@@ -84,6 +84,8 @@ jobs:
           grep -q -- '--terrain-fixture' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
+          grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh
+          grep -q 'Using graphics backend Metal' tools/run-vitrail-smoke.sh
       - name: build
         run: ./gradlew build
       - name: capture build artifacts

@@ -136,6 +136,24 @@ if [[ $client_status -ne 0 ]]; then
 fi
 
 if [[ -n "$fixture_mode" ]]; then
+	latest_log="$repo_root/run/logs/latest.log"
+	if [[ ! -f "$latest_log" || ! "$latest_log" -nt "$fixture_marker" ]]; then
+		echo "Could not confirm the graphics backend: no latest.log from this $fixture_label smoke launch was found." >&2
+		exit 1
+	fi
+
+	if ! grep -qE 'Using graphics backend Metal|Client setup reached on the Metal backend' "$latest_log"; then
+		actual_backend="$(sed -n 's/.*Using graphics backend \([^,]*\),.*/\1/p' "$latest_log" | tail -n1)"
+		if [[ -n "$actual_backend" ]]; then
+			echo "Vitrail $fixture_label smoke did not run on Metal; actual backend: $actual_backend." >&2
+		else
+			echo "Vitrail $fixture_label smoke did not provide evidence that the Metal backend was active." >&2
+		fi
+		echo "Select Prefer Metal, restart the client, and rerun --${fixture_mode}-fixture before treating this as Metal acceptance." >&2
+		exit 1
+	fi
+	echo "Confirmed Metal backend for this $fixture_label smoke run."
+
 	newest_screenshot=""
 	screenshot_dir="$repo_root/run/screenshots"
 	if [[ -d "$screenshot_dir" ]]; then
