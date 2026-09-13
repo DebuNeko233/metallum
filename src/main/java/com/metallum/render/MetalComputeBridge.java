@@ -12,6 +12,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.spvc.Spv;
 import org.lwjgl.util.spvc.Spvc;
+import org.lwjgl.util.spvc.SpvcMslResourceBinding2;
 import org.lwjgl.util.spvc.SpvcReflectedResource;
 
 import java.lang.foreign.MemorySegment;
@@ -33,12 +34,16 @@ import java.util.regex.Pattern;
  * <p>
  * Shader-pack policy is deliberately absent here: callers decide which resource a declared name
  * means, which ping-pong half is current, when a dispatch belongs in the frame, and how many
- * workgroups it requests. Metallum only compiles SPIR-V to MSL, binds the already-resolved GPU
+ * workgroups it requests. Metallum only compiles SPIR-V to MSL, maps reflected resources onto
+ * Metal's independent buffer/texture/sampler argument tables, binds the already-resolved GPU
  * resources, dispatches the requested workgroups, and applies its encoder/fence lifetime rules.
  */
 @Environment(EnvType.CLIENT)
 public final class MetalComputeBridge {
     private static final int MSL_VERSION_4_0 = 0x040000;
+    private static final int MAX_BUFFER_ARGUMENTS = 31;
+    private static final int MAX_TEXTURE_ARGUMENTS = 128;
+    private static final int MAX_SAMPLER_ARGUMENTS = 16;
     private static final Pattern KERNEL_ENTRY_PATTERN = Pattern.compile("\\bkernel\\s+\\w+\\s+(\\w+)\\s*\\(");
 
     private MetalComputeBridge() {
@@ -49,7 +54,7 @@ public final class MetalComputeBridge {
      *
      * @param backend a Metallum {@code MetalDevice}, typed as {@link Object} for optional clients
      * @param label diagnostic label owned by the caller
-     * @param spirv SPIR-V bytes whose binding decorations identify the Metal argument indices
+     * @param spirv SPIR-V bytes whose reflected resources are remapped to native Metal arguments
      */
     public static Object compile(final Object backend, final String label, final ByteBuffer spirv) {
         if (!(backend instanceof MetalDevice device)) {
@@ -176,7 +181,7 @@ public final class MetalComputeBridge {
     ) {
         GpuBufferSlice slice = requireBuffer(binding, buffers);
         MetalGpuBuffer buffer = (MetalGpuBuffer) slice.buffer();
-        compute.setBuffer(buffer.metalBuffer(), slice.offset(), binding.index);
+        compute.setBuffer(buffer.metalBuffer(), slice.offset(), binding.bufferIndex);
     }
 
     private static void bindSampledImage(
@@ -187,8 +192,8 @@ public final class MetalComputeBridge {
     ) {
         MetalGpuTextureView view = requireTexture(binding, textures, "sampled image");
         MetalGpuSampler sampler = requireSampler(binding, samplers);
-        compute.setTexture(view.nativeHandle(), binding.index);
-        compute.setSamplerState(sampler.nativeHandle(), binding.index);
+        compute.setTexture(view.nativeHandle(), binding.textureIndex);
+        compute.setSamplerState(sampler.nativeHandle(), binding.samplerIndex);
     }
 
     private static void bindStorageImage(
@@ -198,7 +203,7 @@ public final class MetalComputeBridge {
     ) {
         MetalGpuTextureView view = requireTexture(binding, textures, "storage image");
         ((MetalGpuTexture) view.texture()).markContentsDirty();
-        compute.setTexture(view.nativeHandle(), binding.index);
+        compute.setTexture(view.nativeHandle(), binding.textureIndex);
     }
 
     private static GpuBufferSlice requireBuffer(
@@ -265,7 +270,7 @@ public final class MetalComputeBridge {
                 long compiler = pCompiler.get(0);
                 installMslOptions(stack, compiler);
 
-                Map<String, Binding> bindings = reflectBindings(stack, compiler);
+                Map<String, Binding> bindings = reflectAndRemapBindings(stack, compiler);
 
                 PointerBuffer pSource = stack.mallocPointer(1);
                 checkSpvc(Spvc.spvc_compiler_compile(compiler, pSource), "spvc_compiler_compile");
@@ -305,14 +310,6 @@ public final class MetalComputeBridge {
         checkSpvc(
                 Spvc.spvc_compiler_options_set_bool(
                         options,
-                        Spvc.SPVC_COMPILER_OPTION_MSL_ENABLE_DECORATION_BINDING,
-                        true
-                ),
-                "spvc_compiler_options_set_bool(MSL_ENABLE_DECORATION_BINDING)"
-        );
-        checkSpvc(
-                Spvc.spvc_compiler_options_set_bool(
-                        options,
                         Spvc.SPVC_COMPILER_OPTION_MSL_TEXTURE_BUFFER_NATIVE,
                         true
                 ),
@@ -324,7 +321,10 @@ public final class MetalComputeBridge {
         );
     }
 
-    private static Map<String, Binding> reflectBindings(final MemoryStack stack, final long compiler) throws Exception {
+    private static Map<String, Binding> reflectAndRemapBindings(
+            final MemoryStack stack,
+            final long compiler
+    ) throws Exception {
         PointerBuffer pResources = stack.mallocPointer(1);
         checkSpvc(
                 Spvc.spvc_compiler_create_shader_resources(compiler, pResources),
@@ -332,10 +332,15 @@ public final class MetalComputeBridge {
         );
         long resources = pResources.get(0);
         LinkedHashMap<String, Binding> bindings = new LinkedHashMap<>();
-        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, Kind.UNIFORM_BUFFER, bindings);
-        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER, Kind.STORAGE_BUFFER, bindings);
-        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, Kind.SAMPLED_IMAGE, bindings);
-        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE, Kind.STORAGE_IMAGE, bindings);
+        ArgumentSlots slots = new ArgumentSlots();
+        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_UNIFORM_BUFFER,
+                Kind.UNIFORM_BUFFER, bindings, slots);
+        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER,
+                Kind.STORAGE_BUFFER, bindings, slots);
+        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_SAMPLED_IMAGE,
+                Kind.SAMPLED_IMAGE, bindings, slots);
+        collectBindings(stack, compiler, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE,
+                Kind.STORAGE_IMAGE, bindings, slots);
         return bindings;
     }
 
@@ -345,7 +350,8 @@ public final class MetalComputeBridge {
             final long resources,
             final int resourceType,
             final Kind kind,
-            final Map<String, Binding> bindings
+            final Map<String, Binding> bindings,
+            final ArgumentSlots slots
     ) throws Exception {
         PointerBuffer pList = stack.mallocPointer(1);
         PointerBuffer pCount = stack.mallocPointer(1);
@@ -365,18 +371,49 @@ public final class MetalComputeBridge {
             if (name.isEmpty()) {
                 continue;
             }
-            int bindingIndex = Spvc.spvc_compiler_get_decoration(
-                    compiler,
-                    resource.id(),
-                    Spv.SpvDecorationBinding
-            );
-            Binding previous = bindings.putIfAbsent(name, new Binding(name, kind, bindingIndex));
-            if (previous != null && previous.kind != kind) {
+            long type = Spvc.spvc_compiler_get_type_handle(compiler, resource.type_id());
+            if (Spvc.spvc_type_get_num_array_dimensions(type) != 0) {
                 throw new IllegalStateException(
-                        "Metal compute resource " + name + " is reflected as both " + previous.kind + " and " + kind
+                        "Metal compute resource arrays are not yet supported: " + name
                 );
             }
+            if (bindings.containsKey(name)) {
+                throw new IllegalStateException("Metal compute resource name is ambiguous: " + name);
+            }
+
+            Binding binding = slots.allocate(name, kind);
+            remapBinding(stack, compiler, resource, binding);
+            bindings.put(name, binding);
         }
+    }
+
+    private static void remapBinding(
+            final MemoryStack stack,
+            final long compiler,
+            final SpvcReflectedResource resource,
+            final Binding binding
+    ) {
+        SpvcMslResourceBinding2 remap = SpvcMslResourceBinding2.calloc(stack);
+        Spvc.spvc_msl_resource_binding_init_2(remap);
+        remap.stage(Spvc.spvc_compiler_get_execution_model(compiler));
+        remap.desc_set(Spvc.spvc_compiler_get_decoration(
+                compiler, resource.id(), Spv.SpvDecorationDescriptorSet));
+        remap.binding(Spvc.spvc_compiler_get_decoration(
+                compiler, resource.id(), Spv.SpvDecorationBinding));
+        remap.count(1);
+        if (binding.bufferIndex >= 0) {
+            remap.msl_buffer(binding.bufferIndex);
+        }
+        if (binding.textureIndex >= 0) {
+            remap.msl_texture(binding.textureIndex);
+        }
+        if (binding.samplerIndex >= 0) {
+            remap.msl_sampler(binding.samplerIndex);
+        }
+        checkSpvc(
+                Spvc.spvc_compiler_msl_add_resource_binding_2(compiler, remap),
+                "spvc_compiler_msl_add_resource_binding_2(" + binding.name + ")"
+        );
     }
 
     private static String resourceName(final long compiler, final SpvcReflectedResource resource) {
@@ -405,7 +442,60 @@ public final class MetalComputeBridge {
         STORAGE_IMAGE
     }
 
-    private record Binding(String name, Kind kind, int index) {
+    private record Binding(
+            String name,
+            Kind kind,
+            int bufferIndex,
+            int textureIndex,
+            int samplerIndex
+    ) {
+    }
+
+    private static final class ArgumentSlots {
+        private int buffers;
+        private int textures;
+        private int samplers;
+
+        private Binding allocate(final String name, final Kind kind) {
+            return switch (kind) {
+                case UNIFORM_BUFFER, STORAGE_BUFFER ->
+                        new Binding(name, kind, nextBuffer(name), -1, -1);
+                case SAMPLED_IMAGE ->
+                        new Binding(name, kind, -1, nextTexture(name), nextSampler(name));
+                case STORAGE_IMAGE ->
+                        new Binding(name, kind, -1, nextTexture(name), -1);
+            };
+        }
+
+        private int nextBuffer(final String name) {
+            if (this.buffers >= MAX_BUFFER_ARGUMENTS) {
+                throw new IllegalStateException(
+                        "Metal compute buffer argument limit exceeded while binding " + name
+                                + ": limit=" + MAX_BUFFER_ARGUMENTS
+                );
+            }
+            return this.buffers++;
+        }
+
+        private int nextTexture(final String name) {
+            if (this.textures >= MAX_TEXTURE_ARGUMENTS) {
+                throw new IllegalStateException(
+                        "Metal compute texture argument limit exceeded while binding " + name
+                                + ": limit=" + MAX_TEXTURE_ARGUMENTS
+                );
+            }
+            return this.textures++;
+        }
+
+        private int nextSampler(final String name) {
+            if (this.samplers >= MAX_SAMPLER_ARGUMENTS) {
+                throw new IllegalStateException(
+                        "Metal compute sampler argument limit exceeded while binding " + name
+                                + ": limit=" + MAX_SAMPLER_ARGUMENTS
+                );
+            }
+            return this.samplers++;
+        }
     }
 
     private record Reflected(String msl, String entryPoint, Map<String, Binding> bindings) {
