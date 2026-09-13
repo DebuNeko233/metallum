@@ -1,11 +1,9 @@
 package com.metallum.mixin.render;
 
+import com.metallum.api.MetallumApi;
 import com.metallum.render.MetalBackend;
-import com.mojang.blaze3d.opengl.GlBackend;
 import com.mojang.blaze3d.systems.GpuBackend;
-import com.mojang.blaze3d.vulkan.VulkanBackend;
 import net.minecraft.client.PreferredGraphicsApi;
-import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -13,21 +11,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(PreferredGraphicsApi.class)
 abstract class PreferredGraphicsApiMixin {
-    @Inject(method = "getBackendsToTry", at = @At("HEAD"), cancellable = true)
-    private void metallum$injectMetalBackend(final CallbackInfoReturnable<GpuBackend[]> cir) {
+    @Inject(method = "getBackendsToTry", at = @At("RETURN"), cancellable = true)
+    private void metallum$preferMetalBackend(final CallbackInfoReturnable<GpuBackend[]> cir) {
         PreferredGraphicsApi self = (PreferredGraphicsApi) (Object) this;
-        if (self != PreferredGraphicsApi.DEFAULT) {
+        if (self != PreferredGraphicsApi.DEFAULT || !MetallumApi.isMetalPreferred()) {
             return;
         }
 
-        cir.setReturnValue(new GpuBackend[]{new MetalBackend(), new VulkanBackend(), new GlBackend()});
-    }
-
-    @Inject(method = "caption", at = @At("HEAD"), cancellable = true)
-    private void metallum$renameDefaultApiToMetal(final CallbackInfoReturnable<Component> cir) {
-        PreferredGraphicsApi self = (PreferredGraphicsApi) (Object) this;
-        if (self == PreferredGraphicsApi.DEFAULT) {
-            cir.setReturnValue(Component.literal("Prefer Metal"));
-        }
+        GpuBackend[] vanillaBackends = cir.getReturnValue();
+        GpuBackend[] preferredBackends = new GpuBackend[vanillaBackends.length + 1];
+        preferredBackends[0] = new MetalBackend();
+        System.arraycopy(vanillaBackends, 0, preferredBackends, 1, vanillaBackends.length);
+        cir.setReturnValue(preferredBackends);
     }
 }

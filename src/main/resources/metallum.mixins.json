@@ -7,9 +7,9 @@
   ],
   "client": [
     "render.PreferredGraphicsApiMixin",
+    "render.VideoSettingsScreenMixin",
     "sodium.DrawBackendMixin",
-    "sodium.DrawContextMixin",
-    "sodium.SodiumPreferredGraphicsApiMixin"
+    "sodium.DrawContextMixin"
   ],
   "injectors": {
     "defaultRequire": 1
