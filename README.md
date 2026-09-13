@@ -77,6 +77,7 @@ Metallum now also exposes backend-native primitives for shader-writable textures
 - `MetalCommandEncoder#clearStorageTexture(...)` clears writable 1D/2D/3D textures to numeric zero through cached typed Metal compute kernels for floating-point, signed-integer, and unsigned-integer storage images.
 - `MetalCommandEncoder#copyStorageTextureRegion(...)` performs exact texture-region copies with the Metal blit encoder. It deliberately does not define overlapping in-place copy semantics; callers that shift a volume must provide a distinct scratch texture.
 - Render, compute, and blit encoder transitions reuse Metallum's existing `MTLFence` dependency chain instead of copying Vulkan image-layout/barrier logic into Metal.
+- `MetalDevice.close()` releases the cached storage-zero compute pipeline states through `MTLStorageTexturePipelines.close()`, keeping those native objects inside the Metal device lifetime.
 
 These methods are backend capabilities only. They do not decide which shader-pack image is cleared, which volumes follow the camera, when scratch storage is needed, or how frame scheduling works. Those remain caller policy.
 
@@ -84,7 +85,7 @@ This foundation does **not** imply that an external shader-pack engine's compute
 
 ## Validation status
 
-The latest compile-validated backend code is head `881c4337426fe2dd88b08bcad2d029a00bfa3d71`: GitHub Actions run `34761479404` completed `./gradlew build` successfully with Java 25 after storage-image draw binding was added. Earlier MRT/SSBO heads were also compile-validated by the same PR build gate.
+Storage-image render binding was compile-validated at head `881c4337426fe2dd88b08bcad2d029a00bfa3d71` by GitHub Actions run `34761479404`. The later lifecycle head `f9bc3aee46e1491536ce0601a15d354e0c4e4cce`, which adds storage-zero pipeline teardown to `MetalDevice.close()`, also completed `./gradlew build` successfully on Java 25 in Actions run `34763133940`.
 
 Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, SSBO write/read, and writable storage-image clear/write/read behavior including a true 3D texture. Depth/stencil mipmap generation remains outside the implemented capability set.
 
