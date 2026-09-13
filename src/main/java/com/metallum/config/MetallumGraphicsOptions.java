@@ -3,6 +3,7 @@ package com.metallum.config;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.PreferredGraphicsApi;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.network.chat.Component;
 
 import java.util.List;
@@ -30,7 +31,10 @@ public final class MetallumGraphicsOptions {
     public static OptionInstance<GraphicsApiPreference> createVanillaOption(Options options) {
         return new OptionInstance<>(
                 "options.graphicsApi",
-                OptionInstance.cachedConstantTooltip(Component.translatable("options.graphicsApi.tooltip")),
+                value -> Tooltip.create(Component.translatable(
+                        value == GraphicsApiPreference.VULKAN
+                                ? "options.graphicsApi.tooltip.vulkan"
+                                : "options.graphicsApi.tooltip")),
                 (caption, value) -> Options.genericValueLabel(caption, value.caption()),
                 new OptionInstance.Enum<>(List.of(GraphicsApiPreference.values()), GraphicsApiPreference.CODEC),
                 current(options),
