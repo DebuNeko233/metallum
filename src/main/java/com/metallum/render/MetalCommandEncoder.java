@@ -100,7 +100,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 || !(texture instanceof MetalGpuTexture metalTexture)
                 || texture.isClosed()
                 || texture.getMipLevels() <= 1
-                || !texture.getFormat().hasColorAspect()) {
+                || !supportsNativeMipmaps(texture.getFormat())) {
             return false;
         }
 
@@ -109,6 +109,26 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         blit.generateMipmapsForTexture(metalTexture.nativeHandle());
         endEncoder();
         return true;
+    }
+
+    /**
+     * Metal's native mipmap command requires both filtering and color-rendering support. Keep this
+     * list at the Apple7/M1 common denominator because Metallum targets every Apple Silicon Mac and
+     * does not yet query the runtime GPU family. Full-range integer formats are color-renderable but
+     * not filterable, while R/RG/RGBA32Float only becomes filterable on Apple9, so neither group is
+     * safe for the backend-wide native path.
+     */
+    private static boolean supportsNativeMipmaps(final com.mojang.blaze3d.GpuFormat format) {
+        return switch (format) {
+            case R8_UNORM, R8_SNORM,
+                    R16_UNORM, R16_SNORM, R16_FLOAT,
+                    RG8_UNORM, RG8_SNORM,
+                    RG16_UNORM, RG16_SNORM, RG16_FLOAT,
+                    RGBA8_UNORM, RGBA8_SNORM,
+                    RGB10A2_UNORM, RG11B10_FLOAT,
+                    RGBA16_UNORM, RGBA16_SNORM, RGBA16_FLOAT -> true;
+            default -> false;
+        };
     }
 
     /**
