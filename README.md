@@ -41,9 +41,22 @@ The command encoder now exposes backend-level color mipmap generation through Me
 
 The method is intentionally a generic Metal command-encoder capability. It contains no Vitrail shader-pack scheduling or texture-name semantics.
 
+## Selective pipeline-cache eviction
+
+`MetalDevice` now exposes a backend-level `evictCachedPipelines(Predicate<RenderPipeline>)` operation for callers whose pipeline-visible state changes without a full resource reload.
+
+- The caller chooses the predicate; Metallum does not know shader-pack, entity, or Vitrail semantics.
+- Matching keys leave the identity cache immediately so the next `precompilePipeline` rebuilds them from the current `RenderPipeline` state.
+- Their `MetalCompiledRenderPipeline` objects are not released at the eviction point because already-recorded GPU work may still reference them.
+- Evicted native pipelines are held until the next `clearPipelineCache()`, whose existing `waitForSubmittedGpuWork()` provides the safe release point before `close()` is called.
+
+This is required for state such as vertex layouts because `MetalCompiledRenderPipeline` writes each binding's `VertexFormat.getVertexSize()` into the `MTLVertexDescriptor` stride at compile time. A cached pipeline therefore cannot safely survive a live vertex-layout change merely because the `RenderPipeline` Java object is unchanged.
+
+Minecraft 26.2's public `GpuDeviceBackend` only exposes full-cache `clearPipelineCache()`; it has no selective invalidation operation, so this remains a Metallum backend extension rather than a replacement for a public Mojang API.
+
 ## Validation status
 
-The MRT and native color-mipmap changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. A successful Minecraft/Gradle build and Apple-Silicon smoke coverage are still required before this work should be merged.
+The MRT, native color-mipmap, and selective pipeline-cache changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. A successful Minecraft/Gradle build and Apple-Silicon smoke coverage are still required before this work should be merged.
 
 ## Requirements
 
