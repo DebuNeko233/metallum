@@ -1,6 +1,6 @@
-# Automatically build the project and run any configured tests for pull requests,
-# the default branch, manual runs, and release tags. This provides a compile gate
-# for backend work before it is merged.
+# Automatically build the project and run any configured tests for every branch push,
+# pull requests, manual runs, and release tags. This provides a compile gate for
+# backend work before it is merged.
 
 name: build
 run-name: ${{ github.ref_name }}
@@ -9,7 +9,7 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - '**'
     tags:
       - 'v*'
 
