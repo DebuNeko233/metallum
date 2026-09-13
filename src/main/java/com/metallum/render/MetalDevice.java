@@ -144,6 +144,32 @@ final class MetalDevice implements GpuDeviceBackend {
         return buffer;
     }
 
+    /**
+     * Creates a shader-storage buffer for optional backend integrations.
+     * <p>
+     * Minecraft 26.2 exposes no storage-buffer usage bit on {@link GpuBuffer}. Metal does not need
+     * such a usage declaration for {@code MTLBuffer}, so this backend extension allocates a shared
+     * buffer directly and zeros it before returning it. The result is intentionally typed as
+     * {@link Object}: callers that bridge optional backends can keep Metallum off their compile
+     * classpath and hand the opaque object back to this backend for binding and release.
+     */
+    public Object createStorageBufferResource(final long size) {
+        if (size <= 0L) {
+            throw new IllegalArgumentException("Storage buffer size must be positive, got " + size);
+        }
+        MetalGpuBuffer buffer = new MetalGpuBuffer(this, GpuBuffer.USAGE_MAP_WRITE, size);
+        buffer.zeroContents();
+        return buffer;
+    }
+
+    /** Releases a resource returned by {@link #createStorageBufferResource(long)}. */
+    public void closeStorageBufferResource(final Object resource) {
+        if (!(resource instanceof MetalGpuBuffer buffer)) {
+            throw new IllegalArgumentException("Not a Metal storage buffer resource: " + resource);
+        }
+        buffer.close();
+    }
+
     @Override
     public @NonNull List<String> getLastDebugMessages() {
         return List.of();
