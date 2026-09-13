@@ -87,6 +87,37 @@ jobs:
               raise SystemExit('Metal render pipeline does not use the shared colour-target format mapping')
           print('Metal GBuffer target formats: texture and pipeline mappings aligned')
           PY
+      - name: validate Metal MRT clear routing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          command_buffer = Path('src/main/java/com/metallum/mtl/MTLCommandBuffer.java').read_text(encoding='utf-8')
+
+          required_encoder = (
+              'Vector4fc[] colorClears = new Vector4fc[colorAttachments.size()];',
+              'Vector4fc colorClear = colorAttachment.clearValue().orElse(null);',
+              'colorClears[index] = colorClear;',
+              'colorAttachments,\n                clearColors,',
+          )
+          missing = [needle for needle in required_encoder if needle not in encoder]
+          if missing:
+              raise SystemExit('Metal render-pass clear plumbing is incomplete: ' + ', '.join(missing))
+
+          required_native = (
+              'Vector4fc clearColor = clearColors == null ? null : clearColors[index];',
+              'renderPass.colorAttachment(',
+              'index,',
+              'clearColor != null ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR : MTLRenderPassDescriptor.LOAD_ACTION_LOAD,',
+              'MTLRenderPassDescriptor.STORE_ACTION_STORE,',
+              'clearColor',
+          )
+          missing = [needle for needle in required_native if needle not in command_buffer]
+          if missing:
+              raise SystemExit('Native Metal attachment clear routing is incomplete: ' + ', '.join(missing))
+          print('Metal GBuffer clears: per-slot clear values reach MTLLoadActionClear')
+          PY
       - name: validate Metal position invariance
         run: |
           python3 - <<'PY'
@@ -128,8 +159,10 @@ jobs:
           grep -q -- '--terrain-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-location-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-format-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-clear-fixture' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-format-contract' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-clear-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh
