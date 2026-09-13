@@ -54,9 +54,23 @@ This is required for state such as vertex layouts because `MetalCompiledRenderPi
 
 Minecraft 26.2's public `GpuDeviceBackend` only exposes full-cache `clearPipelineCache()`; it has no selective invalidation operation, so this remains a Metallum backend extension rather than a replacement for a public Mojang API.
 
+## Shader-storage buffer foundation
+
+Metallum now has a backend-level path for shader-storage buffers even though Minecraft 26.2 exposes no `GpuBuffer` storage-usage flag.
+
+- `MetalDevice#createStorageBufferResource(long)` allocates a normal backend-owned `MetalGpuBuffer` in shared memory and zero-initializes the complete allocation before it is exposed to a shader.
+- The returned object is still a Minecraft `GpuBuffer`, so integrations can keep resource ownership and deferred destruction inside the normal backend lifetime instead of carrying an `MTLBuffer` handle.
+- `MetalCrossShaderCompiler` additionally reflects `SPVC_RESOURCE_TYPE_STORAGE_BUFFER` from the raw SPIR-V. It preserves the binding index already used by the caller's placeholder bind-group entry instead of allocating a duplicate Metal argument slot.
+- A reflected storage-buffer entry becomes `ResourceKind.STORAGE_BUFFER`; it therefore shares Metal's buffer index space with uniform buffers and is included when the first free vertex-buffer slot is chosen.
+- Render-pass binding uses the same `setVertexBuffer` / `setFragmentBuffer` path as other Metal buffers. No Vulkan descriptor-set or push-descriptor model is reproduced on Metal.
+
+The binding-index reuse is deliberate. Vitrail currently exposes a shader-storage name to Minecraft 26.2 as a placeholder uniform entry because the public bind-group API has no storage-buffer entry type. Its SPIR-V reflection mixin also makes the vanilla rebind pass aware of that resource. Metallum recognizes the underlying SPIR-V resource as storage while retaining that one shared index, so the placeholder is an API bridge rather than a second resource.
+
+This slice does **not** add storage images. A writable 2D/3D Metal texture still needs explicit `MTLTextureUsageShaderWrite`, correct 3D texture construction, SPIR-V storage-image reflection, and a backend-native clear path that preserves shader-pack lifetime/clear semantics. Those will be implemented separately instead of treating sampled textures as writable storage.
+
 ## Validation status
 
-The MRT, native color-mipmap, and selective pipeline-cache changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. A successful Minecraft/Gradle build and Apple-Silicon smoke coverage are still required before this work should be merged.
+The MRT, native color-mipmap, selective pipeline-cache, and storage-buffer changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. The storage-buffer changes additionally need a successful compile gate and an Apple-Silicon smoke test that writes and reads a nontrivial SSBO range before this work should be merged.
 
 ## Requirements
 
