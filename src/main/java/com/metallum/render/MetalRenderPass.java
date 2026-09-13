@@ -27,6 +27,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.function.Supplier;
@@ -39,12 +40,13 @@ final class MetalRenderPass implements RenderPassBackend {
     private final MetalCommandEncoder commandEncoder;
     @Nullable
     private final String label;
-    private final GpuTextureView colorTexture;
+    private final GpuTextureView[] colorTextures;
     @Nullable
     private final GpuTextureView depthTexture;
     private final RenderPass.RenderArea renderArea;
-    @Nullable
-    private Vector4fc clearColor;
+    private final int targetWidth;
+    private final int targetHeight;
+    private final Vector4fc[] clearColors;
     @Nullable
     private Double clearDepth;
     private final ScissorState scissorState = new ScissorState();
@@ -66,20 +68,76 @@ final class MetalRenderPass implements RenderPassBackend {
             final MetalDevice device,
             final MetalCommandEncoder encoder,
             final Supplier<String> label,
-            final GpuTextureView colorTexture,
+            final GpuTextureView[] colorTextures,
             @Nullable final GpuTextureView depthTexture,
             final RenderPass.RenderArea renderArea,
-            @Nullable final Vector4fc clearColor,
+            final Vector4fc[] clearColors,
             @Nullable final Double clearDepth
     ) {
+        if (colorTextures.length != clearColors.length) {
+            throw new IllegalArgumentException(
+                    "Color attachment and clear-value counts differ: " + colorTextures.length + " != " + clearColors.length
+            );
+        }
+
         this.device = device;
         this.commandEncoder = encoder;
         this.label = device.useLabels() ? label.get() : null;
-        this.colorTexture = colorTexture;
+        this.colorTextures = colorTextures.clone();
         this.depthTexture = depthTexture;
         this.renderArea = renderArea;
-        this.clearColor = clearColor;
+        this.clearColors = clearColors.clone();
         this.clearDepth = clearDepth;
+
+        int width = -1;
+        int height = -1;
+        for (int index = 0; index < this.colorTextures.length; index++) {
+            GpuTextureView colorTexture = this.colorTextures[index];
+            if (colorTexture == null) {
+                continue;
+            }
+            int attachmentWidth = colorTexture.getWidth(0);
+            int attachmentHeight = colorTexture.getHeight(0);
+            if (width < 0) {
+                width = attachmentWidth;
+                height = attachmentHeight;
+            } else if (width != attachmentWidth || height != attachmentHeight) {
+                throw new IllegalArgumentException(
+                        "Metal render-pass color attachment " + index + " is " + attachmentWidth + "x" + attachmentHeight
+                                + ", expected " + width + "x" + height
+                );
+            }
+        }
+
+        if (depthTexture != null) {
+            int depthWidth = depthTexture.getWidth(0);
+            int depthHeight = depthTexture.getHeight(0);
+            if (width < 0) {
+                width = depthWidth;
+                height = depthHeight;
+            } else if (width != depthWidth || height != depthHeight) {
+                throw new IllegalArgumentException(
+                        "Metal render-pass depth attachment is " + depthWidth + "x" + depthHeight
+                                + ", expected " + width + "x" + height
+                );
+            }
+        }
+
+        if (width < 0 || height < 0) {
+            throw new IllegalArgumentException("Metal render pass requires at least one color or depth attachment");
+        }
+        if (renderArea.x() < 0
+                || renderArea.y() < 0
+                || renderArea.width() <= 0
+                || renderArea.height() <= 0
+                || renderArea.x() + renderArea.width() > width
+                || renderArea.y() + renderArea.height() > height) {
+            throw new IllegalArgumentException(
+                    "Render area " + renderArea + " is outside Metal attachment extent " + width + "x" + height
+            );
+        }
+        this.targetWidth = width;
+        this.targetHeight = height;
     }
 
     @Override
@@ -331,10 +389,6 @@ final class MetalRenderPass implements RenderPassBackend {
         }
     }
 
-    MTLPixelFormat colorAttachmentFormat() {
-        return ((MetalGpuTexture) colorTexture.texture()).mtlPixelFormat();
-    }
-
     MTLPixelFormat depthAttachmentFormat() {
         if (depthTexture == null) {
             return MTLPixelFormat.Invalid;
@@ -350,23 +404,36 @@ final class MetalRenderPass implements RenderPassBackend {
     }
 
     void materializePendingClear() {
-        if (clearColor != null || clearDepth != null) {
+        if (hasPendingColorClear() || clearDepth != null) {
             renderEncoder();
         }
     }
 
+    private boolean hasPendingColorClear() {
+        for (Vector4fc clearColor : clearColors) {
+            if (clearColor != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private MTLRenderCommandEncoder renderEncoder() {
-        MetalGpuTextureView colorTextureView = (MetalGpuTextureView) colorTexture;
+        MetalGpuTextureView[] colorTextureViews = new MetalGpuTextureView[colorTextures.length];
+        for (int index = 0; index < colorTextures.length; index++) {
+            GpuTextureView colorTexture = colorTextures[index];
+            colorTextureViews[index] = colorTexture == null ? null : (MetalGpuTextureView) colorTexture;
+        }
         MetalGpuTextureView depthTextureView = depthTexture == null ? null : (MetalGpuTextureView) depthTexture;
         MTLRenderCommandEncoder encoder = commandEncoder.renderCommandEncoder(
-                colorTextureView,
+                colorTextureViews,
                 depthTextureView,
-                colorTexture.getWidth(0),
-                colorTexture.getHeight(0),
-                clearColor,
+                targetWidth,
+                targetHeight,
+                clearColors,
                 clearDepth
         );
-        clearColor = null;
+        Arrays.fill(clearColors, null);
         clearDepth = null;
         return encoder;
     }
@@ -565,8 +632,11 @@ final class MetalRenderPass implements RenderPassBackend {
         int areaLeft = renderArea.x();
         int areaTop = renderArea.y();
         if (!scissorState.enabled()) {
-            if (renderArea.fillsTexture(colorTexture)) {
-                enc.setScissorRect(0L, 0L, colorTexture.getWidth(0), colorTexture.getHeight(0));
+            if (renderArea.x() == 0
+                    && renderArea.y() == 0
+                    && renderArea.width() == targetWidth
+                    && renderArea.height() == targetHeight) {
+                enc.setScissorRect(0L, 0L, targetWidth, targetHeight);
                 return;
             }
             enc.setScissorRect(areaLeft, areaTop, renderArea.width(), renderArea.height());
