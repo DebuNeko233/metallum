@@ -70,7 +70,9 @@ This slice does **not** add storage images. A writable 2D/3D Metal texture still
 
 ## Validation status
 
-The MRT, native color-mipmap, selective pipeline-cache, and storage-buffer changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. The storage-buffer changes additionally need a successful compile gate and an Apple-Silicon smoke test that writes and reads a nontrivial SSBO range before this work should be merged.
+The current feature head is compile-validated: GitHub Actions run `34757903523` completed `./gradlew build` successfully with Java 25 after the nullable nested attachment type-use was corrected.
+
+Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, and an SSBO write/read round trip. Storage images and depth/stencil mipmap generation are explicitly outside the implemented capability set.
 
 ## Requirements
 
