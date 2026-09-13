@@ -81,13 +81,27 @@ Metallum now also exposes backend-native primitives for shader-writable textures
 
 These methods are backend capabilities only. They do not decide which shader-pack image is cleared, which volumes follow the camera, when scratch storage is needed, or how frame scheduling works. Those remain caller policy.
 
-This foundation does **not** imply that an external shader-pack engine's compute stage is already Metal-capable. In the current Vitrail migration, storage-image allocation, render-stage binding, zero clear, and reanchor copies are being bridged, while Vitrail's custom compute compiler/dispatch path is still Vulkan-specific and must be backend-neutralized separately.
+## Shader-pack compute backend foundation
+
+The Metal backend now has a separate optional bridge for general shader-pack compute work. It is intentionally lower-level than a shader-pack engine and does not decide pack scheduling or resource meanings.
+
+- `MTLComputeCommandEncoder` exposes Metal's `setBuffer:offset:atIndex:`, `setTexture:atIndex:`, and `setSamplerState:atIndex:` argument-table operations in addition to the existing storage-clear path.
+- Pack dispatch counts are encoded with `dispatchThreadgroups:threadsPerThreadgroup:`. This preserves Vulkan `vkCmdDispatch` semantics: the first triplet is the number of workgroups, while the second triplet is the shader's local workgroup size. The existing `dispatchThreads:threadsPerThreadgroup:` method remains for workloads such as exact texel clears where the first size is a total thread grid instead.
+- `MetalComputeBridge.compile(...)` accepts SPIR-V and keeps the resulting MSL source, `MTLFunction`, compute pipeline state, resource reflection, and native lifetime inside Metallum. The returned value is opaque to optional callers and is only valid when handed back to the bridge.
+- Compute reflection currently covers uniform buffers, storage buffers, combined sampled images, and storage images. SPIR-V binding decorations are retained as Metal argument indices through SPIRV-Cross's MSL decoration-binding mode.
+- `MetalComputeBridge.dispatch(...)` accepts already-resolved Minecraft `GpuBufferSlice`, `GpuTextureView`, and `GpuSampler` maps by shader resource name. Sampled images receive both texture and sampler state; storage images receive only a writable texture binding and are marked dirty before dispatch.
+- Every dispatch uses Metallum's existing compute encoder and `MTLFence` chain. Finishing the compute encoder updates the same fence that subsequent render, blit, or compute encoders wait on, so Vulkan pipeline barriers are not copied into the Metal implementation.
+- `MetalComputeBridge.close(...)` defers release of the native compute pipeline through Metallum's normal command-encoder destruction queue.
+
+The bridge deliberately does **not** map `colortex*`, shadow images, custom textures, ping-pong halves, uniform names, or dispatch moments. Those are Vitrail policy and must be resolved before a resource reaches Metallum. Oversized shader-pack shared/threadgroup-memory rewriting and any resource classes outside the four reflected kinds above are not yet claimed as supported.
+
+This foundation does **not** mean Vitrail's compute stage is Metal-capable yet. Vitrail's current `PackCompute` still owns a Vulkan-only pipeline/layout/descriptor/dispatch implementation; the next migration step is to make that caller feed its already-resolved resources and dispatch sizes through this bridge while leaving the established Vulkan path unchanged.
 
 ## Validation status
 
 Storage-image render binding was compile-validated at head `881c4337426fe2dd88b08bcad2d029a00bfa3d71` by GitHub Actions run `34761479404`. The later lifecycle head `f9bc3aee46e1491536ce0601a15d354e0c4e4cce`, which adds storage-zero pipeline teardown to `MetalDevice.close()`, also completed `./gradlew build` successfully on Java 25 in Actions run `34763133940`.
 
-Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, SSBO write/read, and writable storage-image clear/write/read behavior including a true 3D texture. Depth/stencil mipmap generation remains outside the implemented capability set.
+The new general compute bridge has not yet been counted as validated until its current branch head completes CI. Runtime validation is also still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, SSBO write/read, writable storage-image clear/write/read behavior including a true 3D texture, and shader-pack compute compile/bind/dispatch. Depth/stencil mipmap generation remains outside the implemented capability set.
 
 ## Requirements
 
