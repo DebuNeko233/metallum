@@ -10,7 +10,8 @@ public enum MTLTextureType {
     Type2D(2L),
     Type2DArray(3L),
     TypeCube(5L),
-    TypeCubeArray(6L);
+    TypeCubeArray(6L),
+    Type3D(7L);
 
     public final long value;
 
