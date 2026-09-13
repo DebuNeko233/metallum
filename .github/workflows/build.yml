@@ -1,13 +1,15 @@
-# Automatically build the project and run any configured tests for every push
-# and submitted pull request. This can help catch issues that only occur on
-# certain platforms or Java versions, and provides a first line of defence
-# against bad commits.
+# Automatically build the project and run any configured tests for pull requests,
+# the default branch, manual runs, and release tags. This provides a compile gate
+# for backend work before it is merged.
 
 name: build
 run-name: ${{ github.ref_name }}
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
 
