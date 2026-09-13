@@ -77,6 +77,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         return encoder;
     }
 
+    MTLComputeCommandEncoder computeCommandEncoder() {
+        endEncoder();
+        MTLComputeCommandEncoder encoder = commandBuffer().makeComputeCommandEncoder();
+        encoder.waitForFence(fence);
+        currentEncoder = encoder;
+        return encoder;
+    }
+
     /**
      * Generates all mip levels after level zero using Metal's native blit command.
      * <p>
@@ -103,6 +111,99 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         return true;
     }
 
+    /**
+     * Clears a writable Metal texture to numeric zero with a typed compute kernel.
+     * <p>
+     * The dimensionality is supplied by the optional backend caller because Minecraft's public
+     * {@link GpuTexture} facade stores true 3D depth in the same integer used for array layers.
+     */
+    public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {
+        if (currentRenderPass != null
+                || !(texture instanceof MetalGpuTexture metalTexture)
+                || texture.isClosed()
+                || dimensions < 1
+                || dimensions > 3) {
+            return false;
+        }
+
+        String formatName = texture.getFormat().name();
+        MTLStorageTexturePipelines.ScalarKind scalarKind = formatName.endsWith("_UINT")
+                ? MTLStorageTexturePipelines.ScalarKind.UINT
+                : formatName.endsWith("_SINT")
+                    ? MTLStorageTexturePipelines.ScalarKind.SINT
+                    : MTLStorageTexturePipelines.ScalarKind.FLOAT;
+        long width = texture.getWidth(0);
+        long height = dimensions == 1 ? 1L : texture.getHeight(0);
+        long depth = dimensions == 3 ? texture.getDepthOrLayers() : 1L;
+
+        metalTexture.markContentsDirty();
+        MTLComputeCommandEncoder compute = computeCommandEncoder();
+        MTLStorageTexturePipelines.clearZero(
+                device.metalDevice(),
+                compute,
+                metalTexture.nativeHandle(),
+                scalarKind,
+                dimensions,
+                width,
+                height,
+                depth
+        );
+        endEncoder();
+        return true;
+    }
+
+    /**
+     * Copies one exact 1D/2D/3D region between storage textures using Metal's blit encoder.
+     * Overlap is intentionally not solved here: callers that shift a texture in place must supply
+     * a separate scratch texture and perform two non-overlapping copies.
+     */
+    public boolean copyStorageTextureRegion(
+            final GpuTexture source,
+            final GpuTexture destination,
+            final int sourceX,
+            final int sourceY,
+            final int sourceZ,
+            final int destinationX,
+            final int destinationY,
+            final int destinationZ,
+            final int width,
+            final int height,
+            final int depth
+    ) {
+        if (currentRenderPass != null
+                || !(source instanceof MetalGpuTexture sourceTexture)
+                || !(destination instanceof MetalGpuTexture destinationTexture)
+                || source.isClosed()
+                || destination.isClosed()
+                || width <= 0
+                || height <= 0
+                || depth <= 0) {
+            return false;
+        }
+
+        destinationTexture.markContentsDirty();
+        MTLBlitCommandEncoder blit = blitCommandEncoder();
+        blit.copyFromTextureToTexture(
+                sourceTexture.nativeHandle(),
+                0L,
+                0L,
+                sourceX,
+                sourceY,
+                sourceZ,
+                width,
+                height,
+                depth,
+                destinationTexture.nativeHandle(),
+                0L,
+                0L,
+                destinationX,
+                destinationY,
+                destinationZ
+        );
+        endEncoder();
+        return true;
+    }
+
     void endEncoder() {
         if (currentEncoder != null) {
             if (currentEncoder instanceof MTLRenderCommandEncoder renderEncoder) {
@@ -112,6 +213,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 }
             } else if (currentEncoder instanceof MTLBlitCommandEncoder blitEncoder) {
                 blitEncoder.updateFence(fence);
+            } else if (currentEncoder instanceof MTLComputeCommandEncoder computeEncoder) {
+                computeEncoder.updateFence(fence);
             }
             currentEncoder.endEncoding();
             currentEncoder = null;
