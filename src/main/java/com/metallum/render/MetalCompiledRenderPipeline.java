@@ -276,11 +276,11 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
                 continue;
             }
             int bufferIndex = firstAvailableBufferSlot + binding;
-            descriptor.setLayout(bufferIndex, format.getVertexSize(), 1L, MTLVertexStepFunction.PerVertex);
+            descriptor.setLayout(bufferIndex, format.getVertexSize(), MTLVertexStepFunction.PerVertex, 1L);
             List<VertexFormatElement> elements = format.getElements();
             for (int location = 0; location < elements.size(); location++) {
                 VertexFormatElement element = elements.get(location);
-                descriptor.setAttribute(location, MTLVertexFormat.from(element.format()), element.offset(), bufferIndex);
+                descriptor.setAttribute(location, MTLVertexFormat.from(element.format()).value, element.offset(), bufferIndex);
             }
         }
         return descriptor;
