@@ -114,14 +114,19 @@ public final class MetalComputeBridge {
             return true;
         }
 
+        // A pending texture clear is materialized with a render encoder. Resolve every resource and
+        // materialize those clears before opening compute so no binding step can end the encoder it
+        // is about to write into.
+        prepareResources(commandEncoder, pipeline.bindings, buffers, textures, samplers);
+
         MTLComputeCommandEncoder compute = commandEncoder.computeCommandEncoder();
         try {
             compute.setComputePipelineState(pipeline.pipelineState);
             for (Binding binding : pipeline.bindings.values()) {
                 switch (binding.kind) {
                     case UNIFORM_BUFFER, STORAGE_BUFFER -> bindBuffer(compute, binding, buffers);
-                    case SAMPLED_IMAGE -> bindSampledImage(commandEncoder, compute, binding, textures, samplers);
-                    case STORAGE_IMAGE -> bindStorageImage(commandEncoder, compute, binding, textures);
+                    case SAMPLED_IMAGE -> bindSampledImage(compute, binding, textures, samplers);
+                    case STORAGE_IMAGE -> bindStorageImage(compute, binding, textures);
                 }
             }
             compute.dispatchThreadgroups(
@@ -141,8 +146,62 @@ public final class MetalComputeBridge {
         }
     }
 
+    private static void prepareResources(
+            final MetalCommandEncoder commandEncoder,
+            final Map<String, Binding> bindings,
+            final Map<String, GpuBufferSlice> buffers,
+            final Map<String, GpuTextureView> textures,
+            final Map<String, GpuSampler> samplers
+    ) {
+        for (Binding binding : bindings.values()) {
+            switch (binding.kind) {
+                case UNIFORM_BUFFER, STORAGE_BUFFER -> requireBuffer(binding, buffers);
+                case SAMPLED_IMAGE -> {
+                    MetalGpuTextureView view = requireTexture(binding, textures, "sampled image");
+                    requireSampler(binding, samplers);
+                    commandEncoder.flushPendingClear((MetalGpuTexture) view.texture());
+                }
+                case STORAGE_IMAGE -> {
+                    MetalGpuTextureView view = requireTexture(binding, textures, "storage image");
+                    commandEncoder.flushPendingClear((MetalGpuTexture) view.texture());
+                }
+            }
+        }
+    }
+
     private static void bindBuffer(
             final MTLComputeCommandEncoder compute,
+            final Binding binding,
+            final Map<String, GpuBufferSlice> buffers
+    ) {
+        GpuBufferSlice slice = requireBuffer(binding, buffers);
+        MetalGpuBuffer buffer = (MetalGpuBuffer) slice.buffer();
+        compute.setBuffer(buffer.metalBuffer(), slice.offset(), binding.index);
+    }
+
+    private static void bindSampledImage(
+            final MTLComputeCommandEncoder compute,
+            final Binding binding,
+            final Map<String, GpuTextureView> textures,
+            final Map<String, GpuSampler> samplers
+    ) {
+        MetalGpuTextureView view = requireTexture(binding, textures, "sampled image");
+        MetalGpuSampler sampler = requireSampler(binding, samplers);
+        compute.setTexture(view.nativeHandle(), binding.index);
+        compute.setSamplerState(sampler.nativeHandle(), binding.index);
+    }
+
+    private static void bindStorageImage(
+            final MTLComputeCommandEncoder compute,
+            final Binding binding,
+            final Map<String, GpuTextureView> textures
+    ) {
+        MetalGpuTextureView view = requireTexture(binding, textures, "storage image");
+        ((MetalGpuTexture) view.texture()).markContentsDirty();
+        compute.setTexture(view.nativeHandle(), binding.index);
+    }
+
+    private static GpuBufferSlice requireBuffer(
             final Binding binding,
             final Map<String, GpuBufferSlice> buffers
     ) {
@@ -150,46 +209,33 @@ public final class MetalComputeBridge {
         if (slice == null) {
             throw new IllegalStateException("Missing Metal compute buffer " + binding.name);
         }
-        if (!(slice.buffer() instanceof MetalGpuBuffer buffer) || slice.buffer().isClosed()) {
+        if (!(slice.buffer() instanceof MetalGpuBuffer) || slice.buffer().isClosed()) {
             throw new IllegalStateException("Invalid Metal compute buffer " + binding.name);
         }
-        compute.setBuffer(buffer.metalBuffer(), slice.offset(), binding.index);
+        return slice;
     }
 
-    private static void bindSampledImage(
-            final MetalCommandEncoder commandEncoder,
-            final MTLComputeCommandEncoder compute,
+    private static MetalGpuTextureView requireTexture(
             final Binding binding,
             final Map<String, GpuTextureView> textures,
-            final Map<String, GpuSampler> samplers
+            final String description
     ) {
         GpuTextureView view = textures.get(binding.name);
-        GpuSampler sampler = samplers.get(binding.name);
         if (!(view instanceof MetalGpuTextureView metalView) || view.isClosed()) {
-            throw new IllegalStateException("Missing Metal compute sampled image " + binding.name);
+            throw new IllegalStateException("Missing Metal compute " + description + " " + binding.name);
         }
+        return metalView;
+    }
+
+    private static MetalGpuSampler requireSampler(
+            final Binding binding,
+            final Map<String, GpuSampler> samplers
+    ) {
+        GpuSampler sampler = samplers.get(binding.name);
         if (!(sampler instanceof MetalGpuSampler metalSampler) || metalSampler.isClosed()) {
             throw new IllegalStateException("Missing Metal compute sampler " + binding.name);
         }
-        commandEncoder.flushPendingClear((MetalGpuTexture) view.texture());
-        compute.setTexture(metalView.nativeHandle(), binding.index);
-        compute.setSamplerState(metalSampler.nativeHandle(), binding.index);
-    }
-
-    private static void bindStorageImage(
-            final MetalCommandEncoder commandEncoder,
-            final MTLComputeCommandEncoder compute,
-            final Binding binding,
-            final Map<String, GpuTextureView> textures
-    ) {
-        GpuTextureView view = textures.get(binding.name);
-        if (!(view instanceof MetalGpuTextureView metalView) || view.isClosed()) {
-            throw new IllegalStateException("Missing Metal compute storage image " + binding.name);
-        }
-        MetalGpuTexture texture = (MetalGpuTexture) view.texture();
-        commandEncoder.flushPendingClear(texture);
-        texture.markContentsDirty();
-        compute.setTexture(metalView.nativeHandle(), binding.index);
+        return metalSampler;
     }
 
     private static Reflected reflectAndCompile(final ByteBuffer spirvBytes) throws Exception {
