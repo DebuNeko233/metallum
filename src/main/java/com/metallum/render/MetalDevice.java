@@ -170,6 +170,52 @@ final class MetalDevice implements GpuDeviceBackend {
         buffer.close();
     }
 
+    /**
+     * Allocates a shader-readable and shader-writable one-, two-, or three-dimensional texture.
+     * <p>
+     * Minecraft 26.2's public {@link GpuTexture} usage mask has no storage-image bit and its normal
+     * {@code depthOrLayers} path describes array layers rather than a true Metal 3D texture. This
+     * backend extension keeps the returned object inside the normal Minecraft texture facade while
+     * selecting the correct Metal texture type and {@link MTLTextureUsage#ShaderWrite} internally.
+     * No shader-pack naming or clear/reprojection policy is implemented here.
+     */
+    public GpuTexture createStorageTextureResource(
+            @Nullable final String label,
+            final GpuFormat format,
+            final int width,
+            final int height,
+            final int depth,
+            final int dimensions
+    ) {
+        if (width <= 0 || height <= 0 || depth <= 0) {
+            throw new IllegalArgumentException(
+                    "Storage texture extent must be positive, got " + width + "x" + height + "x" + depth
+            );
+        }
+
+        MTLTextureType type = switch (dimensions) {
+            case 1 -> MTLTextureType.Type1D;
+            case 2 -> MTLTextureType.Type2D;
+            case 3 -> MTLTextureType.Type3D;
+            default -> throw new IllegalArgumentException("Storage texture dimensions must be 1, 2, or 3, got " + dimensions);
+        };
+        int textureHeight = dimensions == 1 ? 1 : height;
+        int textureDepth = dimensions == 3 ? depth : 1;
+        int usage = GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST;
+        return new MetalGpuTexture(
+                this,
+                usage,
+                label == null ? "" : label,
+                format,
+                width,
+                textureHeight,
+                textureDepth,
+                1,
+                type,
+                true
+        );
+    }
+
     @Override
     public @NonNull List<String> getLastDebugMessages() {
         return List.of();
