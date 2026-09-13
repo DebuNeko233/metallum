@@ -28,6 +28,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         UNIFORM_BUFFER,
         STORAGE_BUFFER,
         SAMPLED_IMAGE,
+        STORAGE_IMAGE,
         TEXEL_BUFFER
     }
 
@@ -222,14 +223,6 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.depthBiasConstant;
     }
 
-    MemorySegment getDepthStencilState() {
-        return this.depthStencilState;
-    }
-
-    MemorySegment getNativePipeline(final boolean useDepth) {
-        return useDepth ? this.withDepthPipeline : this.withoutDepthPipeline;
-    }
-
     MTLCullMode cullMode() {
         return this.cullMode;
     }
@@ -246,49 +239,12 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.vertexBufferCount;
     }
 
-    private static MTLVertexDescriptor buildVertexDescriptor(
-            final RenderPipeline pipeline,
-            final int firstMetalVertexBufferSlot
-    ) {
-        VertexFormat[] bindings = pipeline.getVertexFormatBindings();
-        MTLVertexDescriptor vertexDesc = new MTLVertexDescriptor();
-        long attrIndex = 0;
-
-        for (int i = 0; i < bindings.length; i++) {
-            VertexFormat binding = bindings[i];
-            if (binding == null || binding.getElements().isEmpty()) {
-                continue;
-            }
-
-            int metalSlot = firstMetalVertexBufferSlot + i;
-
-            long stride = binding.getVertexSize();
-            long stepRate = binding.getStepRate();
-            MTLVertexStepFunction stepFunction = stepRate > 0 ? MTLVertexStepFunction.PerInstance : MTLVertexStepFunction.PerVertex;
-            vertexDesc.setLayout(metalSlot, stride, stepFunction, stepRate > 0 ? stepRate : 1);
-
-            for (VertexFormatElement element : binding.getElements()) {
-                MTLVertexFormat format = MTLVertexFormat.from(element.format());
-                if (format == MTLVertexFormat.Invalid) {
-                    throw new IllegalStateException("Unsupported vertex attribute format: " + element.format());
-                }
-                vertexDesc.setAttribute(attrIndex, format.value, element.offset(), metalSlot);
-                attrIndex++;
-            }
-        }
-
-        return vertexDesc;
+    MemorySegment getNativePipeline(final boolean depth) {
+        return depth ? this.withDepthPipeline : this.withoutDepthPipeline;
     }
 
-    private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
-        int maxVertexBufferBinding = -1;
-        for (ResourceBinding resource : resources) {
-            if ((resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER)
-                    && (resource.stageMask() & STAGE_VERTEX) != 0) {
-                maxVertexBufferBinding = Math.max(maxVertexBufferBinding, resource.bindingIndex());
-            }
-        }
-        return maxVertexBufferBinding + 1;
+    MemorySegment getDepthStencilState() {
+        return this.depthStencilState;
     }
 
     @Override
@@ -299,5 +255,34 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         if (!ObjC.isNil(this.withoutDepthPipeline)) {
             ObjC.release(this.withoutDepthPipeline);
         }
+    }
+
+    private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
+        int slot = 0;
+        for (ResourceBinding resource : resources) {
+            if (resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER) {
+                slot = Math.max(slot, resource.bindingIndex() + 1);
+            }
+        }
+        return slot;
+    }
+
+    private static MTLVertexDescriptor buildVertexDescriptor(final RenderPipeline info, final int firstAvailableBufferSlot) {
+        MTLVertexDescriptor descriptor = new MTLVertexDescriptor();
+        int bindingCount = info.getVertexFormatBindings().length;
+        for (int binding = 0; binding < bindingCount; binding++) {
+            VertexFormat format = info.getVertexFormatBinding(binding);
+            if (format == null) {
+                continue;
+            }
+            int bufferIndex = firstAvailableBufferSlot + binding;
+            descriptor.setLayout(bufferIndex, format.getVertexSize(), 1L, MTLVertexStepFunction.PerVertex);
+            List<VertexFormatElement> elements = format.getElements();
+            for (int location = 0; location < elements.size(); location++) {
+                VertexFormatElement element = elements.get(location);
+                descriptor.setAttribute(location, MTLVertexFormat.from(element.format()), element.offset(), bufferIndex);
+            }
+        }
+        return descriptor;
     }
 }
