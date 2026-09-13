@@ -51,20 +51,30 @@ final class MetalCrossShaderCompiler {
             Set<String> storageBuffers = new LinkedHashSet<>();
             storageBuffers.addAll(resourceNames(vertexSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER));
             storageBuffers.addAll(resourceNames(fragmentSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER));
+            Set<String> storageImages = new LinkedHashSet<>();
+            storageImages.addAll(resourceNames(vertexSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE));
+            storageImages.addAll(resourceNames(fragmentSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE));
 
             List<VulkanBindGroupLayout.Entry> layoutEntries = new ArrayList<>();
-            addToBindGroup(layoutEntries, vertexSpirv, pipeline);
-            addToBindGroup(layoutEntries, fragmentSpirv, pipeline);
+            addToBindGroup(layoutEntries, vertexSpirv, pipeline, storageImages);
+            addToBindGroup(layoutEntries, fragmentSpirv, pipeline, storageImages);
             addStorageBufferPlaceholders(layoutEntries, storageBuffers, pipeline);
+            addStorageImagePlaceholders(layoutEntries, storageImages, pipeline);
             List<String> vertexOutputs = extractVariableNames(vertexSpirv.outputs());
 
             vertexSpirv.rebind(tolerateUnprovidedInputs(MetalPipelineSupport.vertexAttributeNames(pipeline), vertexSpirv.inputs()), layoutEntries);
-            rebindStorageBuffers(vertexSpirv.spirv(), storageBuffers, layoutEntries);
+            rebindStorageResources(vertexSpirv.spirv(), storageBuffers, layoutEntries,
+                    Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER, "storage buffer");
+            rebindStorageResources(vertexSpirv.spirv(), storageImages, layoutEntries,
+                    Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE, "storage image");
             MslShader vertexMsl = spirvToMsl(vertexSpirv.spirv(), layoutEntries.size(), vertexAttributeFormats(pipeline), true);
 
             boolean enableFragDepth = pipeline.getDepthStencilState() != null;
             fragmentSpirv.rebind(tolerateUnprovidedInputs(vertexOutputs, fragmentSpirv.inputs()), layoutEntries);
-            rebindStorageBuffers(fragmentSpirv.spirv(), storageBuffers, layoutEntries);
+            rebindStorageResources(fragmentSpirv.spirv(), storageBuffers, layoutEntries,
+                    Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER, "storage buffer");
+            rebindStorageResources(fragmentSpirv.spirv(), storageImages, layoutEntries,
+                    Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE, "storage image");
             MslShader fragmentMsl = spirvToMsl(fragmentSpirv.spirv(), layoutEntries.size(), Map.of(), enableFragDepth);
 
             String vertexEntryPoint = extractEntryPoint(vertexMsl.source(), VERTEX_ENTRY_PATTERN, "main0");
@@ -72,6 +82,7 @@ final class MetalCrossShaderCompiler {
             List<MetalCompiledRenderPipeline.ResourceBinding> resources = buildResourceBindings(
                     layoutEntries,
                     storageBuffers,
+                    storageImages,
                     vertexMsl,
                     fragmentMsl
             );
@@ -92,7 +103,8 @@ final class MetalCrossShaderCompiler {
     private static void addToBindGroup(
             final List<VulkanBindGroupLayout.Entry> entries,
             final IntermediaryShaderModule shader,
-            final RenderPipeline pipeline
+            final RenderPipeline pipeline,
+            final Set<String> storageImages
     ) throws ShaderCompileException {
         List<UniformDescription> uniforms = BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts());
         List<String> samplers = BindGroupLayout.flattenSamplers(pipeline.getBindGroupLayouts());
@@ -108,7 +120,15 @@ final class MetalCrossShaderCompiler {
             String name = sampler.name();
             UniformDescription uniform = findUniform(uniforms, name);
             int dimensions = sampler.dimensions();
-            if (uniform != null) {
+            if (storageImages.contains(name)) {
+                if (!samplers.contains(name)) {
+                    throw new ShaderCompileException("Unable to find shader defined storage image (" + name + ")");
+                }
+                if (!supportedTextureDimension(dimensions)) {
+                    throw new ShaderCompileException("Storage image (" + name + ") has unsupported dimension " + dimensions);
+                }
+                addBindingIfAbsent(entries, VulkanBindGroupEntryType.SAMPLED_IMAGE, name, null);
+            } else if (uniform != null) {
                 if (dimensions != Spv.SpvDimBuffer) {
                     throw new ShaderCompileException("UTB (" + name + ") must have type of SpvDimBuffer");
                 }
@@ -117,12 +137,16 @@ final class MetalCrossShaderCompiler {
                 if (!samplers.contains(name)) {
                     throw new ShaderCompileException("Unable to find shader defined uniform (" + name + ")");
                 }
-                if (dimensions != Spv.SpvDim2D && dimensions != Spv.SpvDimCube) {
-                    throw new ShaderCompileException("Sampled texture (" + name + ") must have type of SpvDim2D or SpvDimCube");
+                if (!supportedTextureDimension(dimensions) && dimensions != Spv.SpvDimCube) {
+                    throw new ShaderCompileException("Sampled texture (" + name + ") has unsupported dimension " + dimensions);
                 }
                 addBindingIfAbsent(entries, VulkanBindGroupEntryType.SAMPLED_IMAGE, name, null);
             }
         }
+    }
+
+    private static boolean supportedTextureDimension(final int dimensions) {
+        return dimensions == Spv.SpvDim1D || dimensions == Spv.SpvDim2D || dimensions == Spv.SpvDim3D;
     }
 
     private static void addStorageBufferPlaceholders(
@@ -139,11 +163,28 @@ final class MetalCrossShaderCompiler {
             if (findUniform(uniforms, name) == null) {
                 throw new ShaderCompileException("Unable to find shader defined storage buffer (" + name + ")");
             }
-            // Vitrail appends storage buffers to IntermediaryShaderModule.uniformBuffers so the
-            // vanilla Vulkan rebind path can see them. addToBindGroup has already inserted those
-            // names in that case. The explicit add keeps Metallum's backend extension functional
-            // when the caller supplies the same UBO placeholder without that mixin.
             addBindingIfAbsent(entries, VulkanBindGroupEntryType.UNIFORM_BUFFER, name, null);
+        }
+    }
+
+    private static void addStorageImagePlaceholders(
+            final List<VulkanBindGroupLayout.Entry> entries,
+            final Set<String> storageImages,
+            final RenderPipeline pipeline
+    ) throws ShaderCompileException {
+        if (storageImages.isEmpty()) {
+            return;
+        }
+
+        List<String> samplers = BindGroupLayout.flattenSamplers(pipeline.getBindGroupLayouts());
+        for (String name : storageImages) {
+            if (!samplers.contains(name)) {
+                throw new ShaderCompileException("Unable to find shader defined storage image (" + name + ")");
+            }
+            // Vitrail appends storage images to IntermediaryShaderModule.samplers so the vanilla
+            // rebind path can see them. The explicit add keeps the same binding-index contract if
+            // an optional caller supplied the sampler placeholder without that mixin.
+            addBindingIfAbsent(entries, VulkanBindGroupEntryType.SAMPLED_IMAGE, name, null);
         }
     }
 
@@ -199,19 +240,21 @@ final class MetalCrossShaderCompiler {
         }
     }
 
-    private static void rebindStorageBuffers(
+    private static void rebindStorageResources(
             final ByteBuffer spirvBytes,
-            final Set<String> storageBuffers,
-            final List<VulkanBindGroupLayout.Entry> entries
+            final Set<String> names,
+            final List<VulkanBindGroupLayout.Entry> entries,
+            final int resourceType,
+            final String description
     ) throws ShaderCompileException {
-        if (storageBuffers.isEmpty()) {
+        if (names.isEmpty()) {
             return;
         }
 
         Map<String, Integer> byName = new HashMap<>();
         for (int index = 0; index < entries.size(); index++) {
             String name = entries.get(index).name();
-            if (storageBuffers.contains(name)) {
+            if (names.contains(name)) {
                 byName.put(name, index);
             }
         }
@@ -245,11 +288,11 @@ final class MetalCrossShaderCompiler {
                 checkSpvc(
                         Spvc.spvc_resources_get_resource_list_for_type(
                                 pResources.get(0),
-                                Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER,
+                                resourceType,
                                 pList,
                                 pCount
                         ),
-                        "spvc_resources_get_resource_list_for_type(STORAGE_BUFFER)"
+                        "spvc_resources_get_resource_list_for_type(" + description + ")"
                 );
 
                 int count = (int) pCount.get(0);
@@ -273,7 +316,7 @@ final class MetalCrossShaderCompiler {
                             offset
                     )) {
                         throw new ShaderCompileException(
-                                "Couldn't find binding decoration for storage buffer " + name
+                                "Couldn't find binding decoration for " + description + " " + name
                         );
                     }
                     words.put(offset.get(0), index);
@@ -353,6 +396,7 @@ final class MetalCrossShaderCompiler {
     private static List<MetalCompiledRenderPipeline.ResourceBinding> buildResourceBindings(
             final List<VulkanBindGroupLayout.Entry> entries,
             final Set<String> storageBuffers,
+            final Set<String> storageImages,
             final MslShader vertexMsl,
             final MslShader fragmentMsl
     ) {
@@ -363,7 +407,9 @@ final class MetalCrossShaderCompiler {
                 case UNIFORM_BUFFER -> storageBuffers.contains(entry.name())
                         ? MetalCompiledRenderPipeline.ResourceKind.STORAGE_BUFFER
                         : MetalCompiledRenderPipeline.ResourceKind.UNIFORM_BUFFER;
-                case SAMPLED_IMAGE -> MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE;
+                case SAMPLED_IMAGE -> storageImages.contains(entry.name())
+                        ? MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE
+                        : MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE;
                 case TEXEL_BUFFER -> MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER;
             };
             GpuFormat texelFormat = entry.type() == VulkanBindGroupLayout.VulkanBindGroupEntryType.TEXEL_BUFFER ? entry.texelBufferFormat() : null;
@@ -565,6 +611,7 @@ final class MetalCrossShaderCompiler {
         Set<String> names = new HashSet<>();
         collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, names);
         collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER, names);
+        collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_STORAGE_IMAGE, names);
         collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, names);
         collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_SEPARATE_IMAGE, names);
         collectResourceNames(stack, resources, Spvc.SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS, names);
