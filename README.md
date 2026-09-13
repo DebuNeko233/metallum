@@ -56,7 +56,7 @@ Minecraft 26.2's public `GpuDeviceBackend` only exposes full-cache `clearPipelin
 
 ## Shader-storage buffer foundation
 
-Metallum now has a backend-level path for shader-storage buffers even though Minecraft 26.2 exposes no `GpuBuffer` storage-usage flag.
+Metallum has a backend-level path for shader-storage buffers even though Minecraft 26.2 exposes no `GpuBuffer` storage-usage flag.
 
 - `MetalDevice#createStorageBufferResource(long)` allocates a normal backend-owned `MetalGpuBuffer` in shared memory and zero-initializes the complete allocation before it is exposed to a shader.
 - The returned object is still a Minecraft `GpuBuffer`, so integrations can keep resource ownership and deferred destruction inside the normal backend lifetime instead of carrying an `MTLBuffer` handle.
@@ -66,16 +66,29 @@ Metallum now has a backend-level path for shader-storage buffers even though Min
 
 The binding-index reuse is deliberate. Vitrail currently exposes a shader-storage name to Minecraft 26.2 as a placeholder uniform entry because the public bind-group API has no storage-buffer entry type. Its SPIR-V reflection mixin also makes the vanilla rebind pass aware of that resource. Metallum recognizes the underlying SPIR-V resource as storage while retaining that one shared index, so the placeholder is an API bridge rather than a second resource.
 
-This slice does **not** add storage images. A writable 2D/3D Metal texture still needs explicit `MTLTextureUsageShaderWrite`, correct 3D texture construction, SPIR-V storage-image reflection, and a backend-native clear path that preserves shader-pack lifetime/clear semantics. Those will be implemented separately instead of treating sampled textures as writable storage.
+## Shader-storage image foundation
+
+Metallum now also exposes backend-native primitives for shader-writable textures without putting shader-pack semantics into the backend.
+
+- `MetalDevice#createStorageTextureResource(...)` creates backend-owned 1D, 2D, or true 3D `GpuTexture` objects with `MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite` and copy usage.
+- True 3D textures use `MTLTextureType3D`; Minecraft's ordinary `depthOrLayers` array-texture interpretation is not reused for this path.
+- `MetalCrossShaderCompiler` reflects `SPVC_RESOURCE_TYPE_STORAGE_IMAGE` directly from SPIR-V, reuses the caller's placeholder binding index, and classifies the resource as `ResourceKind.STORAGE_IMAGE`.
+- A storage image is bound as a Metal texture argument only. No sampler state is written for the storage binding. If a shader-pack directive also exposes a sampled alias, that alias remains an ordinary `SAMPLED_IMAGE` texture-plus-sampler binding.
+- `MetalCommandEncoder#clearStorageTexture(...)` clears writable 1D/2D/3D textures to numeric zero through cached typed Metal compute kernels for floating-point, signed-integer, and unsigned-integer storage images.
+- `MetalCommandEncoder#copyStorageTextureRegion(...)` performs exact texture-region copies with the Metal blit encoder. It deliberately does not define overlapping in-place copy semantics; callers that shift a volume must provide a distinct scratch texture.
+- Render, compute, and blit encoder transitions reuse Metallum's existing `MTLFence` dependency chain instead of copying Vulkan image-layout/barrier logic into Metal.
+
+These methods are backend capabilities only. They do not decide which shader-pack image is cleared, which volumes follow the camera, when scratch storage is needed, or how frame scheduling works. Those remain caller policy.
+
+This foundation does **not** imply that an external shader-pack engine's compute stage is already Metal-capable. In the current Vitrail migration, storage-image allocation, render-stage binding, zero clear, and reanchor copies are being bridged, while Vitrail's custom compute compiler/dispatch path is still Vulkan-specific and must be backend-neutralized separately.
 
 ## Validation status
 
-The current feature head is compile-validated: GitHub Actions run `34757903523` completed `./gradlew build` successfully with Java 25 after the nullable nested attachment type-use was corrected.
+The latest compile-validated backend code is head `881c4337426fe2dd88b08bcad2d029a00bfa3d71`: GitHub Actions run `34761479404` completed `./gradlew build` successfully with Java 25 after storage-image draw binding was added. Earlier MRT/SSBO heads were also compile-validated by the same PR build gate.
 
-Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, and an SSBO write/read round trip. Storage images and depth/stencil mipmap generation are explicitly outside the implemented capability set.
+Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, SSBO write/read, and writable storage-image clear/write/read behavior including a true 3D texture. Depth/stencil mipmap generation remains outside the implemented capability set.
 
 ## Requirements
 
 - macOS
 - Apple Silicon (M1 or newer)
-
