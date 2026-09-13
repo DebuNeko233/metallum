@@ -258,29 +258,47 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     }
 
     private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
-        int slot = 0;
+        int maxVertexBufferBinding = -1;
         for (ResourceBinding resource : resources) {
-            if (resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER) {
-                slot = Math.max(slot, resource.bindingIndex() + 1);
+            if ((resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER)
+                    && (resource.stageMask() & STAGE_VERTEX) != 0) {
+                maxVertexBufferBinding = Math.max(maxVertexBufferBinding, resource.bindingIndex());
             }
         }
-        return slot;
+        return maxVertexBufferBinding + 1;
     }
 
-    private static MTLVertexDescriptor buildVertexDescriptor(final RenderPipeline info, final int firstAvailableBufferSlot) {
+    private static MTLVertexDescriptor buildVertexDescriptor(
+            final RenderPipeline info,
+            final int firstAvailableBufferSlot
+    ) {
         MTLVertexDescriptor descriptor = new MTLVertexDescriptor();
+        long attributeIndex = 0L;
         int bindingCount = info.getVertexFormatBindings().length;
         for (int binding = 0; binding < bindingCount; binding++) {
             VertexFormat format = info.getVertexFormatBinding(binding);
-            if (format == null) {
+            if (format == null || format.getElements().isEmpty()) {
                 continue;
             }
+
             int bufferIndex = firstAvailableBufferSlot + binding;
-            descriptor.setLayout(bufferIndex, format.getVertexSize(), MTLVertexStepFunction.PerVertex, 1L);
-            List<VertexFormatElement> elements = format.getElements();
-            for (int location = 0; location < elements.size(); location++) {
-                VertexFormatElement element = elements.get(location);
-                descriptor.setAttribute(location, MTLVertexFormat.from(element.format()).value, element.offset(), bufferIndex);
+            long stepRate = format.getStepRate();
+            MTLVertexStepFunction stepFunction =
+                    stepRate > 0 ? MTLVertexStepFunction.PerInstance : MTLVertexStepFunction.PerVertex;
+            descriptor.setLayout(
+                    bufferIndex,
+                    format.getVertexSize(),
+                    stepFunction,
+                    stepRate > 0 ? stepRate : 1L
+            );
+
+            for (VertexFormatElement element : format.getElements()) {
+                MTLVertexFormat vertexFormat = MTLVertexFormat.from(element.format());
+                if (vertexFormat == MTLVertexFormat.Invalid) {
+                    throw new IllegalStateException("Unsupported vertex attribute format: " + element.format());
+                }
+                descriptor.setAttribute(attributeIndex, vertexFormat.value, element.offset(), bufferIndex);
+                attributeIndex++;
             }
         }
         return descriptor;
