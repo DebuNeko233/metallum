@@ -22,6 +22,11 @@ jobs:
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          sw_vers
+          uname -a
+          test "$(uname -m)" = "arm64"
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
       - name: setup jdk
