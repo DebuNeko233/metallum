@@ -22,6 +22,8 @@ import java.util.Optional;
 
 @Environment(EnvType.CLIENT)
 final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
+    private static final int MAX_COLOR_ATTACHMENTS = 8;
+
     enum ResourceKind {
         UNIFORM_BUFFER,
         SAMPLED_IMAGE,
@@ -97,15 +99,36 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
 
         this.depthStencilState = device.depthStencilState(depthCompareOp, depthWrite != 0);
 
-        var colorTarget = info.getColorTargetState();
-        MTLPixelFormat colorFormat = colorTarget != null ? MTLPixelFormat.from(colorTarget.format()) : MTLPixelFormat.RGBA8Unorm;
+        ColorTargetState[] colorTargets = info.getColorTargetStates();
+        if (colorTargets.length > MAX_COLOR_ATTACHMENTS) {
+            throw new IllegalStateException(
+                    "Pipeline " + info.getLocation() + " declares " + colorTargets.length
+                            + " color targets, Metal supports at most " + MAX_COLOR_ATTACHMENTS
+            );
+        }
 
         MemorySegment vertexFunction = device.getOrCompileFunction(vertexMsl, vertexEntryPoint);
         MemorySegment fragmentFunction = device.getOrCompileFunction(fragmentMsl, fragmentEntryPoint);
 
         try (MTLVertexDescriptor vertexDescriptor = buildVertexDescriptor(info, this.firstAvailableVertexBufferSlot)) {
-            this.withDepthPipeline = createPipeline(device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorFormat, MTLPixelFormat.Depth32Float);
-            this.withoutDepthPipeline = createPipeline(device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorFormat, MTLPixelFormat.Invalid);
+            this.withDepthPipeline = createPipeline(
+                    device,
+                    info,
+                    vertexFunction,
+                    fragmentFunction,
+                    vertexDescriptor,
+                    colorTargets,
+                    MTLPixelFormat.Depth32Float
+            );
+            this.withoutDepthPipeline = createPipeline(
+                    device,
+                    info,
+                    vertexFunction,
+                    fragmentFunction,
+                    vertexDescriptor,
+                    colorTargets,
+                    MTLPixelFormat.Invalid
+            );
         }
     }
 
@@ -115,42 +138,54 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             final MemorySegment vertexFunction,
             final MemorySegment fragmentFunction,
             final MTLVertexDescriptor vertexDescriptor,
-            final MTLPixelFormat colorFormat,
+            final ColorTargetState[] colorTargets,
             final MTLPixelFormat depthFormat
     ) {
         if (ObjC.isNil(vertexFunction) || ObjC.isNil(fragmentFunction)) {
             return MemorySegment.NULL;
         }
 
-        ColorTargetState colorTarget = info.getColorTargetState();
-        Optional<BlendFunction> blendFunction = colorTarget == null ? Optional.empty() : colorTarget.blendFunction();
-        long writeMask = colorTarget == null ? MTLColorWriteMask.All.value : MTLColorWriteMask.from(colorTarget.writeMask());
-
         try (MTLRenderPipelineDescriptor pipelineDesc = new MTLRenderPipelineDescriptor()) {
             pipelineDesc.setCompiledFunctions(vertexFunction, fragmentFunction);
             pipelineDesc.setVertexDescriptor(vertexDescriptor);
-            pipelineDesc.setColorAttachmentFormat(0, colorFormat);
             pipelineDesc.setDepthStencilFormats(depthFormat, MTLPixelFormat.Invalid);
 
-            if (blendFunction.isPresent()) {
-                var function = blendFunction.get();
-                pipelineDesc.setBlendState(
-                        0,
-                        MTLBlendFactor.from(function.color().sourceFactor()),
-                        MTLBlendFactor.from(function.color().destFactor()),
-                        MTLBlendOperation.from(function.color().op()),
-                        MTLBlendFactor.from(function.alpha().sourceFactor()),
-                        MTLBlendFactor.from(function.alpha().destFactor()),
-                        MTLBlendOperation.from(function.alpha().op()),
-                        writeMask
-                );
-            } else {
-                pipelineDesc.disableBlending(0, writeMask);
+            for (int index = 0; index < colorTargets.length; index++) {
+                ColorTargetState colorTarget = colorTargets[index];
+                if (colorTarget == null) {
+                    pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.Invalid);
+                    pipelineDesc.disableBlending(index, MTLColorWriteMask.None.value);
+                    continue;
+                }
+
+                pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.from(colorTarget.format()));
+                Optional<BlendFunction> blendFunction = colorTarget.blendFunction();
+                long writeMask = MTLColorWriteMask.from(colorTarget.writeMask());
+                if (blendFunction.isPresent()) {
+                    var function = blendFunction.get();
+                    pipelineDesc.setBlendState(
+                            index,
+                            MTLBlendFactor.from(function.color().sourceFactor()),
+                            MTLBlendFactor.from(function.color().destFactor()),
+                            MTLBlendOperation.from(function.color().op()),
+                            MTLBlendFactor.from(function.alpha().sourceFactor()),
+                            MTLBlendFactor.from(function.alpha().destFactor()),
+                            MTLBlendOperation.from(function.alpha().op()),
+                            writeMask
+                    );
+                } else {
+                    pipelineDesc.disableBlending(index, writeMask);
+                }
             }
 
             MemorySegment pipeline = device.metalDevice().newRenderPipelineState(pipelineDesc);
             if (ObjC.isNil(pipeline)) {
-                Metallum.LOGGER.error("[metallum] Pipeline {} failed to build with depth format {}", info.getLocation(), depthFormat);
+                Metallum.LOGGER.error(
+                        "[metallum] Pipeline {} failed to build with {} color target slots and depth format {}",
+                        info.getLocation(),
+                        colorTargets.length,
+                        depthFormat
+                );
             }
             return pipeline;
         }
