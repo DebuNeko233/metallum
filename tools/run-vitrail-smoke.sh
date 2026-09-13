@@ -3,17 +3,29 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 vitrail_root="$repo_root/../Vitrail-Shaders-Metal"
-install_mrt_fixture=false
+fixture_mode=""
 path_seen=false
 
 usage() {
-	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture]" >&2
+	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture]" >&2
+}
+
+set_fixture_mode() {
+	if [[ -n "$fixture_mode" ]]; then
+		echo "Choose only one smoke fixture per launch." >&2
+		usage
+		exit 2
+	fi
+	fixture_mode="$1"
 }
 
 for argument in "$@"; do
 	case "$argument" in
 		--mrt-fixture)
-			install_mrt_fixture=true
+			set_fixture_mode mrt
+			;;
+		--terrain-fixture)
+			set_fixture_mode terrain
 			;;
 		-*)
 			usage
@@ -62,28 +74,51 @@ if [[ -z "$vitrail_jar" ]]; then
 	exit 1
 fi
 
-mrt_marker=""
-if [[ "$install_mrt_fixture" == true ]]; then
-	fixture_source="$vitrail_root/tests/fixtures/shaderpacks/mrt-contract"
-	fixture_target="$repo_root/run/shaderpacks/mrt-contract"
-	verifier_source="$vitrail_root/tests/VerifyMrtScreenshot.java"
+fixture_marker=""
+fixture_verifier=""
+fixture_label=""
+if [[ -n "$fixture_mode" ]]; then
+	case "$fixture_mode" in
+		mrt)
+			fixture_name="mrt-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyMrtScreenshot.java"
+			fixture_label="MRT"
+			;;
+		terrain)
+			fixture_name="terrain-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyTerrainScreenshot.java"
+			fixture_label="Terrain"
+			;;
+		*)
+			echo "Internal error: unknown fixture mode '$fixture_mode'" >&2
+			exit 2
+			;;
+	esac
+
+	fixture_source="$vitrail_root/tests/fixtures/shaderpacks/$fixture_name"
+	fixture_target="$repo_root/run/shaderpacks/$fixture_name"
 	if [[ ! -d "$fixture_source/shaders" ]]; then
-		echo "Vitrail MRT smoke fixture not found at: $fixture_source" >&2
+		echo "Vitrail $fixture_label smoke fixture not found at: $fixture_source" >&2
 		exit 2
 	fi
-	if [[ ! -f "$verifier_source" ]]; then
-		echo "Vitrail MRT screenshot verifier not found at: $verifier_source" >&2
+	if [[ ! -f "$fixture_verifier" ]]; then
+		echo "Vitrail $fixture_label screenshot verifier not found at: $fixture_verifier" >&2
 		exit 2
 	fi
 
 	mkdir -p "$(dirname "$fixture_target")" "$repo_root/run"
 	rm -rf "$fixture_target"
 	cp -R "$fixture_source" "$fixture_target"
-	mrt_marker="$repo_root/run/.vitrail-mrt-smoke-start"
-	touch "$mrt_marker"
-	echo "Installed Vitrail MRT smoke fixture at: $fixture_target"
-	echo "Select 'mrt-contract' in Vitrail's shader-pack UI; the launcher does not change pack selection."
-	echo "While the four-colour result is visible in-world, press F2 once; this launcher will verify that new screenshot after exit."
+	fixture_marker="$repo_root/run/.vitrail-${fixture_mode}-smoke-start"
+	touch "$fixture_marker"
+	echo "Installed Vitrail $fixture_label smoke fixture at: $fixture_target"
+	echo "Select '$fixture_name' in Vitrail's shader-pack UI; the launcher does not change pack selection."
+	if [[ "$fixture_mode" == mrt ]]; then
+		echo "While the four-colour result is visible in-world, press F2 once; this launcher will verify that new screenshot after exit."
+	else
+		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
+		echo "The automatic check requires substantial red/green/blue terrain regions; transparent cutout silhouettes remain a manual visual check."
+	fi
 fi
 
 echo "Launching Metallum dev client with Vitrail: $vitrail_jar"
@@ -100,22 +135,22 @@ if [[ $client_status -ne 0 ]]; then
 	exit "$client_status"
 fi
 
-if [[ "$install_mrt_fixture" == true ]]; then
+if [[ -n "$fixture_mode" ]]; then
 	newest_screenshot=""
 	screenshot_dir="$repo_root/run/screenshots"
 	if [[ -d "$screenshot_dir" ]]; then
 		while IFS= read -r -d '' candidate; do
-			if [[ "$candidate" -nt "$mrt_marker" && ( -z "$newest_screenshot" || "$candidate" -nt "$newest_screenshot" ) ]]; then
+			if [[ "$candidate" -nt "$fixture_marker" && ( -z "$newest_screenshot" || "$candidate" -nt "$newest_screenshot" ) ]]; then
 				newest_screenshot="$candidate"
 			fi
 		done < <(find "$screenshot_dir" -type f -name '*.png' -print0)
 	fi
 
 	if [[ -n "$newest_screenshot" ]]; then
-		echo "Verifying MRT smoke screenshot: $newest_screenshot"
-		java "$vitrail_root/tests/VerifyMrtScreenshot.java" "$newest_screenshot"
+		echo "Verifying $fixture_label smoke screenshot: $newest_screenshot"
+		java "$fixture_verifier" "$newest_screenshot"
 	else
-		echo "No screenshot newer than this MRT smoke launch was found."
-		echo "Pixel verification was not run; launch again with --mrt-fixture and press F2 while the four-colour world view is visible."
+		echo "No screenshot newer than this $fixture_label smoke launch was found."
+		echo "Pixel verification was not run; launch again with --${fixture_mode}-fixture and press F2 while the contract scene is visible."
 	fi
 fi

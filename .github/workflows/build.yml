@@ -77,6 +77,13 @@ jobs:
             -C "$RUNNER_TEMP/vitrail-smoke-fixture" fabric.mod.json
           ./gradlew dependencies --configuration localRuntime \
             -PvitrailSmokeJar="$RUNNER_TEMP/vitrail-smoke-fixture.jar"
+      - name: validate Vitrail smoke launcher
+        run: |
+          bash -n tools/run-vitrail-smoke.sh
+          grep -q -- '--mrt-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--terrain-fixture' tools/run-vitrail-smoke.sh
+          grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
+          grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
       - name: build
         run: ./gradlew build
       - name: capture build artifacts
