@@ -15,6 +15,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 @Environment(EnvType.CLIENT)
 public final class MTLCommandBuffer {
+    private static final int MAX_COLOR_ATTACHMENTS = 8;
     private static final long STATUS_COMPLETED = 4;
     private static final long STATUS_ERROR = 5;
 
@@ -62,15 +63,63 @@ public final class MTLCommandBuffer {
             final double viewportWidth,
             final double viewportHeight
     ) {
-        if (ObjC.isNil(colorTexture) && ObjC.isNil(depthTexture)) {
+        MemorySegment[] colorTextures = ObjC.isNil(colorTexture)
+                ? new MemorySegment[0]
+                : new MemorySegment[]{colorTexture};
+        Vector4fc[] clearColors = ObjC.isNil(colorTexture)
+                ? new Vector4fc[0]
+                : new Vector4fc[]{clearColor};
+        return makeRenderCommandEncoder(
+                colorTextures,
+                clearColors,
+                depthTexture,
+                clearDepth,
+                viewportWidth,
+                viewportHeight
+        );
+    }
+
+    public MTLRenderCommandEncoder makeRenderCommandEncoder(
+            final MemorySegment[] colorTextures,
+            @Nullable final Vector4fc[] clearColors,
+            final MemorySegment depthTexture,
+            @Nullable final Double clearDepth,
+            final double viewportWidth,
+            final double viewportHeight
+    ) {
+        if (colorTextures.length > MAX_COLOR_ATTACHMENTS) {
+            throw new IllegalArgumentException(
+                    "Metal supports at most " + MAX_COLOR_ATTACHMENTS + " color attachments, got " + colorTextures.length
+            );
+        }
+        if (clearColors != null && clearColors.length != colorTextures.length) {
+            throw new IllegalArgumentException(
+                    "Color attachment and clear-value counts differ: " + colorTextures.length + " != " + clearColors.length
+            );
+        }
+
+        boolean hasColorAttachment = false;
+        for (MemorySegment colorTexture : colorTextures) {
+            if (!ObjC.isNil(colorTexture)) {
+                hasColorAttachment = true;
+                break;
+            }
+        }
+        if (!hasColorAttachment && ObjC.isNil(depthTexture)) {
             throw new IllegalStateException("Render pass requires a color or depth attachment");
         }
+
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             MTLRenderCommandEncoder encoder;
             try (MTLRenderPassDescriptor renderPass = new MTLRenderPassDescriptor()) {
-                if (!ObjC.isNil(colorTexture)) {
+                for (int index = 0; index < colorTextures.length; index++) {
+                    MemorySegment colorTexture = colorTextures[index];
+                    if (ObjC.isNil(colorTexture)) {
+                        continue;
+                    }
+                    Vector4fc clearColor = clearColors == null ? null : clearColors[index];
                     renderPass.colorAttachment(
-                            0,
+                            index,
                             colorTexture,
                             clearColor != null ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR : MTLRenderPassDescriptor.LOAD_ACTION_LOAD,
                             MTLRenderPassDescriptor.STORE_ACTION_STORE,
