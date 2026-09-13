@@ -26,6 +26,7 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -42,6 +43,7 @@ final class MetalDevice implements GpuDeviceBackend {
     private final DeviceInfo deviceInfo;
     public final MTLCommandQueue commandQueue;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
+    private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
@@ -162,9 +164,36 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
     }
 
+    /**
+     * Removes selected compiled pipelines from the identity cache without releasing their native
+     * Metal objects immediately. Callers may use the returned keys to compile replacements against
+     * changed pipeline-visible state while already-recorded GPU work can continue referencing the
+     * old objects. The removed native pipelines are released by the next full cache clear, after
+     * that path has waited for submitted GPU work to complete.
+     */
+    public List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
+        Objects.requireNonNull(predicate, "predicate");
+
+        List<RenderPipeline> evicted = new ArrayList<>();
+        Iterator<Map.Entry<RenderPipeline, MetalCompiledRenderPipeline>> entries = this.compiledPipelines.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry<RenderPipeline, MetalCompiledRenderPipeline> entry = entries.next();
+            if (!predicate.test(entry.getKey())) {
+                continue;
+            }
+
+            evicted.add(entry.getKey());
+            this.deferredPipelineReleases.add(entry.getValue());
+            entries.remove();
+        }
+        return List.copyOf(evicted);
+    }
+
     @Override
     public void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
+        this.deferredPipelineReleases.forEach(MetalCompiledRenderPipeline::close);
+        this.deferredPipelineReleases.clear();
         this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
         this.compiledPipelines.clear();
         this.shaderCache.values().forEach(IntermediaryShaderModule::close);
