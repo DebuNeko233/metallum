@@ -61,6 +61,24 @@ jobs:
               )
           print('Metal MRT attachment limit:', advertised.group(1))
           PY
+      - name: validate Metal position invariance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          options = Path('src/main/java/com/metallum/mtl/MTLCompileOptions.java').read_text(encoding='utf-8')
+          device = Path('src/main/java/com/metallum/mtl/MTLDevice.java').read_text(encoding='utf-8')
+
+          if 'setPreserveInvariance:' not in options or 'JAVA_BOOLEAN' not in options:
+              raise SystemExit('MTLCompileOptions does not expose preserveInvariance')
+          if 'options.setPreserveInvariance(true);' not in device:
+              raise SystemExit('Metal shader-library compilation does not enable preserveInvariance')
+          if 'NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, options.handle(), errorOut)' not in device:
+              raise SystemExit('Metal shader-library compilation does not pass MTLCompileOptions')
+          if 'NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, MemorySegment.NULL, errorOut)' in device:
+              raise SystemExit('Metal shader-library compilation still discards compile options')
+          print('Metal shader position invariance: enabled')
+          PY
       - name: validate Vitrail smoke runtime configuration
         run: |
           mkdir -p "$RUNNER_TEMP/vitrail-smoke-fixture"

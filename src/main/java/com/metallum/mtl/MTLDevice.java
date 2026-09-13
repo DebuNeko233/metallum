@@ -116,10 +116,18 @@ public record MTLDevice(MemorySegment handle) {
     }
 
     public MemorySegment newFunction(final String mslSource, final String entryPoint) {
-        try (AutoreleasePool _ = AutoreleasePool.push(); Arena arena = Arena.ofConfined()) {
+        try (AutoreleasePool _ = AutoreleasePool.push();
+             Arena arena = Arena.ofConfined();
+             MTLCompileOptions options = new MTLCompileOptions()) {
+            // Vitrail marks gl_Position invariant for geometry that can be redrawn by another
+            // program at the exact same depth. SPIRV-Cross carries that through to MSL, but Metal
+            // ignores [[invariant]] unless preserveInvariance is enabled at library compilation.
+            // Enabling it for the library is safe for ordinary shaders: the conservative contract
+            // only applies to position outputs that were actually marked invariant.
+            options.setPreserveInvariance(true);
             MemorySegment errorOut = arena.allocate(ADDRESS);
             MemorySegment nsSource = ObjC.nsString(mslSource);
-            MemorySegment library = NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, MemorySegment.NULL, errorOut);
+            MemorySegment library = NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, options.handle(), errorOut);
             ObjC.release(nsSource);
             if (ObjC.isNil(library)) {
                 Metallum.LOGGER.error("[metallum] Failed to compile MSL: {}", errorDescription(errorOut));
