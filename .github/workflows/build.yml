@@ -100,6 +100,8 @@ jobs:
           bash -n tools/run-vitrail-smoke.sh
           grep -q -- '--mrt-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--terrain-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-location-fixture' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh

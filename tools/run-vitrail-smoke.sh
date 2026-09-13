@@ -7,7 +7,7 @@ fixture_mode=""
 path_seen=false
 
 usage() {
-	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture]" >&2
+	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture]" >&2
 }
 
 set_fixture_mode() {
@@ -26,6 +26,9 @@ for argument in "$@"; do
 			;;
 		--terrain-fixture)
 			set_fixture_mode terrain
+			;;
+		--gbuffer-location-fixture)
+			set_fixture_mode gbuffer-location
 			;;
 		-*)
 			usage
@@ -89,6 +92,11 @@ if [[ -n "$fixture_mode" ]]; then
 			fixture_verifier="$vitrail_root/tests/VerifyTerrainScreenshot.java"
 			fixture_label="Terrain"
 			;;
+		gbuffer-location)
+			fixture_name="gbuffer-location-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyMrtScreenshot.java"
+			fixture_label="GBuffer location"
+			;;
 		*)
 			echo "Internal error: unknown fixture mode '$fixture_mode'" >&2
 			exit 2
@@ -113,7 +121,7 @@ if [[ -n "$fixture_mode" ]]; then
 	touch "$fixture_marker"
 	echo "Installed Vitrail $fixture_label smoke fixture at: $fixture_target"
 	echo "Select '$fixture_name' in Vitrail's shader-pack UI; the launcher does not change pack selection."
-	if [[ "$fixture_mode" == mrt ]]; then
+	if [[ "$fixture_mode" == mrt || "$fixture_mode" == gbuffer-location ]]; then
 		echo "While the four-colour result is visible in-world, press F2 once; this launcher will verify that new screenshot after exit."
 	else
 		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
