@@ -36,6 +36,22 @@ jobs:
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
+      - name: validate Vitrail smoke runtime configuration
+        run: |
+          mkdir -p "$RUNNER_TEMP/vitrail-smoke-fixture"
+          cat > "$RUNNER_TEMP/vitrail-smoke-fixture/fabric.mod.json" <<'JSON'
+          {
+            "schemaVersion": 1,
+            "id": "vitrail-smoke-fixture",
+            "version": "0.0.0",
+            "name": "Vitrail smoke fixture",
+            "environment": "client"
+          }
+          JSON
+          jar --create --file "$RUNNER_TEMP/vitrail-smoke-fixture.jar" \
+            -C "$RUNNER_TEMP/vitrail-smoke-fixture" fabric.mod.json
+          ./gradlew dependencies --configuration modLocalRuntime \
+            -PvitrailSmokeJar="$RUNNER_TEMP/vitrail-smoke-fixture.jar"
       - name: build
         run: ./gradlew build
       - name: capture build artifacts

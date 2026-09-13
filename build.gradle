@@ -35,7 +35,7 @@ if (vitrailSmokeJar.isPresent()) {
 	loom {
 		runs {
 			client {
-				systemProperties.put("vitrail.experimentalMetal", "true")
+				property("vitrail.experimentalMetal", "true")
 			}
 		}
 	}
