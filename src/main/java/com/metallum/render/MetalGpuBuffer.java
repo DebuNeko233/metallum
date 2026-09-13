@@ -99,6 +99,24 @@ class MetalGpuBuffer extends GpuBuffer {
         this.sliceStorage(offset, data.remaining()).put(data.duplicate());
     }
 
+    /**
+     * Zeros the complete allocation before it is first exposed as shader storage.
+     * <p>
+     * Storage buffers are created in shared memory on Apple Silicon so the CPU can initialize the
+     * allocation without staging another buffer of the same size. The resource is new and has not
+     * been submitted to the GPU yet when this is called, so no encoder transition is required.
+     */
+    void zeroContents() {
+        if (this.storage == null) {
+            throw new IllegalStateException("Buffer is not CPU-accessible");
+        }
+        MemorySegment contents = metalBuffer().contents();
+        if (ObjC.isNil(contents)) {
+            throw new IllegalStateException("MTLBuffer.contents returned null");
+        }
+        contents.reinterpret(this.allocationSize).fill((byte) 0);
+    }
+
     long allocationSize() {
         return this.allocationSize;
     }
