@@ -61,6 +61,32 @@ jobs:
               )
           print('Metal MRT attachment limit:', advertised.group(1))
           PY
+      - name: validate Metal target format mapping
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          formats = Path('src/main/java/com/metallum/mtl/MTLPixelFormat.java').read_text(encoding='utf-8')
+          texture = Path('src/main/java/com/metallum/render/MetalGpuTexture.java').read_text(encoding='utf-8')
+          pipeline = Path('src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java').read_text(encoding='utf-8')
+
+          expected = (
+              'case R8_UNORM -> R8Unorm;',
+              'case RG8_UNORM -> RG8Unorm;',
+              'case RGBA16_FLOAT -> RGBA16Float;',
+              'case RGB10A2_UNORM -> RGB10A2Unorm;',
+          )
+          missing = [mapping for mapping in expected if mapping not in formats]
+          if missing:
+              raise SystemExit('Missing Metal GBuffer format mappings: ' + ', '.join(missing))
+          if 'this.mtlPixelFormat = MTLPixelFormat.from(format);' not in texture:
+              raise SystemExit('Metal texture allocation does not use the shared GpuFormat -> MTLPixelFormat mapping')
+          if 'descriptor.pixelFormat(this.mtlPixelFormat);' not in texture:
+              raise SystemExit('Metal texture descriptor does not receive the mapped pixel format')
+          if 'pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.from(colorTarget.format()));' not in pipeline:
+              raise SystemExit('Metal render pipeline does not use the shared colour-target format mapping')
+          print('Metal GBuffer target formats: texture and pipeline mappings aligned')
+          PY
       - name: validate Metal position invariance
         run: |
           python3 - <<'PY'
@@ -101,7 +127,9 @@ jobs:
           grep -q -- '--mrt-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--terrain-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-location-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-format-fixture' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-format-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh
