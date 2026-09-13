@@ -20,6 +20,7 @@ public final class MTLBlitCommandEncoder extends MTLCommandEncoder {
             ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS);
     private static final Msg COPY_TEXTURE_TO_BUFFER = Msg.ofVoid("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:",
             ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+    private static final Msg GENERATE_MIPMAPS_FOR_TEXTURE = Msg.ofVoid("generateMipmapsForTexture:", ADDRESS);
     private static final Msg UPDATE_FENCE = Msg.ofVoid("updateFence:", ADDRESS);
     private static final Msg WAIT_FOR_FENCE = Msg.ofVoid("waitForFence:", ADDRESS);
 
@@ -123,6 +124,17 @@ public final class MTLBlitCommandEncoder extends MTLCommandEncoder {
                     destinationBytesPerImage
             );
         }
+    }
+
+    /**
+     * Encodes Metal's native mipmap generation for every level after the base level.
+     * <p>
+     * Apple requires the texture to have more than one mip level and a pixel format that is both
+     * color-renderable and color-filterable. Callers are responsible for enforcing those format
+     * constraints before reaching this low-level wrapper.
+     */
+    public void generateMipmapsForTexture(final MemorySegment texture) {
+        GENERATE_MIPMAPS_FOR_TEXTURE.send(handle(), texture);
     }
 
     public void updateFence(final MTLFence fence) {
