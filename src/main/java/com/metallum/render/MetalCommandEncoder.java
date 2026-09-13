@@ -208,7 +208,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     @Override
     public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {
-        List<@Nullable RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
+        List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
         if (colorAttachments.size() > MAX_COLOR_ATTACHMENTS) {
             throw new IllegalArgumentException(
                     "Render pass declares " + colorAttachments.size()
