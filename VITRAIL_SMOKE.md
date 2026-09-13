@@ -35,6 +35,18 @@ This refreshes `run/shaderpacks/mrt-contract` from the companion Vitrail checkou
 
 The fixture has two jobs. Its fullscreen composite writes colortex0 red, colortex1 green, colortex2 blue, and colortex3 white, and its final pass displays all four as screen quadrants. Its terrain fragment declares one draw buffer while producing three fragment-output ranks, causing Vitrail's opaque coverage path to hand the backend two nullable color-attachment slots before the coverage attachment. Metallum must preserve those slot indices rather than compacting them.
 
+While the four-colour result is visible in-world, press **F2 once**. The launcher records a marker before starting the client; after a clean client exit it looks for the newest PNG created after that marker and runs Vitrail's developer-only `tests/VerifyMrtScreenshot.java` against it. The verifier samples multiple points around the center of each quadrant and accepts the four expected swatches in any orientation, so vertical texture orientation is deliberately irrelevant.
+
+If no new screenshot was taken, the launcher reports that pixel verification was skipped and still exits successfully. If a new screenshot exists but does not contain one red, green, blue and white quadrant, the verifier fails the smoke command. Take the screenshot while the world view is visible rather than from a menu or pause overlay.
+
+You can also run the verifier directly:
+
+```sh
+java ../Vitrail-Shaders-Metal/tests/VerifyMrtScreenshot.java run/screenshots/<file>.png
+```
+
+The verifier itself is CI-self-tested with a generated four-colour image. It is test infrastructure only and is not packaged into either mod.
+
 You can also use the underlying hook directly with an already-built jar:
 
 ```sh
@@ -47,6 +59,6 @@ Supplying `vitrailSmokeJar` is what adds the local Vitrail/Fabric-API runtime de
 
 A client reaching a world is only the entry point. Record the actual backend reported by the game and exercise the acceptance matrix in the companion PRs: indexed MRT including a hole, single-target regression, multi-binding/per-instance vertices, eligible and rejected mipmap paths, entity layout changes, SSBO and storage-image write/read visibility, true 3D storage, scratch/reanchor copies, writable `colorimgN`, compute ordering including deferred clears, descriptor remapping stress, oversized local-size refusal, depth/stencil fallback, and Vulkan regression.
 
-For the deterministic MRT fixture specifically, capture the four-color quadrant result and confirm Metal validation emits no render-pass/pipeline attachment-index error while opaque terrain is visible. The fixture's compile-time contract test is useful regression evidence but is not a GPU test.
+For the deterministic MRT fixture specifically, a complete result now has two independent pieces of evidence: the log must show the terrain/composite/final chain running on Metal without render-pass/pipeline attachment-index errors, and the screenshot verifier must report `MRT screenshot pixel check: PASS` for the four-colour output.
 
 Do not remove the Vitrail smoke gate or mark either PR ready merely because this launcher starts successfully. Compile-green and launch-green are not proof of correct Metal rendering.
