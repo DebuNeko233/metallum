@@ -20,6 +20,7 @@ public final class MTLCommandBuffer {
     private static final long STATUS_ERROR = 5;
 
     private static final Msg BLIT_COMMAND_ENCODER = Msg.of("blitCommandEncoder", ADDRESS);
+    private static final Msg COMPUTE_COMMAND_ENCODER = Msg.of("computeCommandEncoder", ADDRESS);
     private static final Msg RENDER_COMMAND_ENCODER = Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg PRESENT_DRAWABLE = Msg.ofVoid("presentDrawable:", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit");
@@ -42,6 +43,16 @@ public final class MTLCommandBuffer {
                 throw new IllegalStateException("Failed to create MTLBlitCommandEncoder");
             }
             return new MTLBlitCommandEncoder(ObjC.retain(encoder));
+        }
+    }
+
+    public MTLComputeCommandEncoder makeComputeCommandEncoder() {
+        try (AutoreleasePool _ = AutoreleasePool.push()) {
+            MemorySegment encoder = COMPUTE_COMMAND_ENCODER.sendPtr(handle());
+            if (ObjC.isNil(encoder)) {
+                throw new IllegalStateException("Failed to create MTLComputeCommandEncoder");
+            }
+            return new MTLComputeCommandEncoder(ObjC.retain(encoder));
         }
     }
 
