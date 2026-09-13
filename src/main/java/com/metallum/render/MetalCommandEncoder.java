@@ -77,6 +77,32 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         return encoder;
     }
 
+    /**
+     * Generates all mip levels after level zero using Metal's native blit command.
+     * <p>
+     * This is a backend capability rather than a shader-pack concept. Metal only guarantees
+     * {@code generateMipmapsForTexture:} for color-renderable, color-filterable formats, so depth
+     * and stencil textures are rejected here instead of issuing an invalid native command.
+     *
+     * @return true when the native mipmap command was encoded, false when this texture or encoder
+     *         state cannot use Metal's native mipmap path
+     */
+    public boolean generateMipmaps(final GpuTexture texture) {
+        if (currentRenderPass != null
+                || !(texture instanceof MetalGpuTexture metalTexture)
+                || texture.isClosed()
+                || texture.getMipLevels() <= 1
+                || !texture.getFormat().hasColorAspect()) {
+            return false;
+        }
+
+        flushPendingClear(metalTexture);
+        MTLBlitCommandEncoder blit = blitCommandEncoder();
+        blit.generateMipmapsForTexture(metalTexture.nativeHandle());
+        endEncoder();
+        return true;
+    }
+
     void endEncoder() {
         if (currentEncoder != null) {
             if (currentEncoder instanceof MTLRenderCommandEncoder renderEncoder) {
