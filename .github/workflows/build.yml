@@ -50,7 +50,7 @@ jobs:
           JSON
           jar --create --file "$RUNNER_TEMP/vitrail-smoke-fixture.jar" \
             -C "$RUNNER_TEMP/vitrail-smoke-fixture" fabric.mod.json
-          ./gradlew dependencies --configuration modLocalRuntime \
+          ./gradlew dependencies --configuration localRuntime \
             -PvitrailSmokeJar="$RUNNER_TEMP/vitrail-smoke-fixture.jar"
       - name: build
         run: ./gradlew build

@@ -25,9 +25,9 @@ dependencies {
 	implementation "maven.modrinth:sodium:${project.sodium_version}"
 
 	if (vitrailSmokeJar.isPresent()) {
-		modLocalRuntime files(vitrailSmokeJar.get())
-		modLocalRuntime "net.fabricmc.fabric-api:fabric-key-mapping-api-v1:2.0.5+e2bdee789e"
-		modLocalRuntime "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:4.1.4+29b6eb019e"
+		localRuntime files(vitrailSmokeJar.get())
+		localRuntime "net.fabricmc.fabric-api:fabric-key-mapping-api-v1:2.0.5+e2bdee789e"
+		localRuntime "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:4.1.4+29b6eb019e"
 	}
 }
 

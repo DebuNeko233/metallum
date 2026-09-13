@@ -19,7 +19,7 @@ From the Metallum checkout:
 ./tools/run-vitrail-smoke.sh ../Vitrail-Shaders-Metal
 ```
 
-The script builds Vitrail's Fabric jar, passes that jar to Metallum's Loom client as a `modLocalRuntime` dependency, supplies the two Fabric API modules Vitrail declares, and sets Vitrail's non-persisted `vitrail.experimentalMetal=true` smoke property for the game JVM.
+The script builds Vitrail's Fabric jar, passes that jar to Metallum's Loom client through the developer-only `localRuntime` configuration, supplies the two Fabric API modules Vitrail declares, and sets Vitrail's non-persisted `vitrail.experimentalMetal=true` smoke property for the game JVM.
 
 On the first dev-profile launch, open Video Settings, select **Prefer Metal**, close the client, and run the same command again. The second launch then tests the complete selection chain rather than bypassing it: Metallum owns and persists Prefer Metal, Minecraft starts the Metal backend, Vitrail sees compatible `MetallumApi` v1 plus the selected preference, and Vitrail's Metal capability provider must publish after successful device creation before the shader-pack path can open.
 
