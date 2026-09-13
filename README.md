@@ -30,6 +30,21 @@ Minecraft 26.2 currently constrains active color targets to compatible blend-fun
 
 This is backend GPU behavior only. Shader-pack concepts such as `colortex*`, draw-buffer routing, ping-pong/history, shadow/deferred/composite scheduling, and pack policy belong in Vitrail rather than Metallum.
 
+## Native mipmap command
+
+The command encoder now exposes backend-level color mipmap generation through Metal's native `MTLBlitCommandEncoder.generateMipmapsForTexture:` path.
+
+- Existing Metal render/blit encoder and `MTLFence` transitions are reused; Vulkan-style barriers are not reproduced in the Metal backend.
+- Pending color clears are materialized before the mipmap blit begins.
+- Closed textures, single-level textures, active render passes, and non-color `GpuFormat`s are rejected conservatively.
+- Depth/stencil mipmap generation is **not** implemented by this native path. Apple's native mipmap command requires color-renderable, color-filterable formats; shader-pack shadow-depth mip chains therefore still require a separate backend implementation before that feature is considered complete.
+
+The method is intentionally a generic Metal command-encoder capability. It contains no Vitrail shader-pack scheduling or texture-name semantics.
+
+## Validation status
+
+The MRT and native color-mipmap changes on the current feature branch are source-reviewed but are **not yet runtime-validated**. A successful Minecraft/Gradle build and Apple-Silicon smoke coverage are still required before this work should be merged.
+
 ## Requirements
 
 - macOS
