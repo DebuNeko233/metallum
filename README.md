@@ -95,13 +95,15 @@ The Metal backend now has a separate optional bridge for general shader-pack com
 
 The bridge deliberately does **not** map `colortex*`, shadow images, custom textures, ping-pong halves, uniform names, or dispatch moments. Those are Vitrail policy and must be resolved before a resource reaches Metallum. Oversized shader-pack shared/threadgroup-memory rewriting and any resource classes outside the four reflected kinds above are not yet claimed as supported.
 
-This foundation does **not** mean Vitrail's compute stage is Metal-capable yet. Vitrail's current `PackCompute` still owns a Vulkan-only pipeline/layout/descriptor/dispatch implementation; the next migration step is to make that caller feed its already-resolved resources and dispatch sizes through this bridge while leaving the established Vulkan path unchanged.
+The companion Vitrail branch now has an optional backend-neutral compute path that routes `PackCompute` through backend capabilities when both compute-device and compute-command providers are present, while preserving the existing Vulkan descriptor/barrier path. That caller-side plumbing is compile-tested in isolation, but it is **not** evidence that shader-pack compute is correct on Metal: writable resource contents, encoder ordering, later render/compute visibility, and fallback behavior still require Apple-Silicon runtime validation.
 
 ## Validation status
 
-Storage-image render binding was compile-validated at head `881c4337426fe2dd88b08bcad2d029a00bfa3d71` by GitHub Actions run `34761479404`. The later lifecycle head `f9bc3aee46e1491536ce0601a15d354e0c4e4cce`, which adds storage-zero pipeline teardown to `MetalDevice.close()`, also completed `./gradlew build` successfully on Java 25 in Actions run `34763133940`.
+The writable ordinary texture and general compute bridge head `81295f043f9f8dd3d13f349c14b6189daa625082` completed GitHub Actions merge workflow `34768563289` successfully. This is compile validation only; it does not validate Metal execution.
 
-The new general compute bridge has not yet been counted as validated until its current branch head completes CI. Runtime validation is also still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, native color mipmaps, selective pipeline eviction, SSBO write/read, writable storage-image clear/write/read behavior including a true 3D texture, and shader-pack compute compile/bind/dispatch. Depth/stencil mipmap generation remains outside the implemented capability set.
+A later static review found that storage-image work had accidentally replaced the pre-existing vertex-descriptor ABI logic. Head `4e1609463e58e5a1b77c77013abd65672fc3b0be` restores global attribute-location numbering across multiple bindings, `VertexFormat.getStepRate()`/per-instance layouts, unsupported-format refusal, and vertex-stage-only buffer-slot reservation while retaining storage-buffer resource support. Its current Actions run is `34771694544`; do not count that head as compile-validated until the run succeeds.
+
+Runtime validation is still outstanding. Before this work is ready to merge it needs Apple-Silicon smoke coverage for indexed MRT, an unused middle MRT slot, a multi-binding/per-instance vertex descriptor, native color mipmaps, selective pipeline eviction, SSBO write/read, writable storage-image clear/write/read behavior including a true 3D texture, `colorimgN` shader-write allocation, and shader-pack compute write/read visibility. Depth/stencil mipmap generation remains outside the implemented capability set.
 
 ## Requirements
 
