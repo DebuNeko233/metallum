@@ -287,6 +287,7 @@ final class MetalDevice implements GpuDeviceBackend {
             this.cocoa.clearViewLayer();
         } catch (Throwable ignored) {
         }
+        MTLStorageTexturePipelines.close();
         MTLBuiltinPipelines.close();
         this.commandQueue.close();
         for (MemorySegment state : depthStencilStates.values()) {
