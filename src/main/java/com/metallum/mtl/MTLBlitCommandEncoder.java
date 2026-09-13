@@ -81,18 +81,59 @@ public final class MTLBlitCommandEncoder extends MTLCommandEncoder {
             final long destinationX,
             final long destinationY
     ) {
+        copyFromTextureToTexture(
+                sourceTexture,
+                sourceSlice,
+                sourceLevel,
+                sourceX,
+                sourceY,
+                0,
+                width,
+                height,
+                1,
+                destinationTexture,
+                destinationSlice,
+                destinationLevel,
+                destinationX,
+                destinationY,
+                0
+        );
+    }
+
+    /**
+     * Encodes a texture-to-texture copy with a true three-dimensional source size and origin.
+     * For 3D Metal textures {@code sourceSlice} and {@code destinationSlice} stay zero; the Z
+     * coordinates and {@code depth} select the volume region.
+     */
+    public void copyFromTextureToTexture(
+            final MemorySegment sourceTexture,
+            final long sourceSlice,
+            final long sourceLevel,
+            final long sourceX,
+            final long sourceY,
+            final long sourceZ,
+            final long width,
+            final long height,
+            final long depth,
+            final MemorySegment destinationTexture,
+            final long destinationSlice,
+            final long destinationLevel,
+            final long destinationX,
+            final long destinationY,
+            final long destinationZ
+    ) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             COPY_TEXTURE_TO_TEXTURE.send(
                     handle(),
                     sourceTexture,
                     sourceSlice,
                     sourceLevel,
-                    MTLOrigin.on(stack, sourceX, sourceY, 0),
-                    MTLSize.on(stack, width, height, 1),
+                    MTLOrigin.on(stack, sourceX, sourceY, sourceZ),
+                    MTLSize.on(stack, width, height, depth),
                     destinationTexture,
                     destinationSlice,
                     destinationLevel,
-                    MTLOrigin.on(stack, destinationX, destinationY, 0)
+                    MTLOrigin.on(stack, destinationX, destinationY, destinationZ)
             );
         }
     }
