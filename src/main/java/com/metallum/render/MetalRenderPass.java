@@ -681,6 +681,17 @@ final class MetalRenderPass implements RenderPassBackend {
             return;
         }
 
+        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE) {
+            TextureViewAndSampler textureBinding = samplers.get(binding.name());
+            if (textureBinding == null) {
+                throw new IllegalStateException("Missing storage image " + binding.name());
+            }
+
+            MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
+            bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());
+            return;
+        }
+
         if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER) {
             pushTexelBufferDescriptor(enc, binding);
             return;
