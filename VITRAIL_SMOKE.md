@@ -47,6 +47,21 @@ java ../Vitrail-Shaders-Metal/tests/VerifyMrtScreenshot.java run/screenshots/<fi
 
 The verifier itself is CI-self-tested with a generated four-colour image. It is test infrastructure only and is not packaged into either mod.
 
+### First-person hand glint fixtures
+
+The two first-person glint moments are independent acceptance gates even though both correctly request `gbuffers_armor_glint`. Run them separately:
+
+```sh
+./tools/run-vitrail-smoke.sh ../Vitrail-Shaders-Metal --hand-glint-fixture
+./tools/run-vitrail-smoke.sh ../Vitrail-Shaders-Metal --hand-water-glint-fixture
+```
+
+For `--hand-glint-fixture`, select `hand-glint-contract`, use first person, and hold a glinting opaque/non-translucent item such as an enchanted book or tool. Acceptance requires the `hand_glint` piece at `HAND_SOLID`, a real Minecraft enchanted-glint texture, isolated `[colortex1 MAIN]`, the stable green screenshot gate, and clean `Stopping!`.
+
+For `--hand-water-glint-fixture`, select `hand-water-glint-contract` and hold a translucent block model whose item glint is forced/enabled (glass with a glint override is suitable). `hand_water` means the Iris-compatible translucent hand pass; the player does not need to stand underwater. Acceptance requires `hand_water_glint @ HAND_TRANSLUCENT` plus the same real-texture, target, pixel and clean-shutdown evidence. Camera armor glint and the solid hand-glint run do not substitute for this second gate.
+
+The launcher does not create or mutate inventory stacks. In particular, it does not manufacture the glinting translucent test item; prepare that held stack in the dev world before taking the screenshot.
+
 You can also use the underlying hook directly with an already-built jar:
 
 ```sh
