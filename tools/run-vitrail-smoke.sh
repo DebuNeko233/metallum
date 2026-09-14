@@ -7,7 +7,7 @@ fixture_mode=""
 path_seen=false
 
 usage() {
-	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture|--gbuffer-sampling-fixture|--gbuffer-pingpong-fixture]" >&2
+	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture|--gbuffer-sampling-fixture|--gbuffer-pingpong-fixture|--entity-fixture]" >&2
 }
 
 set_fixture_mode() {
@@ -44,6 +44,9 @@ for argument in "$@"; do
 			;;
 		--gbuffer-pingpong-fixture)
 			set_fixture_mode gbuffer-pingpong
+			;;
+		--entity-fixture)
+			set_fixture_mode entity
 			;;
 		-*)
 			usage
@@ -137,6 +140,11 @@ if [[ -n "$fixture_mode" ]]; then
 			fixture_verifier="$vitrail_root/tests/VerifyMrtScreenshot.java"
 			fixture_label="GBuffer ping-pong"
 			;;
+		entity)
+			fixture_name="entity-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyEntityScreenshot.java"
+			fixture_label="Entity"
+			;;
 		*)
 			echo "Internal error: unknown fixture mode '$fixture_mode'" >&2
 			exit 2
@@ -163,6 +171,9 @@ if [[ -n "$fixture_mode" ]]; then
 	echo "Select '$fixture_name' in Vitrail's shader-pack UI; the launcher does not change pack selection."
 	if [[ "$fixture_mode" == mrt || "$fixture_mode" == gbuffer-location || "$fixture_mode" == gbuffer-format || "$fixture_mode" == gbuffer-clear || "$fixture_mode" == gbuffer-write || "$fixture_mode" == gbuffer-sampling || "$fixture_mode" == gbuffer-pingpong ]]; then
 		echo "While the four-colour result is visible in-world, press F2 once; this launcher will verify that new screenshot after exit."
+	elif [[ "$fixture_mode" == entity ]]; then
+		echo "Frame one ordinary living entity close enough to occupy a visible region; green means the entity ABI passed, magenta means it failed. Press F2 once, then exit normally."
+		echo "Do not use a block entity, spider-eye/emissive layer, armor glint, hand, particle, weather, cloud or sky element as evidence for this checkpoint."
 	else
 		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
 		echo "The automatic check requires substantial red/green/blue terrain regions; transparent cutout silhouettes remain a manual visual check."
@@ -201,6 +212,11 @@ if [[ -n "$fixture_mode" ]]; then
 		exit 1
 	fi
 	echo "Confirmed Metal backend for this $fixture_label smoke run."
+
+	if [[ "$fixture_mode" == entity ]] && ! grep -qE 'Drawing the .* entity pass with gbuffers_entities of entity-contract' "$latest_log"; then
+		echo "Vitrail Entity smoke did not record an ordinary entity draw through gbuffers_entities; frame a normal living entity and rerun --entity-fixture." >&2
+		exit 1
+	fi
 
 	newest_screenshot=""
 	screenshot_dir="$repo_root/run/screenshots"
