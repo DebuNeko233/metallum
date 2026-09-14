@@ -186,6 +186,37 @@ jobs:
               raise SystemExit('Metal sampled images do not reach fragment texture/sampler slots: ' + ', '.join(missing))
           print('Metal GBuffer sampling: texture view and sampler reach fragment descriptor slots')
           PY
+      - name: validate Metal ping-pong pass transitions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+
+          lifecycle = (
+              'currentRenderPass = renderPass;',
+              'currentRenderPass.materializePendingClear();',
+              'currentRenderPass = null;',
+              'MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)',
+              'endEncoder();',
+              'renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);',
+              'currentEncoder.endEncoding();',
+              'encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);',
+          )
+          missing = [needle for needle in lifecycle if needle not in encoder]
+          if missing:
+              raise SystemExit('Metal ping-pong pass transition contract is incomplete: ' + ', '.join(missing))
+
+          sampling = (
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());',
+          )
+          missing = [needle for needle in sampling if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal ping-pong sampled surface routing is incomplete: ' + ', '.join(missing))
+          print('Metal GBuffer ping-pong: changed attachments end/fence old encoders before later sampled draws')
+          PY
       - name: validate Metal position invariance
         run: |
           python3 - <<'PY'
@@ -230,11 +261,13 @@ jobs:
           grep -q -- '--gbuffer-clear-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-write-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-sampling-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-pingpong-fixture' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-format-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-clear-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-write-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-sampling-contract' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-pingpong-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh
