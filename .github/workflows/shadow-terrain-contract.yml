@@ -77,6 +77,8 @@ jobs:
           grep -q 'shadow_solid' tools/run-vitrail-shadow-terrain-smoke.sh
           grep -q 'shadow_cutout' tools/run-vitrail-shadow-terrain-smoke.sh
           grep -q 'shadow_water' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q "pass='shadow_translucent'" tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'RAW LIGHT-SPACE shadowcolor0 diagnostic' tools/run-vitrail-shadow-terrain-smoke.sh
           grep -Fq 'Shadow map allocated at ' tools/run-vitrail-shadow-terrain-smoke.sh
           grep -Fq 'minecraft:textures/atlas/blocks.png' tools/run-vitrail-shadow-terrain-smoke.sh
           grep -Fq 'Stopping!' tools/run-vitrail-shadow-terrain-smoke.sh
