@@ -62,6 +62,27 @@ For `--hand-water-glint-fixture`, select `hand-water-glint-contract` and hold a 
 
 The launcher does not create or mutate inventory stacks. In particular, it does not manufacture the glinting translucent test item; prepare that held stack in the dev world before taking the screenshot.
 
+### Particle fixtures
+
+Opaque and translucent particles are separate schedule checkpoints. Run both independently:
+
+```sh
+./tools/run-vitrail-particle-smoke.sh ../Vitrail-Shaders-Metal --opaque
+./tools/run-vitrail-particle-smoke.sh ../Vitrail-Shaders-Metal --translucent
+```
+
+The opaque route uses `gbuffers_particles @ PARTICLES` before deferred and must also prove the coverage mask. The translucent route uses `gbuffers_particles_translucent @ PARTICLES` after deferred. Both require the real particle atlas, isolated `[colortex1 MAIN]`, a new screenshot and clean shutdown.
+
+### Weather fixture
+
+Weather is a separate post-deferred family even though it reuses the four-element PARTICLE vertex format. Run:
+
+```sh
+./tools/run-vitrail-weather-smoke.sh ../Vitrail-Shaders-Metal
+```
+
+Select `weather-contract`, enter a biome where precipitation is possible, then run `/weather rain`. Visible rain or snow is valid evidence: Minecraft draws both from the same weather mesh/program and changes only the sampled image, so the launcher accepts a real `minecraft:textures/environment/rain.png` or `snow.png`. Acceptance requires `gbuffers_weather @ RAIN_SNOW`, isolated `[colortex1 MAIN]`, the stable green screenshot gate and clean `Stopping!`. A particle, cloud or sky draw does not substitute for this checkpoint.
+
 You can also use the underlying hook directly with an already-built jar:
 
 ```sh
