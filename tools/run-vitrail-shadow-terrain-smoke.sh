@@ -51,9 +51,9 @@ cat <<'EOF'
 Run the PHASE 9 shadow-terrain checkpoint in one Overworld session:
 
   1. Select 'shadow-terrain-contract'.
-  2. Use a daylight scene containing all three chunk materials inside the nearby shadow-map area: substantial solid ground/stone, cutout foliage or tall grass, and visible water. A pond beside a leafy tree is ideal.
-  3. Wait for pack compilation and the shadow stage to settle. The diagnostic shadow-map view must contain GREEN solid terrain, YELLOW cutout terrain and BLUE water. Broad MAGENTA means the carried chunk ABI/atlas contract failed.
-  4. Press F2 once while all three colours are visible, then exit normally.
+  2. Use a daylight scene with substantial solid terrain, cutout foliage/tall grass and water inside the nearby shadow-map area. A pond beside a leafy tree is ideal.
+  3. Wait for pack compilation and the shadow stage to settle. The screen is a RAW LIGHT-SPACE shadowcolor0 diagnostic, not a camera-space overlay: its GREEN/YELLOW/BLUE regions are shadow-map texels and are not expected to line up with the objects in front of the player. It must contain GREEN solid terrain, YELLOW cutout terrain and BLUE water. Broad MAGENTA means the carried chunk ABI/atlas contract failed.
+  4. Press F2 once while all three colours are present, then exit normally.
 
 This checkpoint closes only PHASE 9 shadow terrain. shadow entities, shadow depth semantics/sampling, the full shadow-colour contract and shadow mipmaps remain independent gates even though shadowcolor0 is used here as the diagnostic carrier.
 EOF
@@ -78,16 +78,25 @@ fi
 
 for route in shadow_solid shadow_cutout shadow_water; do
     case "$route" in
-        shadow_solid) stage='TERRAIN_SOLID' ;;
-        shadow_cutout) stage='TERRAIN_CUTOUT' ;;
-        shadow_water) stage='TERRAIN_TRANSLUCENT' ;;
+        shadow_solid)
+            pass='shadow_solid'
+            stage='TERRAIN_SOLID'
+            ;;
+        shadow_cutout)
+            pass='shadow_cutout'
+            stage='TERRAIN_CUTOUT'
+            ;;
+        shadow_water)
+            pass='shadow_translucent'
+            stage='TERRAIN_TRANSLUCENT'
+            ;;
     esac
-    if ! grep -qF "Drawing the $route chunk pass with $route of shadow-terrain-contract at render stage $stage" "$latest_log"; then
-        echo "Shadow-terrain smoke did not record $route through its dedicated chunk shadow program at $stage." >&2
+    if ! grep -qF "Drawing the $pass chunk pass with $route of shadow-terrain-contract at render stage $stage" "$latest_log"; then
+        echo "Shadow-terrain smoke did not record $route through its $pass chunk pass at $stage." >&2
         exit 1
     fi
-    if ! grep -qF "The $route pass records its first draw with $route, reading minecraft:textures/atlas/blocks.png" "$latest_log"; then
-        echo "Shadow-terrain smoke did not prove a real block-atlas sample for $route; keep that material visible in the light-space walk and rerun." >&2
+    if ! grep -qF "The $pass pass records its first draw with $route, reading minecraft:textures/atlas/blocks.png" "$latest_log"; then
+        echo "Shadow-terrain smoke did not prove a real block-atlas sample for $route through $pass; keep that material inside the light-space walk and rerun." >&2
         exit 1
     fi
 done
@@ -129,7 +138,7 @@ for candidate in "${screenshots[@]}"; do
 done
 
 if [[ -z "$matched" ]]; then
-    echo "No fresh screenshot independently passed the shadow-terrain green/yellow/blue verifier." >&2
+    echo "No fresh screenshot independently passed the raw light-space shadow-terrain green/yellow/blue verifier." >&2
     exit 1
 fi
 
