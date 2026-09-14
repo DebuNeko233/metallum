@@ -1,0 +1,70 @@
+name: cloud-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cloud-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal cloud resource path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          pipeline = Path('src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          backend = '\n'.join(path.read_text(encoding='utf-8') for path in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          required_pipeline = (
+              'TEXEL_BUFFER',
+              'this.vertexBufferCount = info.getVertexFormatBindings().length;',
+              'int bindingCount = info.getVertexFormatBindings().length;',
+              'if (format == null || format.getElements().isEmpty()) {',
+              'continue;',
+          )
+          missing = [needle for needle in required_pipeline if needle not in pipeline]
+          if missing:
+              raise SystemExit('Metal cloud no-vertex-format pipeline support is incomplete: ' + ', '.join(missing))
+
+          required_binding = (
+              'public void setUniform(final @NonNull String name, final GpuBuffer value)',
+              'uniforms.put(name, value);',
+              'if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER)',
+              'pushTexelBufferDescriptor(enc, binding);',
+              'GpuBufferSlice texelSlice = uniforms.get(binding.name());',
+              'GpuFormat texelFormat = binding.texelBufferFormat();',
+              'MTLTexture.newBufferTextureView(',
+              'bindTexture(enc, texelTexture, binding.bindingIndex(), binding.stageMask());',
+              'bindBuffer(enc, uniformBuffer.metalBuffer(), uniformSlice.offset(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing = [needle for needle in required_binding if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal CloudInfo/CloudFaces generic binding support is incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('gbuffers_clouds', 'CloudInfo', 'CloudFaces'):
+              if forbidden in backend:
+                  raise SystemExit('Shader-family cloud semantics leaked into Metallum backend source: ' + forbidden)
+
+          print('Metal cloud path: zero vertex buffers plus generic UBO/texel-buffer reflection remain family-neutral')
+          PY
+      - name: validate cloud smoke launcher
+        run: |
+          bash -n tools/run-vitrail-cloud-smoke.sh
+          grep -q 'clouds-contract' tools/run-vitrail-cloud-smoke.sh
+          grep -q 'VerifyCloudScreenshot.java' tools/run-vitrail-cloud-smoke.sh
+          grep -Fq 'gbuffers_clouds' tools/run-vitrail-cloud-smoke.sh
+          grep -Fq 'render stage CLOUDS' tools/run-vitrail-cloud-smoke.sh
+          grep -Fq '0 samplers' tools/run-vitrail-cloud-smoke.sh
+          grep -Fq '[colortex1 MAIN]' tools/run-vitrail-cloud-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-cloud-smoke.sh
