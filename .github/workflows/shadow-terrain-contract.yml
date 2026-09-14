@@ -1,0 +1,82 @@
+name: shadow-terrain-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shadow-terrain-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal shadow-terrain prerequisites
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          formats = Path('src/main/java/com/metallum/mtl/MTLPixelFormat.java').read_text(encoding='utf-8')
+          compare = Path('src/main/java/com/metallum/mtl/MTLCompareFunction.java').read_text(encoding='utf-8')
+          pipeline = Path('src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java').read_text(encoding='utf-8')
+          texture = Path('src/main/java/com/metallum/render/MetalGpuTexture.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          backend = '\n'.join(path.read_text(encoding='utf-8') for path in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          if 'case D32_FLOAT -> Depth32Float;' not in formats:
+              raise SystemExit('Metal D32_FLOAT -> Depth32Float mapping needed by Vitrail shadow maps is missing')
+          if 'case LESS_THAN_OR_EQUAL -> LessEqual;' not in compare:
+              raise SystemExit('Metal LESS_THAN_OR_EQUAL -> LessEqual mapping needed by forward shadow depth is missing')
+
+          required_pipeline = (
+              'this.cullMode = info.isCull() ? MTLCullMode.Back : MTLCullMode.None;',
+              'depthCompareOp = MTLCompareFunction.from(depthStencilState.depthTest());',
+              'depthWrite = depthStencilState.writeDepth() ? 1 : 0;',
+              'MTLPixelFormat.Depth32Float',
+              'descriptor.setAttribute(attributeIndex, vertexFormat.value, element.offset(), bufferIndex);',
+          )
+          missing = [needle for needle in required_pipeline if needle not in pipeline]
+          if missing:
+              raise SystemExit('Metal generic shadow pipeline prerequisites are incomplete: ' + ', '.join(missing))
+
+          required_usage = (
+              'if ((usage & GpuTexture.USAGE_RENDER_ATTACHMENT) != 0)',
+              'result |= MTLTextureUsage.RenderTarget.value;',
+              'result |= MTLTextureUsage.ShaderRead.value;',
+          )
+          missing = [needle for needle in required_usage if needle not in texture]
+          if missing:
+              raise SystemExit('Metal render-target-to-shader-read usage is incomplete: ' + ', '.join(missing))
+
+          required_binding = (
+              'public void bindTexture(final @NonNull String name',
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing = [needle for needle in required_binding if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal reflected sampled-texture binding support is incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('shadow_solid', 'shadow_cutout', 'shadow_water', 'shadowcolor0', 'shadowtex0', 'shadowtex1'):
+              if forbidden in backend:
+                  raise SystemExit('Shader-pack shadow semantics leaked into Metallum backend source: ' + forbidden)
+
+          print('Metal shadow-terrain prerequisite: generic depth/cull/vertex/render-to-sample execution remains backend-neutral')
+          PY
+      - name: validate shadow terrain smoke launcher
+        run: |
+          bash -n tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'shadow-terrain-contract' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'VerifyShadowTerrainScreenshot.java' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'shadow_solid' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'shadow_cutout' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -q 'shadow_water' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -Fq 'Shadow map allocated at ' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -Fq 'minecraft:textures/atlas/blocks.png' tools/run-vitrail-shadow-terrain-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-shadow-terrain-smoke.sh
