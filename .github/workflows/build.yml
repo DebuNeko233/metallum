@@ -158,6 +158,34 @@ jobs:
               raise SystemExit('Metal colour attachments are not stored after the render pass')
           print('Metal GBuffer writes: per-slot write masks draw and store through native attachments')
           PY
+      - name: validate Metal sampled-image routing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+
+          required_binding = (
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());',
+              'markDescriptorDirty(name);',
+              'if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {',
+              'TextureViewAndSampler textureBinding = samplers.get(binding.name());',
+              'bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing = [needle for needle in required_binding if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal sampled-image descriptor routing is incomplete: ' + ', '.join(missing))
+
+          required_native = (
+              'enc.setFragmentTexture(texture, index);',
+              'enc.setFragmentSamplerState(sampler, index);',
+          )
+          missing = [needle for needle in required_native if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal sampled images do not reach fragment texture/sampler slots: ' + ', '.join(missing))
+          print('Metal GBuffer sampling: texture view and sampler reach fragment descriptor slots')
+          PY
       - name: validate Metal position invariance
         run: |
           python3 - <<'PY'
@@ -201,10 +229,12 @@ jobs:
           grep -q -- '--gbuffer-format-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-clear-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-write-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-sampling-fixture' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-format-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-clear-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-write-contract' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-sampling-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh

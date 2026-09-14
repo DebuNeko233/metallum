@@ -7,7 +7,7 @@ fixture_mode=""
 path_seen=false
 
 usage() {
-	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture]" >&2
+	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture|--gbuffer-sampling-fixture]" >&2
 }
 
 set_fixture_mode() {
@@ -38,6 +38,9 @@ for argument in "$@"; do
 			;;
 		--gbuffer-write-fixture)
 			set_fixture_mode gbuffer-write
+			;;
+		--gbuffer-sampling-fixture)
+			set_fixture_mode gbuffer-sampling
 			;;
 		-*)
 			usage
@@ -121,6 +124,11 @@ if [[ -n "$fixture_mode" ]]; then
 			fixture_verifier="$vitrail_root/tests/VerifyMrtScreenshot.java"
 			fixture_label="GBuffer write"
 			;;
+		gbuffer-sampling)
+			fixture_name="gbuffer-sampling-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyMrtScreenshot.java"
+			fixture_label="GBuffer sampling"
+			;;
 		*)
 			echo "Internal error: unknown fixture mode '$fixture_mode'" >&2
 			exit 2
@@ -145,7 +153,7 @@ if [[ -n "$fixture_mode" ]]; then
 	touch "$fixture_marker"
 	echo "Installed Vitrail $fixture_label smoke fixture at: $fixture_target"
 	echo "Select '$fixture_name' in Vitrail's shader-pack UI; the launcher does not change pack selection."
-	if [[ "$fixture_mode" == mrt || "$fixture_mode" == gbuffer-location || "$fixture_mode" == gbuffer-format || "$fixture_mode" == gbuffer-clear || "$fixture_mode" == gbuffer-write ]]; then
+	if [[ "$fixture_mode" == mrt || "$fixture_mode" == gbuffer-location || "$fixture_mode" == gbuffer-format || "$fixture_mode" == gbuffer-clear || "$fixture_mode" == gbuffer-write || "$fixture_mode" == gbuffer-sampling ]]; then
 		echo "While the four-colour result is visible in-world, press F2 once; this launcher will verify that new screenshot after exit."
 	else
 		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
