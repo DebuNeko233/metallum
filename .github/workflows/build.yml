@@ -118,6 +118,46 @@ jobs:
               raise SystemExit('Native Metal attachment clear routing is incomplete: ' + ', '.join(missing))
           print('Metal GBuffer clears: per-slot clear values reach MTLLoadActionClear')
           PY
+      - name: validate Metal MRT write routing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          pipeline = Path('src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java').read_text(encoding='utf-8')
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          command_buffer = Path('src/main/java/com/metallum/mtl/MTLCommandBuffer.java').read_text(encoding='utf-8')
+
+          required_pipeline = (
+              'ColorTargetState[] colorTargets = info.getColorTargetStates();',
+              'for (int index = 0; index < colorTargets.length; index++) {',
+              'long writeMask = MTLColorWriteMask.from(colorTarget.writeMask());',
+              'pipelineDesc.disableBlending(index, writeMask);',
+          )
+          missing = [needle for needle in required_pipeline if needle not in pipeline]
+          if missing:
+              raise SystemExit('Metal colour write-mask routing is incomplete: ' + ', '.join(missing))
+
+          required_encoder = (
+              'colorTextures[index] = colorTexture;',
+              'colorClears[index] = colorClear;',
+          )
+          missing = [needle for needle in required_encoder if needle not in encoder]
+          if missing:
+              raise SystemExit('Metal render attachments do not preserve write slots: ' + ', '.join(missing))
+
+          required_draw = (
+              'enc.setRenderPipelineState(pipelineHandle);',
+              'enc.drawPrimitives(primitiveType, firstVertex, vertexCount, instanceCount, firstInstance);',
+          )
+          missing = [needle for needle in required_draw if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal draw path is incomplete: ' + ', '.join(missing))
+
+          if 'MTLRenderPassDescriptor.STORE_ACTION_STORE,' not in command_buffer:
+              raise SystemExit('Metal colour attachments are not stored after the render pass')
+          print('Metal GBuffer writes: per-slot write masks draw and store through native attachments')
+          PY
       - name: validate Metal position invariance
         run: |
           python3 - <<'PY'
@@ -160,9 +200,11 @@ jobs:
           grep -q -- '--gbuffer-location-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-format-fixture' tools/run-vitrail-smoke.sh
           grep -q -- '--gbuffer-clear-fixture' tools/run-vitrail-smoke.sh
+          grep -q -- '--gbuffer-write-fixture' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-location-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-format-contract' tools/run-vitrail-smoke.sh
           grep -q 'gbuffer-clear-contract' tools/run-vitrail-smoke.sh
+          grep -q 'gbuffer-write-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyMrtScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'VerifyTerrainScreenshot.java' tools/run-vitrail-smoke.sh
           grep -q 'run/logs/latest.log' tools/run-vitrail-smoke.sh
