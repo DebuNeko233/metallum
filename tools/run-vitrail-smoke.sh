@@ -172,7 +172,7 @@ if [[ -n "$fixture_mode" ]]; then
 		echo "Frame a spider close to the camera with its glowing eye layer clearly visible. The fixture displays only the eye target: green means gbuffers_spidereyes routing plus full-bright input passed, magenta means full-bright failed, and black means the eye program did not draw. Press F2 once, then exit normally."
 		echo "Ordinary entity body colour, block entities, armor glint, hand, particles, weather, clouds and sky do not count for this checkpoint."
 	elif [[ "$fixture_mode" == armor-glint ]]; then
-		echo "Frame a world entity or armor stand wearing enchanted armor close to the camera. The fixture displays only the camera glint target: green means gbuffers_armor_glint plus the POSITION_TEX/glint synthesized-input ABI passed, magenta means that ABI failed, and black means the camera glint did not draw. Press F2 once, then exit normally."
+		echo "Frame a world entity or armor stand wearing enchanted armor close to the camera. The fixture displays only the camera glint target: stable solid green means gbuffers_armor_glint plus the POSITION_TEX/glint synthesized-input ABI passed, magenta means that ABI failed, and black means the camera glint did not draw. The animated glint stripes are verified separately through the real texture log gate and do not modulate the pixel colour. Press F2 once, then exit normally."
 		echo "A held enchanted item or any hand glint does not count for this checkpoint; hand and hand_water remain separate later gates."
 	else
 		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
@@ -225,8 +225,12 @@ if [[ -n "$fixture_mode" ]]; then
 		echo "Vitrail Spider eyes smoke did not record an eye/emissive-eye draw through gbuffers_spidereyes at render stage NONE; frame a spider with its glowing eye layer visible and rerun --spider-eyes-fixture." >&2
 		exit 1
 	fi
-	if [[ "$fixture_mode" == armor-glint ]] && ! grep -qE 'Drawing the glint_late glint pass with gbuffers_armor_glint of armor-glint-contract at render stage NONE' "$latest_log"; then
+	if [[ "$fixture_mode" == armor-glint ]] && ! grep -qE 'Drawing the glint_late .* pass with gbuffers_armor_glint of armor-glint-contract at render stage NONE' "$latest_log"; then
 		echo "Vitrail Armor glint smoke did not record the camera glint_late draw through gbuffers_armor_glint; frame enchanted armor on a world entity or armor stand and rerun --armor-glint-fixture. Held-item/hand glint does not count." >&2
+		exit 1
+	fi
+	if [[ "$fixture_mode" == armor-glint ]] && ! grep -qF 'The glint_late pass records its first draw with gbuffers_armor_glint, reading minecraft:textures/misc/enchanted_glint_armor.png' "$latest_log"; then
+		echo "Vitrail Armor glint smoke did not prove that glint_late sampled minecraft:textures/misc/enchanted_glint_armor.png; rerun --armor-glint-fixture with enchanted armor visible." >&2
 		exit 1
 	fi
 

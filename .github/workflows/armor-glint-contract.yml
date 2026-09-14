@@ -59,4 +59,5 @@ jobs:
           grep -q -- '--armor-glint-fixture' tools/run-vitrail-smoke.sh
           grep -q 'armor-glint-contract' tools/run-vitrail-smoke.sh
           grep -q 'VerifyArmorGlintScreenshot.java' tools/run-vitrail-smoke.sh
-          grep -q 'glint_late glint pass with gbuffers_armor_glint of armor-glint-contract at render stage NONE' tools/run-vitrail-smoke.sh
+          grep -Fq 'Drawing the glint_late .* pass with gbuffers_armor_glint of armor-glint-contract at render stage NONE' tools/run-vitrail-smoke.sh
+          grep -Fq 'enchanted_glint_armor.png' tools/run-vitrail-smoke.sh
