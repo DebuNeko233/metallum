@@ -7,7 +7,7 @@ fixture_mode=""
 path_seen=false
 
 usage() {
-	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture|--gbuffer-sampling-fixture|--gbuffer-pingpong-fixture|--entity-fixture|--block-entity-fixture|--spider-eyes-fixture|--armor-glint-fixture]" >&2
+	echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal] [--mrt-fixture|--terrain-fixture|--gbuffer-location-fixture|--gbuffer-format-fixture|--gbuffer-clear-fixture|--gbuffer-write-fixture|--gbuffer-sampling-fixture|--gbuffer-pingpong-fixture|--entity-fixture|--block-entity-fixture|--spider-eyes-fixture|--armor-glint-fixture|--hand-fixture|--hand-water-fixture]" >&2
 }
 
 set_fixture_mode() {
@@ -33,6 +33,8 @@ for argument in "$@"; do
 		--block-entity-fixture) set_fixture_mode block-entity ;;
 		--spider-eyes-fixture) set_fixture_mode spider-eyes ;;
 		--armor-glint-fixture) set_fixture_mode armor-glint ;;
+		--hand-fixture) set_fixture_mode hand ;;
+		--hand-water-fixture) set_fixture_mode hand-water ;;
 		-*) usage; exit 2 ;;
 		*)
 			if [[ "$path_seen" == true ]]; then usage; exit 2; fi
@@ -139,6 +141,16 @@ if [[ -n "$fixture_mode" ]]; then
 			fixture_verifier="$vitrail_root/tests/VerifyArmorGlintScreenshot.java"
 			fixture_label="Armor glint"
 			;;
+		hand)
+			fixture_name="hand-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyHandScreenshot.java"
+			fixture_label="Hand solid"
+			;;
+		hand-water)
+			fixture_name="hand-water-contract"
+			fixture_verifier="$vitrail_root/tests/VerifyHandScreenshot.java"
+			fixture_label="Hand translucent"
+			;;
 		*) echo "Internal error: unknown fixture mode '$fixture_mode'" >&2; exit 2 ;;
 	esac
 
@@ -174,6 +186,11 @@ if [[ -n "$fixture_mode" ]]; then
 	elif [[ "$fixture_mode" == armor-glint ]]; then
 		echo "Frame a world entity or armor stand wearing enchanted armor close to the camera. The fixture displays only the camera glint target: stable solid green means gbuffers_armor_glint plus the POSITION_TEX/glint synthesized-input ABI passed, magenta means that ABI failed, and black means the camera glint did not draw. The animated glint stripes are verified separately through the real texture log gate and do not modulate the pixel colour. Press F2 once, then exit normally."
 		echo "A held enchanted item or any hand glint does not count for this checkpoint; hand and hand_water remain separate later gates."
+	elif [[ "$fixture_mode" == hand ]]; then
+		echo "Use first person and hold an ordinary opaque/non-translucent item. The fixture displays only the solid hand target: green means gbuffers_hand routing plus the carried entity-polygon ABI passed, magenta means the ABI failed, and black means the solid hand did not draw. Press F2 once, then exit normally."
+		echo "Do not hold a translucent block model for this checkpoint; that belongs to --hand-water-fixture."
+	elif [[ "$fixture_mode" == hand-water ]]; then
+		echo "Use first person and hold a translucent block model; glass is recommended. This is the Iris-compatible hand_water trigger and does not mean the player should stand underwater. Green means gbuffers_hand_water at HAND_TRANSLUCENT plus the carried entity-polygon ABI passed, magenta means the ABI failed, and black means that pass did not draw. Press F2 once, then exit normally."
 	else
 		echo "Frame opaque blocks, cutout foliage/fire/flowers, and water together, then press F2 once."
 		echo "The automatic check requires substantial red/green/blue terrain regions; transparent cutout silhouettes remain a manual visual check."
@@ -231,6 +248,22 @@ if [[ -n "$fixture_mode" ]]; then
 	fi
 	if [[ "$fixture_mode" == armor-glint ]] && ! grep -qF 'The glint_late pass records its first draw with gbuffers_armor_glint, reading minecraft:textures/misc/enchanted_glint_armor.png' "$latest_log"; then
 		echo "Vitrail Armor glint smoke did not prove that glint_late sampled minecraft:textures/misc/enchanted_glint_armor.png; rerun --armor-glint-fixture with enchanted armor visible." >&2
+		exit 1
+	fi
+	if [[ "$fixture_mode" == hand ]] && ! grep -qE 'Drawing the hand_[^ ]* entity pass with gbuffers_hand of hand-contract at render stage HAND_SOLID' "$latest_log"; then
+		echo "Vitrail Hand solid smoke did not record a first-person hand draw through gbuffers_hand at HAND_SOLID; use first person with an opaque/non-translucent held item and rerun --hand-fixture." >&2
+		exit 1
+	fi
+	if [[ "$fixture_mode" == hand ]] && ! grep -qE 'The hand_[^ ]* pass records its first draw with gbuffers_hand, reading minecraft:' "$latest_log"; then
+		echo "Vitrail Hand solid smoke did not prove a real Minecraft texture sample through gbuffers_hand; rerun --hand-fixture with the held hand/item visible." >&2
+		exit 1
+	fi
+	if [[ "$fixture_mode" == hand-water ]] && ! grep -qE 'Drawing the hand_water_[^ ]* entity pass with gbuffers_hand_water of hand-water-contract at render stage HAND_TRANSLUCENT' "$latest_log"; then
+		echo "Vitrail Hand translucent smoke did not record a first-person hand draw through gbuffers_hand_water at HAND_TRANSLUCENT; hold a translucent block model such as glass and rerun --hand-water-fixture." >&2
+		exit 1
+	fi
+	if [[ "$fixture_mode" == hand-water ]] && ! grep -qE 'The hand_water_[^ ]* pass records its first draw with gbuffers_hand_water, reading minecraft:' "$latest_log"; then
+		echo "Vitrail Hand translucent smoke did not prove a real Minecraft texture sample through gbuffers_hand_water; rerun --hand-water-fixture with a translucent block model visible." >&2
 		exit 1
 	fi
 
