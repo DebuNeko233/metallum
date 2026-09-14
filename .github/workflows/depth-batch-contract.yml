@@ -1,0 +1,70 @@
+name: depth-batch-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  depth-batch-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal depth-window prerequisites
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          formats = Path('src/main/java/com/metallum/mtl/MTLPixelFormat.java').read_text(encoding='utf-8')
+          texture = Path('src/main/java/com/metallum/render/MetalGpuTexture.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          backend = '\n'.join(path.read_text(encoding='utf-8') for path in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          if 'case R32_FLOAT -> R32Float;' not in formats:
+              raise SystemExit('Metal R32_FLOAT -> R32Float mapping needed by Vitrail depth windows is missing')
+
+          required_usage = (
+              'if ((usage & GpuTexture.USAGE_RENDER_ATTACHMENT) != 0)',
+              'result |= MTLTextureUsage.RenderTarget.value;',
+              'result |= MTLTextureUsage.ShaderRead.value;',
+          )
+          missing = [needle for needle in required_usage if needle not in texture]
+          if missing:
+              raise SystemExit('Metal render-target-to-shader-read texture usage is incomplete: ' + ', '.join(missing))
+
+          required_binding = (
+              'public void bindTexture(final @NonNull String name',
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing = [needle for needle in required_binding if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal reflected sampled-texture binding support is incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('depthtex0', 'depthtex1', 'depthtex2', 'pre-translucent', 'pre-hand', 'Vitrail depth window'):
+              if forbidden in backend:
+                  raise SystemExit('Shader-pack depth semantics leaked into Metallum backend source: ' + forbidden)
+
+          print('Metal depth batch prerequisite: generic R32Float render-target sampling remains backend-neutral')
+          PY
+      - name: validate batched depth smoke launcher
+        run: |
+          bash -n tools/run-vitrail-depth-batch-smoke.sh
+          grep -q 'depthtex1-contract' tools/run-vitrail-depth-batch-smoke.sh
+          grep -q 'depthtex2-contract' tools/run-vitrail-depth-batch-smoke.sh
+          grep -q 'pre-translucent-contract' tools/run-vitrail-depth-batch-smoke.sh
+          grep -q 'VerifyDepthBatchScreenshot.java' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq -- '--depthtex1' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq -- '--depthtex2' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq -- '--pre-translucent' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq '1 samplers this chain read the world' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq '1 more before its translucents [deferred]' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq 'Vitrail depth window' tools/run-vitrail-depth-batch-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-depth-batch-smoke.sh
