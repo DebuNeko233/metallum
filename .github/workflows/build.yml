@@ -164,27 +164,34 @@ jobs:
           from pathlib import Path
 
           render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          compiler = Path('src/main/java/com/metallum/render/MetalCrossShaderCompiler.java').read_text(encoding='utf-8')
 
           common = (
               'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
               'commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());',
               'markDescriptorDirty(name);',
               'if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {',
-              'requiredTexture(binding.name(), "sampler")',
           )
           missing = [needle for needle in common if needle not in render_pass]
           if missing:
               raise SystemExit('Metal sampled-image descriptor routing is incomplete: ' + ', '.join(missing))
 
-          direct = (
-              'binding.metalIndex(),',
-              'binding.samplerMetalIndex(),',
-              'enc.setFragmentTexture(texture, textureIndex);',
-              'enc.setFragmentSamplerState(sampler, samplerIndex);',
+          direct_render = (
+              'bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+              'enc.setFragmentTexture(texture, index);',
+              'enc.setFragmentSamplerState(sampler, index);',
           )
-          missing = [needle for needle in direct if needle not in render_pass]
+          missing = [needle for needle in direct_render if needle not in render_pass]
           if missing:
               raise SystemExit('Metal direct sampled-image routing regressed: ' + ', '.join(missing))
+
+          direct_mapping = (
+              'int metalIndex = useArgumentBuffers ? index * 2 : index;',
+              'int samplerIndex = useArgumentBuffers ? metalIndex + 1 : metalIndex;',
+          )
+          missing = [needle for needle in direct_mapping if needle not in compiler]
+          if missing:
+              raise SystemExit('Metal direct sampled-image slot equivalence is no longer explicit: ' + ', '.join(missing))
 
           wide = (
               'layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());',
@@ -195,7 +202,7 @@ jobs:
           missing = [needle for needle in wide if needle not in render_pass]
           if missing:
               raise SystemExit('Metal wide sampled-image routing is incomplete: ' + ', '.join(missing))
-          print('Metal sampling: direct texture/sampler slots and wide argument-buffer routing are both present')
+          print('Metal sampling: direct equivalent slots and wide argument-buffer routing are both present')
           PY
       - name: validate Metal ping-pong pass transitions
         run: |
