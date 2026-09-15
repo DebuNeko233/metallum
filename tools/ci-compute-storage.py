@@ -47,7 +47,7 @@ require("Metal compute encoder wrapper", "src/main/java/com/metallum/mtl/MTLComp
     "setTexture:atIndex:",
     "dispatchThreadgroups:threadsPerThreadgroup:",
     "maxTotalThreadsPerThreadgroup",
-    "if (threads > this.maxTotalThreadsPerThreadgroup)",
+    "if (total > this.maxTotalThreadsPerThreadgroup)",
     "updateFence:",
     "waitForFence:",
 ))
@@ -76,7 +76,7 @@ require("Storage texture allocation", "src/main/java/com/metallum/render/MetalDe
     "case 1 -> MTLTextureType.Type1D;",
     "case 2 -> MTLTextureType.Type2D;",
     "case 3 -> MTLTextureType.Type3D;",
-    "true",
+    "MTLTextureType type = switch (dimensions)",
 ))
 
 require("Storage buffer allocation", "src/main/java/com/metallum/render/MetalDevice.java", (
