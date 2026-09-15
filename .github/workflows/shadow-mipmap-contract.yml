@@ -1,0 +1,67 @@
+name: shadow-mipmap-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shadow-mipmap-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic D32 progressive-nearest reduction
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          bridge = Path('src/main/java/com/metallum/render/MetalDepthMipmapBridge.java').read_text(encoding='utf-8')
+          texture = Path('src/main/java/com/metallum/render/MetalGpuTexture.java').read_text(encoding='utf-8')
+
+          required = (
+              'texture.getFormat() != GpuFormat.D32_FLOAT',
+              'GpuTexture.USAGE_TEXTURE_BINDING',
+              'GpuTexture.USAGE_RENDER_ATTACHMENT',
+              'depth2d<float> source [[texture(0)]]',
+              'source.sample(nearestSampler, in.uv)',
+              'descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);',
+              'descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);',
+              'descriptor.mipFilter(MTLSamplerMipFilter.NotMipmapped);',
+              'descriptor.setDepthStencilFormats(MTLPixelFormat.Depth32Float, MTLPixelFormat.Invalid);',
+              'device.depthStencilState(MTLCompareFunction.Always, true)',
+              'new MetalGpuTextureView(texture, level - 1, 1)',
+              'new MetalGpuTextureView(texture, level, 1)',
+              'render.setFragmentTexture(source.nativeHandle(), 0L);',
+              'render.drawPrimitives(MTLPrimitiveType.Triangle, 0, 3, 1, 0);',
+              'encoder.endEncoder();',
+          )
+          missing = [needle for needle in required if needle not in bridge]
+          if missing:
+              raise SystemExit('Metal D32 depth mip reduction contract is incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('shadowtex0', 'shadowtex1', 'shadowcolor0', 'shadowcolor1', 'shader pack'):
+              if forbidden in bridge.lower():
+                  raise SystemExit('Shader-pack semantics leaked into the generic Metal D32 mip bridge: ' + forbidden)
+
+          if 'MetalDevice device()' not in texture:
+              raise SystemExit('MetalGpuTexture must expose its backend device package-locally to the generic mip bridge')
+
+          print('Metal D32 mip contract: progressive depth2d<float> nearest reads, per-level depth attachments, and encoder-fence boundaries remain generic')
+          PY
+      - name: validate final shadow mipmap launcher
+        run: |
+          bash -n tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q 'shadow-mipmap-contract' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q 'VerifyShadowMipmapScreenshot.java' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q -- '--verify-existing' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q 'both shadowtex0 and shadowtex1' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q 'shadow_solid chunk pass with shadow' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -q 'readable generated shadow depth mips' tools/run-vitrail-shadow-mipmap-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-shadow-mipmap-smoke.sh
