@@ -36,6 +36,8 @@ public record MTLDevice(MemorySegment handle) {
     private static final Msg NAME = Msg.of("name", ADDRESS);
     private static final Msg MAX_BUFFER_LENGTH = Msg.of("maxBufferLength", JAVA_LONG);
     private static final Msg RECOMMENDED_MAX_WORKING_SET_SIZE = Msg.of("recommendedMaxWorkingSetSize", JAVA_LONG);
+    private static final Msg ARGUMENT_BUFFERS_SUPPORT = Msg.of("argumentBuffersSupport", JAVA_LONG);
+    private static final Msg MAX_ARGUMENT_BUFFER_SAMPLER_COUNT = Msg.of("maxArgumentBufferSamplerCount", JAVA_LONG);
 
     public MTLDevice {
         if (handle == null || handle.address() == 0L) {
@@ -65,6 +67,15 @@ public record MTLDevice(MemorySegment handle) {
 
     public long recommendedMaxWorkingSetSize() {
         return RECOMMENDED_MAX_WORKING_SET_SIZE.sendLong(handle);
+    }
+
+    /** Tier 2 is the generic wide-resource path used for shader-declared argument buffers. */
+    public boolean supportsArgumentBuffersTier2() {
+        return ARGUMENT_BUFFERS_SUPPORT.sendLong(handle) >= 1L;
+    }
+
+    public long maxArgumentBufferSamplerCount() {
+        return MAX_ARGUMENT_BUFFER_SAMPLER_COUNT.sendLong(handle);
     }
 
     public MTLBuffer newBuffer(final long length, final long options) {
