@@ -202,6 +202,8 @@ match_mode() {
             esac
             return 0
         fi
+        echo "Rejected $label candidate: $candidate" >&2
+        grep -m1 'shadow batch screenshot swatches:' "$output" >&2 || cat "$output" >&2
         rm -f "$output"
     done
 
