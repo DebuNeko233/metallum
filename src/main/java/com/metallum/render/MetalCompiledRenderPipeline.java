@@ -16,15 +16,26 @@ import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Environment(EnvType.CLIENT)
 final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
+    private static final int MAX_COLOR_ATTACHMENTS = 8;
+    static final int ARGUMENT_BUFFER_SLOT_COUNT = 8;
+    static final int PUSH_CONSTANT_BUFFER_SLOT = 8;
+    private static final int WIDE_VERTEX_BUFFER_BASE = 9;
+
     enum ResourceKind {
         UNIFORM_BUFFER,
+        STORAGE_BUFFER,
         SAMPLED_IMAGE,
+        STORAGE_IMAGE,
         TEXEL_BUFFER
     }
 
@@ -32,13 +43,35 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     static final int STAGE_FRAGMENT = 2;
     static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
 
-    record ResourceBinding(ResourceKind kind, String name, int bindingIndex, int stageMask,
-                           @Nullable GpuFormat texelBufferFormat) {
+    record ResourceBinding(
+            ResourceKind kind,
+            String name,
+            int bindingIndex,
+            int stageMask,
+            @Nullable GpuFormat texelBufferFormat,
+            int metalIndex,
+            int samplerMetalIndex,
+            int argumentBufferSet
+    ) {
+        boolean indirect() {
+            return argumentBufferSet >= 0;
+        }
+    }
+
+    record ArgumentBufferLayout(
+            int stageMask,
+            int descriptorSet,
+            int bufferIndex,
+            MTLArgumentEncoder encoder,
+            long encodedLength
+    ) {
     }
 
     private final List<ResourceBinding> resources;
     private final Map<String, ResourceBinding> resourcesByName;
-    private final long allResourceMask;
+    private final BitSet allResources;
+    private final boolean usesArgumentBuffers;
+    private final List<ArgumentBufferLayout> argumentBuffers;
     private final int firstAvailableVertexBufferSlot;
     private final MTLCullMode cullMode;
     private final MTLTriangleFillMode fillMode;
@@ -58,27 +91,56 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             final String fragmentMsl,
             final String vertexEntryPoint,
             final String fragmentEntryPoint,
-            final List<ResourceBinding> resources
+            final List<ResourceBinding> resources,
+            final boolean usesArgumentBuffers,
+            final Set<Integer> vertexArgumentBufferSets,
+            final Set<Integer> fragmentArgumentBufferSets
     ) {
-        this.resources = resources;
-        this.resourcesByName = resources.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(ResourceBinding::name, binding -> binding));
+        this.resources = List.copyOf(resources);
+        this.resourcesByName = resources.stream().collect(Collectors.toUnmodifiableMap(ResourceBinding::name, binding -> binding));
+        this.usesArgumentBuffers = usesArgumentBuffers;
 
-        int maxBindingIndex = -1;
-        long resourceMask = 0L;
+        BitSet resourceBits = new BitSet();
         for (ResourceBinding binding : resources) {
-            maxBindingIndex = Math.max(maxBindingIndex, binding.bindingIndex());
-            resourceMask |= 1L << binding.bindingIndex();
+            if (binding.bindingIndex() < 0) {
+                throw new IllegalStateException(
+                        "Pipeline " + info.getLocation() + " has negative logical binding index " + binding.bindingIndex()
+                );
+            }
+            resourceBits.set(binding.bindingIndex());
         }
-        if (maxBindingIndex >= Long.SIZE) {
-            throw new IllegalStateException("Pipeline " + info.getLocation() + " has binding index " + maxBindingIndex + ", limit is " + (Long.SIZE - 1));
-        }
-        this.allResourceMask = resourceMask;
+        this.allResources = resourceBits;
 
-        this.firstAvailableVertexBufferSlot = firstAvailableVertexBufferSlot(resources);
+        this.firstAvailableVertexBufferSlot = usesArgumentBuffers
+                ? WIDE_VERTEX_BUFFER_BASE
+                : firstAvailableVertexBufferSlot(resources);
         this.cullMode = info.isCull() ? MTLCullMode.Back : MTLCullMode.None;
         this.fillMode = info.getPolygonMode() == PolygonMode.WIREFRAME ? MTLTriangleFillMode.Lines : MTLTriangleFillMode.Fill;
         this.topology = MTLPrimitiveType.from(info.getPrimitiveTopology());
         this.vertexBufferCount = info.getVertexFormatBindings().length;
+
+        if (this.firstAvailableVertexBufferSlot + this.vertexBufferCount > 31) {
+            throw new IllegalStateException(
+                    "Pipeline " + info.getLocation() + " requires vertex buffer slot "
+                            + (this.firstAvailableVertexBufferSlot + this.vertexBufferCount - 1)
+                            + ", beyond Metal's 0..30 buffer table"
+            );
+        }
+
+        if (usesArgumentBuffers) {
+            long samplerCount = resources.stream().filter(binding -> binding.kind() == ResourceKind.SAMPLED_IMAGE).count();
+            long samplerLimit = device.metalDevice().maxArgumentBufferSamplerCount();
+            if (samplerLimit > 0 && samplerCount > samplerLimit) {
+                throw new IllegalStateException(
+                        "Pipeline " + info.getLocation() + " needs " + samplerCount
+                                + " samplers, beyond Metal argument-buffer limit " + samplerLimit
+                );
+            }
+            Metallum.LOGGER.info(
+                    "[metallum] Wide resource pipeline {} uses Metal Argument Buffers: resources={}, sampledImages={}, vertexSets={}, fragmentSets={}",
+                    info.getLocation(), resources.size(), samplerCount, vertexArgumentBufferSets, fragmentArgumentBufferSets
+            );
+        }
 
         MTLCompareFunction depthCompareOp;
         int depthWrite;
@@ -94,19 +156,52 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             this.depthBiasScaleFactor = depthStencilState.depthBiasScaleFactor();
             this.depthBiasConstant = depthStencilState.depthBiasConstant();
         }
-
         this.depthStencilState = device.depthStencilState(depthCompareOp, depthWrite != 0);
 
-        var colorTarget = info.getColorTargetState();
-        MTLPixelFormat colorFormat = colorTarget != null ? MTLPixelFormat.from(colorTarget.format()) : MTLPixelFormat.RGBA8Unorm;
+        ColorTargetState[] colorTargets = info.getColorTargetStates();
+        if (colorTargets.length > MAX_COLOR_ATTACHMENTS) {
+            throw new IllegalStateException(
+                    "Pipeline " + info.getLocation() + " declares " + colorTargets.length
+                            + " color targets, Metal supports at most " + MAX_COLOR_ATTACHMENTS
+            );
+        }
 
         MemorySegment vertexFunction = device.getOrCompileFunction(vertexMsl, vertexEntryPoint);
         MemorySegment fragmentFunction = device.getOrCompileFunction(fragmentMsl, fragmentEntryPoint);
+        this.argumentBuffers = usesArgumentBuffers
+                ? createArgumentBuffers(vertexFunction, fragmentFunction, vertexArgumentBufferSets, fragmentArgumentBufferSets)
+                : List.of();
 
         try (MTLVertexDescriptor vertexDescriptor = buildVertexDescriptor(info, this.firstAvailableVertexBufferSlot)) {
-            this.withDepthPipeline = createPipeline(device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorFormat, MTLPixelFormat.Depth32Float);
-            this.withoutDepthPipeline = createPipeline(device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorFormat, MTLPixelFormat.Invalid);
+            this.withDepthPipeline = createPipeline(
+                    device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Depth32Float
+            );
+            this.withoutDepthPipeline = createPipeline(
+                    device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Invalid
+            );
         }
+    }
+
+    private static List<ArgumentBufferLayout> createArgumentBuffers(
+            final MemorySegment vertexFunction,
+            final MemorySegment fragmentFunction,
+            final Set<Integer> vertexSets,
+            final Set<Integer> fragmentSets
+    ) {
+        List<ArgumentBufferLayout> layouts = new ArrayList<>(vertexSets.size() + fragmentSets.size());
+        if (!ObjC.isNil(vertexFunction)) {
+            for (int set : vertexSets) {
+                MTLArgumentEncoder encoder = MTLArgumentEncoder.forFunction(vertexFunction, set);
+                layouts.add(new ArgumentBufferLayout(STAGE_VERTEX, set, set, encoder, encoder.encodedLength()));
+            }
+        }
+        if (!ObjC.isNil(fragmentFunction)) {
+            for (int set : fragmentSets) {
+                MTLArgumentEncoder encoder = MTLArgumentEncoder.forFunction(fragmentFunction, set);
+                layouts.add(new ArgumentBufferLayout(STAGE_FRAGMENT, set, set, encoder, encoder.encodedLength()));
+            }
+        }
+        return List.copyOf(layouts);
     }
 
     private static MemorySegment createPipeline(
@@ -115,42 +210,48 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             final MemorySegment vertexFunction,
             final MemorySegment fragmentFunction,
             final MTLVertexDescriptor vertexDescriptor,
-            final MTLPixelFormat colorFormat,
+            final ColorTargetState[] colorTargets,
             final MTLPixelFormat depthFormat
     ) {
         if (ObjC.isNil(vertexFunction) || ObjC.isNil(fragmentFunction)) {
             return MemorySegment.NULL;
         }
-
-        ColorTargetState colorTarget = info.getColorTargetState();
-        Optional<BlendFunction> blendFunction = colorTarget == null ? Optional.empty() : colorTarget.blendFunction();
-        long writeMask = colorTarget == null ? MTLColorWriteMask.All.value : MTLColorWriteMask.from(colorTarget.writeMask());
-
         try (MTLRenderPipelineDescriptor pipelineDesc = new MTLRenderPipelineDescriptor()) {
             pipelineDesc.setCompiledFunctions(vertexFunction, fragmentFunction);
             pipelineDesc.setVertexDescriptor(vertexDescriptor);
-            pipelineDesc.setColorAttachmentFormat(0, colorFormat);
             pipelineDesc.setDepthStencilFormats(depthFormat, MTLPixelFormat.Invalid);
-
-            if (blendFunction.isPresent()) {
-                var function = blendFunction.get();
-                pipelineDesc.setBlendState(
-                        0,
-                        MTLBlendFactor.from(function.color().sourceFactor()),
-                        MTLBlendFactor.from(function.color().destFactor()),
-                        MTLBlendOperation.from(function.color().op()),
-                        MTLBlendFactor.from(function.alpha().sourceFactor()),
-                        MTLBlendFactor.from(function.alpha().destFactor()),
-                        MTLBlendOperation.from(function.alpha().op()),
-                        writeMask
-                );
-            } else {
-                pipelineDesc.disableBlending(0, writeMask);
+            for (int index = 0; index < colorTargets.length; index++) {
+                ColorTargetState colorTarget = colorTargets[index];
+                if (colorTarget == null) {
+                    pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.Invalid);
+                    pipelineDesc.disableBlending(index, MTLColorWriteMask.None.value);
+                    continue;
+                }
+                pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.from(colorTarget.format()));
+                Optional<BlendFunction> blendFunction = colorTarget.blendFunction();
+                long writeMask = MTLColorWriteMask.from(colorTarget.writeMask());
+                if (blendFunction.isPresent()) {
+                    var function = blendFunction.get();
+                    pipelineDesc.setBlendState(
+                            index,
+                            MTLBlendFactor.from(function.color().sourceFactor()),
+                            MTLBlendFactor.from(function.color().destFactor()),
+                            MTLBlendOperation.from(function.color().op()),
+                            MTLBlendFactor.from(function.alpha().sourceFactor()),
+                            MTLBlendFactor.from(function.alpha().destFactor()),
+                            MTLBlendOperation.from(function.alpha().op()),
+                            writeMask
+                    );
+                } else {
+                    pipelineDesc.disableBlending(index, writeMask);
+                }
             }
-
             MemorySegment pipeline = device.metalDevice().newRenderPipelineState(pipelineDesc);
             if (ObjC.isNil(pipeline)) {
-                Metallum.LOGGER.error("[metallum] Pipeline {} failed to build with depth format {}", info.getLocation(), depthFormat);
+                Metallum.LOGGER.error(
+                        "[metallum] Pipeline {} failed to build with {} color target slots and depth format {}",
+                        info.getLocation(), colorTargets.length, depthFormat
+                );
             }
             return pipeline;
         }
@@ -165,8 +266,16 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.resources;
     }
 
-    long allResourceMask() {
-        return this.allResourceMask;
+    BitSet allResources() {
+        return (BitSet) this.allResources.clone();
+    }
+
+    boolean usesArgumentBuffers() {
+        return this.usesArgumentBuffers;
+    }
+
+    List<ArgumentBufferLayout> argumentBuffers() {
+        return this.argumentBuffers;
     }
 
     @Nullable
@@ -186,14 +295,6 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.depthBiasConstant;
     }
 
-    MemorySegment getDepthStencilState() {
-        return this.depthStencilState;
-    }
-
-    MemorySegment getNativePipeline(final boolean useDepth) {
-        return useDepth ? this.withDepthPipeline : this.withoutDepthPipeline;
-    }
-
     MTLCullMode cullMode() {
         return this.cullMode;
     }
@@ -210,57 +311,64 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.vertexBufferCount;
     }
 
-    private static MTLVertexDescriptor buildVertexDescriptor(
-            final RenderPipeline pipeline,
-            final int firstMetalVertexBufferSlot
-    ) {
-        VertexFormat[] bindings = pipeline.getVertexFormatBindings();
-        MTLVertexDescriptor vertexDesc = new MTLVertexDescriptor();
-        long attrIndex = 0;
-
-        for (int i = 0; i < bindings.length; i++) {
-            VertexFormat binding = bindings[i];
-            if (binding == null || binding.getElements().isEmpty()) {
-                continue;
-            }
-
-            int metalSlot = firstMetalVertexBufferSlot + i;
-
-            long stride = binding.getVertexSize();
-            long stepRate = binding.getStepRate();
-            MTLVertexStepFunction stepFunction = stepRate > 0 ? MTLVertexStepFunction.PerInstance : MTLVertexStepFunction.PerVertex;
-            vertexDesc.setLayout(metalSlot, stride, stepFunction, stepRate > 0 ? stepRate : 1);
-
-            for (VertexFormatElement element : binding.getElements()) {
-                MTLVertexFormat format = MTLVertexFormat.from(element.format());
-                if (format == MTLVertexFormat.Invalid) {
-                    throw new IllegalStateException("Unsupported vertex attribute format: " + element.format());
-                }
-                vertexDesc.setAttribute(attrIndex, format.value, element.offset(), metalSlot);
-                attrIndex++;
-            }
-        }
-
-        return vertexDesc;
+    MemorySegment getNativePipeline(final boolean depth) {
+        return depth ? this.withDepthPipeline : this.withoutDepthPipeline;
     }
 
-    private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
-        int maxVertexBufferBinding = -1;
-        for (ResourceBinding resource : resources) {
-            if (resource.kind() == ResourceKind.UNIFORM_BUFFER && (resource.stageMask() & STAGE_VERTEX) != 0) {
-                maxVertexBufferBinding = Math.max(maxVertexBufferBinding, resource.bindingIndex());
-            }
-        }
-        return maxVertexBufferBinding + 1;
+    MemorySegment getDepthStencilState() {
+        return this.depthStencilState;
     }
 
     @Override
     public void close() {
+        for (ArgumentBufferLayout layout : this.argumentBuffers) {
+            layout.encoder().close();
+        }
         if (!ObjC.isNil(this.withDepthPipeline)) {
             ObjC.release(this.withDepthPipeline);
         }
         if (!ObjC.isNil(this.withoutDepthPipeline)) {
             ObjC.release(this.withoutDepthPipeline);
         }
+    }
+
+    private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
+        int maxVertexBufferBinding = -1;
+        for (ResourceBinding resource : resources) {
+            if ((resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER)
+                    && (resource.stageMask() & STAGE_VERTEX) != 0) {
+                maxVertexBufferBinding = Math.max(maxVertexBufferBinding, resource.metalIndex());
+            }
+        }
+        return maxVertexBufferBinding + 1;
+    }
+
+    private static MTLVertexDescriptor buildVertexDescriptor(
+            final RenderPipeline info,
+            final int firstAvailableBufferSlot
+    ) {
+        MTLVertexDescriptor descriptor = new MTLVertexDescriptor();
+        long attributeIndex = 0L;
+        int bindingCount = info.getVertexFormatBindings().length;
+        for (int binding = 0; binding < bindingCount; binding++) {
+            VertexFormat format = info.getVertexFormatBinding(binding);
+            if (format == null || format.getElements().isEmpty()) {
+                continue;
+            }
+            int bufferIndex = firstAvailableBufferSlot + binding;
+            long stepRate = format.getStepRate();
+            MTLVertexStepFunction stepFunction =
+                    stepRate > 0 ? MTLVertexStepFunction.PerInstance : MTLVertexStepFunction.PerVertex;
+            descriptor.setLayout(bufferIndex, format.getVertexSize(), stepFunction, stepRate > 0 ? stepRate : 1L);
+            for (VertexFormatElement element : format.getElements()) {
+                MTLVertexFormat vertexFormat = MTLVertexFormat.from(element.format());
+                if (vertexFormat == MTLVertexFormat.Invalid) {
+                    throw new IllegalStateException("Unsupported vertex attribute format: " + element.format());
+                }
+                descriptor.setAttribute(attributeIndex, vertexFormat.value, element.offset(), bufferIndex);
+                attributeIndex++;
+            }
+        }
+        return descriptor;
     }
 }

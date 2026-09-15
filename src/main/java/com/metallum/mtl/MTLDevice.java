@@ -30,11 +30,14 @@ public record MTLDevice(MemorySegment handle) {
     private static final Msg NEW_LIBRARY_WITH_SOURCE = Msg.of("newLibraryWithSource:options:error:", true, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     private static final Msg NEW_FUNCTION_WITH_NAME = Msg.of("newFunctionWithName:", true, ADDRESS, ADDRESS);
     private static final Msg NEW_RENDER_PIPELINE_STATE = Msg.of("newRenderPipelineStateWithDescriptor:error:", true, ADDRESS, ADDRESS, ADDRESS);
+    private static final Msg NEW_COMPUTE_PIPELINE_STATE = Msg.of("newComputePipelineStateWithFunction:error:", true, ADDRESS, ADDRESS, ADDRESS);
     private static final Msg LOCALIZED_DESCRIPTION = Msg.of("localizedDescription", ADDRESS);
     private static final Msg MINIMUM_TEXTURE_BUFFER_ALIGNMENT = Msg.of("minimumTextureBufferAlignmentForPixelFormat:", JAVA_LONG, JAVA_LONG);
     private static final Msg NAME = Msg.of("name", ADDRESS);
     private static final Msg MAX_BUFFER_LENGTH = Msg.of("maxBufferLength", JAVA_LONG);
     private static final Msg RECOMMENDED_MAX_WORKING_SET_SIZE = Msg.of("recommendedMaxWorkingSetSize", JAVA_LONG);
+    private static final Msg ARGUMENT_BUFFERS_SUPPORT = Msg.of("argumentBuffersSupport", JAVA_LONG);
+    private static final Msg MAX_ARGUMENT_BUFFER_SAMPLER_COUNT = Msg.of("maxArgumentBufferSamplerCount", JAVA_LONG);
 
     public MTLDevice {
         if (handle == null || handle.address() == 0L) {
@@ -64,6 +67,15 @@ public record MTLDevice(MemorySegment handle) {
 
     public long recommendedMaxWorkingSetSize() {
         return RECOMMENDED_MAX_WORKING_SET_SIZE.sendLong(handle);
+    }
+
+    /** Tier 2 is the generic wide-resource path used for shader-declared argument buffers. */
+    public boolean supportsArgumentBuffersTier2() {
+        return ARGUMENT_BUFFERS_SUPPORT.sendLong(handle) >= 1L;
+    }
+
+    public long maxArgumentBufferSamplerCount() {
+        return MAX_ARGUMENT_BUFFER_SAMPLER_COUNT.sendLong(handle);
     }
 
     public MTLBuffer newBuffer(final long length, final long options) {
@@ -115,10 +127,18 @@ public record MTLDevice(MemorySegment handle) {
     }
 
     public MemorySegment newFunction(final String mslSource, final String entryPoint) {
-        try (AutoreleasePool _ = AutoreleasePool.push(); Arena arena = Arena.ofConfined()) {
+        try (AutoreleasePool _ = AutoreleasePool.push();
+             Arena arena = Arena.ofConfined();
+             MTLCompileOptions options = new MTLCompileOptions()) {
+            // Vitrail marks gl_Position invariant for geometry that can be redrawn by another
+            // program at the exact same depth. SPIRV-Cross carries that through to MSL, but Metal
+            // ignores [[invariant]] unless preserveInvariance is enabled at library compilation.
+            // Enabling it for the library is safe for ordinary shaders: the conservative contract
+            // only applies to position outputs that were actually marked invariant.
+            options.setPreserveInvariance(true);
             MemorySegment errorOut = arena.allocate(ADDRESS);
             MemorySegment nsSource = ObjC.nsString(mslSource);
-            MemorySegment library = NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, MemorySegment.NULL, errorOut);
+            MemorySegment library = NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, options.handle(), errorOut);
             ObjC.release(nsSource);
             if (ObjC.isNil(library)) {
                 Metallum.LOGGER.error("[metallum] Failed to compile MSL: {}", errorDescription(errorOut));
@@ -142,6 +162,18 @@ public record MTLDevice(MemorySegment handle) {
             MemorySegment pipeline = NEW_RENDER_PIPELINE_STATE.sendPtr(handle, descriptor.handle(), errorOut);
             if (ObjC.isNil(pipeline)) {
                 Metallum.LOGGER.error("[metallum] Failed to create render pipeline state: {}", errorDescription(errorOut));
+                return MemorySegment.NULL;
+            }
+            return pipeline;
+        }
+    }
+
+    public MemorySegment newComputePipelineState(final MemorySegment function) {
+        try (AutoreleasePool _ = AutoreleasePool.push(); Arena arena = Arena.ofConfined()) {
+            MemorySegment errorOut = arena.allocate(ADDRESS);
+            MemorySegment pipeline = NEW_COMPUTE_PIPELINE_STATE.sendPtr(handle, function, errorOut);
+            if (ObjC.isNil(pipeline)) {
+                Metallum.LOGGER.error("[metallum] Failed to create compute pipeline state: {}", errorDescription(errorOut));
                 return MemorySegment.NULL;
             }
             return pipeline;

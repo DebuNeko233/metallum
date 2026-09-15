@@ -22,6 +22,18 @@ final class MetalPipelineSupport {
         return leftValue == rightValue;
     }
 
+    static boolean sameHandles(final MemorySegment[] left, final MemorySegment[] right) {
+        if (left.length != right.length) {
+            return false;
+        }
+        for (int index = 0; index < left.length; index++) {
+            if (!sameHandle(left[index], right[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static List<String> vertexAttributeNames(final RenderPipeline pipeline) {
         List<String> names = new ArrayList<>();
         for (VertexFormat binding : pipeline.getVertexFormatBindings()) {

@@ -1,9 +1,11 @@
 package com.metallum.render;
 
+import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLSamplerAddressMode;
 import com.metallum.mtl.MTLSamplerDescriptor;
 import com.metallum.mtl.MTLSamplerMinMagFilter;
 import com.metallum.mtl.MTLSamplerMipFilter;
+import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
@@ -12,6 +14,7 @@ import net.fabricmc.api.Environment;
 import org.jspecify.annotations.NonNull;
 
 import java.lang.foreign.MemorySegment;
+import java.util.EnumMap;
 import java.util.OptionalDouble;
 
 @Environment(EnvType.CLIENT)
@@ -24,6 +27,7 @@ final class MetalGpuSampler extends GpuSampler {
     private final FilterMode magFilter;
     private final int maxAnisotropy;
     private final OptionalDouble maxLod;
+    private final EnumMap<CompareOp, MetalGpuSampler> comparisonVariants = new EnumMap<>(CompareOp.class);
     private boolean closed;
 
     MetalGpuSampler(
@@ -35,6 +39,19 @@ final class MetalGpuSampler extends GpuSampler {
             final int maxAnisotropy,
             final OptionalDouble maxLod
     ) {
+        this(device, addressModeU, addressModeV, minFilter, magFilter, maxAnisotropy, maxLod, null);
+    }
+
+    private MetalGpuSampler(
+            final MetalDevice device,
+            final AddressMode addressModeU,
+            final AddressMode addressModeV,
+            final FilterMode minFilter,
+            final FilterMode magFilter,
+            final int maxAnisotropy,
+            final OptionalDouble maxLod,
+            final CompareOp comparison
+    ) {
         this.device = device;
         try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
             descriptor.minFilter(MTLSamplerMinMagFilter.from(minFilter));
@@ -42,6 +59,10 @@ final class MetalGpuSampler extends GpuSampler {
             descriptor.mipFilter(toMtlMipFilter(maxLod));
             descriptor.sAddressMode(MTLSamplerAddressMode.from(addressModeU));
             descriptor.tAddressMode(MTLSamplerAddressMode.from(addressModeV));
+            descriptor.rAddressMode(MTLSamplerAddressMode.from(addressModeV));
+            if (comparison != null) {
+                descriptor.compareFunction(MTLCompareFunction.from(comparison));
+            }
             descriptor.maxAnisotropy(Math.max(1, maxAnisotropy));
             descriptor.lodMinClamp(0.0f);
             double lodMaxClamp = toMtlMaxLodClamp(maxLod);
@@ -54,6 +75,26 @@ final class MetalGpuSampler extends GpuSampler {
         this.magFilter = magFilter;
         this.maxAnisotropy = maxAnisotropy;
         this.maxLod = maxLod;
+    }
+
+    MetalGpuSampler comparisonVariant(final CompareOp compareOp) {
+        if (this.closed) {
+            throw new IllegalStateException("Cannot create a Metal comparison sampler from a closed sampler");
+        }
+        return this.comparisonVariants.computeIfAbsent(compareOp, op -> new MetalGpuSampler(
+                this.device,
+                this.addressModeU,
+                this.addressModeV,
+                this.minFilter,
+                this.magFilter,
+                this.maxAnisotropy,
+                this.maxLod,
+                op
+        ));
+    }
+
+    MetalDevice device() {
+        return this.device;
     }
 
     @Override
@@ -92,6 +133,10 @@ final class MetalGpuSampler extends GpuSampler {
             return;
         }
         this.closed = true;
+        for (MetalGpuSampler variant : this.comparisonVariants.values()) {
+            variant.close();
+        }
+        this.comparisonVariants.clear();
         this.device.queueResourceRelease(this.nativeHandle);
     }
 
