@@ -29,12 +29,14 @@ require("Metal compute pipeline", "src/main/java/com/metallum/render/MetalComput
     "newComputePipelineState(function)",
     "commandEncoder.computeCommandEncoder()",
     "compute.setComputePipelineState(pipeline.pipelineState)",
-    "compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ);",
-    "case STORAGE_BUFFER -> compute.setBuffer(",
-    "case STORAGE_IMAGE -> {",
-    "compute.setTexture(texture.nativeHandle(), binding.metalIndex);",
-    "texture.texture().markContentsDirty();",
-    "commandEncoder.flushPendingClear(texture);",
+    "compute.dispatchThreadgroups(",
+    "groupsX, groupsY, groupsZ,",
+    "localX, localY, localZ",
+    "case UNIFORM_BUFFER, STORAGE_BUFFER -> bindBuffer(compute, binding, buffers);",
+    "case STORAGE_IMAGE -> bindStorageImage(compute, binding, textures);",
+    "((MetalGpuTexture) view.texture()).markContentsDirty();",
+    "compute.setTexture(view.nativeHandle(), binding.textureIndex);",
+    "commandEncoder.flushPendingClear((MetalGpuTexture) view.texture());",
     "finally {",
     "commandEncoder.endEncoder();",
 ))
@@ -74,7 +76,7 @@ require("Storage texture allocation", "src/main/java/com/metallum/render/MetalDe
     "case 1 -> MTLTextureType.Type1D;",
     "case 2 -> MTLTextureType.Type2D;",
     "case 3 -> MTLTextureType.Type3D;",
-    "shaderWrite",
+    "true",
 ))
 
 require("Storage buffer allocation", "src/main/java/com/metallum/render/MetalDevice.java", (
