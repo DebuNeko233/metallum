@@ -82,8 +82,7 @@ jobs:
           if 'useResource:usage:stages:' not in encoder:
               raise SystemExit('Indirect argument-buffer resources are not declared resident to Metal')
 
-          # The backend must remain generic: the test fixture and shader-pack sampler names belong to Vitrail.
-          forbidden = ('wide-resources-contract', 'customTexture.wide', 'wide00', 'wide16')
+          forbidden = ('wide-resources-contract', 'customTexture.wide', 'wide00', 'wide32')
           leaked = [term for term in forbidden if term in backend]
           if leaked:
               raise SystemExit('PHASE 14 fixture semantics leaked into generic Metal execution: ' + ', '.join(leaked))
@@ -95,7 +94,7 @@ jobs:
           bash -n tools/run-vitrail-wide-resources-smoke.sh
           grep -q 'wide-resources-contract' tools/run-vitrail-wide-resources-smoke.sh
           grep -q 'VerifyWideResourcesScreenshot.java' tools/run-vitrail-wide-resources-smoke.sh
-          grep -q 'sampledImages=17' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'sampledImages=33' tools/run-vitrail-wide-resources-smoke.sh
           grep -q 'Wide resource pipeline' tools/run-vitrail-wide-resources-smoke.sh
           grep -q -- '--verify-existing' tools/run-vitrail-wide-resources-smoke.sh
           grep -q 'Batched PHASE 14 Wide Resources: PASS' tools/run-vitrail-wide-resources-smoke.sh
