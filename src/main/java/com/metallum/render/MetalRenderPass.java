@@ -552,6 +552,23 @@ final class MetalRenderPass implements RenderPassBackend {
             final MTLRenderCommandEncoder enc,
             final MemorySegment texture,
             final MemorySegment sampler,
+            final long index,
+            final int stageMask
+    ) {
+        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
+            enc.setVertexTexture(texture, index);
+            enc.setVertexSamplerState(sampler, index);
+        }
+        if ((stageMask & MetalCompiledRenderPipeline.STAGE_FRAGMENT) != 0) {
+            enc.setFragmentTexture(texture, index);
+            enc.setFragmentSamplerState(sampler, index);
+        }
+    }
+
+    private static void bindTextureAndSampler(
+            final MTLRenderCommandEncoder enc,
+            final MemorySegment texture,
+            final MemorySegment sampler,
             final long textureIndex,
             final long samplerIndex,
             final int stageMask
@@ -701,23 +718,22 @@ final class MetalRenderPass implements RenderPassBackend {
             final MetalCompiledRenderPipeline.ResourceBinding binding
     ) {
         if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {
-            TextureViewAndSampler textureBinding = requiredTexture(binding.name(), "sampler");
+            TextureViewAndSampler textureBinding = samplers.get(binding.name());
+            if (textureBinding == null) {
+                throw new IllegalStateException("Missing sampler " + binding.name());
+            }
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
             MetalGpuSampler sampler = (MetalGpuSampler) textureBinding.sampler();
-            bindTextureAndSampler(
-                    enc,
-                    textureView.nativeHandle(),
-                    sampler.nativeHandle(),
-                    binding.metalIndex(),
-                    binding.samplerMetalIndex(),
-                    binding.stageMask()
-            );
+            bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());
             return;
         }
         if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE) {
-            TextureViewAndSampler textureBinding = requiredTexture(binding.name(), "storage image");
+            TextureViewAndSampler textureBinding = samplers.get(binding.name());
+            if (textureBinding == null) {
+                throw new IllegalStateException("Missing storage image " + binding.name());
+            }
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
-            bindTexture(enc, textureView.nativeHandle(), binding.metalIndex(), binding.stageMask());
+            bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());
             return;
         }
         if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER) {
@@ -726,7 +742,7 @@ final class MetalRenderPass implements RenderPassBackend {
         }
         GpuBufferSlice uniformSlice = requiredBuffer(binding);
         MetalGpuBuffer uniformBuffer = (MetalGpuBuffer) uniformSlice.buffer();
-        bindBuffer(enc, uniformBuffer.metalBuffer(), uniformSlice.offset(), binding.metalIndex(), binding.stageMask());
+        bindBuffer(enc, uniformBuffer.metalBuffer(), uniformSlice.offset(), binding.bindingIndex(), binding.stageMask());
     }
 
     private void pushArgumentDescriptor(
@@ -788,7 +804,7 @@ final class MetalRenderPass implements RenderPassBackend {
             final MetalCompiledRenderPipeline.ResourceBinding binding
     ) {
         MemorySegment texelTexture = createTexelBufferTexture(binding);
-        bindTexture(enc, texelTexture, binding.metalIndex(), binding.stageMask());
+        bindTexture(enc, texelTexture, binding.bindingIndex(), binding.stageMask());
     }
 
     private void pushArgumentTexelBufferDescriptor(
