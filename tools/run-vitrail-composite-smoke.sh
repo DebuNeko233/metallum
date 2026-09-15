@@ -68,8 +68,10 @@ grep -qF '1 targets doubled: [0]' "$latest_log" || { echo "Composite flip fixtur
 grep -qF 'composite writes colortex2 alt' "$latest_log" || { echo "Composite history fixture did not record temporal target ALT write." >&2; exit 1; }
 grep -qF 'composite1 writes colortex2 main' "$latest_log" || { echo "Composite history fixture did not record temporal target MAIN write." >&2; exit 1; }
 grep -qF 'composite2 writes colortex0 alt, colortex2 alt' "$latest_log" || { echo "Composite history fixture did not record its final temporal ALT write." >&2; exit 1; }
-grep -qF '2 targets doubled: [0, 2]' "$latest_log" || { echo "Composite history fixture did not allocate both required ping-pong targets." >&2; exit 1; }
-grep -qF 'the pack keeps that target between frames' "$latest_log" || { echo "Composite history fixture did not record a previous-frame history read." >&2; exit 1; }
+grep -qE '2 targets doubled: \[(0, 2|2, 0)\]' "$latest_log" || { echo "Composite history fixture did not allocate both required ping-pong targets." >&2; exit 1; }
+grep -qF 'targets the pack keeps between frames: [2]' "$latest_log" || { echo "Composite history fixture did not mark colortex2 persistent." >&2; exit 1; }
+grep -qF '1 targets are copied back from their far half at the end of every frame, because the pack keeps them and the chain left them there: [2]' "$latest_log" || { echo "Composite history fixture did not schedule colortex2 ALT -> MAIN copy-back." >&2; exit 1; }
+grep -qF 'colortex2 is not written until composite1, later in the same frame, so composite reads the frame before, and the clear colour on the first one' "$latest_log" || { echo "Composite history fixture did not record a previous-frame history read." >&2; exit 1; }
 grep -qE 'samplers this chain read a real colour target: .*colortex0.*colortex2|samplers this chain read a real colour target: .*colortex2.*colortex0' "$latest_log" || { echo "Composite history fixture did not prove its colour targets were sampled." >&2; exit 1; }
 
 split='0 of this chain run before the world [], 0 more before its translucents [], 4 after'
