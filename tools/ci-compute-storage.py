@@ -111,9 +111,10 @@ launcher_text = launcher.read_text(encoding="utf-8")
 for needle in (
     "compute-storage-contract",
     "VerifyComputeStorageScreenshot.java",
+    "minecraft:(overworld|the_nether|the_end)",
     "Dispatched compute composite through the active backend",
     "Dispatched compute composite_a through the active backend",
-    "Dispatched 2 compute pass(es) at composite",
+    "compute programs dispatched before the pass they hang off: [composite, composite_a]",
     "PHASE 15 Compute / Storage: PASS",
     "--verify-existing",
     "Stopping!",
