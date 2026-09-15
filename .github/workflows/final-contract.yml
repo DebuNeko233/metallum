@@ -1,0 +1,73 @@
+name: final-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal main-target presentation path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          command = Path('src/main/java/com/metallum/mtl/MTLCommandBuffer.java').read_text(encoding='utf-8')
+          builtin = Path('src/main/java/com/metallum/mtl/MTLBuiltinPipelines.java').read_text(encoding='utf-8')
+          backend = '\n'.join(p.read_text(encoding='utf-8') for p in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          encoder_required = (
+              'void presentTextureToDrawable(final CAMetalLayer layer, final GpuTextureView textureView)',
+              'flushPendingClear(source);',
+              'submitRenderPass();',
+              'endEncoder();',
+              'commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);',
+          )
+          missing=[x for x in encoder_required if x not in encoder]
+          if missing: raise SystemExit('Generic Metal present entry incomplete: ' + ', '.join(missing))
+
+          command_required = (
+              'private static final Msg PRESENT_DRAWABLE = Msg.ofVoid("presentDrawable:", ADDRESS);',
+              'public void encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture, final MTLFence globalFence)',
+              'PRESENT_DRAWABLE.send(handle(), drawable.handle());',
+          )
+          missing=[x for x in command_required if x not in command]
+          if missing: raise SystemExit('Generic Metal command-buffer present path incomplete: ' + ', '.join(missing))
+
+          builtin_required = (
+              'CAMetalDrawable drawable = layer.nextDrawable();',
+              'MemorySegment drawableTexture = drawable.texture();',
+              'MTLRenderPassDescriptor.LOAD_ACTION_DONT_CARE',
+              'MTLRenderPassDescriptor.STORE_ACTION_STORE',
+              'encoder.setFragmentTexture(sourceTexture, 0L);',
+              'encoder.drawPrimitives(MTLPrimitiveType.Triangle, 0, 3, 1, 0);',
+              'commandBuffer.presentDrawable(drawable);',
+          )
+          missing=[x for x in builtin_required if x not in builtin]
+          if missing: raise SystemExit('Generic Metal CAMetalLayer presentation path incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('final-direct-contract','final-chain-contract','phase 12 final'):
+              if forbidden in backend.lower(): raise SystemExit('Shader-pack Final semantics leaked into Metallum production source: ' + forbidden)
+          print('Metal Final prerequisites remain generic: main-target texture -> present pipeline -> CAMetalDrawable')
+          PY
+      - name: validate batched real-device launcher
+        run: |
+          bash -n tools/run-vitrail-final-smoke.sh
+          grep -q 'final-direct-contract' tools/run-vitrail-final-smoke.sh
+          grep -q 'final-chain-contract' tools/run-vitrail-final-smoke.sh
+          grep -q 'VerifyFinalScreenshot.java' tools/run-vitrail-final-smoke.sh
+          grep -q -- '--verify-existing' tools/run-vitrail-final-smoke.sh
+          grep -q 'PHASE 12 final direct: PASS' tools/run-vitrail-final-smoke.sh
+          grep -q 'PHASE 12 final chain-to-screen: PASS' tools/run-vitrail-final-smoke.sh
+          grep -q 'Batched PHASE 12 Final: PASS' tools/run-vitrail-final-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-final-smoke.sh
