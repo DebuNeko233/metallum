@@ -53,7 +53,12 @@ jobs:
           missing=[x for x in sampled if x not in render_pass]
           if missing: raise SystemExit('Generic Metal sampled-target prerequisites incomplete: ' + ', '.join(missing))
 
-          for forbidden in ('composite-flip-contract','composite-history-contract','colortex2clear','swapback'):
+          # Backend code may use ordinary words such as "swap back" for generic resource bookkeeping.
+          # Reject only names/directives that would prove shader-pack Composite policy leaked below Vitrail.
+          for forbidden in (
+              'composite-flip-contract', 'composite-history-contract', 'composite_pre',
+              'colortex0', 'colortex1', 'colortex2', 'colortex2clear',
+          ):
               if forbidden in backend.lower(): raise SystemExit('Shader-pack Composite semantics leaked into Metallum production source: ' + forbidden)
           print('Metal Composite prerequisites remain generic: sampled render targets + fenced render/blit texture copy')
           PY
