@@ -37,6 +37,10 @@ public final class MetalDepthMipmapBridge {
               float2 uv;
             };
 
+            struct DepthMipFragmentOut {
+              float depth [[depth(any)]];
+            };
+
             vertex DepthMipVertexOut metallum_depth_mip_vs(uint vertexId [[vertex_id]]) {
               const float2 positions[3] = {
                 float2(-1.0,  1.0),
@@ -55,12 +59,14 @@ public final class MetalDepthMipmapBridge {
               return out;
             }
 
-            fragment float metallum_depth_mip_fs(
+            fragment DepthMipFragmentOut metallum_depth_mip_fs(
               DepthMipVertexOut in [[stage_in]],
               depth2d<float> source [[texture(0)]],
               sampler nearestSampler [[sampler(0)]]
-            ) [[depth(any)]] {
-              return source.sample(nearestSampler, in.uv);
+            ) {
+              DepthMipFragmentOut out;
+              out.depth = source.sample(nearestSampler, in.uv);
+              return out;
             }
             """;
 
