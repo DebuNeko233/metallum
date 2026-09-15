@@ -31,6 +31,7 @@ marker=""
 
 for required in \
     "$advanced_source/shaders/final.fsh" \
+    "$advanced_source/shaders/gbuffers_terrain_solid.fsh" \
     "$pbr_source/shaders/gbuffers_terrain.fsh" \
     "$temporal_source/shaders/gbuffers_terrain.fsh" \
     "$resources_source/pack.mcmeta" \
@@ -68,14 +69,19 @@ if [[ "$verify_existing" == false ]]; then
     cat <<'INSTRUCTIONS'
 Run the complete PHASE 16 Advanced Features hardware acceptance in ONE client session:
 
-  1. Select 'phase16-advanced-contract' and enter an Overworld.
-     Expected output: four vertical quarters, all overwhelmingly GREEN.
+  1. Select 'phase16-advanced-contract' and enter an Overworld. Face a large opaque
+     block surface so real solid terrain occupies a substantial part of the third quarter.
+     VOLUME, NOISE and COMPARE (quarters 1, 2 and 4) should be overwhelmingly GREEN.
+     BLEND (quarter 3) is GREEN on drawn solid terrain and BLACK where no solid terrain
+     covered the pixel; MAGENTA is failure. A black-only third quarter does not pass.
      Once stable, press F2 exactly once.
 
-  2. Enable resource pack 'phase16-pbr-resources', then select shader pack
-     'phase16-pbr-contract'. Face or place a vanilla stone block so a large stone face
-     is visible. The marker stone must be GREEN with no meaningful MAGENTA.
-     Once stable, press F2 exactly once.
+  2. Enable resource pack 'phase16-pbr-resources'. THEN open Vitrail's shader-pack
+     selector and select 'phase16-pbr-contract'; verify that exact shader-pack name is
+     selected rather than leaving 'phase16-advanced-contract' active. Face or place a
+     vanilla stone block so a large stone face is visible. The marker stone must be GREEN
+     with no meaningful MAGENTA. Only after the shader pack has visibly switched, press F2
+     exactly once.
 
   3. Disable the PBR marker resource pack, select 'terrain-contract', set Render Scale
      to 75% and Temporal Fold to ON. Walk forward/backward and yaw the camera for several
@@ -83,8 +89,9 @@ Run the complete PHASE 16 Advanced Features hardware acceptance in ONE client se
      wrong-direction reprojection. Then exit normally.
 
 After the client exits this launcher verifies both fresh screenshots, Metal activation,
-all three fixture draws, native-comparison fallback remaining OFF, temporal motion-vector
-consumption, sub-100% render scale, and clean Stopping!.
+real gbuffers terrain execution for the Advanced blend gate, all three fixture draws,
+native-comparison fallback remaining OFF, temporal motion-vector consumption,
+sub-100% render scale, and clean Stopping!.
 INSTRUCTIONS
     "$repo_root/tools/run-vitrail-smoke.sh" "$vitrail_root"
 else
@@ -101,10 +108,30 @@ grep -qE 'Using graphics backend Metal|Client setup reached on the Metal backend
     || { echo "PHASE 16 smoke did not prove Metal was active." >&2; exit 1; }
 echo "Confirmed Metal backend for PHASE 16 Advanced Features smoke."
 
-for fixture in "$advanced_fixture" "$pbr_fixture" "$temporal_fixture"; do
-    grep -qF "Drawing $fixture from the root for minecraft:overworld" "$latest_log" \
-        || { echo "$fixture did not draw in the Overworld during this PHASE 16 session." >&2; exit 1; }
-done
+grep -qF "Drawing $advanced_fixture from the root for minecraft:overworld" "$latest_log" \
+    || { echo "$advanced_fixture did not draw in the Overworld during this PHASE 16 session." >&2; exit 1; }
+grep -qF "Drawing the solid chunk pass with gbuffers_terrain_solid of $advanced_fixture at render stage TERRAIN_SOLID" "$latest_log" \
+    || { echo "$advanced_fixture did not execute its real gbuffers_terrain_solid blend marker on opaque terrain." >&2; exit 1; }
+grep -qF 'per buffer blend directives read onto the attachment whose rank their target holds' "$latest_log" \
+    || { echo "$advanced_fixture did not report an honoured per-buffer geometry blend directive." >&2; exit 1; }
+grep -qF 'gbuffers_terrain_solid.colortex3=ONE ZERO' "$latest_log" \
+    || { echo "$advanced_fixture did not land the colortex3 ONE ZERO override." >&2; exit 1; }
+grep -qF 'gbuffers_terrain_solid.colortex1=ZERO ZERO' "$latest_log" \
+    || { echo "$advanced_fixture did not land the colortex1 ZERO ZERO override." >&2; exit 1; }
+
+if ! grep -qF "Drawing $pbr_fixture from the root for minecraft:overworld" "$latest_log"; then
+    if grep -qF 'The resource pack answers normals for 1 of the' "$latest_log" \
+        && grep -qF 'The resource pack answers specular for 1 of the' "$latest_log"; then
+        echo "$pbr_resources loaded its normal/specular companions, but $pbr_fixture never drew." >&2
+        echo "The resource pack was enabled while another shader pack remained selected; rerun and explicitly select $pbr_fixture before the second F2." >&2
+    else
+        echo "$pbr_fixture did not draw in the Overworld during this PHASE 16 session." >&2
+    fi
+    exit 1
+fi
+
+grep -qF "Drawing $temporal_fixture from the root for minecraft:overworld" "$latest_log" \
+    || { echo "$temporal_fixture did not draw in the Overworld during this PHASE 16 session." >&2; exit 1; }
 
 if [[ -e "$repo_root/run/vitrail/soft-shadow-compare" ]]; then
     echo "vitrail/soft-shadow-compare was armed; native comparison-sampler acceptance is invalid." >&2
@@ -158,7 +185,7 @@ for i in "${!screenshots[@]}"; do
     rm -f "$output"
 done
 [[ -n "$advanced_shot" ]] \
-    || { echo "No fresh screenshot passed all four PHASE 16 Advanced quarters." >&2; exit 1; }
+    || { echo "No fresh screenshot passed all four PHASE 16 Advanced quarters, including a visible real-terrain BLEND marker." >&2; exit 1; }
 
 pbr_shot=""
 for i in "${!screenshots[@]}"; do
