@@ -124,6 +124,10 @@ public final class MetalDepthMipmapBridge {
             encoder.queueForDestroy(() -> ObjC.release(pipeline));
             throw e;
         }
+        if (ObjC.isNil(nearestSampler)) {
+            encoder.queueForDestroy(() -> ObjC.release(pipeline));
+            return false;
+        }
 
         MemorySegment depthState = device.depthStencilState(MTLCompareFunction.Always, true);
         try {
