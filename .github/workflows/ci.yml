@@ -61,6 +61,7 @@ jobs:
 
       - name: validate consolidated Metal and Vitrail contracts
         run: |
+          bash -n tools/run-vitrail-phase16-smoke.sh
           python3 tools/ci-contracts.py
           python3 tools/ci-compute-storage.py
 
