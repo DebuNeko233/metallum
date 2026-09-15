@@ -37,13 +37,13 @@ Run the complete PHASE 14 Wide Resources hardware acceptance in ONE client sessi
 
   1. Select 'wide-resources-contract' and enter an Overworld.
   2. Expected output: overwhelmingly GREEN.
-     MAGENTA means at least one of the seventeen active custom samplers was missing,
+     MAGENTA means at least one of the thirty-three active custom samplers was missing,
      stale, aliased to the wrong descriptor, or otherwise read incorrectly.
   3. Once GREEN is stable, press F2 once.
   4. Exit normally.
 
 The raw log must independently prove Metallum selected its generic Metal Argument Buffer path
-with sampledImages=17. A GREEN screenshot without that log line does not close PHASE 14.
+with sampledImages=33. A GREEN screenshot without that log line does not close PHASE 14.
 EOF
     "$repo_root/tools/run-vitrail-smoke.sh" "$vitrail_root"
 else
@@ -66,8 +66,8 @@ grep -qF "final writes the game's own target" "$latest_log" \
     || { echo "Wide-resource Final was not recorded writing the game's own target." >&2; exit 1; }
 grep -qF 'Wide resource pipeline' "$latest_log" \
     || { echo "Metallum did not report the wide-resource Argument Buffer path." >&2; exit 1; }
-grep -qE 'Wide resource pipeline .* uses Metal Argument Buffers: resources=[0-9]+, sampledImages=17([,}]|$)' "$latest_log" \
-    || { echo "Metallum did not prove exactly seventeen active sampled images on the wide path." >&2; exit 1; }
+grep -qE 'Wide resource pipeline .* uses Metal Argument Buffers: resources=[0-9]+, sampledImages=33([,}]|$)' "$latest_log" \
+    || { echo "Metallum did not prove exactly thirty-three active sampled images on the wide path." >&2; exit 1; }
 if grep -qF 'Vitrail stopped drawing this pack after an error' "$latest_log"; then
     echo "Vitrail reported a chain failure during PHASE 14 Wide Resources smoke." >&2; exit 1
 fi
@@ -104,7 +104,7 @@ for candidate in "${screenshots[@]}"; do
 done
 [[ -n "$wide_shot" ]] || { echo "No fresh screenshot passed the PHASE 14 wide-resource verifier." >&2; exit 1; }
 
-echo "PHASE 14 >16 active samplers: PASS screenshot=$wide_shot"
-echo "PHASE 14 Metal Argument Buffer execution: PASS sampledImages=17"
+echo "PHASE 14 >16 / >32 active samplers: PASS screenshot=$wide_shot"
+echo "PHASE 14 Metal Argument Buffer execution: PASS sampledImages=33"
 echo "Batched PHASE 14 Wide Resources: PASS screenshot=$wide_shot"
 echo "After raw-log review this closes PHASE 14 only; PHASE 15 Compute / Storage remains separate."
