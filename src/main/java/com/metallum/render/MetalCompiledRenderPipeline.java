@@ -16,6 +16,7 @@ import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.foreign.MemorySegment;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,7 +43,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
 
     private final List<ResourceBinding> resources;
     private final Map<String, ResourceBinding> resourcesByName;
-    private final long allResourceMask;
+    private final BitSet allResources;
     private final int firstAvailableVertexBufferSlot;
     private final MTLCullMode cullMode;
     private final MTLTriangleFillMode fillMode;
@@ -67,16 +68,16 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         this.resources = resources;
         this.resourcesByName = resources.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(ResourceBinding::name, binding -> binding));
 
-        int maxBindingIndex = -1;
-        long resourceMask = 0L;
+        BitSet resourceBits = new BitSet();
         for (ResourceBinding binding : resources) {
-            maxBindingIndex = Math.max(maxBindingIndex, binding.bindingIndex());
-            resourceMask |= 1L << binding.bindingIndex();
+            if (binding.bindingIndex() < 0) {
+                throw new IllegalStateException(
+                        "Pipeline " + info.getLocation() + " has negative binding index " + binding.bindingIndex()
+                );
+            }
+            resourceBits.set(binding.bindingIndex());
         }
-        if (maxBindingIndex >= Long.SIZE) {
-            throw new IllegalStateException("Pipeline " + info.getLocation() + " has binding index " + maxBindingIndex + ", limit is " + (Long.SIZE - 1));
-        }
-        this.allResourceMask = resourceMask;
+        this.allResources = resourceBits;
 
         this.firstAvailableVertexBufferSlot = firstAvailableVertexBufferSlot(resources);
         this.cullMode = info.isCull() ? MTLCullMode.Back : MTLCullMode.None;
@@ -202,8 +203,8 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return this.resources;
     }
 
-    long allResourceMask() {
-        return this.allResourceMask;
+    BitSet allResources() {
+        return (BitSet) this.allResources.clone();
     }
 
     @Nullable
