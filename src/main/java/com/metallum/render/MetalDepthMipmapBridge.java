@@ -1,6 +1,5 @@
 package com.metallum.render;
 
-import com.metallum.mtl.MTLColorWriteMask;
 import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLPixelFormat;
 import com.metallum.mtl.MTLPrimitiveType;
@@ -82,7 +81,9 @@ public final class MetalDepthMipmapBridge {
                 || texture.isClosed()
                 || texture.getFormat() != GpuFormat.D32_FLOAT
                 || texture.getMipLevels() <= 1
-                || texture.getDepthOrLayers() != 1) {
+                || texture.getDepthOrLayers() != 1
+                || (texture.usage() & GpuTexture.USAGE_TEXTURE_BINDING) == 0
+                || (texture.usage() & GpuTexture.USAGE_RENDER_ATTACHMENT) == 0) {
             return false;
         }
 
@@ -99,7 +100,6 @@ public final class MetalDepthMipmapBridge {
         try (MTLRenderPipelineDescriptor descriptor = new MTLRenderPipelineDescriptor()) {
             descriptor.setCompiledFunctions(vertexFunction, fragmentFunction);
             descriptor.setDepthStencilFormats(MTLPixelFormat.Depth32Float, MTLPixelFormat.Invalid);
-            descriptor.disableBlending(0, MTLColorWriteMask.None.value);
             pipeline = device.metalDevice().newRenderPipelineState(descriptor);
         }
         if (ObjC.isNil(pipeline)) {
@@ -114,6 +114,9 @@ public final class MetalDepthMipmapBridge {
             descriptor.sAddressMode(MTLSamplerAddressMode.ClampToEdge);
             descriptor.tAddressMode(MTLSamplerAddressMode.ClampToEdge);
             nearestSampler = device.metalDevice().newSamplerState(descriptor);
+        } catch (RuntimeException | Error e) {
+            encoder.queueForDestroy(() -> ObjC.release(pipeline));
+            throw e;
         }
 
         MemorySegment depthState = device.depthStencilState(MTLCompareFunction.Always, true);
@@ -122,8 +125,8 @@ public final class MetalDepthMipmapBridge {
                 MetalGpuTextureView source = new MetalGpuTextureView(texture, level - 1, 1);
                 MetalGpuTextureView destination = new MetalGpuTextureView(texture, level, 1);
                 try {
-                    int width = texture.getWidth(level);
-                    int height = texture.getHeight(level);
+                    int width = Math.max(1, texture.getWidth(level));
+                    int height = Math.max(1, texture.getHeight(level));
                     MTLRenderCommandEncoder render = encoder.renderCommandEncoder(
                             new MetalGpuTextureView[0],
                             destination,
