@@ -114,6 +114,10 @@ final class MetalGpuTexture extends GpuTexture {
         this.materializedDepthClear = null;
     }
 
+    MetalDevice device() {
+        return this.device;
+    }
+
     MemorySegment nativeHandle() {
         if (this.nativeHandle == null) {
             throw new IllegalStateException("Native Metal texture is closed");
