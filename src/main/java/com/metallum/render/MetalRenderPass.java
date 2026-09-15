@@ -28,6 +28,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.function.Supplier;
@@ -53,7 +54,7 @@ final class MetalRenderPass implements RenderPassBackend {
     private final GpuBufferSlice[] vertexBuffers = new GpuBufferSlice[MAX_VERTEX_BUFFERS];
     private final HashMap<String, GpuBufferSlice> uniforms = new HashMap<>();
     private final HashMap<String, TextureViewAndSampler> samplers = new HashMap<>();
-    private long dirtyDescriptorMask;
+    private final BitSet dirtyDescriptors = new BitSet();
     @Nullable
     private MetalCompiledRenderPipeline compiledPipeline;
     @Nullable
@@ -177,6 +178,7 @@ final class MetalRenderPass implements RenderPassBackend {
             markDescriptorDirty(name);
         } else if (textureView == null && sampler == null) {
             samplers.remove(name);
+            markDescriptorDirty(name);
         } else {
             throw new IllegalArgumentException();
         }
@@ -332,7 +334,7 @@ final class MetalRenderPass implements RenderPassBackend {
             }
 
             MTLRenderCommandEncoder enc = renderEncoder();
-            if (scissorDirty || vertexBuffersDirty || dirtyDescriptorMask != 0L || pipelineDirty) {
+            if (scissorDirty || vertexBuffersDirty || !dirtyDescriptors.isEmpty() || pipelineDirty) {
                 bindDrawState(enc);
             }
             MetalGpuBuffer nativeIndexBuffer = (MetalGpuBuffer) indexBuffer;
@@ -597,7 +599,7 @@ final class MetalRenderPass implements RenderPassBackend {
             enc.setCullMode(compiledPipeline.cullMode());
             enc.setTriangleFillMode(compiledPipeline.fillMode());
 
-            dirtyDescriptorMask |= compiledPipeline.allResourceMask();
+            dirtyDescriptors.or(compiledPipeline.allResources());
         }
 
         if (scissorDirty) {
@@ -610,15 +612,15 @@ final class MetalRenderPass implements RenderPassBackend {
             vertexBuffersDirty = false;
         }
 
-        if (dirtyDescriptorMask != 0) {
+        if (!dirtyDescriptors.isEmpty()) {
             for (MetalCompiledRenderPipeline.ResourceBinding binding : compiledPipeline.resources()) {
-                if ((dirtyDescriptorMask & (1L << binding.bindingIndex())) != 0L) {
+                if (dirtyDescriptors.get(binding.bindingIndex())) {
                     pushDescriptor(enc, binding);
                 }
             }
         }
 
-        dirtyDescriptorMask = 0L;
+        dirtyDescriptors.clear();
     }
 
     private MTLPrimitiveType primitiveTopology() {
@@ -660,7 +662,7 @@ final class MetalRenderPass implements RenderPassBackend {
         if (compiledPipeline != null) {
             MetalCompiledRenderPipeline.ResourceBinding binding = compiledPipeline.resource(name);
             if (binding != null) {
-                dirtyDescriptorMask |= 1L << binding.bindingIndex();
+                dirtyDescriptors.set(binding.bindingIndex());
             }
         }
     }
