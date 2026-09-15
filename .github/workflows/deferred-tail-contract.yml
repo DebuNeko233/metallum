@@ -1,0 +1,72 @@
+name: deferred-tail-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deferred-tail-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal Deferred MRT and colour mip prerequisites
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          backend = '\n'.join(p.read_text(encoding='utf-8') for p in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          mrt = (
+              'MemorySegment[] colorAttachments = new MemorySegment[colorTextureViews.length];',
+              'colorAttachments[index] = colorTextureView == null ? MemorySegment.NULL : colorTextureView.nativeHandle();',
+              'colorTextures[index] = colorTexture;',
+              'MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)',
+              'renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);',
+              'encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);',
+          )
+          missing=[x for x in mrt if x not in encoder]
+          if missing: raise SystemExit('Generic Metal Deferred MRT prerequisites incomplete: ' + ', '.join(missing))
+
+          sampled = (
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing=[x for x in sampled if x not in render_pass]
+          if missing: raise SystemExit('Generic Metal sampled-target prerequisites incomplete: ' + ', '.join(missing))
+
+          mip = (
+              'public boolean generateMipmaps(final GpuTexture texture)',
+              'texture.getMipLevels() <= 1',
+              'flushPendingClear(metalTexture);',
+              'blit.generateMipmapsForTexture(metalTexture.nativeHandle());',
+              'case R8_UNORM, R8_SNORM,',
+              'RGBA8_UNORM, RGBA8_SNORM,',
+              'endEncoder();',
+          )
+          missing=[x for x in mip if x not in encoder]
+          if missing: raise SystemExit('Generic Metal colour mipmap prerequisites incomplete: ' + ', '.join(missing))
+
+          for forbidden in ('deferred-mrt-contract','deferred-mipmap-contract','colortex0mipmapenabled'):
+              if forbidden in backend.lower(): raise SystemExit('Shader-pack semantics leaked into Metallum production source: ' + forbidden)
+          print('Metal Deferred tail prerequisites remain generic: indexed MRT + fenced sampling + native colour mip generation')
+          PY
+      - name: validate batched real-device launcher
+        run: |
+          bash -n tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'deferred-mrt-contract' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'deferred-mipmap-contract' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'VerifyDeferredTailScreenshot.java' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q '2 targets doubled: \[0, 1\]' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'level\\(s\\)' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'PHASE 10 deferred MRT: PASS' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -q 'PHASE 10 deferred mipmap: PASS' tools/run-vitrail-deferred-tail-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-deferred-tail-smoke.sh
