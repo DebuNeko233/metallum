@@ -3,11 +3,16 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 vitrail_root="$repo_root/../Vitrail-Shaders-Metal"
+verify_existing=false
 
 usage() {
-    echo "Usage: $0 [/path/to/Vitrail-Shaders-Metal]" >&2
+    echo "Usage: $0 [--verify-existing] [/path/to/Vitrail-Shaders-Metal]" >&2
 }
 
+if [[ ${1:-} == "--verify-existing" ]]; then
+    verify_existing=true
+    shift
+fi
 if [[ $# -gt 1 ]]; then
     usage
     exit 2
@@ -33,23 +38,25 @@ if [[ ! -f "$verifier" ]]; then
     exit 2
 fi
 
-mkdir -p "$repo_root/run/shaderpacks" "$repo_root/run"
-for fixture in "${fixtures[@]}"; do
-    source_dir="$vitrail_root/tests/fixtures/shaderpacks/$fixture"
-    target_dir="$repo_root/run/shaderpacks/$fixture"
-    if [[ ! -d "$source_dir/shaders" ]]; then
-        echo "Vitrail shadow batch fixture is missing: $source_dir" >&2
-        exit 2
-    fi
-    rm -rf "$target_dir"
-    cp -R "$source_dir" "$target_dir"
-    echo "Installed Vitrail shadow batch fixture at: $target_dir"
-done
+marker=""
+if [[ "$verify_existing" == false ]]; then
+    mkdir -p "$repo_root/run/shaderpacks" "$repo_root/run"
+    for fixture in "${fixtures[@]}"; do
+        source_dir="$vitrail_root/tests/fixtures/shaderpacks/$fixture"
+        target_dir="$repo_root/run/shaderpacks/$fixture"
+        if [[ ! -d "$source_dir/shaders" ]]; then
+            echo "Vitrail shadow batch fixture is missing: $source_dir" >&2
+            exit 2
+        fi
+        rm -rf "$target_dir"
+        cp -R "$source_dir" "$target_dir"
+        echo "Installed Vitrail shadow batch fixture at: $target_dir"
+    done
 
-marker="$repo_root/run/.vitrail-shadow-batch-smoke-start"
-touch "$marker"
+    marker="$repo_root/run/.vitrail-shadow-batch-smoke-start"
+    touch "$marker"
 
-cat <<'EOF'
+    cat <<'EOF'
 Run THREE independent PHASE 9 checkpoints in ONE Overworld client session. Every screen below is a RAW LIGHT-SPACE shadow-map diagnostic; its colored texels do not line up with the objects in front of the camera.
 
   1. Select 'shadow-entities-contract'. Keep several ordinary mobs (cows/sheep/zombies, etc.) inside the nearby shadow-map area. Wait for the shadow stage to settle. The raw map should contain GREEN entity regions and BLUE terrain regions; broad MAGENTA is failure. Press F2.
@@ -61,10 +68,17 @@ Screenshot order does not matter; the launcher classifies fresh screenshots by i
 This batch closes only shadow entities, shadow depth and shadow color. Shadow mipmaps remain a separate checkpoint because Metal D32_FLOAT mip generation needs an explicit backend path rather than the native color mipmap command.
 EOF
 
-"$repo_root/tools/run-vitrail-smoke.sh" "$vitrail_root"
+    "$repo_root/tools/run-vitrail-smoke.sh" "$vitrail_root"
+else
+    echo "Re-verifying the latest completed shadow batch without launching Minecraft."
+fi
 
 latest_log="$repo_root/run/logs/latest.log"
-if [[ ! -f "$latest_log" || ! "$latest_log" -nt "$marker" ]]; then
+if [[ ! -f "$latest_log" ]]; then
+    echo "Could not confirm the graphics backend: run/logs/latest.log was not found." >&2
+    exit 1
+fi
+if [[ "$verify_existing" == false && ! "$latest_log" -nt "$marker" ]]; then
     echo "Could not confirm the graphics backend: no latest.log from this shadow batch launch was found." >&2
     exit 1
 fi
@@ -85,8 +99,9 @@ if ! grep -qF 'Shadow map allocated at ' "$latest_log"; then
     exit 1
 fi
 
-# Entity checkpoint: a real Vitrail shadow-entity row must be selected and draw a real entity texture.
-if ! grep -qE 'Drawing the shadow_[^ ]+ entities in the shadow map pass with shadow_entities of shadow-entities-contract at render stage ENTITIES' "$latest_log"; then
+# Entity checkpoint: the log spells the geometry family as singular `entity pass`; the semantic
+# program name immediately after `with` is what proves this is the dedicated shadow_entities route.
+if ! grep -qE 'Drawing the shadow_[^ ]+ entity pass with shadow_entities of shadow-entities-contract at render stage ENTITIES' "$latest_log"; then
     echo "shadow-entities checkpoint did not record a direct shadow_entities feature draw." >&2
     exit 1
 fi
@@ -136,14 +151,28 @@ fi
 screenshots=()
 screenshot_dir="$repo_root/run/screenshots"
 if [[ -d "$screenshot_dir" ]]; then
-    while IFS= read -r -d '' candidate; do
-        if [[ "$candidate" -nt "$marker" ]]; then
-            screenshots+=("$candidate")
-        fi
-    done < <(find "$screenshot_dir" -type f -name '*.png' -print0)
+    if [[ "$verify_existing" == true ]]; then
+        while IFS= read -r logged_name; do
+            [[ -n "$logged_name" ]] || continue
+            candidate="$screenshot_dir/$logged_name"
+            if [[ -f "$candidate" ]]; then
+                screenshots+=("$candidate")
+            fi
+        done < <(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.png' "$latest_log" | sort -u)
+    else
+        while IFS= read -r -d '' candidate; do
+            if [[ "$candidate" -nt "$marker" ]]; then
+                screenshots+=("$candidate")
+            fi
+        done < <(find "$screenshot_dir" -type f -name '*.png' -print0)
+    fi
 fi
 if [[ ${#screenshots[@]} -lt 3 ]]; then
-    echo "Shadow batch requires at least three fresh F2 screenshots, one independently passing each checkpoint." >&2
+    if [[ "$verify_existing" == true ]]; then
+        echo "Shadow batch re-verification needs the three F2 screenshots named by latest.log to still exist in run/screenshots." >&2
+    else
+        echo "Shadow batch requires at least three fresh F2 screenshots, one independently passing each checkpoint." >&2
+    fi
     exit 1
 fi
 
@@ -176,7 +205,7 @@ match_mode() {
         rm -f "$output"
     done
 
-    echo "No fresh screenshot independently passed the $label verifier." >&2
+    echo "No screenshot independently passed the $label verifier." >&2
     return 1
 }
 

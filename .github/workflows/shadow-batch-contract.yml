@@ -82,7 +82,11 @@ jobs:
           grep -q -- '--entities' tools/run-vitrail-shadow-batch-smoke.sh
           grep -q -- '--depth' tools/run-vitrail-shadow-batch-smoke.sh
           grep -q -- '--color' tools/run-vitrail-shadow-batch-smoke.sh
+          grep -q -- '--verify-existing' tools/run-vitrail-shadow-batch-smoke.sh
+          grep -q 'entity pass with shadow_entities' tools/run-vitrail-shadow-batch-smoke.sh
+          ! grep -q 'entities in the shadow map pass with shadow_entities' tools/run-vitrail-shadow-batch-smoke.sh
           grep -q 'shadow_translucent chunk pass with shadow' tools/run-vitrail-shadow-batch-smoke.sh
           grep -q 'shadowcolor0 and shadowcolor1' tools/run-vitrail-shadow-batch-smoke.sh
+          grep -q 'latest completed shadow batch without launching Minecraft' tools/run-vitrail-shadow-batch-smoke.sh
           grep -q 'shadow mipmaps remain pending' tools/run-vitrail-shadow-batch-smoke.sh
           grep -Fq 'Stopping!' tools/run-vitrail-shadow-batch-smoke.sh
