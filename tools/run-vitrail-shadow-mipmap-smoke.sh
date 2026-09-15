@@ -59,16 +59,17 @@ Run the FINAL PHASE 9 shadow checkpoint:
 
   1. Select 'shadow-mipmap-contract' in Vitrail.
   2. Enter an Overworld daylight scene with ordinary opaque terrain inside the shadow-map area.
-     The screen is a diagnostic, not a camera-space picture: BLUE means LOD 0 and LOD 4 matched;
-     GREEN means a generated higher mip differs from LOD 0; MAGENTA is invalid depth.
-  3. Wait several frames for the shadow stage to settle. A real progressive nearest depth chain
-     should produce a mixture of GREEN and BLUE. If generation failed or high LOD stayed clamped
-     to level zero, the diagnostic remains BLUE and the verifier will reject it.
+     The screen is a diagnostic, not a camera-space picture: BLUE means both LOD 4 reads still
+     match their LOD 0 bases; GREEN means BOTH shadow depth chains show generated higher-mip
+     reduction; MAGENTA means invalid depth or only one of the two chains reduced.
+  3. Wait several frames for the shadow stage to settle. A real progressive nearest pair should
+     produce a mixture of GREEN and BLUE with no substantial MAGENTA. If generation failed or high
+     LOD stayed clamped to level zero, the diagnostic remains BLUE and the verifier will reject it.
   4. Press F2 once while the GREEN+BLUE diagnostic is visible, then exit normally.
 
 This fixture requests BOTH shadowtex0Mipmap and shadowtex1Mipmap. One screenshot closes neither
-name by declaration alone: the verifier requires a high-LOD difference that cannot occur while the
-sampler is clamped to level zero, and the log gate separately requires both names to be bound.
+name by declaration alone: the verifier requires the two names to show high-LOD reduction together,
+rejects one-sided generation as MAGENTA, and the log gate separately requires both names to be bound.
 EOF
 
     "$repo_root/tools/run-vitrail-smoke.sh" "$vitrail_root"
