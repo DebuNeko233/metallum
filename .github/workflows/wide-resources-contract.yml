@@ -1,0 +1,102 @@
+name: wide-resources-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wide-resources-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal wide-resource execution
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          compiler = Path('src/main/java/com/metallum/render/MetalCrossShaderCompiler.java').read_text(encoding='utf-8')
+          pipeline = Path('src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+          argument = Path('src/main/java/com/metallum/mtl/MTLArgumentEncoder.java').read_text(encoding='utf-8')
+          device = Path('src/main/java/com/metallum/mtl/MTLDevice.java').read_text(encoding='utf-8')
+          encoder = Path('src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.java').read_text(encoding='utf-8')
+          backend = '\n'.join(path.read_text(encoding='utf-8') for path in Path('src/main/java/com/metallum').rglob('*.java'))
+
+          required_compiler = (
+              'DIRECT_SAMPLER_LIMIT = 16',
+              'sampledImages > DIRECT_SAMPLER_LIMIT',
+              'supportsArgumentBuffersTier2()',
+              'SpvcMslResourceBinding',
+              'int metalIndex = useArgumentBuffers ? index * 2 : index;',
+              'int samplerIndex = useArgumentBuffers ? metalIndex + 1 : metalIndex;',
+              'SPVC_MSL_ARGUMENT_BUFFER_BINDING',
+          )
+          missing = [needle for needle in required_compiler if needle not in compiler]
+          if missing:
+              raise SystemExit('Metal wide-resource compiler contract is incomplete: ' + ', '.join(missing))
+
+          required_pipeline = (
+              'private final BitSet allResources;',
+              'uses Metal Argument Buffers: resources={}, sampledImages={}',
+              'maxArgumentBufferSamplerCount()',
+              'createArgumentBuffers(',
+              'WIDE_VERTEX_BUFFER_BASE',
+          )
+          missing = [needle for needle in required_pipeline if needle not in pipeline]
+          if missing:
+              raise SystemExit('Metal wide-resource pipeline metadata is incomplete: ' + ', '.join(missing))
+
+          required_render = (
+              'private final BitSet dirtyDescriptors = new BitSet();',
+              'layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());',
+              'layout.encoder().setSamplerState(sampler.nativeHandle(), binding.samplerMetalIndex());',
+              'enc.useResource(',
+              'RESOURCE_USAGE_SAMPLE',
+              'ensureArgumentBuffersBound(enc);',
+          )
+          missing = [needle for needle in required_render if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal argument-buffer draw routing is incomplete: ' + ', '.join(missing))
+          if '1L << binding.bindingIndex()' in render_pass or 'dirtyDescriptorMask' in render_pass:
+              raise SystemExit('Fixed-width descriptor dirty tracking returned to the Metal render pass')
+
+          required_native = (
+              'newArgumentEncoderWithBufferIndex:',
+              'setArgumentBuffer:offset:',
+              'setTexture:atIndex:',
+              'setSamplerState:atIndex:',
+          )
+          missing = [needle for needle in required_native if needle not in argument]
+          if missing:
+              raise SystemExit('MTLArgumentEncoder wrapper is incomplete: ' + ', '.join(missing))
+          if 'argumentBuffersSupport' not in device or 'maxArgumentBufferSamplerCount' not in device:
+              raise SystemExit('Metal argument-buffer capabilities are not queried from the device')
+          if 'useResource:usage:stages:' not in encoder:
+              raise SystemExit('Indirect argument-buffer resources are not declared resident to Metal')
+
+          # The backend must remain generic: the test fixture and shader-pack sampler names belong to Vitrail.
+          forbidden = ('wide-resources-contract', 'customTexture.wide', 'wide00', 'wide16')
+          leaked = [term for term in forbidden if term in backend]
+          if leaked:
+              raise SystemExit('PHASE 14 fixture semantics leaked into generic Metal execution: ' + ', '.join(leaked))
+
+          print('Metal wide resources: unbounded dirty tracking + Tier-2 argument-buffer sampling contract PASS')
+          PY
+      - name: validate PHASE 14 real-device launcher
+        run: |
+          bash -n tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'wide-resources-contract' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'VerifyWideResourcesScreenshot.java' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'sampledImages=17' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'Wide resource pipeline' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q -- '--verify-existing' tools/run-vitrail-wide-resources-smoke.sh
+          grep -q 'Batched PHASE 14 Wide Resources: PASS' tools/run-vitrail-wide-resources-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-wide-resources-smoke.sh
