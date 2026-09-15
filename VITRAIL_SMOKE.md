@@ -62,6 +62,26 @@ For `--hand-water-glint-fixture`, select `hand-water-glint-contract` and hold a 
 
 The launcher does not create or mutate inventory stacks. In particular, it does not manufacture the glinting translucent test item; prepare that held stack in the dev world before taking the screenshot.
 
+### Final PHASE 9 shadow mipmap fixture
+
+The final shadow checkpoint has its own launcher because it must prove real D32 depth mip generation rather than merely prove that the shader pack declared a mipmap directive:
+
+```sh
+./tools/run-vitrail-shadow-mipmap-smoke.sh ../Vitrail-Shaders-Metal
+```
+
+Select `shadow-mipmap-contract`, use an Overworld daylight scene with ordinary opaque terrain in the light-space walk, wait for the diagnostic to settle, press **F2 once** while the screen contains both GREEN and BLUE, and exit normally. The pack requests mip chains for both `shadowtex0` and `shadowtex1`; level zero is written with an alternating depth pattern, while the fullscreen diagnostic compares level zero with explicit LOD 4 from both names. GREEN means a readable generated higher mip differs from the base. BLUE means a valid sample happened to match. MAGENTA is invalid depth.
+
+The important negative case is an all-BLUE image: that is exactly what happens when mip generation fails or Vitrail correctly keeps the sampler clamped to level zero, and `VerifyShadowMipmapScreenshot.java` rejects it. The launcher also requires a fresh Metal log showing the requested multi-level allocations, both shadow depth samplers bound together, a real opaque shadow-terrain draw, no shadow-stage failure, and clean `Stopping!`. Only the screenshot plus those log gates together count as real-device acceptance.
+
+After a completed launch you can rerun the same log/screenshot verdict without starting Minecraft:
+
+```sh
+./tools/run-vitrail-shadow-mipmap-smoke.sh --verify-existing ../Vitrail-Shaders-Metal
+```
+
+Do not mark PHASE 9 closed from CI alone. The production path and fixture may be CI Verified while shadow mipmaps remain **Real-device Pending** until this command passes on Apple Silicon.
+
 ### Particle fixtures
 
 Opaque and translucent particles are separate schedule checkpoints. Run both independently:
