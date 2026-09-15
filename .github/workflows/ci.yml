@@ -1,4 +1,4 @@
-# One PR CI surface for Metallum. Phase/fixture contracts live in tools/ci-contracts.py
+# One PR CI surface for Metallum. Contract checks live under tools/ and run in this single job
 # so adding acceptance coverage does not create another GitHub Actions check.
 name: ci
 run-name: ${{ github.ref_name }}
@@ -60,7 +60,9 @@ jobs:
             -PvitrailSmokeJar="$RUNNER_TEMP/vitrail-smoke-fixture.jar"
 
       - name: validate consolidated Metal and Vitrail contracts
-        run: python3 tools/ci-contracts.py
+        run: |
+          python3 tools/ci-contracts.py
+          python3 tools/ci-compute-storage.py
 
       - name: build
         run: ./gradlew build
