@@ -18,6 +18,8 @@ public final class MTLSamplerDescriptor implements AutoCloseable {
     private static final Msg SET_MIP_FILTER = Msg.ofVoid("setMipFilter:", JAVA_LONG);
     private static final Msg SET_S_ADDRESS_MODE = Msg.ofVoid("setSAddressMode:", JAVA_LONG);
     private static final Msg SET_T_ADDRESS_MODE = Msg.ofVoid("setTAddressMode:", JAVA_LONG);
+    private static final Msg SET_R_ADDRESS_MODE = Msg.ofVoid("setRAddressMode:", JAVA_LONG);
+    private static final Msg SET_COMPARE_FUNCTION = Msg.ofVoid("setCompareFunction:", JAVA_LONG);
     private static final Msg SET_MAX_ANISOTROPY = Msg.ofVoid("setMaxAnisotropy:", JAVA_LONG);
     private static final Msg SET_LOD_MIN_CLAMP = Msg.ofVoid("setLodMinClamp:", JAVA_FLOAT);
     private static final Msg SET_LOD_MAX_CLAMP = Msg.ofVoid("setLodMaxClamp:", JAVA_FLOAT);
@@ -54,6 +56,14 @@ public final class MTLSamplerDescriptor implements AutoCloseable {
 
     public void tAddressMode(final MTLSamplerAddressMode mode) {
         SET_T_ADDRESS_MODE.send(handle, mode.value);
+    }
+
+    public void rAddressMode(final MTLSamplerAddressMode mode) {
+        SET_R_ADDRESS_MODE.send(handle, mode.value);
+    }
+
+    public void compareFunction(final MTLCompareFunction function) {
+        SET_COMPARE_FUNCTION.send(handle, function.value);
     }
 
     public void maxAnisotropy(final long maxAnisotropy) {
