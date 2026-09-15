@@ -63,8 +63,12 @@ grep -qE 'Using graphics backend Metal|Client setup reached on the Metal backend
     || { echo "Compute / Storage smoke did not prove Metal was active." >&2; exit 1; }
 echo "Confirmed Metal backend for PHASE 15 Compute / Storage smoke."
 
-grep -qF "Drawing $fixture from the root for minecraft:overworld" "$latest_log" \
-    || { echo "$fixture did not draw in the Overworld." >&2; exit 1; }
+# This contract lives at the pack root and carries no dimension-specific shader source. PHASE 15
+# is about generic compute/storage execution, so accept a real root-chain draw in any vanilla
+# dimension instead of coupling the checkpoint to Vitrail's diagnostic dimension label. Dimension
+# routing has its own PHASE 13 acceptance and must not make this independent phase false-negative.
+grep -qE "Drawing $fixture from the root for minecraft:(overworld|the_nether|the_end)" "$latest_log" \
+    || { echo "$fixture did not record a root-chain draw in a vanilla dimension." >&2; exit 1; }
 grep -qF 'storage buffer 0 as Phase15Buffer 16 bytes through the active GPU backend' "$latest_log" \
     || { echo "PHASE 15 named SSBO was not allocated through the active backend." >&2; exit 1; }
 grep -qF 'storage image phase15Image as phase15Tex TEXTURE_2D RGBA8 1x1' "$latest_log" \
@@ -73,8 +77,8 @@ grep -qF 'Dispatched compute composite through the active backend: groups=(1, 1,
     || { echo "First PHASE 15 compute did not dispatch as the required 1x1x1 workgroup." >&2; exit 1; }
 grep -qF 'Dispatched compute composite_a through the active backend: groups=(1, 1, 1), local=(1, 1, 1)' "$latest_log" \
     || { echo "Second PHASE 15 compute did not dispatch as the required 1x1x1 workgroup." >&2; exit 1; }
-grep -qF 'Dispatched 2 compute pass(es) at composite' "$latest_log" \
-    || { echo "The two PHASE 15 computes were not recorded at the composite boundary." >&2; exit 1; }
+grep -qF 'compute programs dispatched before the pass they hang off: [composite, composite_a]' "$latest_log" \
+    || { echo "The two PHASE 15 computes were not recorded in order at the composite boundary." >&2; exit 1; }
 grep -qE 'composite writes colortex0 (main|alt)' "$latest_log" \
     || { echo "Composite render pass did not follow the compute chain." >&2; exit 1; }
 grep -qF "final writes the game's own target" "$latest_log" \
