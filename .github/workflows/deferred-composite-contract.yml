@@ -1,0 +1,63 @@
+name: deferred-composite-contract
+run-name: ${{ github.ref_name }}
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deferred-composite-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify Apple Silicon runner
+        run: |
+          uname -a
+          test "$(uname -m)" = "arm64"
+      - name: validate generic Metal sequential render-pass ordering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          encoder = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java').read_text(encoding='utf-8')
+          render_pass = Path('src/main/java/com/metallum/render/MetalRenderPass.java').read_text(encoding='utf-8')
+
+          lifecycle = (
+              'currentRenderPass = renderPass;',
+              'currentRenderPass.materializePendingClear();',
+              'currentRenderPass = null;',
+              'MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)',
+              'endEncoder();',
+              'renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);',
+              'currentEncoder.endEncoding();',
+              'encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);',
+          )
+          missing = [needle for needle in lifecycle if needle not in encoder]
+          if missing:
+              raise SystemExit('Metal sequential render-pass contract is incomplete: ' + ', '.join(missing))
+
+          sampling = (
+              'samplers.put(name, new TextureViewAndSampler(textureView, sampler));',
+              'commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());',
+              'bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());',
+          )
+          missing = [needle for needle in sampling if needle not in render_pass]
+          if missing:
+              raise SystemExit('Metal sampled ping-pong surface routing is incomplete: ' + ', '.join(missing))
+
+          print('Metal PHASE 10A: changed render attachments close/store/fence before later sampled full-screen draws')
+          PY
+      - name: validate PHASE 10A launcher
+        run: |
+          bash -n tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q 'deferred-composite-contract' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q 'VerifyDeferredCompositeScreenshot.java' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q -- '--verify-existing' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q 'deferred writes colortex0 alt' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q 'composite writes colortex0 main' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -q 'composite1 writes colortex0 alt' tools/run-vitrail-deferred-composite-smoke.sh
+          grep -Fq "final writes the game's own target" tools/run-vitrail-deferred-composite-smoke.sh
+          grep -Fq 'Stopping!' tools/run-vitrail-deferred-composite-smoke.sh
