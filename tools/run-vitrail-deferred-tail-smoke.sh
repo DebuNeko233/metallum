@@ -60,7 +60,7 @@ done
 grep -qF 'deferred writes colortex0 alt, colortex1 alt' "$latest_log" || { echo "Deferred MRT did not write both ALT targets." >&2; exit 1; }
 grep -qF 'deferred1 writes colortex0 main, colortex1 main' "$latest_log" || { echo "Deferred MRT deferred1 did not write both MAIN targets." >&2; exit 1; }
 grep -qF 'deferred2 writes colortex0 alt, colortex1 alt' "$latest_log" || { echo "Deferred MRT deferred2 did not write both ALT targets." >&2; exit 1; }
-grep -qF '2 targets doubled: [0, 1]' "$latest_log" || { echo "Deferred MRT did not allocate both ping-pong targets." >&2; exit 1; }
+grep -q '2 targets doubled: \[0, 1\]' "$latest_log" || { echo "Deferred MRT did not allocate both ping-pong targets." >&2; exit 1; }
 grep -qE 'samplers this chain read a real colour target: .*colortex0.*colortex1' "$latest_log" || { echo "Deferred MRT did not prove both colour targets were sampled." >&2; exit 1; }
 
 # Deferred mipmap: one doubled target must carry a real chain and be sampled by the deferred readers.
