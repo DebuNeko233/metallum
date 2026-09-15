@@ -14,6 +14,10 @@ import static java.lang.foreign.ValueLayout.*;
 
 @Environment(EnvType.CLIENT)
 public final class MTLRenderCommandEncoder extends MTLCommandEncoder {
+    public static final long RESOURCE_USAGE_READ = 1L;
+    public static final long RESOURCE_USAGE_WRITE = 2L;
+    public static final long RESOURCE_USAGE_SAMPLE = 4L;
+
     private static final Msg SET_RENDER_PIPELINE_STATE = Msg.ofVoid("setRenderPipelineState:", ADDRESS);
     private static final Msg SET_DEPTH_STENCIL_STATE = Msg.ofVoid("setDepthStencilState:", ADDRESS);
     private static final Msg SET_DEPTH_BIAS = Msg.ofVoid("setDepthBias:slopeScale:clamp:", JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT);
@@ -28,6 +32,7 @@ public final class MTLRenderCommandEncoder extends MTLCommandEncoder {
     private static final Msg SET_FRAGMENT_TEXTURE = Msg.ofVoid("setFragmentTexture:atIndex:", ADDRESS, JAVA_LONG);
     private static final Msg SET_VERTEX_SAMPLER = Msg.ofVoid("setVertexSamplerState:atIndex:", ADDRESS, JAVA_LONG);
     private static final Msg SET_FRAGMENT_SAMPLER = Msg.ofVoid("setFragmentSamplerState:atIndex:", ADDRESS, JAVA_LONG);
+    private static final Msg USE_RESOURCE = Msg.ofVoid("useResource:usage:stages:", ADDRESS, JAVA_LONG, JAVA_LONG);
     private static final Msg SET_SCISSOR_RECT = Msg.ofVoid("setScissorRect:", ADDRESS);
     private static final Msg SET_VIEWPORT = Msg.ofVoid("setViewport:", ADDRESS);
     private static final Msg SET_VERTEX_BYTES = Msg.ofVoid("setVertexBytes:length:atIndex:", ADDRESS, JAVA_LONG, JAVA_LONG);
@@ -99,6 +104,11 @@ public final class MTLRenderCommandEncoder extends MTLCommandEncoder {
 
     public void setFragmentSamplerState(final MemorySegment sampler, final long index) {
         SET_FRAGMENT_SAMPLER.send(handle(), ObjC.orNil(sampler), index);
+    }
+
+    /** Declares a resource referenced indirectly through an argument buffer. */
+    public void useResource(final MemorySegment resource, final long usage, final MTLRenderStages stages) {
+        USE_RESOURCE.send(handle(), ObjC.orNil(resource), usage, stages.value);
     }
 
     public void setScissorRect(final long x, final long y, final long width, final long height) {
