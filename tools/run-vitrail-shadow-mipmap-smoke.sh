@@ -99,7 +99,7 @@ if ! grep -qE 'Shadow map allocated at .*pack asks for a chain the light fills e
     echo "Shadow mipmap smoke did not allocate the requested shadow depth mip chain." >&2
     exit 1
 fi
-if ! grep -qE 'levels where it reads shadowtex0 and [2-9][0-9]* levels where it reads shadowtex1|[2-9][0-9]* levels where it reads shadowtex0 and [2-9][0-9]* levels where it reads shadowtex1' "$latest_log"; then
+if ! grep -qE '([2-9]|[1-9][0-9]+) levels where it reads shadowtex0 and ([2-9]|[1-9][0-9]+) levels where it reads shadowtex1' "$latest_log"; then
     echo "Shadow mipmap smoke did not prove that both shadowtex0 and shadowtex1 received multi-level allocations." >&2
     exit 1
 fi
