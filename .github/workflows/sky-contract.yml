@@ -44,9 +44,9 @@ jobs:
               'drawTriangleFan(enc, firstVertex, vertexCount, instanceCount, firstInstance);',
               'private void drawTriangleFan(',
               'int triangleCount = vertexCount - 2;',
-              'indices.put((short) 0);',
-              'indices.put((short) (i + 1));',
-              'indices.put((short) (i + 2));',
+              'indices.put((short) 0)',
+              '.put((short) (i + 1))',
+              '.put((short) (i + 2))',
           )
           missing = [needle for needle in required_fan if needle not in render_pass]
           if missing:
