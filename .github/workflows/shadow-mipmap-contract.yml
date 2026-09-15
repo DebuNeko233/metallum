@@ -55,6 +55,24 @@ jobs:
 
           print('Metal D32 mip contract: progressive depth2d<float> nearest reads, per-level depth attachments, and encoder-fence boundaries remain generic')
           PY
+      - name: compile embedded depth mip Metal shader
+        run: |
+          python3 - "$RUNNER_TEMP/depth-mip.metal" <<'PY'
+          from pathlib import Path
+          import sys
+          import textwrap
+
+          source = Path('src/main/java/com/metallum/render/MetalDepthMipmapBridge.java').read_text(encoding='utf-8')
+          marker = 'private static final String DEPTH_MIP_MSL = """'
+          start = source.index(marker) + len(marker)
+          end = source.index('""";', start)
+          metal = textwrap.dedent(source[start:end]).strip() + '\n'
+          output = Path(sys.argv[1])
+          output.write_text(metal, encoding='utf-8')
+          print(metal)
+          PY
+          xcrun -sdk macosx metal -c "$RUNNER_TEMP/depth-mip.metal" -o "$RUNNER_TEMP/depth-mip.air"
+          test -s "$RUNNER_TEMP/depth-mip.air"
       - name: validate final shadow mipmap launcher
         run: |
           bash -n tools/run-vitrail-shadow-mipmap-smoke.sh
