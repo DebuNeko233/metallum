@@ -572,6 +572,11 @@ final class MetalCrossShaderCompiler {
                         "spvc_compiler_options_set_bool(MSL_TEXTURE_BUFFER_NATIVE)");
                 checkSpvc(Spvc.spvc_compiler_options_set_bool(options, Spvc.SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, true),
                         "spvc_compiler_options_set_bool(FLIP_VERTEX_Y)");
+                if (executionModel == Spv.SpvExecutionModelFragment) {
+                    checkSpvc(Spvc.spvc_compiler_options_set_bool(
+                            options, Spvc.SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, true),
+                            "spvc_compiler_options_set_bool(MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS)");
+                }
                 if (useArgumentBuffers) {
                     checkSpvc(Spvc.spvc_compiler_options_set_bool(options, Spvc.SPVC_COMPILER_OPTION_MSL_ARGUMENT_BUFFERS, true),
                             "spvc_compiler_options_set_bool(MSL_ARGUMENT_BUFFERS)");
