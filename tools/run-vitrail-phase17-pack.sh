@@ -159,19 +159,23 @@ if [[ ! -f "$latest_log" || ! "$latest_log" -nt "$marker" ]]; then
     exit 1
 fi
 
-newest_screenshot=""
+fresh_screenshots=()
 screenshot_dir="$repo_root/run/screenshots"
 if [[ -d "$screenshot_dir" ]]; then
     while IFS= read -r -d '' candidate; do
-        if [[ "$candidate" -nt "$marker" && ( -z "$newest_screenshot" || "$candidate" -nt "$newest_screenshot" ) ]]; then
-            newest_screenshot="$candidate"
+        if [[ "$candidate" -nt "$marker" ]]; then
+            fresh_screenshots+=("$candidate")
         fi
     done < <(find "$screenshot_dir" -type f -name '*.png' -print0)
 fi
-if [[ -z "$newest_screenshot" ]]; then
-    echo "PHASE 17 requires one fresh F2 screenshot from the tested real pack." >&2
+if [[ "${#fresh_screenshots[@]}" -ne 1 ]]; then
+    echo "PHASE 17 requires exactly one fresh F2 screenshot from the tested real pack; found ${#fresh_screenshots[@]}." >&2
+    if [[ "${#fresh_screenshots[@]}" -gt 1 ]]; then
+        printf '  %s\n' "${fresh_screenshots[@]}" >&2
+    fi
     exit 1
 fi
+fresh_screenshot="${fresh_screenshots[0]}"
 
 stamp="$(date '+%Y%m%d-%H%M%S')"
 safe_family="$(printf '%s' "$family" | tr -cs 'A-Za-z0-9._-' '-')"
@@ -189,11 +193,11 @@ python3 "$collector" \
     --runtime-name "$runtime_name" \
     --vitrail-head "$vitrail_head" \
     --metallum-head "$metallum_head" \
-    --screenshot "$newest_screenshot" \
+    --screenshot "$fresh_screenshot" \
     --out "$evidence_out"
 
 cp "$latest_log" "$evidence_dir/latest.log"
-cp "$newest_screenshot" "$evidence_dir/screenshot.png"
+cp "$fresh_screenshot" "$evidence_dir/screenshot.png"
 tar -czf "$bundle_out" -C "$(dirname "$evidence_dir")" "$(basename "$evidence_dir")"
 
 echo "PHASE 17 draft evidence: $evidence_out"
