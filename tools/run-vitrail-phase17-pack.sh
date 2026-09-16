@@ -196,7 +196,7 @@ python3 "$collector" \
 
 cp "$latest_log" "$evidence_dir/latest.log"
 cp "$fresh_screenshot" "$evidence_dir/screenshot.png"
-tar -czf "$bundle_out" -C "$(dirname "$evidence_dir")" "$(basename "$evidence_dir")"
+COPYFILE_DISABLE=1 tar -czf "$bundle_out" -C "$(dirname "$evidence_dir")" "$(basename "$evidence_dir")"
 
 echo "PHASE 17 draft evidence: $evidence_out"
 echo "PHASE 17 review bundle:  $bundle_out"
