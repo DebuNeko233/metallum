@@ -32,8 +32,6 @@ import java.util.regex.Pattern;
 
 @Environment(EnvType.CLIENT)
 final class MetalDevice implements GpuDeviceBackend {
-    private static final Pattern BLOCK_COMMENTS = Pattern.compile("(?s)/\\*.*?\\*/");
-    private static final Pattern LINE_COMMENTS = Pattern.compile("(?m)//[^\\n]*");
     private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final MemorySegment metalDeviceHandle;
     private final MTLDevice metalDevice;
@@ -365,8 +363,7 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     private static String prepareShaderSource(final String source, final ShaderDefines defines) {
-        String stripped = BLOCK_COMMENTS.matcher(source).replaceAll("");
-        stripped = LINE_COMMENTS.matcher(stripped).replaceAll("").stripLeading();
+        String stripped = GlslCommentStripper.strip(source).stripLeading();
         return GlslPreprocessor.injectDefines(stripped, defines);
     }
 
