@@ -9,7 +9,7 @@ required = (
     'Pattern.compile("\\\\b\\\\d+:(\\\\d+):")',
     "shaderCompileFailure(k.id(), sourceWithDefines, e)",
     'new StringBuilder("GLSL source around line ")',
-    'line == failingLine ? \">> \": \\"   \\"',
+    'line == failingLine ? ">> " : "   "',
     'String.format(Locale.ROOT, "%5d | %s", line, lines[line - 1])',
 )
 missing = [needle for needle in required if needle not in source]
