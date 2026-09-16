@@ -5,10 +5,10 @@ package com.metallum.render;
  * separated by a comment.
  * <p>
  * Comment openers overlap: {@code //*} is a line comment, not the start of a block comment at its
- * second slash. Shader packs use that spelling together with {@code //*/} as a convenient switch
- * around blocks of source. Running independent block- and line-comment regular expressions loses
- * that lexical ordering and can leave the first slash behind as live GLSL. One left-to-right scan
- * keeps the same first-token-wins rule as the language.
+ * second slash. Shader packs pair that spelling with a line-commented block closer as a convenient
+ * switch around blocks of source. Running independent block- and line-comment regular expressions
+ * loses that lexical ordering and can leave the first slash behind as live GLSL. One left-to-right
+ * scan keeps the same first-token-wins rule as the language.
  */
 final class GlslCommentStripper {
     private GlslCommentStripper() {
