@@ -64,6 +64,9 @@ jobs:
           bash -n tools/run-vitrail-phase16-smoke.sh
           bash -n tools/run-vitrail-phase17-pack.sh
           bash tools/run-vitrail-phase17-pack.sh --help >/dev/null
+          grep -F 'fresh_screenshots=()' tools/run-vitrail-phase17-pack.sh
+          grep -F 'if [[ "${#fresh_screenshots[@]}" -ne 1 ]]; then' tools/run-vitrail-phase17-pack.sh
+          grep -F 'PHASE 17 requires exactly one fresh F2 screenshot' tools/run-vitrail-phase17-pack.sh
           python3 tools/ci-contracts.py
           python3 tools/ci-compute-storage.py
 
