@@ -159,23 +159,21 @@ if [[ ! -f "$latest_log" || ! "$latest_log" -nt "$marker" ]]; then
     exit 1
 fi
 
-fresh_screenshots=()
+fresh_screenshot=""
+fresh_screenshot_count=0
 screenshot_dir="$repo_root/run/screenshots"
 if [[ -d "$screenshot_dir" ]]; then
     while IFS= read -r -d '' candidate; do
         if [[ "$candidate" -nt "$marker" ]]; then
-            fresh_screenshots+=("$candidate")
+            fresh_screenshot="$candidate"
+            fresh_screenshot_count=$((fresh_screenshot_count + 1))
         fi
     done < <(find "$screenshot_dir" -type f -name '*.png' -print0)
 fi
-if [[ "${#fresh_screenshots[@]}" -ne 1 ]]; then
-    echo "PHASE 17 requires exactly one fresh F2 screenshot from the tested real pack; found ${#fresh_screenshots[@]}." >&2
-    if [[ "${#fresh_screenshots[@]}" -gt 1 ]]; then
-        printf '  %s\n' "${fresh_screenshots[@]}" >&2
-    fi
+if [[ "$fresh_screenshot_count" -ne 1 ]]; then
+    echo "PHASE 17 requires exactly one fresh F2 screenshot from the tested real pack; found $fresh_screenshot_count." >&2
     exit 1
 fi
-fresh_screenshot="${fresh_screenshots[0]}"
 
 stamp="$(date '+%Y%m%d-%H%M%S')"
 safe_family="$(printf '%s' "$family" | tr -cs 'A-Za-z0-9._-' '-')"
