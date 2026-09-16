@@ -20,6 +20,7 @@ public final class MTLSamplerDescriptor implements AutoCloseable {
     private static final Msg SET_T_ADDRESS_MODE = Msg.ofVoid("setTAddressMode:", JAVA_LONG);
     private static final Msg SET_R_ADDRESS_MODE = Msg.ofVoid("setRAddressMode:", JAVA_LONG);
     private static final Msg SET_COMPARE_FUNCTION = Msg.ofVoid("setCompareFunction:", JAVA_LONG);
+    private static final Msg SET_SUPPORT_ARGUMENT_BUFFERS = Msg.ofVoid("setSupportArgumentBuffers:", JAVA_BOOLEAN);
     private static final Msg SET_MAX_ANISOTROPY = Msg.ofVoid("setMaxAnisotropy:", JAVA_LONG);
     private static final Msg SET_LOD_MIN_CLAMP = Msg.ofVoid("setLodMinClamp:", JAVA_FLOAT);
     private static final Msg SET_LOD_MAX_CLAMP = Msg.ofVoid("setLodMaxClamp:", JAVA_FLOAT);
@@ -64,6 +65,10 @@ public final class MTLSamplerDescriptor implements AutoCloseable {
 
     public void compareFunction(final MTLCompareFunction function) {
         SET_COMPARE_FUNCTION.send(handle, function.value);
+    }
+
+    public void supportArgumentBuffers(final boolean support) {
+        SET_SUPPORT_ARGUMENT_BUFFERS.send(handle, support);
     }
 
     public void maxAnisotropy(final long maxAnisotropy) {

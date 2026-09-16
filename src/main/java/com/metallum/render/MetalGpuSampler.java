@@ -63,6 +63,10 @@ final class MetalGpuSampler extends GpuSampler {
             if (comparison != null) {
                 descriptor.compareFunction(MTLCompareFunction.from(comparison));
             }
+            // A sampler can be rebound through Metal's direct argument table or an argument
+            // buffer depending on which compiled pipeline consumes it. Apple requires samplers
+            // referenced from argument buffers to be created with this flag; it defaults false.
+            descriptor.supportArgumentBuffers(true);
             descriptor.maxAnisotropy(Math.max(1, maxAnisotropy));
             descriptor.lodMinClamp(0.0f);
             double lodMaxClamp = toMtlMaxLodClamp(maxLod);
