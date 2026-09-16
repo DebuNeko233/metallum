@@ -69,6 +69,7 @@ jobs:
           grep -F 'if [[ "$fresh_screenshot_count" -ne 1 ]]; then' tools/run-vitrail-phase17-pack.sh
           grep -F 'PHASE 17 requires exactly one fresh F2 screenshot' tools/run-vitrail-phase17-pack.sh
           grep -F -- '--pack "$staged"' tools/run-vitrail-phase17-pack.sh
+          grep -F 'COPYFILE_DISABLE=1 tar -czf' tools/run-vitrail-phase17-pack.sh
           python3 tools/ci-contracts.py
           python3 tools/ci-compute-storage.py
 
