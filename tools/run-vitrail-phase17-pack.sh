@@ -186,7 +186,7 @@ mkdir -p "$evidence_dir"
 
 python3 "$collector" \
     --log "$latest_log" \
-    --pack "$pack_path" \
+    --pack "$staged" \
     --family "$family" \
     --name "$pack_name" \
     --version "$pack_version" \
