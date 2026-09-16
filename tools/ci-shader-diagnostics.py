@@ -6,8 +6,10 @@ import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = ROOT / "src/main/java/com/metallum/render/MetalDevice.java"
+CROSS = ROOT / "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java"
 STRIPPER = ROOT / "src/main/java/com/metallum/render/GlslCommentStripper.java"
 source = DEVICE.read_text(encoding="utf-8")
+cross_source = CROSS.read_text(encoding="utf-8")
 
 required = (
     'Pattern.compile("\\\\b\\\\d+:(\\\\d+):")',
@@ -25,6 +27,19 @@ if 'new IllegalStateException(shaderCompileFailure(k.id(), sourceWithDefines, e)
     raise SystemExit("shader compile diagnostics must preserve ShaderCompileException as the cause")
 if "BLOCK_COMMENTS" in source or "LINE_COMMENTS" in source:
     raise SystemExit("shader preparation must not use independent block/line comment regexes")
+
+pad_option = "Spvc.SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS"
+pad_index = cross_source.find(pad_option)
+if pad_index < 0:
+    raise SystemExit("Metal fragment outputs must enable SPIRV-Cross component padding")
+if cross_source.count(pad_option) != 1:
+    raise SystemExit("Metal fragment-output padding option must be configured exactly once")
+fragment_gate = "if (executionModel == Spv.SpvExecutionModelFragment)"
+gate_index = cross_source.rfind(fragment_gate, 0, pad_index)
+if gate_index < 0 or pad_index - gate_index > 300:
+    raise SystemExit("Metal fragment-output padding must be scoped to fragment MSL compilation")
+if '"spvc_compiler_options_set_bool(MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS)"' not in cross_source:
+    raise SystemExit("Metal fragment-output padding must retain a named SPIRV-Cross failure stage")
 
 harness = textwrap.dedent(
     r'''
@@ -107,4 +122,4 @@ with tempfile.TemporaryDirectory(prefix="metallum-shader-comments-") as tmp:
         check=True,
     )
 
-print("shader compile diagnostic/comment contract: PASS")
+print("shader compile diagnostic/comment/fragment-output contract: PASS")
