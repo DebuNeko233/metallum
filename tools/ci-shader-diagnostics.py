@@ -54,7 +54,7 @@ harness = textwrap.dedent(
             require("block-line-text", blockWithLineTextOut.contains("float b = 2.0;"));
             require("block-line-text", !blockWithLineTextOut.contains("text"));
 
-            String splice = "float a = 1.0; // continued \\\n/ still comment\nfloat b = 2.0;\n";
+            String splice = "float a = 1.0; // continued " + '\\' + "\n/ still comment\nfloat b = 2.0;\n";
             String spliceOut = stripSameLines("splice", splice);
             require("splice", !spliceOut.contains("still comment"));
             require("splice", spliceOut.contains("float b = 2.0;"));
