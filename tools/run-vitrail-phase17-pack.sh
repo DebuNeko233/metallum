@@ -21,7 +21,7 @@ Usage:
     [--vitrail /path/to/Vitrail-Shaders-Metal]
 
 This stages one exact real shader pack, launches the existing Vitrail-on-Metallum
-developer client, then creates a conservative PHASE 17 evidence JSON from the new
+developer client, then creates a conservative PHASE 17 evidence bundle from the new
 Metal session. It does not assign a compatibility status.
 EOF
 }
@@ -43,15 +43,18 @@ while [[ $# -gt 0 ]]; do
         --version)
             [[ $# -ge 2 ]] || { usage; exit 2; }
             pack_version="$2"; shift 2 ;;
-        --version=*) pack_version="${1#--version=}"; shift ;;
+        --version=*) pack_version="${1#--version=}"
+            shift ;;
         --runtime-name)
             [[ $# -ge 2 ]] || { usage; exit 2; }
             runtime_name="$2"; shift 2 ;;
-        --runtime-name=*) runtime_name="${1#--runtime-name=}"; shift ;;
+        --runtime-name=*) runtime_name="${1#--runtime-name=}"
+            shift ;;
         --vitrail)
             [[ $# -ge 2 ]] || { usage; exit 2; }
             vitrail_root="$2"; shift 2 ;;
-        --vitrail=*) vitrail_root="${1#--vitrail=}"; shift ;;
+        --vitrail=*) vitrail_root="${1#--vitrail=}"
+            shift ;;
         -h|--help)
             usage
             exit 0 ;;
@@ -172,7 +175,10 @@ fi
 
 stamp="$(date '+%Y%m%d-%H%M%S')"
 safe_family="$(printf '%s' "$family" | tr -cs 'A-Za-z0-9._-' '-')"
-evidence_out="$repo_root/run/vitrail/phase17/${safe_family}-${stamp}.json"
+evidence_dir="$repo_root/run/vitrail/phase17/${safe_family}-${stamp}"
+evidence_out="$evidence_dir/evidence.json"
+bundle_out="$evidence_dir.tar.gz"
+mkdir -p "$evidence_dir"
 
 python3 "$collector" \
     --log "$latest_log" \
@@ -186,5 +192,11 @@ python3 "$collector" \
     --screenshot "$newest_screenshot" \
     --out "$evidence_out"
 
+cp "$latest_log" "$evidence_dir/latest.log"
+cp "$newest_screenshot" "$evidence_dir/screenshot.png"
+tar -czf "$bundle_out" -C "$(dirname "$evidence_dir")" "$(basename "$evidence_dir")"
+
 echo "PHASE 17 draft evidence: $evidence_out"
+echo "PHASE 17 review bundle:  $bundle_out"
+echo "The bundle contains evidence.json, latest.log and screenshot.png; it does not contain the shader pack."
 echo "PHASE 17 reference/compatibility review remains pending; no public pack status was assigned."
