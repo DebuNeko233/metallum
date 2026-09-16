@@ -34,6 +34,7 @@ import java.util.regex.Pattern;
 final class MetalDevice implements GpuDeviceBackend {
     private static final Pattern BLOCK_COMMENTS = Pattern.compile("(?s)/\\*.*?\\*/");
     private static final Pattern LINE_COMMENTS = Pattern.compile("(?m)//[^\\n]*");
+    private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final MemorySegment metalDeviceHandle;
     private final MTLDevice metalDevice;
     private final CAMetalLayer metalLayer;
@@ -358,7 +359,7 @@ final class MetalDevice implements GpuDeviceBackend {
             try (GlslCompiler glslCompiler = new GlslCompiler()) {
                 return glslCompiler.createIntermediary(k.id().toDebugFileName(), sourceWithDefines, k.type());
             } catch (ShaderCompileException e) {
-                throw new IllegalStateException("Failed to compile shader " + k.id(), e);
+                throw new IllegalStateException(shaderCompileFailure(k.id(), sourceWithDefines, e), e);
             }
         });
     }
@@ -367,6 +368,42 @@ final class MetalDevice implements GpuDeviceBackend {
         String stripped = BLOCK_COMMENTS.matcher(source).replaceAll("");
         stripped = LINE_COMMENTS.matcher(stripped).replaceAll("").stripLeading();
         return GlslPreprocessor.injectDefines(stripped, defines);
+    }
+
+    private static String shaderCompileFailure(final Identifier id, final String source, final ShaderCompileException error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return "Failed to compile shader " + id;
+        }
+        var lineMatch = GLSL_ERROR_LINE.matcher(message);
+        if (!lineMatch.find()) {
+            return "Failed to compile shader " + id;
+        }
+
+        int line;
+        try {
+            line = Integer.parseInt(lineMatch.group(1));
+        } catch (NumberFormatException ignored) {
+            return "Failed to compile shader " + id;
+        }
+        return "Failed to compile shader " + id + "\n" + shaderSourceContext(source, line, 4);
+    }
+
+    private static String shaderSourceContext(final String source, final int failingLine, final int radius) {
+        String[] lines = source.split("\\R", -1);
+        if (failingLine < 1 || failingLine > lines.length) {
+            return "GLSL source line " + failingLine + " is outside the prepared source (" + lines.length + " lines)";
+        }
+
+        int first = Math.max(1, failingLine - radius);
+        int last = Math.min(lines.length, failingLine + radius);
+        StringBuilder context = new StringBuilder("GLSL source around line ").append(failingLine).append(':');
+        for (int line = first; line <= last; line++) {
+            context.append('\n')
+                    .append(line == failingLine ? ">> " : "   ")
+                    .append(String.format(Locale.ROOT, "%5d | %s", line, lines[line - 1]));
+        }
+        return context.toString();
     }
 
     MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
