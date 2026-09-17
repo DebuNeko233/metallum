@@ -144,8 +144,19 @@ final class MetalCrossShaderCompiler {
             final RenderPipeline pipeline
     ) {
         long sampledImages = entries.stream().filter(entry -> entry.type() == VulkanBindGroupEntryType.SAMPLED_IMAGE).count();
+        int vertexBindingSpan = 0;
+        VertexFormat[] vertexBindings = pipeline.getVertexFormatBindings();
+        for (int index = vertexBindings.length - 1; index >= 0; index--) {
+            if (vertexBindings[index] != null) {
+                vertexBindingSpan = index + 1;
+                break;
+            }
+        }
+        // Minecraft 26.2 returns a fixed 16-slot array here. Null slots do not consume Metal
+        // vertex-buffer table entries, so counting the array length promotes ordinary fullscreen
+        // pipelines to Argument Buffers even when their live resources fit the direct tables.
         return sampledImages > DIRECT_SAMPLER_LIMIT
-                || entries.size() + pipeline.getVertexFormatBindings().length >= 31;
+                || entries.size() + vertexBindingSpan >= 31;
     }
 
     private static void addToBindGroup(
@@ -246,7 +257,7 @@ final class MetalCrossShaderCompiler {
                         "spvc_context_create_compiler");
                 long compiler = pCompiler.get(0);
                 PointerBuffer pResources = stack.mallocPointer(1);
-                checkSpvc(Spvc.spvc_compiler_create_shader_resources(compiler, pResources), "spvc_compiler_create_shader_resources");
+                checkSpvc(Spvc.spvc_compiler_create_shader_resources(compiler, pResources), "spvc_context_create_shader_resources");
                 PointerBuffer pList = stack.mallocPointer(1);
                 PointerBuffer pCount = stack.mallocPointer(1);
                 checkSpvc(Spvc.spvc_resources_get_resource_list_for_type(pResources.get(0), resourceType, pList, pCount),
@@ -301,7 +312,7 @@ final class MetalCrossShaderCompiler {
                         "spvc_context_create_compiler");
                 long compiler = pCompiler.get(0);
                 PointerBuffer pResources = stack.mallocPointer(1);
-                checkSpvc(Spvc.spvc_compiler_create_shader_resources(compiler, pResources), "spvc_compiler_create_shader_resources");
+                checkSpvc(Spvc.spvc_compiler_create_shader_resources(compiler, pResources), "spvc_context_create_shader_resources");
                 PointerBuffer pList = stack.mallocPointer(1);
                 PointerBuffer pCount = stack.mallocPointer(1);
                 checkSpvc(Spvc.spvc_resources_get_resource_list_for_type(pResources.get(0), resourceType, pList, pCount),
