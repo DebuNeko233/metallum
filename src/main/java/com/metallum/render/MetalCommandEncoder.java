@@ -409,9 +409,17 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     @Override
     public void submitRenderPass() {
         if (currentRenderPass != null) {
+            boolean graphicsStorageImageWrites = currentRenderPass.hasGraphicsStorageImageWrites();
             currentRenderPass.materializePendingClear();
             currentRenderPass.popDebugGroup();
             currentRenderPass = null;
+
+            // Matching attachments normally let adjacent logical passes share one Metal render
+            // encoder. Storage-image writes are untracked, so end this encoder and let the existing
+            // fence update/wait chain make those writes visible before the next pass rebinds them.
+            if (graphicsStorageImageWrites) {
+                endEncoder();
+            }
         }
     }
 

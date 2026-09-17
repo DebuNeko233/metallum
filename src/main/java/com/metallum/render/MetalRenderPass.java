@@ -67,6 +67,14 @@ final class MetalRenderPass implements RenderPassBackend {
     private boolean vertexBuffersDirty = true;
     private boolean pipelineDirty = true;
 
+    /**
+     * A draw in this logical pass bound a writable storage image. Metal textures use untracked
+     * hazard tracking, so the logical pass boundary must end the native render encoder and let the
+     * existing fence chain make those shader writes visible to a later pass. This does not claim
+     * ordering between dependent draws inside the same logical RenderPass.
+     */
+    private boolean graphicsStorageImageWrites;
+
     MetalRenderPass(
             final MetalDevice device,
             final MetalCommandEncoder encoder,
@@ -733,6 +741,7 @@ final class MetalRenderPass implements RenderPassBackend {
                 throw new IllegalStateException("Missing storage image " + binding.name());
             }
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
+            noteGraphicsStorageImageWrite(textureView);
             bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());
             return;
         }
@@ -769,6 +778,7 @@ final class MetalRenderPass implements RenderPassBackend {
         if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE) {
             TextureViewAndSampler textureBinding = requiredTexture(binding.name(), "storage image");
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
+            noteGraphicsStorageImageWrite(textureView);
             forEachArgumentLayout(binding, layout -> {
                 MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
                 layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
@@ -848,6 +858,18 @@ final class MetalRenderPass implements RenderPassBackend {
         }
         commandEncoder.queueForDestroy(() -> ObjC.release(texelTexture));
         return texelTexture;
+    }
+
+    private void noteGraphicsStorageImageWrite(final MetalGpuTextureView textureView) {
+        // Compute storage-image writes invalidate this cache in MetalComputeBridge. Graphics
+        // imageStore has the same ownership effect: an old materialized clear no longer describes
+        // the texture and must not suppress a later clear of the same numeric value.
+        ((MetalGpuTexture) textureView.texture()).markContentsDirty();
+        this.graphicsStorageImageWrites = true;
+    }
+
+    boolean hasGraphicsStorageImageWrites() {
+        return this.graphicsStorageImageWrites;
     }
 
     private TextureViewAndSampler requiredTexture(final String name, final String description) {
