@@ -229,8 +229,15 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.debugOptions.useLabels();
     }
 
+    /**
+     * Compiles or finds a render pipeline under the same device monitor used by every cache the
+     * compiler can touch. Metal permits pipeline-state creation away from the render thread, but
+     * the Java caches and the mutable intermediary SPIR-V modules are shared. Serializing their
+     * mutation here makes this public entry point safe for background warm-up while command
+     * encoding remains render-thread-owned.
+     */
     @Override
-    public @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
+    public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
         return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
     }
@@ -242,7 +249,7 @@ final class MetalDevice implements GpuDeviceBackend {
      * old objects. The removed native pipelines are released by the next full cache clear, after
      * that path has waited for submitted GPU work to complete.
      */
-    public List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
+    public synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
         Objects.requireNonNull(predicate, "predicate");
 
         List<RenderPipeline> evicted = new ArrayList<>();
@@ -261,7 +268,7 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     @Override
-    public void clearPipelineCache() {
+    public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
         this.deferredPipelineReleases.forEach(MetalCompiledRenderPipeline::close);
         this.deferredPipelineReleases.clear();
@@ -278,7 +285,7 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         this.waitForSubmittedGpuWork();
         this.commandEncoder.close();
         this.clearPipelineCache();
@@ -319,7 +326,7 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.metalDevice;
     }
 
-    MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
+    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
         MemorySegment cached = depthStencilStates.get(key);
         if (cached != null) {
@@ -342,11 +349,11 @@ final class MetalDevice implements GpuDeviceBackend {
         this.commandEncoder.queueForDestroy(() -> ObjC.release(handle));
     }
 
-    MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
+    synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
         return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, this.defaultShaderSource));
     }
 
-    IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
+    synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
         ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines);
         return this.shaderCache.computeIfAbsent(key, k -> {
             String source = shaderSource.get(k.id(), k.type());
@@ -403,7 +410,7 @@ final class MetalDevice implements GpuDeviceBackend {
         return context.toString();
     }
 
-    MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
+    synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
         return this.functionCache.computeIfAbsent(
                 new MslFunctionKey(msl, entryPoint),
                 key -> this.metalDevice.newFunction(key.msl(), key.entryPoint())
