@@ -25,4 +25,17 @@ public final class MetallumApi {
     public static boolean isMetalPreferred() {
         return GraphicsApiPreferenceStore.isMetalPreferred();
     }
+
+    /**
+     * Returns whether this Metallum build guarantees that {@code GpuDevice.precompilePipeline}
+     * may be called from a background worker while rendering continues on the render thread.
+     * <p>
+     * The guarantee is deliberately narrow: it covers render-pipeline compilation and the caches
+     * that compilation owns. It does not make command encoding or arbitrary device operations
+     * thread-safe. Optional shader integrations can use this signal to move first-use pipeline
+     * compilation off the render thread without depending on Metallum implementation classes.
+     */
+    public static boolean supportsBackgroundPipelinePrecompile() {
+        return true;
+    }
 }
