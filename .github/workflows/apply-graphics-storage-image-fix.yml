@@ -22,10 +22,8 @@ jobs:
 
           render_path = Path('src/main/java/com/metallum/render/MetalRenderPass.java')
           command_path = Path('src/main/java/com/metallum/render/MetalCommandEncoder.java')
-          ci_path = Path('.github/workflows/ci.yml')
           render = render_path.read_text(encoding='utf-8')
           command = command_path.read_text(encoding='utf-8')
-          ci = ci_path.read_text(encoding='utf-8')
 
           def replace_once(text, old, new, label):
               if text.count(old) != 1:
@@ -59,23 +57,17 @@ jobs:
 
           contract = '''#!/usr/bin/env python3\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\nrender = (ROOT / "src/main/java/com/metallum/render/MetalRenderPass.java").read_text(encoding="utf-8")\ncommand = (ROOT / "src/main/java/com/metallum/render/MetalCommandEncoder.java").read_text(encoding="utf-8")\ncompute = (ROOT / "src/main/java/com/metallum/render/MetalComputeBridge.java").read_text(encoding="utf-8")\n\nif render.count("noteGraphicsStorageImageWrite(textureView);") != 2:\n    raise SystemExit("direct and argument-buffer graphics storage-image paths must both invalidate ownership state")\nfor needle in (\n    "((MetalGpuTexture) textureView.texture()).markContentsDirty();",\n    "this.graphicsStorageImageWrites = true;",\n    "boolean hasGraphicsStorageImageWrites()",\n):\n    if needle not in render:\n        raise SystemExit("missing graphics storage-image ownership contract: " + needle)\nif "((MetalGpuTexture) view.texture()).markContentsDirty();" not in compute:\n    raise SystemExit("compute storage-image writes no longer invalidate texture clear state")\n\nsubmit = command.index("public void submitRenderPass()")\nflag = command.index("currentRenderPass.hasGraphicsStorageImageWrites()", submit)\nclosed = command.index("currentRenderPass = null;", flag)\nfence = command.index("endEncoder();", closed)\nif not submit < flag < closed < fence:\n    raise SystemExit("graphics storage-image logical-pass boundary does not reach the native fence transition")\n\nfor forbidden in ("Photon", "photon", "colorimg", "gbuffers_", "shadowtex"):\n    if forbidden in render or forbidden in command:\n        raise SystemExit("graphics storage-image backend contract leaked shader-pack semantics: " + forbidden)\n\nprint("Metal graphics storage-image ownership/synchronization contract: PASS")\n'''
           Path('tools/ci-graphics-storage-images.py').write_text(contract, encoding='utf-8')
-
-          ci = replace_once(ci,
-              '          python3 tools/ci-argument-buffer-samplers.py\n',
-              '          python3 tools/ci-argument-buffer-samplers.py\n          python3 tools/ci-graphics-storage-images.py\n',
-              'consolidated CI hook')
-
           render_path.write_text(render, encoding='utf-8')
           command_path.write_text(command, encoding='utf-8')
-          ci_path.write_text(ci, encoding='utf-8')
-          Path('.github/workflows/apply-graphics-storage-image-fix.yml').unlink()
           PY
           python3 tools/ci-graphics-storage-images.py
           python3 tools/ci-argument-buffer-samplers.py
-      - name: Commit patch
+      - name: Commit source patch
         run: |
           git config user.name 'DebuNeko233'
           git config user.email '101854723+DebuNeko233@users.noreply.github.com'
-          git add -A
+          git add src/main/java/com/metallum/render/MetalRenderPass.java \
+                  src/main/java/com/metallum/render/MetalCommandEncoder.java \
+                  tools/ci-graphics-storage-images.py
           git commit -m 'fix(render): fence graphics storage image writes'
           git push origin HEAD:feat/mc26.2-mrt-foundation
