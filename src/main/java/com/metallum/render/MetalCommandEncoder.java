@@ -54,6 +54,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     @Nullable
     private AttachmentContents[] nextPassContents;
     private MemorySegment[] renderColorAttachments = new MemorySegment[0];
+    /**
+     * What the pass the live encoder was opened for said about its attachments' contents, with the
+     * default filled in. Held because it decides whether the next pass may reuse that encoder: an
+     * encoder keeps the load and store actions it was created with, so a pass whose attachments
+     * match but whose answers differ cannot share it without reading what the earlier one discarded.
+     */
+    private AttachmentContents[] renderContents = new AttachmentContents[0];
     private MemorySegment renderDepthAttachment = MemorySegment.NULL;
     private final Long2ObjectOpenHashMap<ArrayDeque<MTLBuffer>> dynamicBackingPool = new Long2ObjectOpenHashMap<>();
 
@@ -263,6 +270,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
         renderColorAttachments = new MemorySegment[0];
         renderDepthAttachment = MemorySegment.NULL;
+        renderContents = new AttachmentContents[0];
     }
 
     @Override
@@ -333,11 +341,15 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
         MemorySegment depthAttachment = depthTextureView == null ? MemorySegment.NULL : depthTextureView.nativeHandle();
         boolean hasClear = hasColorClear || clearDepth != null;
+        AttachmentContents[] stated = AttachmentContents.resolve(contents, colorTextureViews.length);
 
+        // A clear already refuses the reuse below, so the actions an encoder was created with only
+        // matter for the passes that carry no clear - and for those the answers have to match too.
         if (!hasClear
                 && currentEncoder instanceof MTLRenderCommandEncoder enc
                 && MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)
-                && MetalPipelineSupport.sameHandle(renderDepthAttachment, depthAttachment)) {
+                && MetalPipelineSupport.sameHandle(renderDepthAttachment, depthAttachment)
+                && Arrays.equals(renderContents, stated)) {
             return enc;
         }
 
@@ -353,7 +365,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MTLRenderCommandEncoder encoder = commandBuffer().makeRenderCommandEncoder(
                 colorAttachments,
                 clearColors,
-                contents,
+                stated,
                 depthAttachment,
                 clearDepth,
                 viewportWidth,
@@ -365,6 +377,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         currentEncoder = encoder;
         renderColorAttachments = colorAttachments.clone();
         renderDepthAttachment = depthAttachment;
+        renderContents = stated;
         return encoder;
     }
 

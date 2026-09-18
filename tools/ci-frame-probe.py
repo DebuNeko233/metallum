@@ -315,15 +315,15 @@ if "MetalGpuTexture" in command_buffer:
 # ---------------------------------------------------------------------------
 contents_record = read("src/main/java/com/metallum/render/AttachmentContents.java")
 require("attachment contents", command_buffer, (
-    "AttachmentContents contents = contentsOf(attachmentContents, index);",
-    "AttachmentContents.CARRIED",
+    "AttachmentContents[] stated = AttachmentContents.resolve(attachmentContents, colorTextures.length);",
+    "AttachmentContents contents = stated[index];",
     ": contents.overwritten()",
     "? MTLRenderPassDescriptor.LOAD_ACTION_DONT_CARE",
     "long storeAction = contents.readAfterwards()",
     "? MTLRenderPassDescriptor.STORE_ACTION_STORE",
     ": MTLRenderPassDescriptor.STORE_ACTION_DONT_CARE",
 ))
-if "if (contents == null || index >= contents.length || contents[index] == null) {" not in command_buffer:
+if "stated != null && index < stated.length && stated[index] != null" not in contents_record:
     raise SystemExit(
         "attachment contents: a caller that said nothing about a slot is not answered with the "
         "default, which is the one direction this capability may not get wrong"
@@ -342,6 +342,20 @@ if not read_facts < cleared < built:
         "attachment contents: what one pass was told is not read and cleared before that pass is "
         "built, so it would leak onto the next"
     )
+
+# An encoder keeps the load and store actions it was created with, so two passes may only share one
+# when their answers agree. Without this a pass that discarded its contents could hand its encoder to
+# a pass that reads them, and the second would read memory nobody wrote - a wrong image rather than a
+# slower frame, and one nothing in a log would name.
+if "&& Arrays.equals(renderContents, stated)) {" not in encoder:
+    raise SystemExit(
+        "attachment contents: the encoder-reuse decision ignores what each pass said about its "
+        "attachments, so a pass can inherit another pass's discarded contents"
+    )
+if "renderContents = stated;" not in encoder:
+    raise SystemExit("attachment contents: the answers the live encoder was opened with are not remembered")
+if "renderContents = new AttachmentContents[0];" not in encoder:
+    raise SystemExit("attachment contents: the answers outlive the encoder they described")
 
 # ---------------------------------------------------------------------------
 # Counter 3: bindings per frame, split by kind

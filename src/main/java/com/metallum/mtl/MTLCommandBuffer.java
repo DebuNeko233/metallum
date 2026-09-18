@@ -140,6 +140,10 @@ public final class MTLCommandBuffer {
             );
         }
 
+        // One answer per slot with the default filled in, so the loop below reads a fact rather
+        // than a null it has to interpret.
+        AttachmentContents[] stated = AttachmentContents.resolve(attachmentContents, colorTextures.length);
+
         boolean hasColorAttachment = false;
         for (MemorySegment colorTexture : colorTextures) {
             if (!ObjC.isNil(colorTexture)) {
@@ -164,7 +168,7 @@ public final class MTLCommandBuffer {
                     // contents read afterwards, and not assumed to be overwritten. A clear already
                     // beats the load question, because a pass that asked to be handed a colour is
                     // not asking to be handed what stood there.
-                    AttachmentContents contents = contentsOf(attachmentContents, index);
+                    AttachmentContents contents = stated[index];
                     long loadAction = clearColor != null
                             ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR
                             : contents.overwritten()
@@ -208,23 +212,6 @@ public final class MTLCommandBuffer {
             encoder.setViewport(0.0, 0.0, viewportWidth, viewportHeight, 0.0, 1.0);
             return encoder;
         }
-    }
-
-    /**
-     * What a pass said about one colour attachment, or what it is taken to mean when it said nothing.
-     * <p>
-     * Null, a short array and a null slot answer the same way, because all three are a caller with
-     * nothing to say about that slot rather than one that said its contents are finished with.
-     */
-    private static AttachmentContents contentsOf(
-            @Nullable final AttachmentContents[] contents,
-            final int index
-    ) {
-        if (contents == null || index >= contents.length || contents[index] == null) {
-            return AttachmentContents.CARRIED;
-        }
-
-        return contents[index];
     }
 
     public void clearColorDepthTexturesRegion(

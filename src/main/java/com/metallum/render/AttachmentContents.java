@@ -1,5 +1,7 @@
 package com.metallum.render;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * What a render pass needs of one colour attachment's contents.
  * <p>
@@ -32,4 +34,29 @@ public record AttachmentContents(boolean readAfterwards, boolean overwritten) {
      * not assumed to be overwritten.
      */
     public static final AttachmentContents CARRIED = new AttachmentContents(true, false);
+
+    /**
+     * One answer per colour attachment slot, with {@link #CARRIED} wherever the pass said nothing.
+     * <p>
+     * The defaulting happens here rather than at each reader, because there are two of them and they
+     * have to agree: the encoder compares one pass's answers against the next one's to decide whether
+     * the two may share a Metal encoder, and the descriptor builder turns them into load and store
+     * actions. Null, a short array and a null slot all mean the same thing at both.
+     *
+     * @param stated what the pass said, or null where it said nothing
+     * @param slots  how many colour attachment slots the pass has
+     */
+    public static AttachmentContents[] resolve(
+            @Nullable final AttachmentContents[] stated,
+            final int slots
+    ) {
+        AttachmentContents[] resolved = new AttachmentContents[slots];
+        for (int index = 0; index < slots; index++) {
+            resolved[index] = stated != null && index < stated.length && stated[index] != null
+                    ? stated[index]
+                    : CARRIED;
+        }
+
+        return resolved;
+    }
 }
