@@ -99,7 +99,7 @@ The companion Vitrail branch has an optional backend-neutral compute path that r
 
 ## Validation status
 
-The branch head is `283bf389dda9f7c84b92f57ab06b99395a0daf92`, whose code-bearing Metal head is `82a0c75e53e28390472b3c26b569cdc2335d90b4`; the commit after it changes CI only and no backend behavior. `82a0c75e` is CI-verified in the single pull-request workflow: the Apple-Silicon guard, the Vitrail runtime and configuration contracts, the consolidated Metal and Vitrail contracts, `./gradlew build` and artifact capture all complete.
+The code-bearing Metal head is `82a0c75e53e28390472b3c26b569cdc2335d90b4`. Commits after it on the branch touch documentation, CI, the contract scripts and `.gitignore` only and change no backend behavior, which is why this section names the code-bearing head rather than the branch tip: a tip that moves for those reasons would restate the same validation status on every such commit. `82a0c75e` is CI-verified in the single pull-request workflow: the Apple-Silicon guard, the Vitrail runtime and configuration contracts, the consolidated Metal and Vitrail contracts, `./gradlew build` and artifact capture all complete.
 
 `tools/ci-contracts.py` is the home for those static contracts, and `.github/workflows/ci.yml` is the only workflow that runs on a pull request. It now also refuses a workflow that could author a commit anywhere in this repository: a self-pushing one-shot helper existed here and is deleted, and the shape is refused rather than the single file, so the next one cannot be added unnoticed.
 
