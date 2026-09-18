@@ -111,6 +111,21 @@ You can also use the underlying hook directly with an already-built jar:
 
 Supplying `vitrailSmokeJar` is what adds the local Vitrail/Fabric-API runtime dependencies and the Vitrail smoke JVM property. With no property, Metallum's normal build and normal `runClient` dependency set are unchanged.
 
+## Measuring one scene twice
+
+A smoke fixture answers whether a frame is drawn; a measurement answers what it costs, and the two are taken by different tools. One run of the performance harness is a whole measurement, with nobody at the keyboard:
+
+```sh
+./tools/run-vitrail-performance.sh --pack /path/to/pack.zip --world /path/to/save \
+  --run plain --run 'elided=-Dvitrail.elideTargetTraffic=true'
+```
+
+The pack and the options file beside it are staged into `run/`, the pack selection and the Metal preference are written where the settings screen would have written them, the Loom client is launched straight into the world with `--quickPlaySingleplayer`, the frame probe is armed **only once the pack has drawn a full frame**, its 600-frame window is collected together with a screenshot, and the client is stopped by the arguments it was started with rather than by a signal to Gradle. Every run leaves `<out>/<name>/{latest.log,probe.txt,screen.png,gradle.log}`, and the runs are compared at the end by `tools/vitrail-performance-compare.py`, which parses the probe's own line rather than restating its counters; `--run` may be repeated, and the first is the baseline.
+
+Three things it does not do. It cannot play: the client is left standing where the world put it, so the picture is evidence of a plausible frame rather than of anybody's judgement of one. It cannot photograph the screen on macOS until the process it runs under has been granted Screen Recording in System Settings, so a run may report that it has no picture - the counters are unaffected. And it measures no time yet: the probe counts bytes, encoders and bindings, and the only frame rate in the log belongs to the first full frame, which is a warming window.
+
+`tools/ci-vitrail-performance.py` pins the launcher's shape, because every property it has is one a hand-run measurement has already got wrong: a window armed before the pack had drawn a frame, a pack named in the script rather than handed to it, a jar picked out of the directory that holds every branch's jar, and a run that measured the pack's own defaults instead of the options its owner had chosen.
+
 ## What counts as evidence
 
 A client reaching a world is only the entry point. Record the actual backend reported by the game and exercise the acceptance matrix in the companion PRs: indexed MRT including a hole, single-target regression, multi-binding/per-instance vertices, eligible and rejected mipmap paths, entity layout changes, SSBO and storage-image write/read visibility, true 3D storage, scratch/reanchor copies, writable `colorimgN`, compute ordering including deferred clears, descriptor remapping stress, oversized local-size refusal, depth/stencil fallback, and Vulkan regression.
