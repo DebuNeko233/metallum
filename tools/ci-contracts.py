@@ -416,10 +416,17 @@ check_launcher("tools/run-vitrail-wide-resources-smoke.sh", (
 # it, so every later push re-ran it against sources it had already patched. It is deleted, and this
 # refuses the shape rather than the file, because the next one would be written the same way.
 #
-# `release.yml` is the only workflow allowed `contents: write`, since creating a GitHub release
-# needs it; it is pinned to `v*` tags and authors no commit. Every workflow must also state its
-# `permissions:` explicitly, so none can inherit a repository default that happens to allow writes.
-# The pull-request surface stays exactly `ci.yml`, as `.github/CI_CONSOLIDATION.md` says, so
+# The guard reads each workflow instead of matching one spelling of the incident. `contents: write`
+# is not the only way to hold repository write -- `permissions: write-all` grants it without naming
+# contents, and a quoted value or a trailing comment defeats an anchored literal -- and a commit
+# does not have to be written `git commit`: `git -c user.email=... commit`, a run of spaces or a `\`
+# continuation runs the same command. A guard that knew only the literal spellings would report PASS
+# on the very file it exists to refuse.
+#
+# `release.yml` is the only workflow allowed repository content write, since creating a GitHub
+# release needs it; it is pinned to `v*` tags and authors no commit. Every workflow must also state
+# its `permissions:` explicitly, so none can inherit a repository default that happens to allow
+# writes. The pull-request surface stays exactly `ci.yml`, as `.github/CI_CONSOLIDATION.md` says, so
 # acceptance coverage cannot quietly multiply into another check.
 # ---------------------------------------------------------------------------
 workflow_dir = ROOT / ".github/workflows"
@@ -427,31 +434,105 @@ workflows = {path.name: path.read_text(encoding="utf-8") for path in sorted(work
 if not workflows:
     raise SystemExit("repository-write guard: no workflow files found under .github/workflows")
 
-# Workflow prose explains commands it does not run -- a comment reading `git push origin dev:main`
-# is documentation of a hazard, not a push -- so live YAML lines are what gets inspected.
-live = {name: "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-        for name, text in workflows.items()}
+# The git options that take a separate value, so that `git -c user.name=x commit` still reaches and
+# reports `commit` rather than stopping at the option's value.
+GIT_OPTIONS_WITH_VALUES = ("-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path")
+COMMITTING_SUBCOMMANDS = ("commit", "push")
+# Any published action that commits, pushes or opens a request on the workflow's own behalf, under
+# any owner. Naming two actions would have missed the third.
+COMMITTING_ACTION = re.compile(r"(?i)\buses:\s*[^\s#]*(commit|push|create-pull-request|add-and-commit|git-auto)")
 
-AUTOCOMMITTING = ("git commit", "git push", "git-auto-commit-action", "create-pull-request@")
-for name, text in live.items():
-    found = [needle for needle in AUTOCOMMITTING if needle in text]
-    if found:
-        raise SystemExit(
-            f"{name}: CI must not author commits, found " + ", ".join(f"`{needle}`" for needle in found)
-            + ". Delete the workflow instead of letting Actions write to a branch."
-        )
 
-no_permissions = sorted(name for name, text in workflows.items() if re.search(r"^permissions:", text, re.MULTILINE) is None)
-if no_permissions:
+def unquote(value: str) -> str:
+    """Drop a trailing comment and the quoting a YAML scalar is allowed to carry."""
+    return re.split(r"\s+#", value, maxsplit=1)[0].strip().strip("'\"")
+
+
+def without_comments(text: str) -> str:
+    """The live lines of a workflow, with continuations joined.
+
+    Workflow prose explains commands it does not run: `prefix.yml` documents the hazard it detects
+    as `git push origin origin/dev:main` in a comment, which is documentation of the gesture rather
+    than the gesture. A `\\` continuation splits one command across two lines, so it is joined here
+    as well; a line-by-line scan would otherwise see neither half as a command.
+    """
+    joined = text.replace("\\\n", " ")
+    return "\n".join(line for line in joined.splitlines() if not line.lstrip().startswith("#"))
+
+
+def git_subcommands(line: str) -> list[str]:
+    """The git subcommand each `git` invocation on this line actually runs."""
+    found = []
+    for match in re.finditer(r"\bgit\b", line):
+        tokens = line[match.end():].split()
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token in GIT_OPTIONS_WITH_VALUES:
+                index += 2
+                continue
+            if token.startswith("-"):
+                index += 1
+                continue
+            found.append(token.strip("'\";|&()"))
+            break
+    return found
+
+
+def declared_permissions(text: str) -> dict[str, str] | None:
+    """The workflow-level `permissions:` mapping, or None when a workflow declares none."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r"^permissions:", line) is None:
+            continue
+        inline = unquote(line.split(":", 1)[1])
+        if inline:
+            if inline in ("{}", "read-all"):
+                return {}
+            if inline == "write-all":
+                # Every scope, contents included, without ever naming `contents`.
+                return {"contents": "write"}
+            raise SystemExit(f"repository-write guard: unrecognised `permissions: {inline}`")
+        granted = {}
+        for follower in lines[index + 1:]:
+            if follower.strip() and follower[:1] not in (" ", "\t"):
+                break
+            key, separator, value = follower.strip().partition(":")
+            if separator and key.strip():
+                granted[key.strip()] = unquote(value)
+        return granted
+    return None
+
+
+live = {name: without_comments(text) for name, text in workflows.items()}
+permissions = {name: declared_permissions(text) for name, text in workflows.items()}
+
+missing_permissions = sorted(name for name, granted in permissions.items() if granted is None)
+if missing_permissions:
     raise SystemExit(
         "repository-write guard: every workflow must declare `permissions:` explicitly so it cannot "
-        "inherit a repository default that permits writes; missing in: " + ", ".join(no_permissions)
+        "inherit a repository default that permits writes; missing in: " + ", ".join(missing_permissions)
     )
 
-writers = sorted(name for name, text in workflows.items() if re.search(r"^\s+contents:\s*write\s*$", text, re.MULTILINE))
+for name, body in live.items():
+    for line in body.splitlines():
+        committed = [subcommand for subcommand in git_subcommands(line) if subcommand in COMMITTING_SUBCOMMANDS]
+        if committed:
+            raise SystemExit(
+                f"{name}: CI must not author commits, found `git {'` and `git '.join(committed)}` in "
+                f"`{line.strip()}`. Delete the workflow instead of letting Actions write to a branch."
+            )
+    action = COMMITTING_ACTION.search(body)
+    if action is not None:
+        raise SystemExit(
+            f"{name}: CI must not author commits, found `{action.group().strip()}`, which commits or "
+            "opens a request on this workflow's behalf. Delete it instead."
+        )
+
+writers = sorted(name for name, granted in permissions.items() if granted.get("contents") == "write")
 if writers != ["release.yml"]:
     raise SystemExit(
-        "repository-write guard: `contents: write` is reserved for release.yml, found: "
+        "repository-write guard: repository content write is reserved for release.yml, found: "
         + (", ".join(writers) if writers else "none")
     )
 
@@ -463,5 +544,24 @@ if pull_request_surface != ["ci.yml"]:
     )
 
 print(f"Repository-write guard: PASS ({len(workflows)} workflows, pull-request surface ci.yml, no CI-authored commits)")
+
+# ---------------------------------------------------------------------------
+# Contract-runner guard
+#
+# A contract script that no workflow names is not a contract. `tools/ci-graphics-storage-images.py`
+# was reached only by a one-shot workflow, so deleting that workflow left the script in the tree
+# asserting nothing -- still reviewed, still green when run by hand, and enforcing nothing. Every
+# `tools/ci-*.py` must be named by the workflow that runs the pull-request contracts.
+# ---------------------------------------------------------------------------
+ci_workflow = read(".github/workflows/ci.yml")
+contract_scripts = sorted(path.name for path in sorted((ROOT / "tools").glob("ci-*.py")))
+unnamed_contracts = [name for name in contract_scripts if f"tools/{name}" not in ci_workflow]
+if unnamed_contracts:
+    raise SystemExit(
+        "contract-runner guard: these contract scripts are named by no workflow, so they assert "
+        "nothing: " + ", ".join(unnamed_contracts) + ". Name each in ci.yml or delete it."
+    )
+
+print(f"Contract-runner guard: PASS ({len(contract_scripts)} contract scripts, all named by ci.yml)")
 
 print("Consolidated Metallum CI contracts: PASS")
