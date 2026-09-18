@@ -3,6 +3,7 @@ package com.metallum.mtl;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
+import com.metallum.render.AttachmentContents;
 import com.metallum.render.MetalFrameProbe;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -89,6 +90,7 @@ public final class MTLCommandBuffer {
         return makeRenderCommandEncoder(
                 colorTextures,
                 clearColors,
+                null,
                 depthTexture,
                 clearDepth,
                 viewportWidth,
@@ -101,15 +103,20 @@ public final class MTLCommandBuffer {
     /**
      * Builds the attachment descriptor and the encoder that encodes into it.
      *
-     * @param colorPixelSizes bytes per pixel of each color attachment, in attachment order, and zero
-     *                        where the caller could not determine it; the frame probe counts an
-     *                        attachment it cannot size as nothing rather than as a guess
-     * @param depthPixelSize  bytes per pixel of the depth attachment, or zero when it cannot be
-     *                        determined
+     * @param attachmentContents what the pass said about each colour attachment's contents, by slot,
+     *                           or null where it said nothing and every slot is
+     *                           {@link AttachmentContents#CARRIED}. Shorter than the attachment list
+     *                           is the same as saying nothing about the slots past its end
+     * @param colorPixelSizes   bytes per pixel of each color attachment, in attachment order, and zero
+     *                          where the caller could not determine it; the frame probe counts an
+     *                          attachment it cannot size as nothing rather than as a guess
+     * @param depthPixelSize    bytes per pixel of the depth attachment, or zero when it cannot be
+     *                          determined
      */
     public MTLRenderCommandEncoder makeRenderCommandEncoder(
             final MemorySegment[] colorTextures,
             @Nullable final Vector4fc[] clearColors,
+            @Nullable final AttachmentContents[] attachmentContents,
             final MemorySegment depthTexture,
             @Nullable final Double clearDepth,
             final double viewportWidth,
@@ -153,10 +160,19 @@ public final class MTLCommandBuffer {
                         continue;
                     }
                     Vector4fc clearColor = clearColors == null ? null : clearColors[index];
+                    // What the pass said about this attachment, or the answer that changes nothing:
+                    // contents read afterwards, and not assumed to be overwritten. A clear already
+                    // beats the load question, because a pass that asked to be handed a colour is
+                    // not asking to be handed what stood there.
+                    AttachmentContents contents = contentsOf(attachmentContents, index);
                     long loadAction = clearColor != null
                             ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR
-                            : MTLRenderPassDescriptor.LOAD_ACTION_LOAD;
-                    long storeAction = MTLRenderPassDescriptor.STORE_ACTION_STORE;
+                            : contents.overwritten()
+                                    ? MTLRenderPassDescriptor.LOAD_ACTION_DONT_CARE
+                                    : MTLRenderPassDescriptor.LOAD_ACTION_LOAD;
+                    long storeAction = contents.readAfterwards()
+                            ? MTLRenderPassDescriptor.STORE_ACTION_STORE
+                            : MTLRenderPassDescriptor.STORE_ACTION_DONT_CARE;
                     // The probe is handed the attachment itself rather than a byte count, so that an
                     // unarmed launch pays one field read here and never asks Metal for a width.
                     MetalFrameProbe.attachment(
@@ -192,6 +208,23 @@ public final class MTLCommandBuffer {
             encoder.setViewport(0.0, 0.0, viewportWidth, viewportHeight, 0.0, 1.0);
             return encoder;
         }
+    }
+
+    /**
+     * What a pass said about one colour attachment, or what it is taken to mean when it said nothing.
+     * <p>
+     * Null, a short array and a null slot answer the same way, because all three are a caller with
+     * nothing to say about that slot rather than one that said its contents are finished with.
+     */
+    private static AttachmentContents contentsOf(
+            @Nullable final AttachmentContents[] contents,
+            final int index
+    ) {
+        if (contents == null || index >= contents.length || contents[index] == null) {
+            return AttachmentContents.CARRIED;
+        }
+
+        return contents[index];
     }
 
     public void clearColorDepthTexturesRegion(

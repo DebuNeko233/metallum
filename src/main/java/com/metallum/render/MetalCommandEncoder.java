@@ -46,6 +46,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private MTLCommandBuffer commandBuffer;
     @Nullable
     private MTLCommandEncoder currentEncoder;
+    /**
+     * What the next render pass will say about its colour attachments' contents, or null where
+     * nothing has been said and every attachment is {@link AttachmentContents#CARRIED}. Read once and
+     * cleared by that pass, so a pass nobody described gets the answer that changes nothing.
+     */
+    @Nullable
+    private AttachmentContents[] nextPassContents;
     private MemorySegment[] renderColorAttachments = new MemorySegment[0];
     private MemorySegment renderDepthAttachment = MemorySegment.NULL;
     private final Long2ObjectOpenHashMap<ArrayDeque<MTLBuffer>> dynamicBackingPool = new Long2ObjectOpenHashMap<>();
@@ -303,6 +310,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             final int viewportWidth,
             final int viewportHeight,
             final Vector4fc[] clearColors,
+            @Nullable final AttachmentContents[] contents,
             @Nullable final Double clearDepth
     ) {
         if (colorTextureViews.length > MAX_COLOR_ATTACHMENTS) {
@@ -345,6 +353,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MTLRenderCommandEncoder encoder = commandBuffer().makeRenderCommandEncoder(
                 colorAttachments,
                 clearColors,
+                contents,
                 depthAttachment,
                 clearDepth,
                 viewportWidth,
@@ -357,6 +366,27 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         renderColorAttachments = colorAttachments.clone();
         renderDepthAttachment = depthAttachment;
         return encoder;
+    }
+
+    /**
+     * Says what the next render pass created on this encoder needs of each of its colour
+     * attachments, by slot.
+     * <p>
+     * The public descriptor carries how an attachment is loaded and nothing about what becomes of it
+     * when the pass ends, which on a tile-based GPU is the other half of the same bill. So a pass may
+     * say, per slot, whether anything reads its contents afterwards and whether the pass writes every
+     * pixel of them anyway; see {@link AttachmentContents} for why the answer nobody gives is the one
+     * that changes nothing.
+     * <p>
+     * Read once and cleared by {@code createRenderPass}, so what is set here belongs to one pass and
+     * cannot leak onto the next. No Metallum pass sets it today: every render pass this backend
+     * creates for itself goes through the same call and takes the default.
+     *
+     * @param contents one entry per colour attachment slot, or null to say nothing. A shorter array,
+     *                 or a null slot in it, says nothing about the slots it does not reach
+     */
+    public void setNextPassContents(@Nullable final AttachmentContents[] contents) {
+        this.nextPassContents = contents;
     }
 
     @Override
@@ -421,6 +451,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
         assert descriptor.renderArea != null;
         RenderPass.RenderArea renderArea = descriptor.renderArea;
+        // Taken before the pass is built, so what this pass was told cannot be read by the next one.
+        AttachmentContents[] passContents = this.nextPassContents;
+        this.nextPassContents = null;
         MetalRenderPass renderPass = new MetalRenderPass(
                 device,
                 this,
@@ -429,6 +462,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 depthTexture,
                 renderArea,
                 colorClears,
+                passContents,
                 depthClear
         );
         currentRenderPass = renderPass;

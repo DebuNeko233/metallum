@@ -49,6 +49,13 @@ final class MetalRenderPass implements RenderPassBackend {
     private final int targetWidth;
     private final int targetHeight;
     private final Vector4fc[] clearColors;
+    /**
+     * What the pass said about each colour attachment's contents, by slot, or null where it said
+     * nothing and every slot is {@link AttachmentContents#CARRIED}. Held rather than read once
+     * because the encoder that spends it is opened on the first draw, not here.
+     */
+    @Nullable
+    private final AttachmentContents[] contents;
     @Nullable
     private Double clearDepth;
     private final ScissorState scissorState = new ScissorState();
@@ -83,6 +90,7 @@ final class MetalRenderPass implements RenderPassBackend {
             @Nullable final GpuTextureView depthTexture,
             final RenderPass.RenderArea renderArea,
             final Vector4fc[] clearColors,
+            @Nullable final AttachmentContents[] contents,
             @Nullable final Double clearDepth
     ) {
         if (colorTextures.length != clearColors.length) {
@@ -97,6 +105,7 @@ final class MetalRenderPass implements RenderPassBackend {
         this.depthTexture = depthTexture;
         this.renderArea = renderArea;
         this.clearColors = clearColors.clone();
+        this.contents = contents == null ? null : contents.clone();
         this.clearDepth = clearDepth;
 
         int width = -1;
@@ -421,7 +430,7 @@ final class MetalRenderPass implements RenderPassBackend {
         }
         MetalGpuTextureView depthTextureView = depthTexture == null ? null : (MetalGpuTextureView) depthTexture;
         MTLRenderCommandEncoder encoder = commandEncoder.renderCommandEncoder(
-                colorTextureViews, depthTextureView, targetWidth, targetHeight, clearColors, clearDepth
+                colorTextureViews, depthTextureView, targetWidth, targetHeight, clearColors, contents, clearDepth
         );
         Arrays.fill(clearColors, null);
         clearDepth = null;

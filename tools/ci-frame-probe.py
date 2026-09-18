@@ -302,6 +302,48 @@ if "MetalGpuTexture" in command_buffer:
     raise SystemExit("attachment byte counter: the MTL layer must stay a handle layer and not learn Minecraft texture types")
 
 # ---------------------------------------------------------------------------
+# What a pass may say about an attachment's contents
+#
+# The two actions above are a decision rather than a constant, and the decision is reached from two
+# facts the caller may state per attachment: whether anything reads its contents afterwards, and
+# whether this pass writes every pixel of them anyway. The public descriptor carries neither, which
+# is why the capability exists at all.
+#
+# The direction that matters is the fallback. A wrong DontCare is not a slower frame, it is a wrong
+# image that reads as a shader-pack defect, so every answer nobody gave - no array, a short array, a
+# null slot - has to come back as the one that changes nothing.
+# ---------------------------------------------------------------------------
+contents_record = read("src/main/java/com/metallum/render/AttachmentContents.java")
+require("attachment contents", command_buffer, (
+    "AttachmentContents contents = contentsOf(attachmentContents, index);",
+    "AttachmentContents.CARRIED",
+    ": contents.overwritten()",
+    "? MTLRenderPassDescriptor.LOAD_ACTION_DONT_CARE",
+    "long storeAction = contents.readAfterwards()",
+    "? MTLRenderPassDescriptor.STORE_ACTION_STORE",
+    ": MTLRenderPassDescriptor.STORE_ACTION_DONT_CARE",
+))
+if "if (contents == null || index >= contents.length || contents[index] == null) {" not in command_buffer:
+    raise SystemExit(
+        "attachment contents: a caller that said nothing about a slot is not answered with the "
+        "default, which is the one direction this capability may not get wrong"
+    )
+if "public static final AttachmentContents CARRIED = new AttachmentContents(true, false);" not in contents_record:
+    raise SystemExit("attachment contents: the default is no longer the answer that changes nothing")
+require("attachment contents fact", encoder, (
+    "private AttachmentContents[] nextPassContents;",
+    "public void setNextPassContents(@Nullable final AttachmentContents[] contents)",
+))
+read_facts = encoder.index("AttachmentContents[] passContents = this.nextPassContents;")
+cleared = encoder.index("this.nextPassContents = null;", read_facts)
+built = encoder.index("new MetalRenderPass(", read_facts)
+if not read_facts < cleared < built:
+    raise SystemExit(
+        "attachment contents: what one pass was told is not read and cleared before that pass is "
+        "built, so it would leak onto the next"
+    )
+
+# ---------------------------------------------------------------------------
 # Counter 3: bindings per frame, split by kind
 #
 # One increment per resource or state pushed at the moment it reaches Metal, so a direct bind, an

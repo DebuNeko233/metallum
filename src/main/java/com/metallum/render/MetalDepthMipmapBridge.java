@@ -143,6 +143,7 @@ public final class MetalDepthMipmapBridge {
                             width,
                             height,
                             new Vector4fc[0],
+                            null,
                             null
                     );
                     render.setRenderPipelineState(pipeline);
