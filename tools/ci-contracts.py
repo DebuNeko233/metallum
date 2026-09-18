@@ -407,4 +407,61 @@ check_launcher("tools/run-vitrail-wide-resources-smoke.sh", (
     "--verify-existing", "Batched PHASE 14 Wide Resources: PASS", "Stopping!",
 ))
 
+# ---------------------------------------------------------------------------
+# Repository-write guard
+#
+# CI runs with a token that can write to this repository, and a workflow that commits becomes an
+# author on a branch. `.github/workflows/apply-graphics-storage-image-fix.yml` did exactly that: it
+# rewrote two source files, committed them and pushed the result back to the branch that triggered
+# it, so every later push re-ran it against sources it had already patched. It is deleted, and this
+# refuses the shape rather than the file, because the next one would be written the same way.
+#
+# `release.yml` is the only workflow allowed `contents: write`, since creating a GitHub release
+# needs it; it is pinned to `v*` tags and authors no commit. Every workflow must also state its
+# `permissions:` explicitly, so none can inherit a repository default that happens to allow writes.
+# The pull-request surface stays exactly `ci.yml`, as `.github/CI_CONSOLIDATION.md` says, so
+# acceptance coverage cannot quietly multiply into another check.
+# ---------------------------------------------------------------------------
+workflow_dir = ROOT / ".github/workflows"
+workflows = {path.name: path.read_text(encoding="utf-8") for path in sorted(workflow_dir.glob("*.y*ml"))}
+if not workflows:
+    raise SystemExit("repository-write guard: no workflow files found under .github/workflows")
+
+# Workflow prose explains commands it does not run -- a comment reading `git push origin dev:main`
+# is documentation of a hazard, not a push -- so live YAML lines are what gets inspected.
+live = {name: "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        for name, text in workflows.items()}
+
+AUTOCOMMITTING = ("git commit", "git push", "git-auto-commit-action", "create-pull-request@")
+for name, text in live.items():
+    found = [needle for needle in AUTOCOMMITTING if needle in text]
+    if found:
+        raise SystemExit(
+            f"{name}: CI must not author commits, found " + ", ".join(f"`{needle}`" for needle in found)
+            + ". Delete the workflow instead of letting Actions write to a branch."
+        )
+
+no_permissions = sorted(name for name, text in workflows.items() if re.search(r"^permissions:", text, re.MULTILINE) is None)
+if no_permissions:
+    raise SystemExit(
+        "repository-write guard: every workflow must declare `permissions:` explicitly so it cannot "
+        "inherit a repository default that permits writes; missing in: " + ", ".join(no_permissions)
+    )
+
+writers = sorted(name for name, text in workflows.items() if re.search(r"^\s+contents:\s*write\s*$", text, re.MULTILINE))
+if writers != ["release.yml"]:
+    raise SystemExit(
+        "repository-write guard: `contents: write` is reserved for release.yml, found: "
+        + (", ".join(writers) if writers else "none")
+    )
+
+pull_request_surface = sorted(name for name, text in workflows.items() if re.search(r"^\s+pull_request:", text, re.MULTILINE))
+if pull_request_surface != ["ci.yml"]:
+    raise SystemExit(
+        "repository-write guard: `.github/CI_CONSOLIDATION.md` keeps the pull-request surface to ci.yml, found: "
+        + (", ".join(pull_request_surface) if pull_request_surface else "none")
+    )
+
+print(f"Repository-write guard: PASS ({len(workflows)} workflows, pull-request surface ci.yml, no CI-authored commits)")
+
 print("Consolidated Metallum CI contracts: PASS")
