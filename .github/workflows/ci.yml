@@ -73,6 +73,7 @@ jobs:
           python3 tools/ci-contracts.py
           python3 tools/ci-argument-buffer-samplers.py
           python3 tools/ci-compute-storage.py
+          python3 tools/ci-graphics-storage-images.py
           python3 tools/ci-shader-diagnostics.py
 
       - name: build
