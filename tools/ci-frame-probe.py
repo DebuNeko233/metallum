@@ -8,6 +8,7 @@ Every assertion here fails the build rather than reporting a warning, for the sa
 Metal for a texture width on the unarmed path, is a behaviour change nobody would see in a diff.
 """
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE_PATH = "src/main/java/com/metallum/render/MetalFrameProbe.java"
@@ -21,6 +22,19 @@ def require(label: str, text: str, needles: tuple[str, ...]) -> None:
     missing = [needle for needle in needles if needle not in text]
     if missing:
         raise SystemExit(f"{label}: missing " + ", ".join(missing))
+
+
+def order(text: str, first: str, second: str, why: str) -> None:
+    """Refuse unless both are present and `first` comes before `second`.
+
+    Presence is checked rather than left to `str.index`, so a token an edit deleted is reported as
+    the defect it is instead of as a traceback from this file.
+    """
+    for needle in (first, second):
+        if needle not in text:
+            raise SystemExit(f"{why} -- {needle!r} is not in the shape at all")
+    if not text.index(first) < text.index(second):
+        raise SystemExit(why)
 
 
 probe = read(PROBE_PATH)
@@ -59,10 +73,17 @@ if probe.index("if (armedFromFile == null) {") > probe.index("armedFromFile = ma
 # ---------------------------------------------------------------------------
 # A window opens on the marker's return, and nowhere else can open one
 #
-# One ask site, reached from the frame boundary alone, skipped when the property already answered for
-# the launch, and gated on the answer changing rather than on the marker being there -- a marker left
-# in place after its window would otherwise arm window after window and fill a disk, which is the one
-# thing the budget exists to prevent.
+# One ask site, reached from the unarmed path of the frame boundary alone, skipped when the property
+# already answered for the launch, and gated on the answer changing rather than on the marker being
+# there -- a marker left in place after its window would otherwise arm window after window and fill a
+# disk, which is the one thing the budget exists to prevent.
+#
+# These are orderings and not appearances on purpose. Every property below is a claim about which
+# branch runs, and every one of them can be broken by an edit that keeps each token exactly where a
+# substring search wants it: dropping the interval's reset makes it ask on every frame, moving the
+# call onto the counting path makes a running window end silently and a late marker never arm, and
+# hoisting the reset above the transition opens a window every interval for the rest of the session.
+# Each of those was written, seen to pass this file as it stood, and is refused below.
 # ---------------------------------------------------------------------------
 if probe.count("askAgain();") != 1:
     raise SystemExit(
@@ -71,29 +92,87 @@ if probe.count("askAgain();") != 1:
     )
 frame_start = probe.index("public static void frameSubmitted() {")
 frame_body = probe[frame_start:probe.index("public static void attachment(", frame_start)]
-if "askAgain();" not in frame_body:
+# Whitespace is not part of the contract, but the branch is: the ask has to be the first thing the
+# unarmed path does and it has to return, not sit somewhere between the guard and the counting.
+if "if (!armed()) { askAgain(); return;" not in " ".join(frame_body.split()):
     raise SystemExit(
-        "frame probe: the marker is not asked again at the frame boundary, so a window can only be "
-        "opened by a frame that has not been drawn yet"
+        "frame probe: the frame boundary does not ask the marker and return when the probe is off, "
+        "so a marker that appears late never arms, or a running window is cut short with its counts "
+        "stranded"
     )
 if probe.count("private static void askAgain() {") != 1:
     raise SystemExit("frame probe: there is no single method that opens a window")
 ask_start = probe.index("private static void askAgain() {")
 ask_body = probe[ask_start:probe.index("\n    }", ask_start)]
-if ask_body.index("markerPresent()") < ask_body.index("if (FLAG) {"):
-    raise SystemExit("frame probe: an armed launch asks the marker, which the property already answered for it")
-if "private static final int ASK_EVERY_FRAMES = " not in probe:
+order(
+    ask_body,
+    "if (FLAG) {",
+    "markerPresent()",
+    "frame probe: an armed launch asks the marker, which the property already answered for it",
+)
+
+# The interval: counted, gated, reset, and about a second. A constant nobody resets is a gate that is
+# true once and open forever after, which is a stat per frame rather than the documented one a second.
+interval = re.search(r"private static final int ASK_EVERY_FRAMES = (\d+);", probe)
+if interval is None:
     raise SystemExit("frame probe: the interval the marker is asked on while off is not a named constant")
-if "framesSinceAsk < ASK_EVERY_FRAMES" not in ask_body:
-    raise SystemExit("frame probe: the marker is asked on every frame the probe is off")
-for needle, why in (
-    ("if (present == marker()) {", "a window is opened on the marker being there rather than on its return"),
-    ("armedFromFile = present;", "the answer just read is not the one held for the next ask to compare against"),
-    ("frames = 0;", "a second window inherits the spent budget of the first"),
-    ("announced = false;", "a second window keeps the first window's announcement and logs no arm line"),
-):
-    if needle not in ask_body:
-        raise SystemExit(f"frame probe: {why}")
+if not 30 <= int(interval.group(1)) <= 600:
+    raise SystemExit(
+        "frame probe: the marker is not asked about once a second -- the interval is "
+        f"{interval.group(1)} frames, which is a frame's work or a minute's"
+    )
+order(
+    ask_body,
+    "++framesSinceAsk < ASK_EVERY_FRAMES",
+    "framesSinceAsk = 0;",
+    "frame probe: the ask interval is counted but never reset, so the gate is true once and the "
+    "marker is asked on every frame after it",
+)
+
+# The answer is read, compared with the one held, and only then held. Comparing after the overwrite
+# is always true and opens no window ever; holding without comparing opens one on the marker simply
+# being there, which is the whole defect this shape replaces.
+order(
+    ask_body,
+    "markerPresent()",
+    "if (present == marker()) {",
+    "frame probe: the marker's answer is not read before it is compared with the one held",
+)
+order(
+    ask_body,
+    "if (present == marker()) {",
+    "armedFromFile = present;",
+    "frame probe: the answer is held before it is compared with the one held, so the comparison is "
+    "always true and no window ever opens",
+)
+
+# A window's reset lives behind that comparison. Above it, a marker left in place opens a window
+# every interval for the whole session, which is the disk the budget exists to protect.
+order(
+    ask_body,
+    "if (present == marker()) {",
+    "frames = 0;",
+    "frame probe: a window's budget is reset without the marker having changed, so a marker left in "
+    "place opens window after window",
+)
+order(
+    ask_body,
+    "if (present == marker()) {",
+    "if (present) {",
+    "frame probe: a window is opened without the marker having come back first",
+)
+order(
+    ask_body,
+    "if (present) {",
+    "frames = 0;",
+    "frame probe: a window's budget is reset outside the branch that opens it",
+)
+order(
+    ask_body,
+    "if (present) {",
+    "announced = false;",
+    "frame probe: the announcement is cleared outside the window being opened",
+)
 
 # The budget is what keeps an armed launch from filling a disk, and the line is a window rather
 # than a frame, so the two are both pinned.
