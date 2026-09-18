@@ -451,6 +451,7 @@ final class MetalRenderPass implements RenderPassBackend {
             }
             MetalGpuBuffer nativeVertexBuffer = (MetalGpuBuffer) vertexBuffer.buffer();
             int metalSlot = firstSlot + slot;
+            MetalFrameProbe.bufferBound();
             enc.setVertexBuffer(nativeVertexBuffer.metalBuffer(), vertexBuffer.offset(), metalSlot);
         }
     }
@@ -534,6 +535,7 @@ final class MetalRenderPass implements RenderPassBackend {
             final long index,
             final int stageMask
     ) {
+        MetalFrameProbe.bufferBound();
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexBuffer(buffer, offset, index);
         }
@@ -548,6 +550,7 @@ final class MetalRenderPass implements RenderPassBackend {
             final long index,
             final int stageMask
     ) {
+        MetalFrameProbe.textureBound();
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexTexture(texture, index);
         }
@@ -563,6 +566,10 @@ final class MetalRenderPass implements RenderPassBackend {
             final long index,
             final int stageMask
     ) {
+        // One of each because the two can never be counted apart here: this helper exists for the
+        // bindings that always carry a sampler.
+        MetalFrameProbe.textureBound();
+        MetalFrameProbe.samplerBound();
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexTexture(texture, index);
             enc.setVertexSamplerState(sampler, index);
@@ -581,6 +588,8 @@ final class MetalRenderPass implements RenderPassBackend {
             final long samplerIndex,
             final int stageMask
     ) {
+        MetalFrameProbe.textureBound();
+        MetalFrameProbe.samplerBound();
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexTexture(texture, textureIndex);
             enc.setVertexSamplerState(sampler, samplerIndex);
@@ -608,6 +617,7 @@ final class MetalRenderPass implements RenderPassBackend {
             if (ObjC.isNil(pipelineHandle)) {
                 throw new IllegalStateException("Native pipeline is unavailable");
             }
+            MetalFrameProbe.pipelineBound();
             enc.setRenderPipelineState(pipelineHandle);
             pipelineDirty = false;
             if (useDepth) {
@@ -653,6 +663,7 @@ final class MetalRenderPass implements RenderPassBackend {
     }
 
     private void pushEffectiveScissor(final MTLRenderCommandEncoder enc) {
+        MetalFrameProbe.scissorSet();
         int areaLeft = renderArea.x();
         int areaTop = renderArea.y();
         if (!scissorState.enabled()) {
@@ -701,8 +712,10 @@ final class MetalRenderPass implements RenderPassBackend {
             }
             layout.encoder().setArgumentBuffer(buffer, 0L);
             if (layout.stageMask() == MetalCompiledRenderPipeline.STAGE_VERTEX) {
+                MetalFrameProbe.bufferBound();
                 enc.setVertexBuffer(buffer, 0L, layout.bufferIndex());
             } else if (layout.stageMask() == MetalCompiledRenderPipeline.STAGE_FRAGMENT) {
+                MetalFrameProbe.bufferBound();
                 enc.setFragmentBuffer(buffer, 0L, layout.bufferIndex());
             } else {
                 throw new IllegalStateException("Argument buffer layout has invalid stage mask " + layout.stageMask());
@@ -765,7 +778,9 @@ final class MetalRenderPass implements RenderPassBackend {
             forEachArgumentLayout(binding, layout -> {
                 MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
                 layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+                MetalFrameProbe.textureBound();
                 layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());
+                MetalFrameProbe.samplerBound();
                 layout.encoder().setSamplerState(sampler.nativeHandle(), binding.samplerMetalIndex());
                 enc.useResource(
                         textureView.nativeHandle(),
@@ -782,6 +797,7 @@ final class MetalRenderPass implements RenderPassBackend {
             forEachArgumentLayout(binding, layout -> {
                 MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
                 layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+                MetalFrameProbe.textureBound();
                 layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());
                 enc.useResource(
                         textureView.nativeHandle(),
@@ -804,6 +820,7 @@ final class MetalRenderPass implements RenderPassBackend {
         forEachArgumentLayout(binding, layout -> {
             MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
             layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+            MetalFrameProbe.bufferBound();
             layout.encoder().setBuffer(uniformBuffer.metalBuffer(), uniformSlice.offset(), binding.metalIndex());
             enc.useResource(uniformBuffer.nativeHandle(), usage, renderStage(layout.stageMask()));
         });
@@ -825,6 +842,7 @@ final class MetalRenderPass implements RenderPassBackend {
         forEachArgumentLayout(binding, layout -> {
             MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
             layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+            MetalFrameProbe.textureBound();
             layout.encoder().setTexture(texelTexture, binding.metalIndex());
             enc.useResource(
                     texelTexture,

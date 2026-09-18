@@ -2,6 +2,7 @@ package com.metallum.mtl;
 
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
+import com.metallum.render.MetalFrameProbe;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;
@@ -118,6 +119,9 @@ public final class MTLRenderCommandEncoder extends MTLCommandEncoder {
     }
 
     public void setViewport(final double originX, final double originY, final double width, final double height, final double znear, final double zfar) {
+        // Counted here rather than at the three callers because this is the only place a viewport
+        // reaches Metal, so a frame's viewport count is one per render encoder wherever it came from.
+        MetalFrameProbe.viewportSet();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             MemorySegment viewport = MemorySegment.ofAddress(stack.nmalloc(8, 48)).reinterpret(48);
             viewport.set(JAVA_DOUBLE, 0, originX);

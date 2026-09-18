@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Pins the frame probe's shape so that instrumenting this backend stays opt-in and reversible.
+
+The probe is a measuring instrument, not a feature: it may only ever be armed by a property or a
+marker file, it may only ever record counts, and it may only ever be reached from the hooks below.
+Every assertion here fails the build rather than reporting a warning, for the same reason the other
+`tools/ci-*.py` contracts do -- a probe that quietly stopped being armed, or that started asking
+Metal for a texture width on the unarmed path, is a behaviour change nobody would see in a diff.
+"""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROBE_PATH = "src/main/java/com/metallum/render/MetalFrameProbe.java"
+
+
+def read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def require(label: str, text: str, needles: tuple[str, ...]) -> None:
+    missing = [needle for needle in needles if needle not in text]
+    if missing:
+        raise SystemExit(f"{label}: missing " + ", ".join(missing))
+
+
+probe = read(PROBE_PATH)
+encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
+command_buffer = read("src/main/java/com/metallum/mtl/MTLCommandBuffer.java")
+render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
+render_encoder = read("src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.java")
+pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
+
+# ---------------------------------------------------------------------------
+# Off unless asked for
+#
+# The property is read once at class load, the marker is read once and cached, and the marker sits
+# in the game directory because that is a place a session can reach while the launcher's arguments
+# are not. Nothing here may throw on an unreadable answer: a probe may never be the reason a
+# session does not start.
+# ---------------------------------------------------------------------------
+require("frame-probe arming", probe, (
+    "package com.metallum.render;",
+    "public final class MetalFrameProbe {",
+    "private MetalFrameProbe() {",
+    'Boolean.getBoolean("metallum.probeFrames")',
+    'Integer.getInteger("metallum.frameProbeBudget", 600)',
+    'private static final String MARKER_DIRECTORY = "metallum";',
+    'private static final String MARKER = "probe-frames";',
+    "FabricLoader.getInstance().getGameDir()",
+    "armedFromFile = markerPresent();",
+    "catch (RuntimeException exception)",
+))
+if "if (!FLAG && !marker()) {" not in probe:
+    raise SystemExit("frame probe: the property and the marker are not both asked before arming")
+if probe.index("if (armedFromFile == null) {") > probe.index("armedFromFile = markerPresent();"):
+    raise SystemExit("frame probe: the marker answer is not cached behind a single ask")
+
+# The budget is what keeps an armed launch from filling a disk, and the line is a window rather
+# than a frame, so the two are both pinned.
+require("frame-probe budget", probe, (
+    "frames >= BUDGET",
+    "frames % REPORT_FRAMES == 0 || frames >= BUDGET",
+    "Metal frame probe wrote its {} frame(s) and is off",
+    "Metal frame probe armed",
+))
+
+# ---------------------------------------------------------------------------
+# The unarmed path is one field read
+#
+# Every public entry point opens with the armed() guard, so an unarmed launch pays a boolean field
+# read and nothing else: no texture query, no timestamp, no counter. `armed()` itself is the guard
+# and is exempt.
+# ---------------------------------------------------------------------------
+lines = probe.splitlines()
+guarded = []
+for index, line in enumerate(lines):
+    # Leading whitespace is not part of the contract: this file and the rest of the repository were
+    # written with different indentation at different times, and a check that pinned one of them
+    # would fail on a reformat rather than on a missing guard.
+    if not line.lstrip().startswith("public static"):
+        continue
+    end = index
+    while end < len(lines) and not lines[end].rstrip().endswith("{"):
+        end += 1
+    if end + 1 >= len(lines):
+        raise SystemExit(f"frame probe: unterminated entry point at {PROBE_PATH}:{index + 1}")
+    declaration = " ".join(part.strip() for part in lines[index:end + 1])
+    if "boolean armed(" in declaration:
+        continue
+    first = lines[end + 1].strip()
+    if first != "if (!armed()) {":
+        raise SystemExit(
+            f"frame probe: {declaration} does not open with the armed() guard, so an unarmed call "
+            "is no longer a single field read"
+        )
+    guarded.append(declaration)
+
+if len(guarded) != 10:
+    raise SystemExit(
+        "frame probe: expected 10 guarded entry points (encoder, frame, attachment, six binding "
+        f"kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
+    )
+if "MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize" not in probe:
+    raise SystemExit("frame probe: attachment bytes must come from the texture's own width, height and pixel size")
+if probe.index("MTLTexture.width(texture)") < probe.index("public static void attachment("):
+    raise SystemExit("frame probe: the attachment byte size is computed outside its entry point")
+
+# ---------------------------------------------------------------------------
+# Counter 1: encoder boundaries per frame, split by why the encoder ended
+#
+# Two call sites, and only two: the pass whose configuration changed, and the frame's own submit.
+# Every other endEncoder() in this backend ends one to switch encoder kind or to materialize a
+# clear, and passes no reason.
+# ---------------------------------------------------------------------------
+require("encoder boundary counter", encoder, (
+    "void endEncoder() {",
+    "endEncoder(null);",
+    "void endEncoder(@Nullable final EncoderEnd reason)",
+    "MetalFrameProbe.encoderEnded(reason);",
+    "endEncoder(MetalFrameProbe.EncoderEnd.SUBMITTED);",
+    "endEncoder(MetalFrameProbe.EncoderEnd.PASS_CONFIGURATION_CHANGED);",
+    "MetalFrameProbe.frameSubmitted();",
+))
+if encoder.count("MetalFrameProbe.EncoderEnd.PASS_CONFIGURATION_CHANGED);") != 1:
+    raise SystemExit("encoder boundary counter: exactly one site ends an encoder because the pass configuration changed")
+# The frame's encoder ends at the drawable blit, not at the submit: by submit() time the MTL layer
+# has already ended it, so the reason is offered at both sites and only the real teardown is counted.
+if encoder.count("MetalFrameProbe.EncoderEnd.SUBMITTED);") != 2:
+    raise SystemExit("encoder boundary counter: the frame boundary must offer its reason at both places the frame's encoder can end")
+submit = encoder.index("public void submit()")
+submit_body = encoder[submit:encoder.index("MTLRenderCommandEncoder renderCommandEncoder(", submit)]
+present = encoder.index("void presentTextureToDrawable(")
+present_body = encoder[present:encoder.index("public void clearColorTexture(", present)]
+if "MetalFrameProbe.EncoderEnd.SUBMITTED);" not in submit_body:
+    raise SystemExit("encoder boundary counter: submit() does not record the frame boundary's encoder end")
+if "MetalFrameProbe.EncoderEnd.SUBMITTED);" not in present_body:
+    raise SystemExit("encoder boundary counter: the present-time teardown does not record the frame boundary's encoder end")
+committed = submit_body.index("commandBuffer.commitWithCompletionBlock(submitSignalBlocks[slot]);")
+counted = submit_body.index("MetalFrameProbe.frameSubmitted();")
+advanced = submit_body.index("currentSubmitIndex++;")
+if not committed < counted < advanced:
+    raise SystemExit(
+        "encoder boundary counter: the frame boundary must be the commit itself -- the surface's "
+        "present-time submit() finds no command buffer, so counting every submit() counts each drawn "
+        "frame twice"
+    )
+configured = encoder.index("MetalFrameProbe.EncoderEnd.PASS_CONFIGURATION_CHANGED);")
+if configured < encoder.index("MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)"):
+    raise SystemExit("encoder boundary counter: the pass configuration change is not recorded where reused encoders are refused")
+
+# ---------------------------------------------------------------------------
+# Counter 2: bytes loaded and stored per frame
+#
+# The load and store actions are chosen in the MTLCommandBuffer attachment loop, so that is where
+# the attachment is handed over. The size itself is a property of the caller's format, which the
+# MTL layer does not hold, so it arrives as a bytes-per-pixel figure per attachment.
+# ---------------------------------------------------------------------------
+require("attachment byte counter", command_buffer, (
+    "final int[] colorPixelSizes",
+    "final int depthPixelSize",
+    "Color attachment and pixel-size counts differ",
+))
+if command_buffer.count("MetalFrameProbe.attachment(") != 2:
+    raise SystemExit("attachment byte counter: both the color and the depth attachment must reach the probe")
+color_loop = command_buffer.index("for (int index = 0; index < colorTextures.length; index++)")
+depth_block = command_buffer.index("if (!ObjC.isNil(depthTexture)) {", color_loop)
+color_probe = command_buffer.index("MetalFrameProbe.attachment(", color_loop)
+depth_probe = command_buffer.index("MetalFrameProbe.attachment(", depth_block)
+if not color_loop < color_probe < depth_block < depth_probe:
+    raise SystemExit("attachment byte counter: neither attachment is counted beside its own load/store decision")
+for action in (
+    "loadAction == MTLRenderPassDescriptor.LOAD_ACTION_LOAD",
+    "storeAction == MTLRenderPassDescriptor.STORE_ACTION_STORE",
+):
+    if action not in command_buffer:
+        raise SystemExit("attachment byte counter: the load/store action is no longer the decision that is counted: " + action)
+require("attachment byte source", encoder, (
+    "int[] colorPixelSizes = new int[colorTextureViews.length];",
+    "((MetalGpuTexture) colorTextureView.texture()).pixelSize()",
+    "((MetalGpuTexture) depthTextureView.texture()).pixelSize()",
+))
+if "MetalGpuTexture" in command_buffer:
+    raise SystemExit("attachment byte counter: the MTL layer must stay a handle layer and not learn Minecraft texture types")
+
+# ---------------------------------------------------------------------------
+# Counter 3: bindings per frame, split by kind
+#
+# One increment per resource or state pushed at the moment it reaches Metal, so a direct bind, an
+# argument-buffer write and a vertex buffer all count once in their own kind.
+# ---------------------------------------------------------------------------
+require("binding counters", render_pass, (
+    "MetalFrameProbe.pipelineBound();",
+    "MetalFrameProbe.textureBound();",
+    "MetalFrameProbe.samplerBound();",
+    "MetalFrameProbe.bufferBound();",
+    "MetalFrameProbe.scissorSet();",
+))
+require("viewport counter", render_encoder, (
+    "import com.metallum.render.MetalFrameProbe;",
+    "MetalFrameProbe.viewportSet();",
+))
+if render_pass.index("MetalFrameProbe.pipelineBound();") > render_pass.index("enc.setRenderPipelineState(pipelineHandle);"):
+    raise SystemExit("binding counters: the pipeline count is not taken where the pipeline is pushed")
+if render_pass.index("MetalFrameProbe.scissorSet();") < render_pass.index("private void pushEffectiveScissor("):
+    raise SystemExit("binding counters: the scissor count is not taken inside the scissor push")
+for label, needle in (
+    ("vertex buffer", "MetalFrameProbe.bufferBound();\n            enc.setVertexBuffer(nativeVertexBuffer.metalBuffer(), vertexBuffer.offset(), metalSlot);"),
+    ("direct buffer", "MetalFrameProbe.bufferBound();\n        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {"),
+    ("direct texture", "MetalFrameProbe.textureBound();\n        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {\n            enc.setVertexTexture(texture, index);"),
+    ("sampled texture", "MetalFrameProbe.textureBound();\n        MetalFrameProbe.samplerBound();"),
+):
+    if needle not in render_pass:
+        raise SystemExit(f"binding counters: the {label} push is not counted where it is pushed")
+if render_pass.count("MetalFrameProbe.samplerBound();") != 3:
+    raise SystemExit("binding counters: a sampled image carries a sampler on both the direct and the argument path")
+if render_pass.count("MetalFrameProbe.textureBound();") != 6:
+    raise SystemExit("binding counters: storage and texel-buffer bindings must count as textures too")
+if render_pass.count("MetalFrameProbe.bufferBound();") != 5:
+    raise SystemExit("binding counters: vertex, uniform, storage and argument buffers must all count as buffers")
+
+# ---------------------------------------------------------------------------
+# Counter 4: pipeline compiles per session
+#
+# One creation site in the named file, timed around the Metal call alone. The descriptor built
+# above it is this backend's own work and is not what a driver cost is measured as.
+# ---------------------------------------------------------------------------
+require("pipeline compile counter", pipeline, (
+    "long startNanos = System.nanoTime();",
+    "MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);",
+))
+start = pipeline.index("long startNanos = System.nanoTime();")
+created = pipeline.index("device.metalDevice().newRenderPipelineState(pipelineDesc)")
+stopped = pipeline.index("MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);")
+if not start < created < stopped:
+    raise SystemExit("pipeline compile counter: the Metal pipeline creation is not wrapped by the two timestamps")
+if pipeline.count("newRenderPipelineState(") != 1:
+    raise SystemExit("pipeline compile counter: a second creation site in this file must be counted as well")
+
+# ---------------------------------------------------------------------------
+# No shader-pack vocabulary
+#
+# The backend describes Metal, and a probe that named a shader-pack concept would move the seam.
+# `tools/ci-contracts.py` refuses these names repo-wide; this repeats it on the files the frame
+# probe touches so the reason travels with the contract. The names are spelled in full because
+# `colortex0` is forbidden while `colorTexture` is the backend's own word for an attachment.
+# ---------------------------------------------------------------------------
+forbidden_vocabulary = (
+    "colortex0", "colortex1", "colortex2", "colortex2clear",
+    "shadowtex0", "shadowtex1", "shadowcolor0", "shadowcolor1",
+    "gbuffers_", "depthtex0", "depthtex1", "depthtex2",
+)
+for forbidden in forbidden_vocabulary:
+    for name, text in (
+        (PROBE_PATH, probe),
+        ("MetalCommandEncoder.java", encoder),
+        ("MTLCommandBuffer.java", command_buffer),
+        ("MetalRenderPass.java", render_pass),
+        ("MTLRenderCommandEncoder.java", render_encoder),
+        ("MetalCompiledRenderPipeline.java", pipeline),
+    ):
+        if forbidden in text.lower():
+            raise SystemExit(f"frame probe contract leaked shader-pack semantics into {name}: {forbidden}")
+
+print("Metal frame-probe instrumentation contract: PASS")

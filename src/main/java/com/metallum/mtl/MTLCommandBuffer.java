@@ -3,6 +3,7 @@ package com.metallum.mtl;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
+import com.metallum.render.MetalFrameProbe;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;
@@ -72,7 +73,9 @@ public final class MTLCommandBuffer {
             final MemorySegment depthTexture,
             @Nullable final Double clearDepth,
             final double viewportWidth,
-            final double viewportHeight
+            final double viewportHeight,
+            final int colorPixelSize,
+            final int depthPixelSize
     ) {
         MemorySegment[] colorTextures = ObjC.isNil(colorTexture)
                 ? new MemorySegment[0]
@@ -80,23 +83,39 @@ public final class MTLCommandBuffer {
         Vector4fc[] clearColors = ObjC.isNil(colorTexture)
                 ? new Vector4fc[0]
                 : new Vector4fc[]{clearColor};
+        int[] colorPixelSizes = ObjC.isNil(colorTexture)
+                ? new int[0]
+                : new int[]{colorPixelSize};
         return makeRenderCommandEncoder(
                 colorTextures,
                 clearColors,
                 depthTexture,
                 clearDepth,
                 viewportWidth,
-                viewportHeight
+                viewportHeight,
+                colorPixelSizes,
+                depthPixelSize
         );
     }
 
+    /**
+     * Builds the attachment descriptor and the encoder that encodes into it.
+     *
+     * @param colorPixelSizes bytes per pixel of each color attachment, in attachment order, and zero
+     *                        where the caller could not determine it; the frame probe counts an
+     *                        attachment it cannot size as nothing rather than as a guess
+     * @param depthPixelSize  bytes per pixel of the depth attachment, or zero when it cannot be
+     *                        determined
+     */
     public MTLRenderCommandEncoder makeRenderCommandEncoder(
             final MemorySegment[] colorTextures,
             @Nullable final Vector4fc[] clearColors,
             final MemorySegment depthTexture,
             @Nullable final Double clearDepth,
             final double viewportWidth,
-            final double viewportHeight
+            final double viewportHeight,
+            final int[] colorPixelSizes,
+            final int depthPixelSize
     ) {
         if (colorTextures.length > MAX_COLOR_ATTACHMENTS) {
             throw new IllegalArgumentException(
@@ -106,6 +125,11 @@ public final class MTLCommandBuffer {
         if (clearColors != null && clearColors.length != colorTextures.length) {
             throw new IllegalArgumentException(
                     "Color attachment and clear-value counts differ: " + colorTextures.length + " != " + clearColors.length
+            );
+        }
+        if (colorPixelSizes.length != colorTextures.length) {
+            throw new IllegalArgumentException(
+                    "Color attachment and pixel-size counts differ: " + colorTextures.length + " != " + colorPixelSizes.length
             );
         }
 
@@ -129,21 +153,32 @@ public final class MTLCommandBuffer {
                         continue;
                     }
                     Vector4fc clearColor = clearColors == null ? null : clearColors[index];
-                    renderPass.colorAttachment(
-                            index,
+                    long loadAction = clearColor != null
+                            ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR
+                            : MTLRenderPassDescriptor.LOAD_ACTION_LOAD;
+                    long storeAction = MTLRenderPassDescriptor.STORE_ACTION_STORE;
+                    // The probe is handed the attachment itself rather than a byte count, so that an
+                    // unarmed launch pays one field read here and never asks Metal for a width.
+                    MetalFrameProbe.attachment(
                             colorTexture,
-                            clearColor != null ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR : MTLRenderPassDescriptor.LOAD_ACTION_LOAD,
-                            MTLRenderPassDescriptor.STORE_ACTION_STORE,
-                            clearColor
+                            colorPixelSizes[index],
+                            loadAction == MTLRenderPassDescriptor.LOAD_ACTION_LOAD,
+                            storeAction == MTLRenderPassDescriptor.STORE_ACTION_STORE
                     );
+                    renderPass.colorAttachment(index, colorTexture, loadAction, storeAction, clearColor);
                 }
                 if (!ObjC.isNil(depthTexture)) {
-                    renderPass.depthAttachment(
+                    long loadAction = clearDepth != null
+                            ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR
+                            : MTLRenderPassDescriptor.LOAD_ACTION_LOAD;
+                    long storeAction = MTLRenderPassDescriptor.STORE_ACTION_STORE;
+                    MetalFrameProbe.attachment(
                             depthTexture,
-                            clearDepth != null ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR : MTLRenderPassDescriptor.LOAD_ACTION_LOAD,
-                            MTLRenderPassDescriptor.STORE_ACTION_STORE,
-                            clearDepth
+                            depthPixelSize,
+                            loadAction == MTLRenderPassDescriptor.LOAD_ACTION_LOAD,
+                            storeAction == MTLRenderPassDescriptor.STORE_ACTION_STORE
                     );
+                    renderPass.depthAttachment(depthTexture, loadAction, storeAction, clearDepth);
                     if (MTLPixelFormat.hasStencil(MTLTexture.pixelFormat(depthTexture))) {
                         renderPass.stencilAttachment(
                                 depthTexture,

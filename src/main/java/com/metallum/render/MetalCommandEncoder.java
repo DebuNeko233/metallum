@@ -3,6 +3,7 @@ package com.metallum.render;
 import com.metallum.mtl.*;
 import com.metallum.objc.ObjC;
 import com.metallum.objc.ObjCBlock;
+import com.metallum.render.MetalFrameProbe.EncoderEnd;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.GpuFence;
@@ -225,7 +226,21 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     }
 
     void endEncoder() {
+        endEncoder(null);
+    }
+
+    /**
+     * Ends the current encoder and tells the frame probe why it did, for the two boundaries that are
+     * a fact about the frame rather than housekeeping: a changed pass configuration, and the frame
+     * boundary itself, which ends whatever encoder is still open. Every other caller ends one to
+     * switch encoder kind or to materialize a clear, and passes no reason because the probe does not
+     * count those.
+     */
+    void endEncoder(@Nullable final EncoderEnd reason) {
         if (currentEncoder != null) {
+            if (reason != null) {
+                MetalFrameProbe.encoderEnded(reason);
+            }
             if (currentEncoder instanceof MTLRenderCommandEncoder renderEncoder) {
                 renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);
                 if (currentRenderPass != null) {
@@ -253,11 +268,16 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         InFlight toClose = null;
         if (commandBuffer != null) {
             submitRenderPass();
-            endEncoder();
+            endEncoder(MetalFrameProbe.EncoderEnd.SUBMITTED);
 
             int slot = (int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT);
             submitSemaphores[slot].drainPermits();
             commandBuffer.commitWithCompletionBlock(submitSignalBlocks[slot]);
+
+            // The frame boundary the probe counts at, and only inside this block: a commit is what
+            // makes a frame, while the surface's present-time submit finds no command buffer and
+            // commits nothing, so counting every submit() would count each drawn frame twice.
+            MetalFrameProbe.frameSubmitted();
 
             toClose = inFlight[slot];
             inFlight[slot] = new InFlight(currentSubmitIndex, commandBuffer);
@@ -313,14 +333,24 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             return enc;
         }
 
-        endEncoder();
+        endEncoder(MetalFrameProbe.EncoderEnd.PASS_CONFIGURATION_CHANGED);
+        // Each attachment's byte size comes from the texture the view wraps, because the format is
+        // the only place it exists and the MTL layer below holds handles rather than formats.
+        int[] colorPixelSizes = new int[colorTextureViews.length];
+        for (int index = 0; index < colorTextureViews.length; index++) {
+            MetalGpuTextureView colorTextureView = colorTextureViews[index];
+            colorPixelSizes[index] = colorTextureView == null ? 0 : ((MetalGpuTexture) colorTextureView.texture()).pixelSize();
+        }
+        int depthPixelSize = depthTextureView == null ? 0 : ((MetalGpuTexture) depthTextureView.texture()).pixelSize();
         MTLRenderCommandEncoder encoder = commandBuffer().makeRenderCommandEncoder(
                 colorAttachments,
                 clearColors,
                 depthAttachment,
                 clearDepth,
                 viewportWidth,
-                viewportHeight
+                viewportHeight,
+                colorPixelSizes,
+                depthPixelSize
         );
         encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);
         currentEncoder = encoder;
@@ -427,7 +457,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MetalGpuTexture source = (MetalGpuTexture) textureView.texture();
         flushPendingClear(source);
         submitRenderPass();
-        endEncoder();
+        // The frame's own encoder ends here, not at submit(): the drawable blit below is encoded
+        // through the MTL layer, so by the time the frame is submitted there is nothing left to end
+        // and the probe's submit-time endEncoder() finds no encoder. Both sites carry the same
+        // reason because the boundary is the frame's, not the call's.
+        endEncoder(MetalFrameProbe.EncoderEnd.SUBMITTED);
         MTLCommandBuffer commandBuffer = commandBuffer();
         commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
     }
@@ -808,7 +842,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 colorClear,
                 depthClear != null ? texture.nativeHandle() : MemorySegment.NULL,
                 depthClear,
-                1.0, 1.0
+                1.0, 1.0,
+                texture.pixelSize(),
+                texture.pixelSize()
         );
         encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);
         currentEncoder = encoder;
