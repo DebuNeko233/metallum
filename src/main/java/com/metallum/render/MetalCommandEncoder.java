@@ -53,6 +53,21 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
      */
     @Nullable
     private AttachmentContents[] nextPassContents;
+    /**
+     * Whether the next render pass may read a storage image written since the live encoder opened.
+     * <p>
+     * A graphics stage's {@code imageStore} is untracked, so anything that reads one afterwards has
+     * to be ordered against it by the fence chain, and the fence is only meaningful across an
+     * encoder boundary. The default is true, which is the answer that breaks the encoder: a pass
+     * nobody described keeps the behaviour this backend had before the fact existed.
+     */
+    private boolean nextPassReadsStorageImage = true;
+    /**
+     * Whether a storage image has been written since the live encoder opened, with nothing ordered
+     * against it yet. Held rather than acted on, because whether the boundary is owed depends on
+     * what comes next and not on what has just been drawn.
+     */
+    private boolean storageUnordered;
     private MemorySegment[] renderColorAttachments = new MemorySegment[0];
     /**
      * What the pass the live encoder was opened for said about its attachments' contents, with the
@@ -271,6 +286,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         renderColorAttachments = new MemorySegment[0];
         renderDepthAttachment = MemorySegment.NULL;
         renderContents = new AttachmentContents[0];
+        storageUnordered = false;
     }
 
     @Override
@@ -402,6 +418,20 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         this.nextPassContents = contents;
     }
 
+    /**
+     * Says whether the next render pass created on this encoder may read a storage image written
+     * since the live one opened.
+     * <p>
+     * Read once and reset to true by {@code createRenderPass}, so a pass nobody describes asks for
+     * the boundary rather than going without it - the one direction a wrong answer may not take,
+     * because an unordered read of an untracked write is a wrong image rather than a slower frame.
+     *
+     * @param reads true where the pass reads one, or where that is not known
+     */
+    public void setNextPassReadsStorageImage(final boolean reads) {
+        this.nextPassReadsStorageImage = reads;
+    }
+
     @Override
     public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {
         List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
@@ -467,6 +497,17 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         // Taken before the pass is built, so what this pass was told cannot be read by the next one.
         AttachmentContents[] passContents = this.nextPassContents;
         this.nextPassContents = null;
+        boolean readsStorageImage = this.nextPassReadsStorageImage;
+        this.nextPassReadsStorageImage = true;
+        // The boundary is owed here rather than at the pass that wrote, because only this pass knows
+        // whether it reads what was written. Ending the encoder is what makes the fence chain order
+        // the two, and a pass that reads no storage image does not need it: the whole cost of the
+        // boundary - every attachment reloaded and stored again - is paid for nothing there.
+        if (this.storageUnordered && readsStorageImage) {
+            endEncoder();
+        }
+
+        this.storageUnordered = false;
         MetalRenderPass renderPass = new MetalRenderPass(
                 device,
                 this,
@@ -491,11 +532,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             currentRenderPass.popDebugGroup();
             currentRenderPass = null;
 
-            // Matching attachments normally let adjacent logical passes share one Metal render
-            // encoder. Storage-image writes are untracked, so end this encoder and let the existing
-            // fence update/wait chain make those writes visible before the next pass rebinds them.
+            // Storage-image writes are untracked, so something that reads one afterwards has to be
+            // ordered against it by the fence chain, and that chain is only meaningful across an
+            // encoder boundary. Whether the boundary is owed is not decided here: it is owed by the
+            // pass that reads, and that pass is the next one to be created.
             if (graphicsStorageImageWrites) {
-                endEncoder();
+                this.storageUnordered = true;
             }
         }
     }
