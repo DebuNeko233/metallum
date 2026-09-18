@@ -28,12 +28,15 @@ import java.util.Locale;
  * launcher's arguments are a place a session cannot reach while a file in the game directory is one
  * it can. {@code -Dmetallum.frameProbeBudget=N} bounds the frames observed, six hundred by default,
  * and a line covers six hundred frames rather than one: an unbounded per-frame probe is a way to
- * fill a disk rather than a way to answer a question. The marker is asked once and the answer kept,
- * so it arms a launch rather than a frame.
+ * fill a disk rather than a way to answer a question. The marker decides a window rather than a
+ * launch: it is asked while the probe is off, at most once a second, so a session can be told to
+ * start counting once the render path it is meant to measure is the one in force. A window opens on
+ * the marker's return and not on its presence, so a file left behind arms the window that read it
+ * and no other.
  * <p>
  * Nothing here observes anything but counts. Every entry point below returns on its guard before it
  * touches an attachment, a timestamp or a texture, so an unarmed launch pays one boolean field read
- * per hook and no Metal query at all.
+ * per hook, an increment a frame, and one stat a second.
  */
 @Environment(EnvType.CLIENT)
 public final class MetalFrameProbe {
@@ -47,14 +50,24 @@ public final class MetalFrameProbe {
     /** How many frames one line covers. A line a frame would be a load test, not a reading. */
     private static final int REPORT_FRAMES = 600;
 
+    /**
+     * Frames between two asks of the marker while the probe is off. A second of a played session,
+     * which is often enough to arm a window while the work worth counting is still running and rare
+     * enough that asking cannot be what an unarmed session is spending its time on.
+     */
+    private static final int ASK_EVERY_FRAMES = 60;
+
     /** The directory a marker beside the game's own files is looked for in. */
     private static final String MARKER_DIRECTORY = "metallum";
 
     private static final String MARKER = "probe-frames";
 
-    /** The marker file's answer, held after the first ask: a stat per frame is not a probe cost. */
+    /** The marker file's answer as last asked, held so that asking is a frame's step and not a hook's. */
     @Nullable
     private static Boolean armedFromFile;
+
+    /** Frames since the marker was last asked, so that an unarmed session asks a second and not a frame. */
+    private static int framesSinceAsk;
 
     /** Frames observed since the probe armed; the budget is spent when this reaches it. */
     private static int frames;
@@ -146,10 +159,12 @@ public final class MetalFrameProbe {
     /**
      * The frame boundary: the command buffer has been committed. The window is summed and the line
      * written here rather than at each counter, so that a frame costs one logging decision and not
-     * one per binding.
+     * one per binding. This is also the one place the marker is asked again, because a frame is the
+     * only thing an unarmed session is known to do exactly once.
      */
     public static void frameSubmitted() {
         if (!armed()) {
+            askAgain();
             return;
         }
 
@@ -256,7 +271,8 @@ public final class MetalFrameProbe {
 
     /**
      * Writes the window and starts the next one. The last frame of the budget writes the final line
-     * and turns the probe off for good, so an armed launch stops by itself.
+     * and turns the probe off, so an armed session stops by itself; only a marker that goes away and
+     * comes back opens another window.
      */
     private static void report() {
         Metallum.LOGGER.info(
@@ -302,6 +318,38 @@ public final class MetalFrameProbe {
         buffers = 0;
         viewports = 0;
         scissors = 0;
+    }
+
+    /**
+     * Asks the marker again, at most once a second and only while nothing is being counted. The
+     * frames worth counting are the ones a session spends with its whole render path in force, and
+     * the launch cannot know when that begins: a marker read at the first frame spends the budget on
+     * whatever was drawn before it. So a window opens on the marker's return and not on its
+     * presence, and the file a finished window was armed by arms that window alone -- otherwise a
+     * marker left in place would arm window after window and fill a disk, which is the one thing the
+     * budget exists to prevent. The property is not asked again: it answered for the launch and
+     * cannot change under it.
+     */
+    private static void askAgain() {
+        if (FLAG) {
+            return;
+        }
+
+        if (++framesSinceAsk < ASK_EVERY_FRAMES) {
+            return;
+        }
+
+        framesSinceAsk = 0;
+        final boolean present = markerPresent();
+        if (present == marker()) {
+            return;
+        }
+
+        armedFromFile = present;
+        if (present) {
+            frames = 0;
+            announced = false;
+        }
     }
 
     private static boolean marker() {

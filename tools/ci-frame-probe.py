@@ -31,12 +31,13 @@ render_encoder = read("src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.ja
 pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
 
 # ---------------------------------------------------------------------------
-# Off unless asked for
+# Off unless asked for, and a window can be opened late
 #
-# The property is read once at class load, the marker is read once and cached, and the marker sits
-# in the game directory because that is a place a session can reach while the launcher's arguments
-# are not. Nothing here may throw on an unreadable answer: a probe may never be the reason a
-# session does not start.
+# The property is read once at class load. The marker decides a window rather than a launch, because
+# the frames worth counting are the ones the whole render path is in force for and a launch cannot
+# know when that starts; it sits in the game directory because that is a place a session can reach
+# while the launcher's arguments are not. Nothing here may throw on an unreadable answer: a probe may
+# never be the reason a session does not start.
 # ---------------------------------------------------------------------------
 require("frame-probe arming", probe, (
     "package com.metallum.render;",
@@ -54,6 +55,45 @@ if "if (!FLAG && !marker()) {" not in probe:
     raise SystemExit("frame probe: the property and the marker are not both asked before arming")
 if probe.index("if (armedFromFile == null) {") > probe.index("armedFromFile = markerPresent();"):
     raise SystemExit("frame probe: the marker answer is not cached behind a single ask")
+
+# ---------------------------------------------------------------------------
+# A window opens on the marker's return, and nowhere else can open one
+#
+# One ask site, reached from the frame boundary alone, skipped when the property already answered for
+# the launch, and gated on the answer changing rather than on the marker being there -- a marker left
+# in place after its window would otherwise arm window after window and fill a disk, which is the one
+# thing the budget exists to prevent.
+# ---------------------------------------------------------------------------
+if probe.count("askAgain();") != 1:
+    raise SystemExit(
+        "frame probe: the marker must be asked again from one place, so that no counter's guard can "
+        "open a window"
+    )
+frame_start = probe.index("public static void frameSubmitted() {")
+frame_body = probe[frame_start:probe.index("public static void attachment(", frame_start)]
+if "askAgain();" not in frame_body:
+    raise SystemExit(
+        "frame probe: the marker is not asked again at the frame boundary, so a window can only be "
+        "opened by a frame that has not been drawn yet"
+    )
+if probe.count("private static void askAgain() {") != 1:
+    raise SystemExit("frame probe: there is no single method that opens a window")
+ask_start = probe.index("private static void askAgain() {")
+ask_body = probe[ask_start:probe.index("\n    }", ask_start)]
+if ask_body.index("markerPresent()") < ask_body.index("if (FLAG) {"):
+    raise SystemExit("frame probe: an armed launch asks the marker, which the property already answered for it")
+if "private static final int ASK_EVERY_FRAMES = " not in probe:
+    raise SystemExit("frame probe: the interval the marker is asked on while off is not a named constant")
+if "framesSinceAsk < ASK_EVERY_FRAMES" not in ask_body:
+    raise SystemExit("frame probe: the marker is asked on every frame the probe is off")
+for needle, why in (
+    ("if (present == marker()) {", "a window is opened on the marker being there rather than on its return"),
+    ("armedFromFile = present;", "the answer just read is not the one held for the next ask to compare against"),
+    ("frames = 0;", "a second window inherits the spent budget of the first"),
+    ("announced = false;", "a second window keeps the first window's announcement and logs no arm line"),
+):
+    if needle not in ask_body:
+        raise SystemExit(f"frame probe: {why}")
 
 # The budget is what keeps an armed launch from filling a disk, and the line is a window rather
 # than a frame, so the two are both pinned.
