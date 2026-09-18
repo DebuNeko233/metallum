@@ -6,13 +6,27 @@ This project is still experimental. Performance, stability, and compatibility ma
 
 How the two halves fit together, and how to obtain this one yet: the shader-pack engine is [Vitrail](https://github.com/DebuNeko233/Vitrail-Shaders-Metal), and Metallum is the backend its Metal path executes on. Vitrail's Metal path is the maintained one as of `v0.12.0-metal-beta`. **This repository has not published a release**, so there is no downloadable version of it yet and the pairing is a build-from-source matter; the release machinery exists and its first tag is open work. A platform whose renderer is not Metal has no path either way, which is a narrowing the companion repository accepted deliberately.
 
-## Current compatibility target
+## Requirements
 
-- Minecraft Java Edition **26.2**
-- Fabric Loader **0.19.3**
-- Sodium **0.9.2 for Minecraft 26.2** (`mc26.2-0.9.2-fabric`)
-- Java **25**
-- macOS on Apple Silicon
+| Component | Version |
+| --- | --- |
+| Minecraft | 26.2 |
+| Fabric Loader | 0.19.3, which is what it is built and tested against; the jar accepts 0.19.2 or later |
+| Sodium | 0.9.2 for Minecraft 26.2 (`mc26.2-0.9.2-fabric`), which is what the backend draws through |
+| Java | 25 |
+| Platform | macOS on Apple Silicon (M1 or newer) |
+
+The loader, Minecraft and Java ranges above are what the jar's own metadata declares, so the loader
+enforces them whether or not this table is current: `src/main/resources/fabric.mod.json`. Two things
+that metadata does **not** declare, and both are worth knowing before installing:
+
+- **Sodium.** The backend integrates with it, through a `sodium:config_api_user` entry point and
+  mixins on its classes, but the metadata does not list it as a dependency, so an instance without
+  Sodium is not refused at startup the way a missing dependency is refused. Installing Sodium 0.9.2
+  for 26.2 alongside this is required in practice.
+- **Vitrail.** This is a backend rather than a mod a player drives. The shader-pack engine that runs
+  on it is [Vitrail](https://github.com/DebuNeko233/Vitrail-Shaders-Metal), reached reflectively
+  over `API_VERSION` 1, and it is the side that decides where the backend is used.
 
 Version-sensitive Minecraft Graphics API and Sodium integrations must be checked against the 26.2 source/API before backend changes are made.
 
@@ -108,8 +122,3 @@ The two builds are paired by the integration contract rather than by a commit. V
 The capability list this section once carried as "runtime validation still outstanding" is no longer outstanding. Indexed MRT including an unused middle slot, a multi-binding and per-instance vertex descriptor, native color mipmaps, selective pipeline eviction, SSBO and storage-image write/read including a true 3D texture, `colorimgN` shader-write allocation and shader-pack compute write/read visibility all belong to the PHASE 2 and PHASE 5-16 baselines, which the companion Vitrail PR records as closed with Apple-Silicon real-device evidence. The launchers under `tools/` are what produce that evidence and `VITRAIL_SMOKE.md` describes each gate.
 
 Both pull requests have since been merged, companion first, and the companion released `v0.12.0-metal-beta` from that work. PHASE 17 real shader-pack compatibility was closed by the project owner's judgement with no per-row compatibility status recorded, so it is no longer a merge blocker and no shader pack is promoted by it: the compatibility matrix is empty rather than partly filled. What that leaves unverified, and the findings that were open when it closed, are recorded in the companion repository's `docs/phase17-compatibility.md`. A green build, a successful launch or a clean log is still not evidence that Metal execution is correct: correctness on a real pack requires the reviewed screenshot and reference material that policy defines.
-
-## Requirements
-
-- macOS
-- Apple Silicon (M1 or newer)
