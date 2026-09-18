@@ -246,7 +246,11 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
                     pipelineDesc.disableBlending(index, writeMask);
                 }
             }
+            // Timed around the Metal call alone: building the descriptor above is this backend's
+            // own work, and what the frame probe reports is what the driver was asked to do.
+            long startNanos = System.nanoTime();
             MemorySegment pipeline = device.metalDevice().newRenderPipelineState(pipelineDesc);
+            MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);
             if (ObjC.isNil(pipeline)) {
                 Metallum.LOGGER.error(
                         "[metallum] Pipeline {} failed to build with {} color target slots and depth format {}",
