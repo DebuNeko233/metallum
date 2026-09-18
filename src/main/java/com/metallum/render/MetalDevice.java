@@ -26,13 +26,13 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 @Environment(EnvType.CLIENT)
 final class MetalDevice implements GpuDeviceBackend {
-    private static final Pattern BLOCK_COMMENTS = Pattern.compile("(?s)/\\*.*?\\*/");
-    private static final Pattern LINE_COMMENTS = Pattern.compile("(?m)//[^\\n]*");
+    private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final MemorySegment metalDeviceHandle;
     private final MTLDevice metalDevice;
     private final CAMetalLayer metalLayer;
@@ -42,6 +42,7 @@ final class MetalDevice implements GpuDeviceBackend {
     private final DeviceInfo deviceInfo;
     public final MTLCommandQueue commandQueue;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
+    private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
@@ -142,6 +143,78 @@ final class MetalDevice implements GpuDeviceBackend {
         return buffer;
     }
 
+    /**
+     * Creates a shader-storage buffer for optional backend integrations.
+     * <p>
+     * Minecraft 26.2 exposes no storage-buffer usage bit on {@link GpuBuffer}. Metal does not need
+     * such a usage declaration for {@code MTLBuffer}, so this backend extension allocates a shared
+     * buffer directly and zeros it before returning it. The result is intentionally typed as
+     * {@link Object}: callers that bridge optional backends can keep Metallum off their compile
+     * classpath and hand the opaque object back to this backend for binding and release.
+     */
+    public Object createStorageBufferResource(final long size) {
+        if (size <= 0L) {
+            throw new IllegalArgumentException("Storage buffer size must be positive, got " + size);
+        }
+        MetalGpuBuffer buffer = new MetalGpuBuffer(this, GpuBuffer.USAGE_MAP_WRITE, size);
+        buffer.zeroContents();
+        return buffer;
+    }
+
+    /** Releases a resource returned by {@link #createStorageBufferResource(long)}. */
+    public void closeStorageBufferResource(final Object resource) {
+        if (!(resource instanceof MetalGpuBuffer buffer)) {
+            throw new IllegalArgumentException("Not a Metal storage buffer resource: " + resource);
+        }
+        buffer.close();
+    }
+
+    /**
+     * Allocates a shader-readable and shader-writable one-, two-, or three-dimensional texture.
+     * <p>
+     * Minecraft 26.2's public {@link GpuTexture} usage mask has no storage-image bit and its normal
+     * {@code depthOrLayers} path describes array layers rather than a true Metal 3D texture. This
+     * backend extension keeps the returned object inside the normal Minecraft texture facade while
+     * selecting the correct Metal texture type and {@link MTLTextureUsage#ShaderWrite} internally.
+     * No shader-pack naming or clear/reprojection policy is implemented here.
+     */
+    public GpuTexture createStorageTextureResource(
+            @Nullable final String label,
+            final GpuFormat format,
+            final int width,
+            final int height,
+            final int depth,
+            final int dimensions
+    ) {
+        if (width <= 0 || height <= 0 || depth <= 0) {
+            throw new IllegalArgumentException(
+                    "Storage texture extent must be positive, got " + width + "x" + height + "x" + depth
+            );
+        }
+
+        MTLTextureType type = switch (dimensions) {
+            case 1 -> MTLTextureType.Type1D;
+            case 2 -> MTLTextureType.Type2D;
+            case 3 -> MTLTextureType.Type3D;
+            default -> throw new IllegalArgumentException("Storage texture dimensions must be 1, 2, or 3, got " + dimensions);
+        };
+        int textureHeight = dimensions == 1 ? 1 : height;
+        int textureDepth = dimensions == 3 ? depth : 1;
+        int usage = GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST;
+        return new MetalGpuTexture(
+                this,
+                usage,
+                label == null ? "" : label,
+                format,
+                width,
+                textureHeight,
+                textureDepth,
+                1,
+                type,
+                true
+        );
+    }
+
     @Override
     public @NonNull List<String> getLastDebugMessages() {
         return List.of();
@@ -156,15 +229,49 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.debugOptions.useLabels();
     }
 
+    /**
+     * Compiles or finds a render pipeline under the same device monitor used by every cache the
+     * compiler can touch. Metal permits pipeline-state creation away from the render thread, but
+     * the Java caches and the mutable intermediary SPIR-V modules are shared. Serializing their
+     * mutation here makes this public entry point safe for background warm-up while command
+     * encoding remains render-thread-owned.
+     */
     @Override
-    public @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
+    public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
         return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
     }
 
+    /**
+     * Removes selected compiled pipelines from the identity cache without releasing their native
+     * Metal objects immediately. Callers may use the returned keys to compile replacements against
+     * changed pipeline-visible state while already-recorded GPU work can continue referencing the
+     * old objects. The removed native pipelines are released by the next full cache clear, after
+     * that path has waited for submitted GPU work to complete.
+     */
+    public synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
+        Objects.requireNonNull(predicate, "predicate");
+
+        List<RenderPipeline> evicted = new ArrayList<>();
+        Iterator<Map.Entry<RenderPipeline, MetalCompiledRenderPipeline>> entries = this.compiledPipelines.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry<RenderPipeline, MetalCompiledRenderPipeline> entry = entries.next();
+            if (!predicate.test(entry.getKey())) {
+                continue;
+            }
+
+            evicted.add(entry.getKey());
+            this.deferredPipelineReleases.add(entry.getValue());
+            entries.remove();
+        }
+        return List.copyOf(evicted);
+    }
+
     @Override
-    public void clearPipelineCache() {
+    public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
+        this.deferredPipelineReleases.forEach(MetalCompiledRenderPipeline::close);
+        this.deferredPipelineReleases.clear();
         this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
         this.compiledPipelines.clear();
         this.shaderCache.values().forEach(IntermediaryShaderModule::close);
@@ -178,7 +285,7 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         this.waitForSubmittedGpuWork();
         this.commandEncoder.close();
         this.clearPipelineCache();
@@ -186,6 +293,7 @@ final class MetalDevice implements GpuDeviceBackend {
             this.cocoa.clearViewLayer();
         } catch (Throwable ignored) {
         }
+        MTLStorageTexturePipelines.close();
         MTLBuiltinPipelines.close();
         this.commandQueue.close();
         for (MemorySegment state : depthStencilStates.values()) {
@@ -218,7 +326,7 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.metalDevice;
     }
 
-    MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
+    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
         MemorySegment cached = depthStencilStates.get(key);
         if (cached != null) {
@@ -241,11 +349,11 @@ final class MetalDevice implements GpuDeviceBackend {
         this.commandEncoder.queueForDestroy(() -> ObjC.release(handle));
     }
 
-    MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
+    synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
         return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, this.defaultShaderSource));
     }
 
-    IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
+    synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
         ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines);
         return this.shaderCache.computeIfAbsent(key, k -> {
             String source = shaderSource.get(k.id(), k.type());
@@ -256,18 +364,53 @@ final class MetalDevice implements GpuDeviceBackend {
             try (GlslCompiler glslCompiler = new GlslCompiler()) {
                 return glslCompiler.createIntermediary(k.id().toDebugFileName(), sourceWithDefines, k.type());
             } catch (ShaderCompileException e) {
-                throw new IllegalStateException("Failed to compile shader " + k.id(), e);
+                throw new IllegalStateException(shaderCompileFailure(k.id(), sourceWithDefines, e), e);
             }
         });
     }
 
     private static String prepareShaderSource(final String source, final ShaderDefines defines) {
-        String stripped = BLOCK_COMMENTS.matcher(source).replaceAll("");
-        stripped = LINE_COMMENTS.matcher(stripped).replaceAll("").stripLeading();
+        String stripped = GlslCommentStripper.strip(source).stripLeading();
         return GlslPreprocessor.injectDefines(stripped, defines);
     }
 
-    MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
+    private static String shaderCompileFailure(final Identifier id, final String source, final ShaderCompileException error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return "Failed to compile shader " + id;
+        }
+        var lineMatch = GLSL_ERROR_LINE.matcher(message);
+        if (!lineMatch.find()) {
+            return "Failed to compile shader " + id;
+        }
+
+        int line;
+        try {
+            line = Integer.parseInt(lineMatch.group(1));
+        } catch (NumberFormatException ignored) {
+            return "Failed to compile shader " + id;
+        }
+        return "Failed to compile shader " + id + "\n" + shaderSourceContext(source, line, 4);
+    }
+
+    private static String shaderSourceContext(final String source, final int failingLine, final int radius) {
+        String[] lines = source.split("\\R", -1);
+        if (failingLine < 1 || failingLine > lines.length) {
+            return "GLSL source line " + failingLine + " is outside the prepared source (" + lines.length + " lines)";
+        }
+
+        int first = Math.max(1, failingLine - radius);
+        int last = Math.min(lines.length, failingLine + radius);
+        StringBuilder context = new StringBuilder("GLSL source around line ").append(failingLine).append(':');
+        for (int line = first; line <= last; line++) {
+            context.append('\n')
+                    .append(line == failingLine ? ">> " : "   ")
+                    .append(String.format(Locale.ROOT, "%5d | %s", line, lines[line - 1]));
+        }
+        return context.toString();
+    }
+
+    synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
         return this.functionCache.computeIfAbsent(
                 new MslFunctionKey(msl, entryPoint),
                 key -> this.metalDevice.newFunction(key.msl(), key.entryPoint())
@@ -293,7 +436,7 @@ final class MetalDevice implements GpuDeviceBackend {
                 true,
                 "Metal",
                 1.0F,
-                new DeviceLimits(16, 256, 16384, maxMemoryAllocationSize, 0, 1),
+                new DeviceLimits(16, 256, 16384, maxMemoryAllocationSize, 0, 8),
                 new DeviceFeatures(false, false, true, true, true, false, true),
                 extensions,
                 new HintsAndWorkarounds(false, false),

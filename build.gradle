@@ -11,14 +11,34 @@ loom {
 }
 
 repositories {
-	maven { url "https://api.modrinth.com/maven" }
+	maven { url = "https://api.modrinth.com/maven" }
 }
+
+// Optional developer-only bridge for running a built Vitrail Fabric jar in Metallum's Loom client.
+// Nothing is added to a normal build or run unless the property is supplied explicitly.
+def vitrailSmokeJar = providers.gradleProperty("vitrailSmokeJar")
 
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "maven.modrinth:sodium:${project.sodium_version}"
+
+	if (vitrailSmokeJar.isPresent()) {
+		localRuntime files(vitrailSmokeJar.get())
+		localRuntime "net.fabricmc.fabric-api:fabric-key-mapping-api-v1:2.0.5+e2bdee789e"
+		localRuntime "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:4.1.4+29b6eb019e"
+	}
+}
+
+if (vitrailSmokeJar.isPresent()) {
+	loom {
+		runs {
+			client {
+				property("vitrail.experimentalMetal", "true")
+			}
+		}
+	}
 }
 
 processResources {
@@ -60,7 +80,6 @@ publishing {
 	repositories {
 		// Add repositories to publish to here.
 		// Notice: This block does NOT have the same function as the block in the top level.
-		// The repositories here will be used for publishing your artifact, not for
-		// retrieving dependencies.
+		// The repositories here are used for publishing your artifact, not for retrieving dependencies.
 	}
 }

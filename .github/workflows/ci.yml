@@ -1,0 +1,86 @@
+# One PR CI surface for Metallum. Contract checks live under tools/ and run in this single job
+# so adding acceptance coverage does not create another GitHub Actions check.
+name: ci
+run-name: ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metallum-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+
+      - name: verify Apple Silicon runner
+        run: |
+          sw_vers
+          uname -a
+          test "$(uname -m)" = "arm64"
+
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: microsoft
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: validate Vitrail smoke runtime configuration
+        run: |
+          mkdir -p "$RUNNER_TEMP/vitrail-smoke-fixture"
+          cat > "$RUNNER_TEMP/vitrail-smoke-fixture/fabric.mod.json" <<'JSON'
+          {
+            "schemaVersion": 1,
+            "id": "vitrail-smoke-fixture",
+            "version": "0.0.0",
+            "name": "Vitrail smoke fixture",
+            "environment": "client"
+          }
+          JSON
+          jar --create --file "$RUNNER_TEMP/vitrail-smoke-fixture.jar" \
+            -C "$RUNNER_TEMP/vitrail-smoke-fixture" fabric.mod.json
+          ./gradlew dependencies --configuration localRuntime \
+            -PvitrailSmokeJar="$RUNNER_TEMP/vitrail-smoke-fixture.jar"
+
+      - name: validate consolidated Metal and Vitrail contracts
+        run: |
+          bash -n tools/run-vitrail-phase16-smoke.sh
+          bash -n tools/run-vitrail-phase17-pack.sh
+          bash tools/run-vitrail-phase17-pack.sh --help >/dev/null
+          grep -F 'fresh_screenshot_count=0' tools/run-vitrail-phase17-pack.sh
+          grep -F 'fresh_screenshot_count=$((fresh_screenshot_count + 1))' tools/run-vitrail-phase17-pack.sh
+          grep -F 'if [[ "$fresh_screenshot_count" -ne 1 ]]; then' tools/run-vitrail-phase17-pack.sh
+          grep -F 'PHASE 17 requires exactly one fresh F2 screenshot' tools/run-vitrail-phase17-pack.sh
+          grep -F -- '--pack "$staged"' tools/run-vitrail-phase17-pack.sh
+          grep -F 'COPYFILE_DISABLE=1 tar -czf' tools/run-vitrail-phase17-pack.sh
+          python3 tools/ci-contracts.py
+          python3 tools/ci-argument-buffer-samplers.py
+          python3 tools/ci-compute-storage.py
+          python3 tools/ci-graphics-storage-images.py
+          python3 tools/ci-shader-diagnostics.py
+
+      - name: build
+        run: ./gradlew build
+
+      - name: capture build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: metallum-${{ github.sha }}
+          path: build/libs/

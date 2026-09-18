@@ -37,6 +37,21 @@ final class MetalGpuTexture extends GpuTexture {
             final int depthOrLayers,
             final int mipLevels
     ) {
+        this(device, usage, label, format, width, height, depthOrLayers, mipLevels, null, false);
+    }
+
+    MetalGpuTexture(
+            final MetalDevice device,
+            @GpuTexture.Usage final int usage,
+            final String label,
+            final GpuFormat format,
+            final int width,
+            final int height,
+            final int depthOrLayers,
+            final int mipLevels,
+            @Nullable final MTLTextureType explicitType,
+            final boolean shaderWrite
+    ) {
         super(usage, label, format, width, height, depthOrLayers, mipLevels);
         this.device = device;
         this.mtlPixelFormat = MTLPixelFormat.from(format);
@@ -45,7 +60,13 @@ final class MetalGpuTexture extends GpuTexture {
             descriptor.pixelFormat(this.mtlPixelFormat);
             descriptor.width(width);
             descriptor.height(height);
-            if ((usage & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0) {
+            if (explicitType != null) {
+                descriptor.textureType(explicitType);
+                if (explicitType == MTLTextureType.Type3D) {
+                    descriptor.depth(depthOrLayers);
+                    descriptor.arrayLength(1);
+                }
+            } else if ((usage & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0) {
                 if (depthOrLayers > 6) {
                     descriptor.textureType(MTLTextureType.TypeCubeArray);
                     descriptor.arrayLength(depthOrLayers / 6);
@@ -58,7 +79,7 @@ final class MetalGpuTexture extends GpuTexture {
                 descriptor.arrayLength(depthOrLayers);
             }
             descriptor.mipmapLevelCount(Math.max(mipLevels, 1));
-            descriptor.usage(toMtlTextureUsage(usage));
+            descriptor.usage(toMtlTextureUsage(usage, shaderWrite));
             descriptor.storageMode(MTLStorageMode.Private);
             descriptor.hazardTrackingMode(MTLHazardTrackingMode.Untracked);
             this.nativeHandle = device.metalDevice().newTexture(descriptor);
@@ -91,6 +112,10 @@ final class MetalGpuTexture extends GpuTexture {
     void markContentsDirty() {
         this.materializedColorClear = null;
         this.materializedDepthClear = null;
+    }
+
+    MetalDevice device() {
+        return this.device;
     }
 
     MemorySegment nativeHandle() {
@@ -142,7 +167,7 @@ final class MetalGpuTexture extends GpuTexture {
         return this.closed;
     }
 
-    private static long toMtlTextureUsage(@GpuTexture.Usage final int usage) {
+    private static long toMtlTextureUsage(@GpuTexture.Usage final int usage, final boolean shaderWrite) {
         long result = 0L;
         if ((usage & GpuTexture.USAGE_TEXTURE_BINDING) != 0 || (usage & GpuTexture.USAGE_COPY_DST) != 0 || (usage & GpuTexture.USAGE_COPY_SRC) != 0) {
             result |= MTLTextureUsage.ShaderRead.value;
@@ -150,6 +175,10 @@ final class MetalGpuTexture extends GpuTexture {
         if ((usage & GpuTexture.USAGE_RENDER_ATTACHMENT) != 0) {
             result |= MTLTextureUsage.RenderTarget.value;
             result |= MTLTextureUsage.ShaderRead.value;
+        }
+        if (shaderWrite) {
+            result |= MTLTextureUsage.ShaderRead.value;
+            result |= MTLTextureUsage.ShaderWrite.value;
         }
         return result == 0L ? MTLTextureUsage.ShaderRead.value : result;
     }

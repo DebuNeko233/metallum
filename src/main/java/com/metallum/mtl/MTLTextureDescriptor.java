@@ -18,6 +18,7 @@ public final class MTLTextureDescriptor implements AutoCloseable {
     private static final Msg SET_PIXEL_FORMAT = Msg.ofVoid("setPixelFormat:", JAVA_LONG);
     private static final Msg SET_WIDTH = Msg.ofVoid("setWidth:", JAVA_LONG);
     private static final Msg SET_HEIGHT = Msg.ofVoid("setHeight:", JAVA_LONG);
+    private static final Msg SET_DEPTH = Msg.ofVoid("setDepth:", JAVA_LONG);
     private static final Msg SET_MIPMAP_LEVEL_COUNT = Msg.ofVoid("setMipmapLevelCount:", JAVA_LONG);
     private static final Msg SET_ARRAY_LENGTH = Msg.ofVoid("setArrayLength:", JAVA_LONG);
     private static final Msg SET_USAGE = Msg.ofVoid("setUsage:", JAVA_LONG);
@@ -52,6 +53,10 @@ public final class MTLTextureDescriptor implements AutoCloseable {
 
     public void height(final long height) {
         SET_HEIGHT.send(handle, height);
+    }
+
+    public void depth(final long depth) {
+        SET_DEPTH.send(handle, depth);
     }
 
     public void mipmapLevelCount(final long count) {

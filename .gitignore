@@ -41,3 +41,8 @@ replay_*.log
 /src/main/resources/natives/macos/*
 libs/
 .wrangler
+
+# python
+
+__pycache__/
+*.py[cod]
