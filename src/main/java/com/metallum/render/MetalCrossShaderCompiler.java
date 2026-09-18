@@ -143,7 +143,19 @@ final class MetalCrossShaderCompiler {
             final List<VulkanBindGroupLayout.Entry> entries,
             final RenderPipeline pipeline
     ) {
-        long sampledImages = entries.stream().filter(entry -> entry.type() == VulkanBindGroupEntryType.SAMPLED_IMAGE).count();
+        // A sampled image's sampler slot is the entry's own position in this list and not a count of
+        // the sampled images before it. The uniform buffer sits at the front of every one of these
+        // layouts, so sixteen sampled images behind it end at position sixteen while Metal has sixteen
+        // sampler slots, nought to fifteen. Counting the images let that last one ask for a slot that
+        // does not exist, and the cost of that is not a pipeline that runs slowly but one that does not
+        // compile at all: photon's deferred4 at the pack's own defaults is exactly sixteen images
+        // behind one buffer, and every one of its draws failed at the sixteenth sampler.
+        int lastSamplerSlot = -1;
+        for (int index = 0; index < entries.size(); index++) {
+            if (entries.get(index).type() == VulkanBindGroupEntryType.SAMPLED_IMAGE) {
+                lastSamplerSlot = index;
+            }
+        }
         int vertexBindingSpan = 0;
         VertexFormat[] vertexBindings = pipeline.getVertexFormatBindings();
         for (int index = vertexBindings.length - 1; index >= 0; index--) {
@@ -155,7 +167,7 @@ final class MetalCrossShaderCompiler {
         // Minecraft 26.2 returns a fixed 16-slot array here. Null slots do not consume Metal
         // vertex-buffer table entries, so counting the array length promotes ordinary fullscreen
         // pipelines to Argument Buffers even when their live resources fit the direct tables.
-        return sampledImages > DIRECT_SAMPLER_LIMIT
+        return lastSamplerSlot >= DIRECT_SAMPLER_LIMIT
                 || entries.size() + vertexBindingSpan >= 31;
     }
 

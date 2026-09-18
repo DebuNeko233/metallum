@@ -269,7 +269,7 @@ forbid("Dimension routing semantics in Metallum", dimension_sources, (
 
 require("Wide resource compiler", "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
     "DIRECT_SAMPLER_LIMIT = 16",
-    "sampledImages > DIRECT_SAMPLER_LIMIT",
+    "lastSamplerSlot >= DIRECT_SAMPLER_LIMIT",
     "supportsArgumentBuffersTier2()",
     "SpvcMslResourceBinding",
     "SPVC_MSL_ARGUMENT_BUFFER_BINDING",
