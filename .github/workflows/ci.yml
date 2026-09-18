@@ -76,6 +76,7 @@ jobs:
           python3 tools/ci-frame-probe.py
           python3 tools/ci-graphics-storage-images.py
           python3 tools/ci-shader-diagnostics.py
+          python3 tools/ci-vitrail-performance.py
 
       - name: build
         run: ./gradlew build

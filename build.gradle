@@ -31,11 +31,24 @@ dependencies {
 	}
 }
 
-if (vitrailSmokeJar.isPresent()) {
-	loom {
-		runs {
-			client {
+// Extra JVM arguments for the client run, from a Gradle property. The performance harness sets one
+// -Dvitrail.* or -Dmetallum.* switch per run so that two runs of one scene can be compared, and
+// nothing is added to a normal run unless the property is supplied explicitly.
+def vitrailPerfVmArgs = providers.gradleProperty("vitrailPerfVmArgs")
+
+loom {
+	runs {
+		client {
+			if (vitrailSmokeJar.isPresent()) {
 				property("vitrail.experimentalMetal", "true")
+			}
+
+			if (vitrailPerfVmArgs.isPresent()) {
+				vitrailPerfVmArgs.get().split("\\s+").each { argument ->
+					if (!argument.isEmpty()) {
+						vmArg argument
+					}
+				}
 			}
 		}
 	}
