@@ -42,8 +42,9 @@ usage() {
 	cat >&2 <<'USAGE'
 Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
 
-  --pack ZIP             the shader pack to measure, staged into the dev instance. It is copied
-                         and never committed; run/ is ignored by git.
+  --pack ZIP             the shader pack to measure, staged into the dev instance together with the
+                         options file beside it, if there is one. It is copied and never committed;
+                         run/ is ignored by git.
   --world SAVE_DIR       a world directory to measure in, copied into run/saves under its own name.
   --run NAME[=VMARGS]    one configuration to measure; repeat for as many as wanted, and the first
                          is the one the others are compared against. VMARGS are extra JVM
@@ -106,11 +107,26 @@ pack_name="$(basename "$pack_path")"
 world_name="$(basename "$world_path")"
 
 echo "Preparing the dev instance at $game_dir"
-mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" "$out_dir"
+mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" \
+	"$game_dir/logs" "$out_dir"
 
 # The pack is copied rather than moved or linked: a run must not be able to write to the owner's
 # copy of it, and the harness must be re-runnable against the same archive.
 cp -f "$pack_path" "$pack_dir/$pack_name"
+
+# The choices the owner made in the pack's own settings screen sit beside the archive in a file named
+# after it with .txt after that, and they travel with the archive or the pack comes up on its own
+# defaults. That is not the same scene: a pack option selects which targets a program samples, so the
+# defaults can be a different number of samplers in a program and therefore a different pipeline shape
+# from the one the owner has been measuring. The sidecar is copied when it is there and its absence is
+# said out loud, because a run that quietly measured a pack nobody has configured would still look
+# like a run.
+pack_options="$pack_path.txt"
+if [[ -f "$pack_options" ]]; then
+	cp -f "$pack_options" "$pack_dir/$pack_name.txt"
+else
+	echo "No options beside the pack, so it comes up on its own defaults: $pack_options" >&2
+fi
 
 # What the pack-selection UI would have written, written here instead, so that the game comes up
 # with the pack already applied rather than waiting for a click. The four keys are the whole of the
@@ -134,9 +150,33 @@ if [[ ! -d "$saves_dir/$world_name" ]]; then
 	cp -R "$world_path" "$saves_dir/$world_name"
 fi
 
-jar="$("$vitrail_root/gradlew" -p "$vitrail_root" :fabric:jar -q --console=plain >/dev/null && \
-	find "$vitrail_root/fabric/build/libs" -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' \
-		! -name '*-dev.jar' -print -quit)"
+# Which jar to measure is asked of the build rather than read out of its output directory. Every
+# branch anybody has built leaves a jar in the same place, and a directory lists them in an order
+# that is not the order they were built in, so listing that directory can measure a jar from another
+# branch without saying so. The init script adds one task that runs after the jar and prints where
+# that jar went; it has no outputs of its own, so it is never up to date and answers even when the
+# jar itself was not rebuilt.
+ask_which_jar="$(mktemp -t vitrail-perf-jar)"
+cat > "$ask_which_jar" <<'INIT'
+allprojects { project ->
+	if (project.path != ":fabric") {
+		return
+	}
+	project.afterEvaluate {
+		def jarTask = project.tasks.named("jar")
+		project.tasks.register("vitrailPerfJarPath") {
+			dependsOn jarTask
+			doLast {
+				println "vitrail-perf-jar=" + jarTask.get().archiveFile.get().asFile.absolutePath
+			}
+		}
+	}
+}
+INIT
+asked="$("$vitrail_root/gradlew" -p "$vitrail_root" -I "$ask_which_jar" :fabric:jar \
+	:fabric:vitrailPerfJarPath -q --console=plain | grep -F 'vitrail-perf-jar=' | tail -1 || true)"
+rm -f "$ask_which_jar"
+jar="${asked#vitrail-perf-jar=}"
 if [[ ! -f "$jar" ]]; then
 	echo "Vitrail's fabric jar was not produced under $vitrail_root/fabric/build/libs" >&2
 	exit 1
@@ -144,12 +184,17 @@ fi
 echo "Measuring with $(basename "$jar")"
 
 # One line of the log per run, and the numbers the harness waits on are the ones the engine already
-# prints: the pack's first full frame, and the probe's window.
+# prints: the pack's first full frame, and the probe's window. A launcher that has already exited is
+# waited on no longer: a launch that failed says so in seconds, and a harness that sat out its whole
+# timeout for a client that never started would be a harness nobody runs.
 wait_for_log() {
-	local pattern="$1" deadline="$2"
+	local pattern="$1" deadline="$2" launcher="$3"
 	while [[ "$(date +%s)" -lt "$deadline" ]]; do
 		if [[ -f "$game_dir/logs/latest.log" ]] && grep -qF "$pattern" "$game_dir/logs/latest.log"; then
 			return 0
+		fi
+		if [[ -n "$launcher" ]] && ! kill -0 "$launcher" 2>/dev/null; then
+			return 2
 		fi
 		sleep 2
 	done
@@ -182,16 +227,30 @@ for run in "${runs[@]}"; do
 	: > "$game_dir/logs/latest.log" 2>/dev/null || true
 
 	echo "Run '$name'${vmargs:+ with $vmargs}"
+	# How long the window is belongs to this harness and not to the probe, because two windows of
+	# different lengths are not two windows of one thing. The probe's own default is the same 600, so
+	# the flag only matters when it is asked for.
+	#
+	# The game's arguments go in through `--args=`, and not through `--args` and a separate word: a
+	# word that begins with two dashes is read as the next option rather than as the option's
+	# argument, which is how the first launch of this harness failed to start a client at all.
 	(
 		cd "$repo_root"
-		./gradlew runClient -PvitrailSmokeJar="$jar" -PvitrailPerfVmArgs="$vmargs" \
-			--console=plain --args "--quickPlaySingleplayer $world_name --width $width --height $height"
+		./gradlew runClient -PvitrailSmokeJar="$jar" \
+			-PvitrailPerfVmArgs="-Dmetallum.frameProbeBudget=$frames${vmargs:+ $vmargs}" \
+			--console=plain \
+			"--args=--quickPlaySingleplayer $world_name --width $width --height $height"
 	) > "$run_dir/gradle.log" 2>&1 &
 	launcher=$!
 
 	deadline="$(( $(date +%s) + timeout_seconds ))"
-	if ! wait_for_log "first full frame opened" "$deadline"; then
-		echo "Run '$name' never reached a full frame; see $run_dir/gradle.log" >&2
+	wait_for_log "first full frame opened" "$deadline" "$launcher" && reached=0 || reached=$?
+	if [[ "$reached" != 0 ]]; then
+		if [[ "$reached" == 2 ]]; then
+			echo "Run '$name' stopped before the pack drew a frame; see $run_dir/gradle.log" >&2
+		else
+			echo "Run '$name' never reached a full frame; see $run_dir/gradle.log" >&2
+		fi
 		stop_run
 		wait "$launcher" 2>/dev/null || true
 		continue
@@ -199,7 +258,7 @@ for run in "${runs[@]}"; do
 
 	sleep 5
 	touch "$marker"
-	if ! wait_for_log "frame-probe" "$deadline"; then
+	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
 	fi
 

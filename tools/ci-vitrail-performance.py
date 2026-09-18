@@ -53,6 +53,21 @@ if 'rm -f "$marker"\nfi' not in launcher:
     raise SystemExit("the marker outlives the runs, so the next session would arm from a leftover file")
 
 # ---------------------------------------------------------------------------
+# A launch that failed costs seconds and not a timeout
+#
+# The first launch this harness ever made never started a client: Gradle read the game's arguments as
+# the option after --args rather than as its value, because a word beginning with two dashes is an
+# option to its parser. The harness waited out its whole timeout for a client that was already gone,
+# which is the same bug in a second costume - so both halves are pinned here.
+# ---------------------------------------------------------------------------
+if '"--args=--quickPlaySingleplayer' not in launcher:
+    raise SystemExit("the game's arguments are not passed with --args=, so Gradle reads them as options")
+if 'wait_for_log "first full frame opened" "$deadline" "$launcher"' not in launcher:
+    raise SystemExit("the wait does not watch the launcher, so a launch that failed looks like a slow one")
+if "return 2" not in launcher:
+    raise SystemExit("a launcher that exited is waited on until the timeout instead of ending the wait")
+
+# ---------------------------------------------------------------------------
 # A pack the harness is handed, never one it knows
 #
 # Shader packs are not redistributable and this repository is not where one lives. The pack arrives as
@@ -65,6 +80,8 @@ for pack in ("photon", "complementary", "bliss", "solas", "sundial", "makeup", "
         raise SystemExit(f"the harness names a shader pack, which it may not: {pack}")
 if 'cp -f "$pack_path" "$pack_dir/$pack_name"' not in launcher:
     raise SystemExit("the pack is not copied into the dev instance")
+if 'pack_options="$pack_path.txt"' not in launcher or 'cp -f "$pack_options" "$pack_dir/$pack_name.txt"' not in launcher:
+    raise SystemExit("the pack's own options are not staged beside it, so a run measures the pack's defaults")
 if "run/" not in GITIGNORE.read_text(encoding="utf-8"):
     raise SystemExit("the dev instance is no longer ignored by git, so a run could be committed")
 
@@ -81,6 +98,29 @@ for needle, why in (
 ):
     if needle not in launcher:
         raise SystemExit("the dev instance is not prepared: " + why)
+
+# ---------------------------------------------------------------------------
+# The jar measured is the jar this run built
+#
+# Every branch a developer has built leaves its jar in the same output directory, so a listing of
+# that directory is not a statement about what was just built: the harness asks the build instead,
+# through an init script whose task prints the archive the jar task wrote.
+# ---------------------------------------------------------------------------
+if "vitrail-perf-jar=" not in launcher:
+    raise SystemExit("the harness does not ask the build which jar it produced")
+if ":fabric:vitrailPerfJarPath" not in launcher:
+    raise SystemExit("the harness does not run the task that names the jar")
+if "-print -quit" in launcher:
+    raise SystemExit("the harness picks its jar out of a directory listing, which is not the one it built")
+
+# ---------------------------------------------------------------------------
+# The window is the harness's length and not the probe's
+#
+# Two windows of different lengths are not two windows of one thing, so --frames has to reach the
+# probe's own budget rather than being a number the harness keeps to itself.
+# ---------------------------------------------------------------------------
+if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
+    raise SystemExit("--frames never reaches the probe, so the window length is not the harness's")
 
 # ---------------------------------------------------------------------------
 # The numbers are the probe's own
