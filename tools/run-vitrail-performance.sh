@@ -505,7 +505,7 @@ for run in "${runs[@]}"; do
 		fi
 
 		if [[ "${scene_bad:-0}" == 0 ]]; then
-			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs)"
+			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs, loadedMiB $(grep -o 'loadedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), storedMiB $(grep -o 'storedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2))"
 		fi
 	fi
 

@@ -232,6 +232,39 @@ if "--settle" not in launcher or 'sleep "$settle_seconds"' not in launcher \
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
     raise SystemExit("the harness collects runs and never compares them")
 
+# A window is only a measurement if the run proves it was the run that was asked for. Three arms reported a
+# menu frame - and one reported a scene at 100 ms a frame - as a measurement of Photon, because the harness
+# judged the window by its counters afterwards. The checkpoint smokes in this repository were already doing it
+# the other way round: named evidence first, the fixture's own name inside the asserted string, a failure line
+# that is a failure, and a clean shutdown before a number is trusted. These four are that evidence here.
+for needle, why in (
+    ('grep -qF "No pack asked for" "$run_dir/latest.log"',
+     "the harness does not refuse a window whose log says the pack selection was off, which is the engine "
+     "telling it that the pack was not drawn at all"),
+    ('grep -qF "of $pack_name at render stage" "$run_dir/latest.log"',
+     "the harness does not require the pack's own name in the line that proves a pass drew, so a window that "
+     "drew another pack - or none - can pass"),
+    ('grep -qF "Stopping!" "$run_dir/latest.log"',
+     "the harness does not require a clean client shutdown, so a window that ended for another reason is "
+     "reported as a measurement"),
+    ("performance window: PASS",
+     "the harness does not say, per run, that the window is one it stands behind"),
+):
+    if needle not in launcher:
+        raise SystemExit(why)
+
+# And the refusals have to be refusals: a window that did not draw the pack, and a run that never armed, are
+# two different faults with two different exits, and neither may end zero - the pass-timings attempt timed out
+# at 900 s and this script still exited 0 with an empty comparison.
+for needle, why in (
+    ("scene_bad=1", "the harness detects a bad window and does not mark the run as one"),
+    ("exit 4", "a window that did not draw the pack ends zero, so an empty comparison reads as a result"),
+    ("run_failed=1", "an arm that never armed is not marked as one"),
+    ("exit 5", "an arm that never armed ends zero, so a missing run reads as a result"),
+):
+    if needle not in launcher:
+        raise SystemExit(why)
+
 if "tools/ci-vitrail-performance.py" not in CI.read_text(encoding="utf-8"):
     raise SystemExit("this contract is not named by ci.yml, so nothing runs it")
 
