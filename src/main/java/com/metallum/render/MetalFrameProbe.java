@@ -127,6 +127,20 @@ public final class MetalFrameProbe {
      */
     private static int blits;
     private static long blittedBytes;
+
+    /**
+     * Encoders opened by kind, which is the decomposition {@code passChanged} never had.
+     * <p>
+     * {@code encoders} counts encoder *ends* and {@code passChanged} counts those that ended because the
+     * pass configuration changed - and an encoder the engine itself opened to copy a texture, materialise
+     * a clear or build a depth mip ends that way too. So the number the phase's exit criterion wants to
+     * move has never been split into "the pack's passes" and "this engine's own switches", and these four
+     * are that split, counted where each encoder is created.
+     */
+    private static int renderPassOpeners;
+    private static int blitOpeners;
+    private static int computeOpeners;
+    private static int clearOpeners;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -270,6 +284,20 @@ public final class MetalFrameProbe {
      * size over rather than the texture so that an unarmed session pays the guard and nothing else -
      * the size is a number the caller already has, not a question asked of Metal.
      */
+    /** An encoder the engine itself opened, by the work it was opened for. */
+    public static void encoderOpened(final int kind) {
+        if (!armed()) {
+            return;
+        }
+
+        switch (kind) {
+            case 0 -> renderPassOpeners++;
+            case 1 -> blitOpeners++;
+            case 2 -> computeOpeners++;
+            default -> clearOpeners++;
+        }
+    }
+
     public static void blit(final int width, final int height, final int pixelSize) {
         if (!armed()) {
             return;
@@ -393,6 +421,13 @@ public final class MetalFrameProbe {
         // Read before reset(), which clears the window's first frame along with its counts.
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
+                "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={}",
+                renderPassOpeners,
+                blitOpeners,
+                computeOpeners,
+                clearOpeners
+        );
+        Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
@@ -446,6 +481,10 @@ public final class MetalFrameProbe {
         depthStoredBytes = 0L;
         blits = 0;
         blittedBytes = 0L;
+        renderPassOpeners = 0;
+        blitOpeners = 0;
+        computeOpeners = 0;
+        clearOpeners = 0;
         pipelines = 0;
         textures = 0;
         samplers = 0;

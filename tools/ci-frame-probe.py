@@ -236,6 +236,12 @@ if probe.count("loadedBytes += bytes;") != 2 or probe.count("storedBytes += byte
 # time and invisible in its decomposition. The size arrives as two integers and a pixel size rather
 # than as a texture, so an unarmed session pays the guard and no question is asked of Metal.
 # ---------------------------------------------------------------------------
+require("the encoder split", probe, (
+    "private static int renderPassOpeners;",
+    "public static void encoderOpened(final int kind) {",
+    "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={}",
+))
+
 require("blit counter", probe, (
     "blits={} blittedMiB={}",
     "public static void blit(final int width, final int height, final int pixelSize) {",
@@ -340,10 +346,11 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 13:
+if len(guarded) != 14:
     raise SystemExit(
-        "frame probe: expected 13 guarded entry points (encoder, frame, gpu frame, colour attachment, "
-        f"depth attachment, blit, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
+        "frame probe: expected 14 guarded entry points (encoder, encoder opener, frame, gpu frame, colour "
+        "attachment, depth attachment, blit, six binding kinds and pipeline creation), found "
+        f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
     raise SystemExit(

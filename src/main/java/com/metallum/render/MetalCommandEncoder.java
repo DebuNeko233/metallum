@@ -112,6 +112,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     MTLBlitCommandEncoder blitCommandEncoder() {
         endEncoder();
+        MetalFrameProbe.encoderOpened(1);
         MTLBlitCommandEncoder encoder = commandBuffer().makeBlitCommandEncoder();
         encoder.waitForFence(fence);
         currentEncoder = encoder;
@@ -120,6 +121,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     MTLComputeCommandEncoder computeCommandEncoder() {
         endEncoder();
+        MetalFrameProbe.encoderOpened(2);
         MTLComputeCommandEncoder encoder = commandBuffer().makeComputeCommandEncoder();
         encoder.waitForFence(fence);
         currentEncoder = encoder;
@@ -405,6 +407,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             colorPixelSizes[index] = colorTextureView == null ? 0 : ((MetalGpuTexture) colorTextureView.texture()).pixelSize();
         }
         int depthPixelSize = depthTextureView == null ? 0 : ((MetalGpuTexture) depthTextureView.texture()).pixelSize();
+        MetalFrameProbe.encoderOpened(0);
         MTLRenderCommandEncoder encoder = commandBuffer().makeRenderCommandEncoder(
                 colorAttachments,
                 clearColors,
@@ -995,6 +998,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         endEncoder();
+        MetalFrameProbe.encoderOpened(3);
         MTLRenderCommandEncoder encoder = commandBuffer().makeRenderCommandEncoder(
                 colorClear != null ? texture.nativeHandle() : MemorySegment.NULL,
                 colorClear,
