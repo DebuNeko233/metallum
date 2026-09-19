@@ -1092,7 +1092,8 @@ require("the identity is read from the game's description plus the session's own
 ))
 require("the key is built where the pipeline is compiled",
         "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
-    "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), useArgumentBuffers)",
+    "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers()),",
+    "TranslatedRenderPipeline translated = translate(vertexSpirv, fragmentSpirv, pipeline, argumentBuffersTier2);",
 ))
 require("the Metal 4 binding shapes are proven, not assumed",
         "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
