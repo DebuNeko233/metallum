@@ -909,7 +909,7 @@ require("a compiled pipeline is recompiled when its profile is not the session's
     "private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {",
     "held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())",
     "this.compiledPipelines.remove(pipeline);",
-    "this.deferredPipelineReleases.add(held);",
+    "this.retirement.retire(held);",
 ))
 require("a translated shader module is keyed by its MSL profile",
         "src/main/java/com/metallum/render/Metal3CompilationContext.java", (

@@ -61,7 +61,8 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     /** What executes, and the queue it submits on; the selection replaces this in M4. */
     private final MetalExecutionServices services;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
-    private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
+    /** The pipelines a Metal 3 session retired: the cache no longer names them, the GPU may still use them. */
+    private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();
     /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
     private final Metal3CompilationContext compilation;
     private final ShaderSource defaultShaderSource;
@@ -341,7 +342,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
             }
 
             evicted.add(entry.getKey());
-            this.deferredPipelineReleases.add(entry.getValue());
+            this.retirement.retire(entry.getValue());
             entries.remove();
         }
         return List.copyOf(evicted);
@@ -350,8 +351,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     @Override
     public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
-        this.deferredPipelineReleases.forEach(MetalCompiledRenderPipeline::close);
-        this.deferredPipelineReleases.clear();
+        this.retirement.releaseRetired();
         this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
         this.compiledPipelines.clear();
         this.compilation.clearShaderCache();
@@ -453,7 +453,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
             // Released on the same deferred path an eviction uses: already-recorded GPU work may still be
             // referencing the artifact, so the native objects outlive the map entry by design.
             this.compiledPipelines.remove(pipeline);
-            this.deferredPipelineReleases.add(held);
+            this.retirement.retire(held);
         }
 
         return this.compiledPipelines.computeIfAbsent(
