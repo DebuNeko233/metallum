@@ -250,8 +250,19 @@ public final class Metal4Path {
 
             MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, drawn);
         } catch (RuntimeException failed) {
-            giveUp(failed.getMessage());
+            // The cause and not only the wrapper: "objc_msgSend failed: <selector>" says which call and
+            // nothing about why, and a wrong method handle, a critical downcall that was not leaf and a
+            // MissingLayout are three different repairs behind the same sentence.
+            giveUp(describe(failed));
         }
+    }
+
+    /** One line for a failure, naming what failed and what it was, for the log rather than for a reader. */
+    private static String describe(final Throwable failed) {
+        Throwable cause = failed.getCause() == null ? failed : failed.getCause();
+        String message = cause.getMessage();
+        return failed.getMessage() + " (" + cause.getClass().getSimpleName()
+                + (message == null ? "" : ": " + message) + ")";
     }
 
     /**

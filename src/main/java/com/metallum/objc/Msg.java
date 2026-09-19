@@ -78,6 +78,24 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * Three integers.
+     * <p>
+     * <strong>This overload is not optional.</strong> Without it a call with three {@code long} arguments
+     * resolves to {@link #send(MemorySegment, float, float, float)}, because {@code long} widens to
+     * {@code float} implicitly and that overload exists - and the handle behind a selector declared with
+     * {@code JAVA_LONG} then answers {@code WrongMethodTypeException} at the first frame that reaches it
+     * rather than at the call that was written wrong. Measured on the Metal 4 present draw, which never ran
+     * because of exactly this.
+     */
+    public void send(MemorySegment self, long a, long b, long c) {
+        try {
+            handle.invokeExact(self, sel, a, b, c);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, float a, float b, float c) {
         try {
             handle.invokeExact(self, sel, a, b, c);
