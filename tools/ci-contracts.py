@@ -705,6 +705,11 @@ require("the Metal 4 submission is proven by the queue's own signal",
     'responds(queue, "commit:count:")',
     'responds(event, "waitUntilSignaledValue:timeoutMS:")',
     "boolean ran = WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) != 0L;",
+    'Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS)',
+    'Msg.ofVoid("setLoadAction:", JAVA_LONG)',
+    'Msg.ofVoid("setStoreAction:", JAVA_LONG)',
+    'END_ENCODING.send(encoder);',
+    'ObjC.clazz("MTL4RenderPassDescriptor")',
 ))
 
 print("Metal and engine contracts: PASS")

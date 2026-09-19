@@ -1,5 +1,6 @@
 package com.metallum.mtl;
 
+import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
@@ -21,8 +22,9 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * factory surface its SDK declares**, so every selector here is asked for before it is sent, and a device
  * that answers no to one is a device this path cannot be built on rather than a crash.
  * <p>
- * What is proven is reachability and submission: a queue of the new command structure, an allocator for a
- * command buffer's working memory, a command buffer begun on that allocator and ended, and that buffer
+ * What is proven is reachability, encoding and submission: a queue of the new command structure, an
+ * allocator for a command buffer's working memory, a command buffer begun on that allocator, a render pass
+ * on a 64x64 colour target encoded into it and ended, and that buffer
  * **committed to the queue and waited for** - the queue signals a shared event after the committed work,
  * and the event's own CPU wait answers whether the GPU ran it. No frame path creates any of it, and the
  * whole probe is one submission at device creation.
@@ -38,6 +40,22 @@ public final class MTL4Probe {
     private static final Msg END = Msg.ofVoid("endCommandBuffer");
     private static final Msg NEW_DESCRIPTOR = Msg.of("new", ADDRESS);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
+    private static final Msg NEW_RENDER_PASS = Msg.of("new", ADDRESS);
+    private static final Msg SET_TARGET_WIDTH = Msg.ofVoid("setRenderTargetWidth:", JAVA_LONG);
+    private static final Msg SET_TARGET_HEIGHT = Msg.ofVoid("setRenderTargetHeight:", JAVA_LONG);
+    private static final Msg COLOR_ATTACHMENTS = Msg.of("colorAttachments", ADDRESS);
+    private static final Msg ATTACHMENT_AT = Msg.of("objectAtIndexedSubscript:", ADDRESS, JAVA_LONG);
+    private static final Msg SET_TEXTURE = Msg.ofVoid("setTexture:", ADDRESS);
+    private static final Msg SET_LOAD_ACTION = Msg.ofVoid("setLoadAction:", JAVA_LONG);
+    private static final Msg SET_STORE_ACTION = Msg.ofVoid("setStoreAction:", JAVA_LONG);
+    private static final Msg RENDER_ENCODER = Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS);
+    private static final Msg END_ENCODING = Msg.ofVoid("endEncoding");
+
+    /** One colour target, big enough to be a render target and small enough to cost nothing. */
+    private static final long TARGET_SIZE = 64L;
+    private static final long USAGE_RENDER_TARGET = 4L;
+    private static final long LOAD_DONT_CARE = 0L;
+    private static final long STORE_STORE = 1L;
     private static final Msg NEW_SHARED_EVENT = Msg.of("newSharedEvent", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
@@ -96,6 +114,60 @@ public final class MTL4Probe {
                 return false;
             }
             BEGIN.send(buffer, allocator);
+
+            // A real pass, so what the queue takes is a command buffer with work in it rather than an empty
+            // one: one 64x64 colour target that nothing loads and the pass stores, encoded and ended. The
+            // pass descriptor is Metal 4's, and its attachments are Metal 3's own classes - which is why
+            // the load and store actions here are the ones the engine already sets on its own passes.
+            MemorySegment target = MemorySegment.NULL;
+            MemorySegment pass = MemorySegment.NULL;
+            try (AutoreleasePool _ = AutoreleasePool.push()) {
+                MemorySegment passClass;
+                try {
+                    passClass = ObjC.clazz("MTL4RenderPassDescriptor");
+                } catch (Throwable missing) {
+                    return false;
+                }
+
+                try (MTLTextureDescriptor targetDescriptor = MTLTextureDescriptor.create()) {
+                    targetDescriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                    targetDescriptor.width(TARGET_SIZE);
+                    targetDescriptor.height(TARGET_SIZE);
+                    targetDescriptor.usage(USAGE_RENDER_TARGET);
+                    target = device.newTexture(targetDescriptor);
+                } catch (RuntimeException refused) {
+                    return false;
+                }
+
+                pass = NEW_RENDER_PASS.sendPtr(passClass);
+                if (ObjC.isNil(pass) || !responds(buffer, "renderCommandEncoderWithDescriptor:")) {
+                    return false;
+                }
+
+                SET_TARGET_WIDTH.send(pass, TARGET_SIZE);
+                SET_TARGET_HEIGHT.send(pass, TARGET_SIZE);
+                MemorySegment attachments = COLOR_ATTACHMENTS.sendPtr(pass);
+                MemorySegment attachment = ObjC.isNil(attachments)
+                        ? MemorySegment.NULL
+                        : ATTACHMENT_AT.sendPtr(attachments, 0L);
+                if (ObjC.isNil(attachment)) {
+                    return false;
+                }
+
+                SET_TEXTURE.send(attachment, target);
+                SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
+                SET_STORE_ACTION.send(attachment, STORE_STORE);
+
+                MemorySegment encoder = RENDER_ENCODER.sendPtr(buffer, pass);
+                if (ObjC.isNil(encoder) || !responds(encoder, "endEncoding")) {
+                    return false;
+                }
+                END_ENCODING.send(encoder);
+            } finally {
+                ObjC.release(pass);
+                ObjC.release(target);
+            }
+
             END.send(buffer);
 
             // And submitted, because a command buffer that can be begun is not yet one the queue takes.

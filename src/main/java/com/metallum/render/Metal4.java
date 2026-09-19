@@ -83,7 +83,8 @@ public final class Metal4 {
 
         available = Boolean.TRUE;
         reason = "the device has the family, answers to " + QUEUE_SELECTOR
-                + ", and a queue, an allocator and a command buffer were made, submitted and released";
+                + ", and a queue, an allocator and a command buffer carrying a render pass were made, "
+                + "encoded, submitted and released";
         Metallum.LOGGER.info("Metal 4 core API: available, {}", reason);
         return true;
     }
