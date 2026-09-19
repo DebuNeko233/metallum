@@ -166,6 +166,32 @@ renderscale=$renderscale
 shadowmapscale=$shadowmap_scale
 EOF
 
+# The measurement profile, written into the staged instance on every run, because a frame rate must not
+# be capped by a setting nobody remembered. `maxFps` is the game's own limiter - 120 here, which is
+# invisible until the engine gets fast and then reads exactly like a display cap, measured: the same run
+# read 120.2 frames a second with it and 137.4 without - and `enableVsync` is off for the same reason.
+# Fullscreen is off because every baseline is a window, and the vanilla clouds are off because the pack
+# draws its own.
+python3 - "$game_dir/options.txt" <<'OPTIONS'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": "false", "renderClouds": '"false"'}
+lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+written = set()
+for index, line in enumerate(lines):
+    name = line.split(":", 1)[0]
+    if name in profile:
+        lines[index] = f"{name}:{profile[name]}"
+        written.add(name)
+for name, value in profile.items():
+    if name not in written:
+        lines.append(f"{name}:{value}")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+OPTIONS
+echo "measurement profile: maxFps 260, vsync off, windowed, vanilla clouds off" >&2
+
 # The Metal path is the one being measured, and a run that came up on another backend would measure
 # nothing at all.
 cat > "$game_dir/config/metallum.properties" <<'EOF'

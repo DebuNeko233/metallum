@@ -163,6 +163,16 @@ if "unsupported PNG" not in compare:
     raise SystemExit("the comparison guesses at a picture it cannot read")
 if "order.txt" not in compare or "order.txt" not in launcher:
     raise SystemExit("the comparison does not use the order the runs were asked for, so the baseline could be any of them")
+# A capped run reads exactly like a slow engine, and this cost four runs to find: the staged instance's
+# own maxFps and vsync were never part of what the harness set, so a window that had been 120 a second
+# because the game limited it looked like the display doing it.
+for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": "false"'):
+    if setting not in launcher:
+        raise SystemExit(
+            "the harness does not write the measurement profile it compares under, so a run can be "
+            f"capped by the instance it stages (missing {setting})"
+        )
+
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
     raise SystemExit("the harness collects runs and never compares them")
 
