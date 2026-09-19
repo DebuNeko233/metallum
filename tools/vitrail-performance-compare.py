@@ -220,16 +220,33 @@ def main() -> int:
     # baseline's 93 943, which every other check here accepted.
     drift: list[str] = []
     for counter in ("renderPasses", "loadedMiB"):
-        baseline = measured[runs[0].name].get(counter)
-        if not baseline:
+        reference = measured[first.name].get(counter)
+        if not reference:
             continue
         for run in runs[1:]:
             value = measured[run.name].get(counter)
             if value is None:
                 continue
-            change = 100 * (value - baseline) / baseline
+            change = 100 * (value - reference) / reference
             if abs(change) > SCENE_TOLERANCE:
                 drift.append(f"{counter} of {run.name} is {change:+.1f}% against {runs[0].name}")
+    # And the window itself: a fullscreen arm renders the display's own mode, so the resolution is a scene
+    # property the harness cannot pin with --width/--height and has to judge here. Measured: two arms of one
+    # configuration photographed 1920x1200 and 3600x2338.
+    first_screen = first / "screen.png"
+    if first_screen.is_file():
+        first_size = read_png(first_screen)[:2]
+        for run in runs[1:]:
+            screen = run / "screen.png"
+            if not screen.is_file():
+                continue
+            size = read_png(screen)[:2]
+            if size != first_size:
+                drift.append(
+                    f"{run.name} was photographed at {size[0]}x{size[1]} against "
+                    f"{first_size[0]}x{first_size[1]}, so the two arms did not render the same window"
+                )
+
     if drift:
         print()
         print("scene drift: " + "; ".join(drift) + f" (tolerance {SCENE_TOLERANCE:.1f}%)", file=sys.stderr)

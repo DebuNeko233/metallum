@@ -280,6 +280,9 @@ for needle, why in (
     ("scene drift: ",
      "the comparison does not name the drift it found"),
     ("return 3", "a drifted arm does not end the comparison non-zero, so it reads as a result"),
+    ("so the two arms did not render the same window",
+     "the comparison does not judge the window the two arms were photographed at, which a fullscreen arm "
+     "takes from the display and --width/--height cannot pin"),
 ):
     if needle not in comparison:
         raise SystemExit(why)
