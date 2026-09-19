@@ -141,6 +141,10 @@ public final class MetalFrameProbe {
     private static int blitOpeners;
     private static int computeOpeners;
     private static int clearOpeners;
+
+    /** Frames carried through the Metal 4 command structure, and what that path cost on the CPU. */
+    private static int metal4Frames;
+    private static long metal4Nanos;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -284,6 +288,21 @@ public final class MetalFrameProbe {
      * size over rather than the texture so that an unarmed session pays the guard and nothing else -
      * the size is a number the caller already has, not a question asked of Metal.
      */
+    /**
+     * One frame carried through the Metal 4 command structure, and how long the CPU spent carrying it.
+     * <p>
+     * The path is beside the frame rather than in it, so the number to read is the cost of carrying it: on
+     * the GPU it is a 64x64 pass, and on the CPU it is the messages a frame-shaped submission takes.
+     */
+    public static void metal4Frame(final long nanos) {
+        if (!armed()) {
+            return;
+        }
+
+        metal4Frames++;
+        metal4Nanos += nanos;
+    }
+
     /** An encoder the engine itself opened, by the work it was opened for. */
     public static void encoderOpened(final int kind) {
         if (!armed()) {
@@ -421,11 +440,14 @@ public final class MetalFrameProbe {
         // Read before reset(), which clears the window's first frame along with its counts.
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
-                "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={}",
+                "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} "
+                        + "metal4Frames={} metal4Us={}",
                 renderPassOpeners,
                 blitOpeners,
                 computeOpeners,
-                clearOpeners
+                clearOpeners,
+                metal4Frames,
+                String.format(Locale.ROOT, "%.1f", metal4Frames == 0 ? 0.0 : metal4Nanos / 1000.0 / metal4Frames)
         );
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
@@ -485,6 +507,8 @@ public final class MetalFrameProbe {
         blitOpeners = 0;
         computeOpeners = 0;
         clearOpeners = 0;
+        metal4Frames = 0;
+        metal4Nanos = 0L;
         pipelines = 0;
         textures = 0;
         samplers = 0;

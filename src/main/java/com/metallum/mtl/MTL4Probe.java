@@ -66,6 +66,10 @@ public final class MTL4Probe {
     }
 
     /** Whether an object answers to a selector, which is the question to ask before reaching anything. */
+    public static boolean respondsTo(final MemorySegment object, final String selector) {
+        return RESPONDS_TO_SELECTOR.sendLong(object, ObjC.selector(selector)) != 0L;
+    }
+
     private static boolean responds(final MemorySegment object, final String selector) {
         return RESPONDS_TO_SELECTOR.sendLong(object, ObjC.selector(selector)) != 0L;
     }

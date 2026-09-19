@@ -336,6 +336,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // commits nothing, so counting every submit() would count each drawn frame twice.
             MetalFrameProbe.frameSubmitted();
 
+            // A frame is a commit, and the new command structure carries one of its own beside it - once per
+            // frame, not once per submit: the surface's present-time submit finds no command buffer and
+            // commits nothing, and carrying a second submission there would double what this path costs for
+            // a frame it is not shaped like. What it touches is its own 64x64 target, so no order between
+            // the two queues is needed.
+            Metal4Path.frame();
+
             lastCommittedSubmitIndex = currentSubmitIndex;
             toClose = inFlight[slot];
             inFlight[slot] = new InFlight(currentSubmitIndex, commandBuffer);
@@ -368,6 +375,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
         transientMemory.rotate();
         destroyQueue.rotate();
+
     }
 
     MTLRenderCommandEncoder renderCommandEncoder(

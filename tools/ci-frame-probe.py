@@ -239,7 +239,8 @@ if probe.count("loadedBytes += bytes;") != 2 or probe.count("storedBytes += byte
 require("the encoder split", probe, (
     "private static int renderPassOpeners;",
     "public static void encoderOpened(final int kind) {",
-    "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={}",
+    "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} ",
+    "metal4Frames={} metal4Us={}",
 ))
 
 require("blit counter", probe, (
@@ -346,10 +347,10 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 14:
+if len(guarded) != 15:
     raise SystemExit(
-        "frame probe: expected 14 guarded entry points (encoder, encoder opener, frame, gpu frame, colour "
-        "attachment, depth attachment, blit, six binding kinds and pipeline creation), found "
+        "frame probe: expected 15 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame, colour attachment, depth attachment, blit, six binding kinds and pipeline creation), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

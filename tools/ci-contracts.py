@@ -755,4 +755,31 @@ require("the generation is a family answer, not a version table",
     'return "Metal 4";',
     'return metal3 ? "Metal 3" : "Metal";',
 ))
+# ---------------------------------------------------------------------------
+# The Metal 4 path carries a frame-shaped submission, once per committed frame
+#
+# The step after detection: every frame the new command structure takes one submission of its own shape -
+# an allocator from a ring of three, a command buffer begun on it, work encoded and ended, the buffer
+# committed and its completion signalled - beside the real frame, touching nothing the picture uses. Three
+# rules are pinned because each of them was learned here: every selector is asked for first (an
+# unimplemented one is an Objective-C exception, not a nil), the submission is carried where a frame is
+# *committed* rather than where a submit is attempted (the present-time submit commits nothing, and two
+# submissions a frame is not the shape being proven), and every release goes through the guard, because the
+# first version threw a NullPointerException out of its own cleanup and took the device down with it.
+# ---------------------------------------------------------------------------
+require("the frame-shaped path is guarded and carried at the frame boundary",
+        "src/main/java/com/metallum/render/Metal4Path.java", (
+    "public static boolean start(final MTLDevice device) {",
+    'device.respondsTo("newMTL4CommandQueue")',
+    'device.respondsTo("newSharedEvent")',
+    "public static void frame() {",
+    "awaited[slot] = ++signalled;",
+    "private static void releaseIfPresent(final @Nullable MemorySegment object) {",
+    'System.getProperty("metallum.metal4Frame", "true")',
+))
+require("the submission is carried where a frame is committed",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "Metal4Path.frame();",
+))
+
 print("Metal and engine contracts: PASS")

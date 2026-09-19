@@ -70,6 +70,7 @@ final class MetalDevice implements GpuDeviceBackend {
         // scaler. Said out loud either way, so that a session's log names which of the two it was.
         MetalFx.spatialSupported(metalDeviceHandle);
         Metal4.available(this.metalDevice);
+        Metal4Path.start(this.metalDevice);
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
@@ -298,6 +299,8 @@ final class MetalDevice implements GpuDeviceBackend {
             this.cocoa.clearViewLayer();
             // The view only ever borrowed the layer; this is the reference this code was given.
             this.metalLayer.close();
+            // The new command structure's objects go with the device that made them.
+            Metal4Path.close();
         } catch (Throwable ignored) {
         }
         MTLStorageTexturePipelines.close();
