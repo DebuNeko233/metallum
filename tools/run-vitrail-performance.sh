@@ -38,6 +38,7 @@ height=900
 timeout_seconds=900
 runs=()
 keep=false
+fresh_world=true
 
 usage() {
 	cat >&2 <<'USAGE'
@@ -60,6 +61,11 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --out DIR              where the collected logs and pictures go.
   --keep                 leave the collected dev instance in place instead of clearing the marker.
+  --continue-world       let each run carry on from the world the last one saved instead of
+                         starting from the staged copy again. Off by default, because the world's
+                         clock runs while a session is loaded and a scene lit by a moved sun is a
+                         different scene: a comparison across runs that share a save measures the
+                         sun rather than the switch.
 
 Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log}, and the harness ends by
 printing the comparison between them.
@@ -82,6 +88,7 @@ while [[ $# -gt 0 ]]; do
 		--timeout) timeout_seconds="$2"; shift 2 ;;
 		--out) out_dir="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
+		--continue-world) fresh_world=false; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
 	esac
@@ -151,9 +158,6 @@ cat > "$game_dir/config/metallum.properties" <<'EOF'
 preferredGraphicsApi=metal
 EOF
 
-if [[ ! -d "$saves_dir/$world_name" ]]; then
-	cp -R "$world_path" "$saves_dir/$world_name"
-fi
 
 # Which jar to measure is asked of the build rather than read out of its output directory. Every
 # branch anybody has built leaves a jar in the same place, and a directory lists them in an order
@@ -224,6 +228,16 @@ for run in "${runs[@]}"; do
 	run_dir="$out_dir/$name"
 	rm -rf "$run_dir"
 	mkdir -p "$run_dir"
+
+	# The world starts from the staged copy again, unless the caller asked each run to carry on. That
+	# copy holds one time of day and one player position, so two runs of one comparison draw the same
+	# scene rather than two scenes a few minutes of world time apart.
+	if [[ "$fresh_world" == true ]]; then
+		rm -rf "$saves_dir/$world_name"
+	fi
+	if [[ ! -d "$saves_dir/$world_name" ]]; then
+		cp -R "$world_path" "$saves_dir/$world_name"
+	fi
 
 	# The marker is removed before the launch and created only once the pack has drawn a full frame.
 	# That order is the whole of what makes a window worth counting: armed at launch it counts the

@@ -91,6 +91,13 @@ if "run/" not in GITIGNORE.read_text(encoding="utf-8"):
 # Both files are what the game reads at startup, which is what lets a run come up on the pack and on
 # the Metal path without anybody clicking.
 # ---------------------------------------------------------------------------
+if "--continue-world" not in launcher or 'rm -rf "$saves_dir/$world_name"' not in launcher:
+    raise SystemExit(
+        "the world is not staged again before each run, so two runs of a comparison start at two "
+        "different times of day and the comparison measures the world's clock rather than the switch"
+    )
+if 'cp -R "$world_path" "$saves_dir/$world_name"' not in launcher:
+    raise SystemExit("the world is no longer copied into the dev instance at all")
 if "--renderscale)" not in launcher or "renderscale=$renderscale" not in launcher:
     raise SystemExit(
         "the render scale is not an argument of the harness, so the seat the upscaling phase replaces cannot be measured"
