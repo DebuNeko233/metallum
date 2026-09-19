@@ -1345,11 +1345,19 @@ require("the seam prints the generation the services themselves carry",
     "this.services.framePathReady() ? \"own-path\" : \"reference-shell\",",
     "this.services.isReferenceShell(), this.services.framePathReady());",
 ))
-require("the services own the queue factory without naming a generation type",
+require("the generation owns the queue factory, behind a neutral signature",
+        "src/main/java/com/metallum/render/metal3/Metal3ExecutionProvider.java", (
+    'Msg.of("newCommandQueue"',
+    "return NEW_COMMAND_QUEUE.sendPtr(device.handle()).address();",
+    "public MetalExecutionState createExecutionState(final MTLDevice device) {",
+))
+require("the services hold a provider and name no generation",
         "src/main/java/com/metallum/render/execution/MetalExecutionServices.java", (
     "long commandQueue(MTLDevice device);",
-    'Msg.of("newCommandQueue"',
-    "return MTL3_QUEUE.sendPtr(device.handle()).address();",
+    "private final MetalExecutionProvider provider =",
+    "return this.provider.commandQueue(device);",
+    "return this.provider.createExecutionState(device);",
+    "return this.provider.createFrameEncoder(device, executionState, defaultShaderSource);",
 ))
 device_source = (ROOT / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8")
 if "this.metalDevice.newCommandQueue()" in device_source:

@@ -23,13 +23,6 @@ import net.fabricmc.api.Environment;
 @Environment(EnvType.CLIENT)
 public interface MetalExecutionServices {
 
-    /**
-     * The Metal 3 queue factory, for the reference shell below: the shell is the seam until the generation
-     * packages own their own services, and it must not import a Metal 3 wrapper to do its job.
-     */
-    com.metallum.objc.Msg MTL3_QUEUE = com.metallum.objc.Msg.of("newCommandQueue",
-            java.lang.foreign.ValueLayout.ADDRESS);
-
     /** The generation this session was selected to execute. */
     MetalApiGeneration selected();
 
@@ -120,6 +113,10 @@ public interface MetalExecutionServices {
      */
     static MetalExecutionServices of(final MetalApiGeneration selected, final MetalApiGeneration executing) {
         return new MetalExecutionServices() {
+
+            private final MetalExecutionProvider provider =
+                    new com.metallum.render.metal3.Metal3ExecutionProvider();
+
             @Override
             public MetalApiGeneration selected() {
                 return selected;
@@ -140,15 +137,14 @@ public interface MetalExecutionServices {
 
             @Override
             public MetalExecutionState createExecutionState(final MTLDevice device) {
-                return com.metallum.render.metal3.Metal3ExecutionFactory.createState(device);
+                return this.provider.createExecutionState(device);
             }
 
             @Override
             public MetalFrameEncoder createFrameEncoder(final com.metallum.render.MetalDevice device,
                                                         final MetalExecutionState executionState,
                                                         final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource) {
-                return com.metallum.render.metal3.Metal3ExecutionFactory.createFrameEncoder(device, executionState,
-                        defaultShaderSource);
+                return this.provider.createFrameEncoder(device, executionState, defaultShaderSource);
             }
 
             private com.metallum.render.shared.MetalFramePresentGate presentGate =
@@ -183,9 +179,7 @@ public interface MetalExecutionServices {
 
             @Override
             public long commandQueue(final MTLDevice device) {
-                // The reference shell submits on the generation that executes, which is Metal 3 until the new
-                // path has a frame of its own - the same answer `executing()` gives, so the two cannot drift.
-                return MTL3_QUEUE.sendPtr(device.handle()).address();
+                return this.provider.commandQueue(device);
             }
         };
     }
