@@ -24,13 +24,13 @@ Vitrail may name only the stable flat surface (`MetalBackend`, `MetalDevice`, `M
 `MetalTextureBridge`). It may not name `com.metallum.render.metal3.*`, `render.metal4.*`, `mtl.metal3.*` or
 `mtl.metal4.*` - in code **or in a string**.
 
-### Batch 1 - Vitrail adapters, and the mixin only with them
+### Batch 1 - Vitrail adapters, and the mixin only with them - **done** (vitrail `44e97493`, `beb3a651`, `bee38231`)
 
-`common/src/main/java/dev/vitrail/mixin/metallum/MetalCommandEncoderMixin.java` targets
+`common/src/main/java/dev/vitrail/mixin/metallum/MetalCommandEncoderMixin.java` targeted
 `com.metallum.render.metal3.MetalCommandEncoder` by string. That is the structure that broke once already
 (`267f3b6` moved the class, the mixin stopped applying, and every capability it carried disappeared - visible as
-darker Photon shadows, with one WARN in the log and no test failure). It must be deleted, and it may only be
-deleted in the same change that adds the replacements, or the same regression returns:
+darker Photon shadows, with one WARN in the log and no test failure). It has been deleted, in a change that
+lands after its replacements rather than with them, which is the order that keeps the regression from returning:
 
 1. `dev.vitrail.compat.metallum.MetallumFrameBridge` - reflection onto `com.metallum.render.MetalFrameBridge`
    (`supports`, `generateMipmaps`, `clearStorageTexture`, `copyStorageTextureRegion`).
@@ -44,7 +44,14 @@ deleted in the same change that adds the replacements, or the same regression re
    `Backends.encoder(...)` stays for callers that need backend identity.
 5. `tests/test_backend_neutrality_contract.py` gains a second reading that strips **comments only** and rejects
    the four generation package prefixes. It was written and proved - it fires on the mixin target - and then
-   reverted because five other scripts were red; it must land with this batch, not before.
+   reverted because five other scripts were red; it lands with this batch, not before.
+
+With the mixin gone, that second reading no longer has a live target to fire on, so it is proved twice on the
+Vitrail side: a self-test that also holds the other direction (a comment may name a generation package, the
+stable flat surface stays nameable in a string, the `com/metallum/mtl/metal4/...` spelling is caught), and a
+mutation of the live tree - a file naming `com.metallum.render.metal3.MetalCommandEncoder` reported one package
+name and went back to zero when removed. The two mixins that remain there name the flat facades
+(`com.metallum.render.MetalBackend`, `com.metallum.render.MetalDevice`), which is this document's own allowlist.
 
 ### Batch 2 - the Attachment ABI, which is broken today
 
