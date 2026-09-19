@@ -116,6 +116,25 @@ Each slice is measured before the next one starts, with the harness and the reci
 6. **The Metal 3 command buffer and the fence chain are removed**, which is when `AppKit`'s own present
    road (`encodePresentTextureToDrawable`) and the Metal 3 encoder classes lose their last callers.
 
+### The isolation that is left is counted, not estimated
+
+`tools/ci-architecture.py` grew a second kind of rule beside the layer rules: a ledger of every file outside
+the generation packages that still names the frame path's concrete generation, checked in **both**
+directions. A file that starts naming `MTLCommandBuffer`, `MetalCommandEncoder`, `MetalRenderPass` or their
+kind is a regression and fails the guard; a file that stops doing so must have its line deleted in the same
+commit, because a ledger nobody prunes reports work that is already done. The guard prints the total on every
+run, so the milestone's cost is a number that can only go down:
+
+    architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
+    still owes 25 couplings in 13 files)
+
+Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
+`render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
+what will become Metal 3's package, which the layer rule will fail the day the encoder moves - and
+`mtl/MTLDevice.java` names `MTLCommandQueue`, with `MTLBuiltinPipelines` and `MTLStorageTexturePipelines`
+naming Metal 3 encoders from the bindings side. A file naming its own class is not counted, because
+`MetalRenderPass` declaring `MetalRenderPass` says nothing about generations.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

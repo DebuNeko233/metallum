@@ -148,6 +148,60 @@ def violations(root: Path) -> list[str]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# The debt the frame path's isolation still owes, frozen so it can only shrink.
+#
+# The rule above stops a file naming *both* generations. It cannot say how much of one generation is still
+# named from outside its package, and that amount is exactly what "the device stops knowing a concrete
+# generation" has to remove. So it is written down here, file by file, and the checker requires the ledger
+# and the tree to agree in both directions: a new coupling fails, and removing one without deleting its line
+# also fails, because an unmaintained ledger stops being evidence.
+#
+# A file in a generation package (`render.metal3`, `render.metal4`, `mtl.metal3`, `mtl.metal4`) is where these
+# names belong and is not listed. Everything else is.
+FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
+    "com/metallum/mtl/MTLBuiltinPipelines.java": ("MTLCommandBuffer", "MTLRenderCommandEncoder",),
+    "com/metallum/mtl/MTLDevice.java": ("MTLCommandQueue",),
+    "com/metallum/mtl/MTLStorageTexturePipelines.java": ("MTLComputeCommandEncoder",),
+    "com/metallum/render/MetalAttachmentBridge.java": ("MetalCommandEncoder",),
+    "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "Metal4Path", "MetalRenderPass",),
+    "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
+    "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
+    "com/metallum/render/MetalDevice.java": ("MTLCommandQueue", "Metal4Path", "MetalCommandEncoder",),
+    "com/metallum/render/MetalDrawContext.java": ("MetalRenderPass",),
+    "com/metallum/render/MetalRenderPass.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
+    "com/metallum/render/MetalScaleBridge.java": ("MetalCommandEncoder",),
+    "com/metallum/render/MetalSurface.java": ("MetalCommandEncoder",),
+    "com/metallum/render/shared/MetalTransientMemory.java": ("MetalCommandEncoder",),
+}
+_GENERATION_PACKAGES = (
+    "com.metallum.render.metal3",
+    "com.metallum.render.metal4",
+    "com.metallum.mtl.metal3",
+    "com.metallum.mtl.metal4",
+)
+
+_FRAME_PATH_TYPES = METAL3_COMMAND_TYPES + ("MetalCommandEncoder", "MetalRenderPass", "Metal4Path")
+
+
+def frame_path_debt(root: Path) -> dict[str, tuple[str, ...]]:
+    """Which files outside the generation packages still name the frame path's concrete generations."""
+    debt: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*.java")):
+        source = path.read_text(encoding="utf-8")
+        package = package_of(source)
+        if any(package == gen or package.startswith(gen + ".") for gen in _GENERATION_PACKAGES):
+            continue
+        # A file naming its own class is not a coupling: `MetalRenderPass` declaring `MetalRenderPass` says
+        # nothing about which generation the frame path reaches for, and counting it would make the number
+        # larger than the work without making the work smaller.
+        own_name = path.stem
+        named = tuple(sorted(set(mentions(source, _FRAME_PATH_TYPES)) - {own_name}))
+        if named:
+            debt[str(path.relative_to(root))] = named
+    return debt
+
+
 def self_test() -> None:
     """Prove every rule fires, because a guard that cannot fail is a guard that is not there.
 
@@ -219,10 +273,44 @@ def self_test() -> None:
         if stray:
             failures.append(f"a compliant file was reported: {stray[0]}")
 
+    # And the debt rule fires in both directions: a new coupling, and a ledger line for a coupling that is
+    # gone. Without this the ledger could silently stop being compared.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        newcomer = root / "com/metallum/render/MetalNewcomer.java"
+        newcomer.parent.mkdir(parents=True, exist_ok=True)
+        newcomer.write_text(
+            "package com.metallum.render;\npublic final class MetalNewcomer { MTLCommandBuffer b; }\n",
+            encoding="utf-8",
+        )
+        if "com/metallum/render/MetalNewcomer.java" not in frame_path_debt(root):
+            failures.append("a new coupling to the frame path's generation was not recorded as debt")
+        stale = root / "com/metallum/render/MetalSettled.java"
+        stale.write_text(
+            "package com.metallum.render;\npublic final class MetalSettled { int free; }\n",
+            encoding="utf-8",
+        )
+        global FRAME_PATH_DEBT
+        kept = FRAME_PATH_DEBT
+        FRAME_PATH_DEBT = {"com/metallum/render/MetalSettled.java": ("MTLCommandBuffer",)}
+        try:
+            ledger_found = []
+            debt = frame_path_debt(root)
+            for path in sorted(set(debt) | set(FRAME_PATH_DEBT)):
+                if debt.get(path) != FRAME_PATH_DEBT.get(path):
+                    ledger_found.append(path)
+            if "com/metallum/render/MetalSettled.java" not in ledger_found:
+                failures.append("a ledger line for a coupling that is gone was not reported")
+        finally:
+            FRAME_PATH_DEBT = kept
+
     if failures:
         raise SystemExit("architecture guard self-test failed: " + "; ".join(failures))
 
-    print(f"architecture guard self-test: PASS ({len(cases)} rules fire, a compliant file passes)")
+    print(
+        f"architecture guard self-test: PASS ({len(cases)} rules fire, a compliant file passes, "
+        "the debt ledger fires both ways)"
+    )
 
 
 def main() -> int:
@@ -232,6 +320,24 @@ def main() -> int:
 
     found = violations(SOURCE_ROOT)
     scanned = len(list(SOURCE_ROOT.rglob("*.java")))
+
+    # The debt ledger, checked in both directions. A file that starts naming the frame path's concrete
+    # generation is a regression and fails; a file that stops doing so must have its line removed in the
+    # same commit, because a ledger nobody prunes reports work that is already done - and the point of this
+    # number is that it can only go down. Nothing generation-specific was added to it since the day it was
+    # written; if that changes, the diff says so.
+    debt = frame_path_debt(SOURCE_ROOT)
+    for path in sorted(set(debt) | set(FRAME_PATH_DEBT)):
+        actual, recorded = debt.get(path), FRAME_PATH_DEBT.get(path)
+        if actual == recorded:
+            continue
+        if recorded is None:
+            found.append(f"{path}: names the frame path's concrete generation ({', '.join(actual)}) and is not in the debt ledger, which may only shrink")
+        elif actual is None:
+            found.append(f"{path}: the debt ledger still lists {', '.join(recorded)}, and the file no longer names them; remove the line, the ledger records work that is left")
+        else:
+            found.append(f"{path}: the debt ledger records {', '.join(recorded)} and the file names {', '.join(actual)}")
+    couplings = sum(len(names) for names in FRAME_PATH_DEBT.values())
     if scanned == 0:
         raise SystemExit(f"no sources under {SOURCE_ROOT}, so nothing was checked")
 
@@ -240,7 +346,10 @@ def main() -> int:
             print(line, file=sys.stderr)
         raise SystemExit(f"architecture guard: {len(found)} violation(s)")
 
-    print(f"architecture guard: PASS ({scanned} sources, {len(LAYERS)} package rules, one mixing rule)")
+    print(
+        f"architecture guard: PASS ({scanned} sources, {len(LAYERS)} package rules, one mixing rule; "
+        f"the frame path's isolation still owes {couplings} couplings in {len(FRAME_PATH_DEBT)} files)"
+    )
     return 0
 
 
