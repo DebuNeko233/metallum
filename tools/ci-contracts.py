@@ -921,6 +921,16 @@ require("a translated shader module is keyed by its MSL profile",
 ))
 # M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
 # access, which is why moving it needed widening; the contract says what it may ask instead.
+require("the pipeline cache asks the artifact one question through a contract",
+        "src/main/java/com/metallum/render/shared/MetalCompiledArtifact.java", (
+    "public interface MetalCompiledArtifact {",
+    "MetalPipelineKey pipelineKey();",
+))
+require("the Metal 3 artifact answers it",
+        "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+    "implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable {",
+    "public MetalPipelineKey pipelineKey() {",
+))
 require("a generation's encoder asks the device through a contract",
         "src/main/java/com/metallum/render/shared/MetalDeviceFacts.java", (
     "public interface MetalDeviceFacts {",

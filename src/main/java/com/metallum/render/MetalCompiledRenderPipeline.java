@@ -1,5 +1,7 @@
 package com.metallum.render;
 
+import com.metallum.render.shared.MetalCompiledArtifact;
+
 import com.metallum.Metallum;
 import com.metallum.mtl.*;
 import com.metallum.objc.ObjC;
@@ -29,7 +31,7 @@ import com.metallum.render.shared.MetalArgumentBufferLayout;
 import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
-public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
+public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable {
     private static final int MAX_COLOR_ATTACHMENTS = 8;
     static final int ARGUMENT_BUFFER_SLOT_COUNT = 8;
     static final int PUSH_CONSTANT_BUFFER_SLOT = 8;
@@ -272,7 +274,8 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
     }
 
     /** What this pipeline is, as the cache identity the next step will use. */
-    MetalPipelineKey pipelineKey() {
+    @Override
+    public MetalPipelineKey pipelineKey() {
         return this.pipelineKey;
     }
 
