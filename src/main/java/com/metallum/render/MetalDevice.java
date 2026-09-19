@@ -65,7 +65,8 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
-    private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
+    /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
+    private final Metal3CompilationContext compilation;
     private final ShaderSource defaultShaderSource;
 
     MetalDevice(
@@ -144,6 +145,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                             + "against");
         }
         this.commandEncoder = this.services.createFrameEncoder(this);
+        this.compilation = new Metal3CompilationContext(this.metalDevice);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
 
@@ -382,10 +384,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         MTLBuiltinPipelines.close();
         MetalFx.close();
         this.services.closePresentPath();
-        for (MemorySegment state : depthStencilStates.values()) {
-            ObjC.release(state);
-        }
-        depthStencilStates.clear();
+        this.compilation.close();
         ObjC.release(this.metalDeviceHandle);
     }
 
@@ -415,18 +414,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     }
 
     synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
-        long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
-        MemorySegment cached = depthStencilStates.get(key);
-        if (cached != null) {
-            return cached;
-        }
-        try (MTLDepthStencilDescriptor descriptor = MTLDepthStencilDescriptor.create()) {
-            descriptor.depthCompareFunction(compareFunction);
-            descriptor.depthWriteEnabled(writeDepth);
-            MemorySegment state = metalDevice.newDepthStencilState(descriptor);
-            depthStencilStates.put(key, state);
-            return state;
-        }
+        return this.compilation.depthStencilState(compareFunction, writeDepth);
     }
 
     void waitForSubmittedGpuWork() {
