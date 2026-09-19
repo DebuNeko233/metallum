@@ -1,5 +1,8 @@
 package com.metallum.render;
 
+import com.metallum.render.execution.MetalDeviceCapabilities;
+import com.metallum.render.execution.MetalExecutionPreference;
+import com.metallum.render.execution.MetalExecutionSelector;
 import com.metallum.mtl.*;
 import com.metallum.objc.Cocoa;
 import com.metallum.objc.ObjC;
@@ -71,14 +74,15 @@ final class MetalDevice implements GpuDeviceBackend {
         MetalFx.spatialSupported(metalDeviceHandle);
         Metal4.available(this.metalDevice);
         boolean newPath = Metal4Path.start(this.metalDevice);
-        // Which generation executes, said once and in one deterministic line. The frame is Metal 3's until
-        // the runtime selector says otherwise; what the new path carries today is the present, and the probe
-        // counts that separately (`metal4Frames`, `metal4Presents`) rather than calling the session Metal 4.
-        MetalExecutionTelemetry.selected(MetalExecutionGeneration.METAL_3, newPath
-                ? "the frame is encoded through Metal 3's command buffer, and the new path is built and "
-                        + "carries the present only when it is asked to; the runtime selector owns this choice"
-                : "the frame is encoded through Metal 3's command buffer and the new path is not built; "
-                        + "the runtime selector owns this choice");
+        // What this device can run, asked once and immutable; then which generation this launch executes.
+        // The selector answers from capability - never from a chip name - and a forced preference the device
+        // cannot satisfy fails the launch rather than falling back to the path nobody asked for. What is
+        // executing today is still Metal 3's command buffer, which the services say plainly rather than
+        // letting a selection read as a fact about the frame.
+        MetalDeviceCapabilities capabilities =
+                MetalDeviceCapabilities.probe(this.metalDevice, deviceName);
+        MetalExecutionSelector.say(capabilities);
+        MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }

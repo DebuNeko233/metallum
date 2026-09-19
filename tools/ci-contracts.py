@@ -799,17 +799,61 @@ require("the present is carried where a frame is committed",
 require("the executing generation is recorded and said in one line",
         "src/main/java/com/metallum/render/MetalExecutionTelemetry.java", (
     '"Metal execution: {} selected ({})"',
-    "public static void selected(final MetalExecutionGeneration selected, final String why) {",
+    "public static void selected(final MetalApiGeneration selected, final String why) {",
     "public static String token() {",
 ))
-require("the generation has exactly two tokens",
-        "src/main/java/com/metallum/render/MetalExecutionGeneration.java", (
-    'METAL_3("metal3")',
-    'METAL_4("metal4")',
+require("the generations are the two API surfaces and nothing else",
+        "src/main/java/com/metallum/render/execution/MetalApiGeneration.java", (
+    'METAL3("metal3", "Metal 3")',
+    'METAL4("metal4", "Metal 4")',
 ))
-require("the device says which generation it came up on",
+# The selector's rules, and the one input it may not use. A chip name is not a capability: Apple Silicon
+# reports the same families across its generations, so a decision keyed off "M4" or "M5" would be a table of
+# hardware rather than a question about the device - and it would be wrong on the first chip it had not seen.
+require("the selection is made from capability and said out loud",
+        "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java", (
+    "public static Decision decide(final MetalExecutionPreference preference,",
+    '"metallum.execution=metal4 was asked for, and this device does not satisfy the "',
+    "throw new UnsatisfiedPreferenceException(",
+    "capabilities.metalFxParityForMetal4()",
+    "MetalExecutionTelemetry.selected(decision.selected(), decision.reason());",
+))
+selector_source = (ROOT / "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java"
+                   ).read_text(encoding="utf-8")
+for forbidden in ("deviceName", "system().deviceName", 'contains("M1")', 'contains("M4")'):
+    if forbidden in selector_source:
+        raise SystemExit(
+            f"the selector reads {forbidden!r}, and a device name is not a capability: the choice has to come "
+            "from the family, the selectors and the probes"
+        )
+require("the capability record asks every clause of the minimum contract",
+        "src/main/java/com/metallum/render/execution/MetalDeviceCapabilities.java", (
+    "public boolean metal4MinimumContract() {",
+    "public boolean metal3MinimumContract() {",
+    "public boolean metalFxParityForMetal4() {",
+    "device.supportsFamily(FAMILY_METAL4)",
+    "device.respondsTo(\"newMTL4CommandQueue\")",
+    'MetalFx.metal4SpatialSupported(device.handle())',
+))
+require("the services say what executes, not only what was chosen",
+        "src/main/java/com/metallum/render/execution/MetalExecutionServices.java", (
+    "MetalApiGeneration selected();",
+    "MetalApiGeneration executing();",
+    "boolean isReferenceShell();",
+    "return MetalApiGeneration.METAL3;",
+))
+require("the preference is one property with three words",
+        "src/main/java/com/metallum/render/execution/MetalExecutionPreference.java", (
+    'public static final String PROPERTY = "metallum.execution";',
+    'AUTO("auto")',
+    'FORCE_METAL3("metal3")',
+    'FORCE_METAL4("metal4")',
+))
+require("the device records capabilities and selects once",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    "MetalExecutionTelemetry.selected(MetalExecutionGeneration.METAL_3",
+    "MetalDeviceCapabilities capabilities =",
+    "MetalExecutionSelector.say(capabilities);",
+    "MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);",
 ))
 require("a Metal 4 commit carries the options its feedback arrives through",
         "src/main/java/com/metallum/render/Metal4Path.java", (

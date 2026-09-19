@@ -1,6 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
+import com.metallum.render.execution.MetalApiGeneration;
 
 /**
  * Which execution generation this session is running, said once and remembered.
@@ -17,7 +18,7 @@ import com.metallum.Metallum;
  */
 public final class MetalExecutionTelemetry {
 
-    private static volatile MetalExecutionGeneration generation = MetalExecutionGeneration.METAL_3;
+    private static volatile MetalApiGeneration generation = MetalApiGeneration.METAL3;
 
     private static volatile String reason =
             "the frame is encoded through Metal 3's command buffer; the runtime selector owns this choice";
@@ -28,7 +29,7 @@ public final class MetalExecutionTelemetry {
     }
 
     /** Records which generation executes, and why, where something knows. Said once, the first time. */
-    public static void selected(final MetalExecutionGeneration selected, final String why) {
+    public static void selected(final MetalApiGeneration selected, final String why) {
         generation = selected;
         reason = why;
         if (!said) {
@@ -42,7 +43,7 @@ public final class MetalExecutionTelemetry {
         Metallum.LOGGER.info("Metal execution: {} selected ({})", generation.token(), reason);
     }
 
-    public static MetalExecutionGeneration generation() {
+    public static MetalApiGeneration generation() {
         return generation;
     }
 

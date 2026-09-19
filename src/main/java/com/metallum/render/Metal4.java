@@ -38,6 +38,10 @@ public final class Metal4 {
     private static final String QUEUE_SELECTOR = "newMTL4CommandQueue";
 
     private static Boolean available;
+
+    /** The two things the startup probe proved, kept for the capability record. */
+    private static boolean makeAndSubmit;
+    private static boolean bindAndDraw;
     private static boolean metal3;
     private static String reason = "not asked yet";
 
@@ -96,6 +100,8 @@ public final class Metal4 {
         // and the pixel it produced is read back, so this is whether the pass *used* the binding rather
         // than whether the calls were accepted.
         boolean binding = MTL4Probe.canBindAndDraw(device);
+        makeAndSubmit = true;
+        bindAndDraw = binding;
 
         available = Boolean.TRUE;
         reason = "the device has the family, answers to " + QUEUE_SELECTOR
@@ -143,6 +149,16 @@ public final class Metal4 {
             return "";
         }
         return metal3 ? "Metal 3" : "Metal";
+    }
+
+    /** Whether the device that was asked made a queue, an allocator and a command buffer and submitted one. */
+    public static boolean canMakeAndSubmit() {
+        return makeAndSubmit;
+    }
+
+    /** Whether the same device bound a uniform by address through a table and drew what it was told to. */
+    public static boolean canBindAndDraw() {
+        return bindAndDraw;
     }
 
     /** Why the last answer came out the way it did, for a log line or a report. */

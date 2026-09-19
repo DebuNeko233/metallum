@@ -1,6 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
+import com.metallum.mtl.MTL4Probe;
 import com.metallum.mtl.MTLFXSpatialScaler;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 import com.metallum.mtl.MTLPixelFormat;
@@ -143,6 +144,39 @@ public final class MetalFx {
         }
 
         return true;
+    }
+
+    /**
+     * Whether this device has the Metal 4 spatial scaler, which is a different class with a different
+     * factory ({@code newSpatialScalerWithDevice:compiler:}, because Metal 4 pipelines come from a compiler
+     * object rather than from the device).
+     * <p>
+     * Asked because choosing Metal 4 must not cost the player the render-scale setting: on a device whose
+     * Metal 3 scaler works and whose Metal 4 one does not, a Metal 4 frame would have to rebuild the backend
+     * whenever the slider moved. A class that is not there and a class that is there but refuses the
+     * factory are both "no" here - the same lesson the command structure taught.
+     */
+    public static boolean metal4SpatialSupported(final MemorySegment device) {
+        try {
+            MemorySegment descriptor = ObjC.clazz("MTLFXSpatialScalerDescriptor");
+            if (ObjC.isNil(descriptor)) {
+                return false;
+            }
+
+            MemorySegment instance = Msg.of("new", ADDRESS).sendPtr(descriptor);
+            if (ObjC.isNil(instance)) {
+                return false;
+            }
+
+            try {
+                return MTL4Probe.respondsTo(instance, "newSpatialScalerWithDevice:compiler:")
+                        && !ObjC.isNil(device);
+            } finally {
+                ObjC.release(instance);
+            }
+        } catch (Throwable missing) {
+            return false;
+        }
     }
 
     /**
