@@ -181,15 +181,22 @@ instant between launches. Until the arming moment is made to wait for a settled 
 difference below about four and a half per cent is not attributable**, and the pinning of the camera is
 worth doing for the picture comparison and not for the numbers.
 
-### The pack scene's floor is larger than the no-pack one, and it was measured today
+### The pack scene's spread was the settling time, and it is 0.14 per cent once settled
 
-Two runs of **one** configuration on **one** commit, Photon v1.3b at 55 per cent with MetalFX, 600 frames
-each, read **7.01 and 7.25 ms a frame** (3.4 per cent apart) with the structural counters moving with them
-(`renderPasses` 20904 against 20922, `loadedMiB` 93858.0 against 93922.0). The no-pack scene repeats to
-about 1.4 per cent; this one does not, because the world is drawn slightly differently every launch - the
-same effect this file records as "two launches of this world do not draw the same frame". So a pack-scene
-difference below roughly three and a half per cent is not attributable without the deterministic fixture,
-and a claim about one needs the same-configuration pair taken in the same session.
+Two runs of one configuration, Photon v1.3b at 55 per cent with MetalFX, 600 frames each, camera pinned:
+
+| settle after the pack's first full frame | run A | run B | spread |
+| --- | --- | --- | --- |
+| 5 seconds (the old default) | 7.26 ms | 7.58 ms | 4.4 per cent |
+| 25 seconds | **7.26 ms** | **7.27 ms** | **0.14 per cent** |
+
+and the structural counters agree at 25 seconds to 0.03-0.2 per cent (`renderPasses` 20928 against 20922,
+`encoders` 21440 against 21435, `loadedMiB` 93943.3 against 93922.0) where at five they moved with the frame
+time. So the variation was neither the camera nor the machine: it was the world still streaming and the
+pack's temporal history still filling when the window opened. **The harness now waits 25 seconds by default
+(`--settle S`), and five is kept as the fast path for a run whose number is not a claim.** This is the
+deterministic fixture the earlier entries of this file said was missing, reached by waiting rather than by
+building one.
 
 ### Machine state drifts, and the floor is the number to respect
 

@@ -220,6 +220,15 @@ if "-PvitrailHud=0" not in launcher:
         "overlay's own numbers rather than the scene"
     )
 
+# The window opens on a settled scene, and how long that takes is a switch rather than a constant: the
+# measurement that motivated it - two pinned runs of one configuration 4.4 per cent apart after five seconds
+# - says five is not obviously enough.
+if "--settle" not in launcher or 'sleep "$settle_seconds"' not in launcher \
+        or "settle_seconds=25" not in launcher:
+    raise SystemExit(
+        "the harness no longer waits for the scene to settle before opening the probe window, or no longer "
+        "lets that wait be raised"
+    )
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
     raise SystemExit("the harness collects runs and never compares them")
 

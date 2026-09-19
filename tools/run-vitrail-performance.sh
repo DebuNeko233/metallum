@@ -38,6 +38,7 @@ aim_args=()
 width=1600
 height=900
 timeout_seconds=900
+settle_seconds=25
 runs=()
 keep=false
 met_all=0
@@ -80,6 +81,14 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          scale does not touch.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
+  --settle S             how long to keep drawing between the frame that says the chain is up and the
+                         marker that opens the window (default 25). The window used to open five seconds
+                         after the pack's first full frame, and measured against that: two runs of one
+                         configuration read 7.26 and 7.58 ms a frame with the camera pinned - 4.4 per cent
+                         apart. At 25 seconds the same pair read 7.26 and 7.27 with the structural counters
+                         within 0.2 per cent, because the world's streaming and the pack's temporal history
+                         have reached the same state in both arms by then. Five is kept as the fast path for
+                         a run whose result is not a claim.
   --out DIR              where the collected logs and pictures go.
   --keep                 leave the collected dev instance in place instead of clearing the marker.
   --continue-world       let each run carry on from the world the last one saved instead of
@@ -113,6 +122,7 @@ while [[ $# -gt 0 ]]; do
 		--width) width="$2"; shift 2 ;;
 		--height) height="$2"; shift 2 ;;
 		--timeout) timeout_seconds="$2"; shift 2 ;;
+		--settle) settle_seconds="$2"; shift 2 ;;
 		--out) out_dir="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
 		--continue-world) fresh_world=false; shift ;;
@@ -412,7 +422,10 @@ for run in "${runs[@]}"; do
 		continue
 	fi
 
-	sleep 5
+	# The scene is given time to settle before the window opens, and the amount is a switch because what
+	# "settled" costs is a measurement: the first version of this waited five seconds and two runs of one
+	# configuration still read 4.4 per cent apart with the camera pinned.
+	sleep "$settle_seconds"
 	touch "$marker"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
