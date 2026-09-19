@@ -28,6 +28,8 @@ public final class MTLCommandBuffer {
     private static final Msg PRESENT_DRAWABLE = Msg.ofVoid("presentDrawable:", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit");
     private static final Msg ADD_COMPLETED_HANDLER = Msg.ofVoid("addCompletedHandler:", ADDRESS);
+    private static final Msg ERROR = Msg.of("error", ADDRESS);
+    private static final Msg LOCALIZED_DESCRIPTION = Msg.of("localizedDescription", ADDRESS);
     private static final Msg STATUS = Msg.of("status", JAVA_LONG);
     private static final Msg GPU_START_TIME = Msg.of("GPUStartTime", JAVA_DOUBLE);
     private static final Msg GPU_END_TIME = Msg.of("GPUEndTime", JAVA_DOUBLE);
@@ -260,6 +262,26 @@ public final class MTLCommandBuffer {
     public void commitWithCompletionBlock(final MemorySegment completedHandlerBlock) {
         ADD_COMPLETED_HANDLER.send(handle(), completedHandlerBlock);
         COMMIT.send(handle());
+    }
+
+    /**
+     * What went wrong, or {@code none}.
+     * <p>
+     * Apple's status machine has a state for a finished command buffer and a state for a failed one, and
+     * both answer {@code isCompleted} - so a frame that failed and a frame that drew look the same to
+     * every caller unless this is read. The two driver times stay 0.0 on a failure, which is the other
+     * symptom: a frame probe reporting no GPU time at all.
+     *
+     * @return the error's own description, or {@code none}
+     */
+    public String errorDescription() {
+        if (ObjC.isNil(handle) || STATUS.sendLong(handle) != STATUS_ERROR) {
+            return "none";
+        }
+
+        MemorySegment error = ERROR.sendPtr(handle);
+        return ObjC.isNil(error) ? "a failed command buffer that carried no error object"
+                : ObjC.javaString(LOCALIZED_DESCRIPTION.sendPtr(error));
     }
 
     public boolean isCompleted() {

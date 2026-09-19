@@ -71,6 +71,9 @@ public class MetalBackend implements GpuBackend {
         try {
             return new GpuDevice(new MetalDevice(defaultShaderSource, debugOptions, metalDevice.handle(), metalLayer, deviceName, cocoa), criticalShaderLoader);
         } catch (Throwable throwable) {
+            // The layer is already on the view and this code owns the only reference to it: the window
+            // is about to be destroyed, so nothing else will ever release it.
+            metalLayer.close();
             throw new BackendCreationException("Metal device initialization failed: " + throwable.getMessage(), BackendCreationException.Reason.OTHER);
         }
     }

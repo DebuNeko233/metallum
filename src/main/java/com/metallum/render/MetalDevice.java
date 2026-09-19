@@ -295,6 +295,8 @@ final class MetalDevice implements GpuDeviceBackend {
         this.clearPipelineCache();
         try {
             this.cocoa.clearViewLayer();
+            // The view only ever borrowed the layer; this is the reference this code was given.
+            this.metalLayer.close();
         } catch (Throwable ignored) {
         }
         MTLStorageTexturePipelines.close();

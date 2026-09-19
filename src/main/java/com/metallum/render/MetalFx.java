@@ -70,6 +70,9 @@ public final class MetalFx {
     private static final Map<Configuration, MTLFXSpatialScaler> scalers = new LinkedHashMap<>();
     private static final Map<Configuration, Boolean> refused = new LinkedHashMap<>();
 
+    /** Whether a scaler has refused the fence, said once rather than once a frame. */
+    private static boolean fenceRefused;
+
     private static boolean asked;
     private static boolean supported;
     private static String reason = "not asked yet";
@@ -152,6 +155,7 @@ public final class MetalFx {
      *
      * @param device        the Metal device handle
      * @param commandBuffer the frame's command buffer
+     * @param fence         the frame's fence, which the scaler must wait on and update
      * @param color         the texture drawn at the scaled size
      * @param output        the texture the picture is brought back into
      * @return whether the encode happened
@@ -159,6 +163,7 @@ public final class MetalFx {
     public static boolean scale(
             final MemorySegment device,
             final MemorySegment commandBuffer,
+            final MemorySegment fence,
             final MetalGpuTexture color,
             final MetalGpuTexture output,
             final int contentWidth,
@@ -202,6 +207,16 @@ public final class MetalFx {
             scalers.put(configuration, scaler);
         }
 
+        // Apple's answer for a resource Metal does not track, on the one encoder in the frame that is
+        // not this engine's own: the scaler waits for the fence the passes before it updated, and the
+        // pass after it waits for the update the scaler makes. Without this its read of the input and
+        // its write of the output sit in no part of the chain at all.
+        if (!scaler.fence(fence) && !fenceRefused) {
+            fenceRefused = true;
+            Metallum.LOGGER.warn("MetalFX spatial scaling: this scaler does not answer to setFence:, so "
+                    + "its read of the input and write of the output are outside the frame's fence chain");
+        }
+
         scaler.encode(commandBuffer, color.nativeHandle(), output.nativeHandle(), contentWidth, contentHeight);
         return true;
     }
@@ -213,6 +228,7 @@ public final class MetalFx {
         }
         scalers.clear();
         refused.clear();
+        fenceRefused = false;
     }
 
     /** Why the last answer came out the way it did, for a log line or a settings screen. */

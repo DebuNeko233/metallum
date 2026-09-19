@@ -34,6 +34,7 @@ public final class MTLFXSpatialScaler implements AutoCloseable {
     private static final Msg SET_INPUT_CONTENT_HEIGHT = Msg.ofVoid("setInputContentHeight:", JAVA_LONG);
     private static final Msg SET_INPUT_CONTENT_ORIGIN_X = Msg.ofVoid("setInputContentOriginX:", JAVA_LONG);
     private static final Msg SET_INPUT_CONTENT_ORIGIN_Y = Msg.ofVoid("setInputContentOriginY:", JAVA_LONG);
+    private static final Msg SET_FENCE = Msg.ofVoid("setFence:", ADDRESS);
     private static final Msg ENCODE = Msg.ofVoid("encodeToCommandBuffer:", ADDRESS);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
 
@@ -74,6 +75,32 @@ public final class MTLFXSpatialScaler implements AutoCloseable {
         }
 
         ENCODE.send(handle, commandBuffer);
+    }
+
+    /**
+     * Hands the scaler the fence it waits for and updates.
+     * <p>
+     * Every texture this backend creates opts out of Metal's own hazard tracking, which the
+     * documentation allows only on the terms it states: the app then synchronises "manually through
+     * {@code MTLFence} or {@code MTLEvent}". The scaler is the one encoder in a frame that is not one
+     * of this engine's own, so it is the one that had no part of the chain - and MetalFX declares the
+     * property for exactly that case: {@code MTLFXSpatialScaler.fence} is the fence "this scaler waits
+     * for and updates", and Apple's description of it names untracked resources.
+     * <p>
+     * Asked for rather than assumed, like the content origin below: a selector an object does not
+     * answer to is an Objective-C exception, and one of those ends the process. A scaler that answers
+     * no leaves the frame on the road it had before this existed, which is what the caller is told.
+     *
+     * @param fence the frame's fence, as the engine's own encoders update and wait on it
+     * @return whether the scaler took it
+     */
+    public boolean fence(final MemorySegment fence) {
+        if (RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector("setFence:")) == 0L) {
+            return false;
+        }
+        SET_FENCE.send(handle, fence);
+
+        return true;
     }
 
     @Override

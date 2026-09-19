@@ -152,4 +152,28 @@ if "RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector(\"setInputContentOriginX
         "the scaler sends a selector it may not answer to; an unrecognized one is an Objective-C exception and ends the process"
     )
 
+# ---------------------------------------------------------------------------
+# The fence Apple documents for a resource Metal does not track
+#
+# Every texture this backend creates opts out of hazard tracking, which the documentation allows only
+# on its own terms - the app then synchronises through a fence. The scaler is the one encoder in a
+# frame that is not one of this engine's own, and MetalFX declares the property for exactly that case:
+# `MTLFXSpatialScaler.fence` is the fence "this scaler waits for and updates". Without it the upscale's
+# read of the input and write of the output sit in no part of the engine's fence chain, so a frame can
+# sample an input that is still being stored or an output the scaler has not written yet. The binding
+# still asks before it sends, for the reason above: an unrecognised selector ends the process.
+# ---------------------------------------------------------------------------
+require("the scaler takes a fence", scaler, (
+    'Msg.ofVoid("setFence:", ADDRESS)',
+    'ObjC.selector("setFence:")',
+    "SET_FENCE.send(handle, fence)",
+))
+require("the encoder hands the frame's fence to the scaler",
+        (ROOT / "src/main/java/com/metallum/render/MetalCommandEncoder.java").read_text(encoding="utf-8"), (
+    "MetalFx.scale(device.metalDeviceHandle(), commandBuffer().handle(), fence.handle(), color,",
+))
+require("the scaler is given it before it encodes", (ROOT / "src/main/java/com/metallum/render/MetalFx.java").read_text(encoding="utf-8"), (
+    "if (!scaler.fence(fence) && !fenceRefused) {",
+))
+
 print("MetalFX availability contract: PASS")

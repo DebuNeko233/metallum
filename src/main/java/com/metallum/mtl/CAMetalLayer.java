@@ -26,6 +26,7 @@ public final class CAMetalLayer {
     private static final Msg NEXT_DRAWABLE = Msg.of("nextDrawable", true, ADDRESS);
 
     private final MemorySegment handle;
+    private boolean released;
 
     public CAMetalLayer(final MTLDevice device, final double contentsScale) {
         this.handle = NEW.sendPtr(CLS);
@@ -36,6 +37,21 @@ public final class CAMetalLayer {
         SET_FRAMEBUFFER_ONLY.send(this.handle, true);
         SET_OPAQUE.send(this.handle, true);
         SET_CONTENTS_SCALE.send(this.handle, contentsScale);
+    }
+
+    /**
+     * Gives back the reference {@code new} took.
+     * <p>
+     * A layer is made with an explicit +1 that nothing else holds: clearing the view detaches it and
+     * does not release it, so a device that is taken down without this leaves the layer - and whatever
+     * it holds - allocated for the rest of the process. Guarded so that the failure path and the normal
+     * teardown cannot both release one reference.
+     */
+    public void close() {
+        if (!released) {
+            released = true;
+            ObjC.release(handle);
+        }
     }
 
     public MemorySegment handle() {

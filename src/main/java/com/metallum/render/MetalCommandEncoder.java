@@ -1,5 +1,6 @@
 package com.metallum.render;
 
+import com.metallum.Metallum;
 import com.metallum.mtl.*;
 import com.metallum.objc.ObjC;
 import com.metallum.objc.ObjCBlock;
@@ -40,6 +41,16 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private final Map<MetalGpuTexture, Vector4fc> pendingColorClears = new IdentityHashMap<>();
     private final Map<MetalGpuTexture, Double> pendingDepthClears = new IdentityHashMap<>();
     private final MTLFence fence;
+
+    /**
+     * The newest submit index a command buffer was actually committed for.
+     * <p>
+     * {@link #currentSubmitIndex} counts submits, and a presented frame makes two of them: the frame's
+     * own commit and the surface's present-time submit, which finds no command buffer and commits
+     * nothing. Deriving "the newest submitted work" from that counter therefore names the submit that
+     * committed nothing - an index no in-flight slot holds, which a wait has to treat as already done.
+     */
+    private long lastCommittedSubmitIndex = -1L;
     @Nullable
     private MetalRenderPass currentRenderPass;
     @Nullable
@@ -310,6 +321,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // commits nothing, so counting every submit() would count each drawn frame twice.
             MetalFrameProbe.frameSubmitted();
 
+            lastCommittedSubmitIndex = currentSubmitIndex;
             toClose = inFlight[slot];
             inFlight[slot] = new InFlight(currentSubmitIndex, commandBuffer);
             commandBuffer = null;
@@ -321,6 +333,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         if (toClose != null) {
+            // A command buffer that failed completes exactly like one that drew, so the frame's own
+            // outcome is read here rather than assumed: the error state and the two driver times that
+            // stay at zero are the only signs a caller gets.
+            String failure = toClose.buffer.errorDescription();
+            if (!"none".equals(failure)) {
+                Metallum.LOGGER.error("A command buffer of this frame failed: {}", failure);
+            }
+
             // The submit this slot held three frames ago, whose semaphore the wait above has already
             // seen signalled, so the driver's own answer for how long the GPU ran it is available:
             // Apple says both times "remain 0.0 until the GPU finishes running the command buffer".
@@ -907,9 +927,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         } else {
             endEncoder();
         }
-        long latestSubmit = currentSubmitIndex - 1L;
-        if (latestSubmit >= MAX_SUBMITS_IN_FLIGHT) {
-            awaitSubmitCompletion(latestSubmit, Long.MAX_VALUE);
+        if (lastCommittedSubmitIndex >= 0L) {
+            awaitSubmitCompletion(lastCommittedSubmitIndex, Long.MAX_VALUE);
         }
     }
 
@@ -948,8 +967,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         endEncoder();
-        return MetalFx.scale(device.metalDeviceHandle(), commandBuffer().handle(), color, output,
-                contentWidth, contentHeight);
+        return MetalFx.scale(device.metalDeviceHandle(), commandBuffer().handle(), fence.handle(), color,
+                output, contentWidth, contentHeight);
     }
 
     @Override

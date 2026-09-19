@@ -565,3 +565,47 @@ if unnamed_contracts:
 print(f"Contract-runner guard: PASS ({len(contract_scripts)} contract scripts, all named by ci.yml)")
 
 print("Consolidated Metallum CI contracts: PASS")
+
+
+# ---------------------------------------------------------------------------
+# Three more places where the code and Apple's documentation disagreed
+#
+# 1. A presented frame makes two submits - the frame's own commit and the surface's present-time one,
+#    which commits nothing - so "the newest submitted work" is not `currentSubmitIndex - 1`. Derived
+#    that way, the wait before a pipeline cache is cleared named an index no in-flight slot holds, and
+#    a wait for an index that is not in flight returns at once: a pack reload could release pipeline
+#    states while command buffers were still running them.
+# 2. Metal's status machine has a state for finished and a state for failed, and both answer
+#    `isCompleted`. Nothing read the error, so a failed command buffer was reported as a drawn frame.
+# 3. A `CAMetalLayer` is created with an explicit +1 that only this code owns, and clearing the view
+#    detaches rather than releases: the layer outlived every device made for it.
+# ---------------------------------------------------------------------------
+require("the wait names the newest commit and not the newest submit",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "private long lastCommittedSubmitIndex = -1L;",
+    "lastCommittedSubmitIndex = currentSubmitIndex;",
+    "awaitSubmitCompletion(lastCommittedSubmitIndex, Long.MAX_VALUE);",
+))
+forbid("the wait no longer derives its index from the submit counter",
+       read("src/main/java/com/metallum/render/MetalCommandEncoder.java"),
+       ("currentSubmitIndex - 1L",))
+
+require("a failed command buffer can be read", "src/main/java/com/metallum/mtl/MTLCommandBuffer.java", (
+    'Msg.of("error", ADDRESS)',
+    "public String errorDescription()",
+))
+require("the frame says when a command buffer failed",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "toClose.buffer.errorDescription()",
+))
+
+require("the layer gives its own reference back", "src/main/java/com/metallum/mtl/CAMetalLayer.java", (
+    "public void close() {",
+    "ObjC.release(handle);",
+))
+require("the device releases the layer it was given",
+        "src/main/java/com/metallum/render/MetalDevice.java", ("this.metalLayer.close();",))
+require("a failed device creation releases the layer",
+        "src/main/java/com/metallum/render/MetalBackend.java", ("metalLayer.close();",))
+
+print("Metal and engine contracts: PASS")
