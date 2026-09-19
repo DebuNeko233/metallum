@@ -884,7 +884,11 @@ require("the capability record asks every clause of the minimum contract",
 # never names a generation's type.
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    "this.services = MetalExecutionServices.of(MetalApiGeneration.METAL3);",
+    # The services are built for the generation the selector chose, not for a constant, so that every seam
+    # asking them - the queue here, the present policy elsewhere - reads the same answer the log printed. The
+    # pin used to name METAL3 because that was the constant; what it is really pinning is that the device has
+    # no opinion of its own about which queue to make.
+    "this.services = MetalExecutionServices.of(decision.selected());",
     "this.commandQueue = new MTLCommandQueue(",
     "this.services.commandQueue(this.metalDevice)",
 ))

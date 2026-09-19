@@ -62,6 +62,23 @@ that would report a future caller - a pack loader, or a Metal 4 table path - han
 built equal pipelines. That run read inside the configuration's settled band (7.25-7.28 ms), so the
 instrument did not move the number it measures.
 
+### The services carry the selection, not a constant
+
+`MetalDevice` built its `MetalExecutionServices` for `MetalApiGeneration.METAL3` **before** the selector had
+run, and then took the selection a few lines later. Nothing read `selected()` from that instance, so nothing
+broke - but the one object every seam asks (the queue factory, the present policy, and whatever M4 asks next)
+disagreed with the selection the same constructor had just logged, and an AUTO launch that chose Metal 4 and a
+forced Metal 3 launch would have looked identical to it. The services are now built from
+`decision.selected()`, the queue is made from them where it always was, and `executing()` is read back from
+the same instance rather than from a second one built from the same decision.
+
+The contract that pinned this seam pinned the constant (`this.services = MetalExecutionServices.of(MetalApiGeneration.METAL3);`)
+and failed the moment the constant was gone, which is what a pin should do: what it is really about is that
+**the device has no opinion of its own about which queue to make**, so it now pins the selection instead.
+
+Verified on the no-pack scene: 1.79 ms, `selectedGeneration=metal4`, counters identical to the run before it
+(2505 encoders, 100 identities against 100 keys).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

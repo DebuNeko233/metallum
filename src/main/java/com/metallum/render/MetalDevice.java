@@ -79,12 +79,6 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.metalLayer = metalLayer;
         this.cocoa = cocoa;
         MTLCommandQueue.setDebugLabelsEnabled(this.useLabels());
-        // The queue comes from the execution services rather than from the device, which is the seam the
-        // frame path's isolation needs: a device that makes its own Metal 3 queue is a device that belongs to
-        // one generation, and the package split cannot be written until that is untrue.
-        this.services = MetalExecutionServices.of(MetalApiGeneration.METAL3);
-        this.commandQueue = new MTLCommandQueue(
-                MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
         MTLBuiltinPipelines.init(this.metalDevice);
         // Asked once, here, because the answer is a fact about the device and the system rather than
         // about a frame: whether the image can be loaded at all and whether this GPU can run the
@@ -103,11 +97,24 @@ public final class MetalDevice implements GpuDeviceBackend {
         MetalExecutionSelector.Decision decision =
                 MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);
 
+        // The queue comes from the execution services rather than from the device, which is the seam the
+        // frame path's isolation needs: a device that makes its own Metal 3 queue is a device that belongs to
+        // one generation, and the package split cannot be written until that is untrue.
+        // <p>
+        // And the services carry the generation this launch was *selected* to execute rather than a constant.
+        // They used to be built for Metal 3 before the selection was taken, which made the one object every
+        // seam asks - the queue, the present policy - disagree with the selection this same constructor had
+        // just logged. Nothing read it yet, so nothing broke; the day something does, an AUTO launch that
+        // chose Metal 4 and a forced Metal 3 launch would have looked identical to it.
+        this.services = MetalExecutionServices.of(decision.selected());
+        this.commandQueue = new MTLCommandQueue(
+                MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
+
         // The shader profile follows what *executes*, not what was selected: a session that has chosen
         // Metal 4 but still encodes its frame through Metal 3 needs MSL the Metal 3 path can compile, and
         // the day the new path executes is the day this switches to 4.0. The Metal 3 ladder is walked by
         // compiling a probe library, so "3.2" here means the system took it and not that the OS is new.
-        MetalApiGeneration executing = MetalExecutionServices.of(decision.selected()).executing();
+        MetalApiGeneration executing = this.services.executing();
         if (executing == MetalApiGeneration.METAL3) {
             MetalShaderLanguageProfile.select(capabilities.shaderLanguageProfile(),
                     "Metal 3 executes the frame and " + capabilities.shaderLanguageProfile().token()
