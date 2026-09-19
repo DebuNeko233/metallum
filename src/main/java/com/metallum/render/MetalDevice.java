@@ -60,10 +60,12 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
 
     /** What executes, and the queue it submits on; the selection replaces this in M4. */
     private final MetalExecutionServices services;
-    /** The pipelines a Metal 3 session retired: the cache no longer names them, the GPU may still use them. */
-    private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();
-    /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
-    private final Metal3CompilationContext compilation;
+    /**
+     * The Metal 3 session's own state - its compilation caches and its retired pipelines - behind one field, so
+     * the device holds a single generation-owned object and the class inside can stay package-private when the
+     * frame path moves to its own package.
+     */
+    private final Metal3ExecutionState metal3;
     private final ShaderSource defaultShaderSource;
 
     MetalDevice(
@@ -142,7 +144,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                             + "against");
         }
         this.commandEncoder = this.services.createFrameEncoder(this);
-        this.compilation = new Metal3CompilationContext(this.metalDevice, this.retirement);
+        this.metal3 = new Metal3ExecutionState(this.metalDevice);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
 
@@ -317,7 +319,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     @Override
     public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
-        return this.compilation.getOrCompilePipeline(pipeline, effectiveSource);
+        return this.metal3.getOrCompilePipeline(pipeline, effectiveSource);
     }
 
     /**
@@ -328,18 +330,13 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * that path has waited for submitted GPU work to complete.
      */
     public synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
-        return this.compilation.evictCachedPipelines(predicate);
+        return this.metal3.evictCachedPipelines(predicate);
     }
 
     @Override
     public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
-
-        this.retirement.releaseRetired();
-        this.compilation.clearActivePipelines();
-
-        this.compilation.clearShaderCache();
-        this.compilation.clearFunctionCache();
+        this.metal3.clearCachesAfterGpuCompletion();
     }
 
     @Override
@@ -360,7 +357,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // released. The call used to appear twice: once inside the surface teardown above, where a throw from
         // the layer release would have skipped it, and once here. The unconditional site is the one that stays.
         this.services.closePresentPath();
-        this.compilation.close();
+        this.metal3.close();
         ObjC.release(this.metalDeviceHandle);
     }
 
@@ -390,7 +387,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     }
 
     synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
-        return this.compilation.depthStencilState(compareFunction, writeDepth);
+        return this.metal3.depthStencilState(compareFunction, writeDepth);
     }
 
     void waitForSubmittedGpuWork() {
@@ -433,7 +430,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      */
     /** Migration-only delegate: the active cache and its profile guard live in the compilation context. */
     synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-        return this.compilation.getOrCompilePipeline(pipeline, this.defaultShaderSource);
+        return this.metal3.getOrCompilePipeline(pipeline, this.defaultShaderSource);
     }
 
     /**
@@ -441,7 +438,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * {@link Metal3CompilationContext}; it goes when {@code MetalCrossShaderTranslator} holds the context.
      */
     synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
-        return this.compilation.getOrCompileShader(id, type, defines, shaderSource);
+        return this.metal3.getOrCompileShader(id, type, defines, shaderSource);
     }
 
 
@@ -452,7 +449,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * it goes when the bridges and the compiled artifact hold the context.
      */
     synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
-        return this.compilation.getOrCompileFunction(msl, entryPoint);
+        return this.metal3.getOrCompileFunction(msl, entryPoint);
     }
 
 

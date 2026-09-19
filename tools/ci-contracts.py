@@ -980,6 +980,31 @@ for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
 if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
     raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
 
+require("the Metal 3 execution aggregate owns the compilation state and the retirement queue",
+        "src/main/java/com/metallum/render/Metal3ExecutionState.java", (
+    "private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();",
+    "private final Metal3CompilationContext compilation;",
+    "this.compilation = new Metal3CompilationContext(device, this.retirement);",
+    "void clearCachesAfterGpuCompletion() {",
+    "void close() {",
+))
+import pathlib as _pp
+
+_root2 = _pp.Path(__file__).resolve().parent.parent
+_dev2 = (_root2 / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8")
+for _forbidden in ("Metal3CompilationContext compilation", "Metal3PipelineRetirement retirement",
+                   "this.compilation", "this.retirement"):
+    if _forbidden in _dev2:
+        raise SystemExit(f"the device still owns {_forbidden}; it belongs to Metal3ExecutionState")
+
+# Exactly one construction of each: the aggregate makes them, nobody else does.
+_sources = "\n".join(p.read_text(encoding="utf-8")
+                     for p in (_root2 / "src/main/java").rglob("*.java"))
+if _sources.count("new Metal3PipelineRetirement()") != 1:
+    raise SystemExit("Metal3PipelineRetirement is constructed somewhere other than the aggregate")
+if _sources.count("new Metal3CompilationContext(") != 1:
+    raise SystemExit("Metal3CompilationContext is constructed somewhere other than the aggregate")
+
 require("the active pipeline cache belongs to the compilation context",
         "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
     "private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();",
@@ -1001,19 +1026,29 @@ _ret = (_root / "src/main/java/com/metallum/render/Metal3PipelineRetirement.java
 if "compiledPipelines = new IdentityHashMap" in _dev:
     raise SystemExit("the active pipeline cache is declared on MetalDevice as well as on the context")
 
+_state = (_root / "src/main/java/com/metallum/render/Metal3ExecutionState.java").read_text(encoding="utf-8")
+# The device waits, then hands over: the wait must come first, and the aggregate must not know how to wait.
+if _dev.index("this.waitForSubmittedGpuWork();") > _dev.index("this.metal3.clearCachesAfterGpuCompletion();"):
+    raise SystemExit("clearPipelineCache releases the caches before the GPU wait")
+
 _order = (
-    "this.waitForSubmittedGpuWork();",
     "this.retirement.releaseRetired();",
     "this.compilation.clearActivePipelines();",
     "this.compilation.clearShaderCache();",
     "this.compilation.clearFunctionCache();",
 )
-_positions = [_dev.index(_line) for _line in _order]
+_positions = [_state.index(_line) for _line in _order]
 if _positions != sorted(_positions):
     raise SystemExit(
-        "clearPipelineCache no longer releases in the order GPU wait, retired, active, shaders, functions: "
+        "the aggregate no longer releases in the order retired, active, shaders, functions: "
         + str(list(zip(_order, _positions)))
     )
+for _forbidden in ("waitForSubmittedGpuWork", "MetalCommandEncoder", "MetalFrameEncoder"):
+    if _forbidden in _state:
+        raise SystemExit(f"the Metal 3 execution aggregate must not know about {_forbidden}")
+for _forbidden in ("Metal4", "MTL4", "Metal4PresentGate", "Metal4Path"):
+    if _forbidden in _state:
+        raise SystemExit(f"the Metal 3 execution aggregate must not know about {_forbidden}")
 
 for _forbidden in ("waitForSubmittedGpuWork", "MetalCommandEncoder", "MetalFrameEncoder", "MetalDevice"):
     if _forbidden in _ret:
