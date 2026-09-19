@@ -444,7 +444,12 @@ public final class MetalDevice implements GpuDeviceBackend {
     }
 
     synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
-        ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines);
+        // The profile is part of the identity, not a detail of the compile: a module translated for Metal 3.2
+        // is not the module a Metal 4 session needs, and the function cache below has always named it
+        // (`MslFunctionKey`) while this one did not. It is one token and the profile is fixed per process, so
+        // this changes no cache behaviour today - it is what makes the reuse impossible rather than unlikely.
+        ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines,
+                MetalShaderLanguageProfile.selected().token());
         return this.shaderCache.computeIfAbsent(key, k -> {
             String source = shaderSource.get(k.id(), k.type());
             if (source == null) {
@@ -512,7 +517,14 @@ public final class MetalDevice implements GpuDeviceBackend {
         );
     }
 
-    private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines) {
+    /**
+     * What a translated module is keyed by: the shader, the stage, the defines it was compiled with **and the
+     * MSL profile it was translated for**. The profile is here because a module is not a stage-independent
+     * artifact: it carries the MSL the translator produced and the language version Metal accepted it under,
+     * so a session that changed profile must not be handed a module from the other one.
+     */
+    private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,
+                                        String shaderProfile) {
     }
 
     private record MslFunctionKey(String msl, String entryPoint, String profile) {

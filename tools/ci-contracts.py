@@ -882,6 +882,18 @@ require("the capability record asks every clause of the minimum contract",
 # shared" impossible to write down. The queue now comes through the execution services, whose first consumer
 # this is; the handle crosses as an address rather than as a wrapper class, so a version-neutral interface
 # never names a generation's type.
+# M2: a translated module belongs to one MSL profile. The function cache always named the profile; the module
+# cache did not, which made the reuse of a Metal 3 module by a Metal 4 session a thing that merely did not
+# happen rather than a thing that could not. Both halves are pinned, because a key that forgot the profile again
+# would compile cleanly and pass every other test in this file.
+require("a translated shader module is keyed by its MSL profile",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,",
+    "String shaderProfile) {",
+    "new ShaderCompilationKey(id, type, defines,",
+    "MetalShaderLanguageProfile.selected().token());",
+    "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
+))
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     # The services are built for the generation the selector chose, not for a constant, so that every seam
