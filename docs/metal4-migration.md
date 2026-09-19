@@ -258,6 +258,31 @@ So the next attempt is not another move: it is deciding the cluster's membership
 fixing the imports with something that resolves nested types. That is the architecture seam §6 asked to find,
 and it is written down here rather than discovered again.
 
+### The move is blocked on a collaborator surface, not on import mechanics
+
+Second attempt, with the decision made (`MetalCompiledRenderPipeline` stays in `render` and became visible to the
+moved cluster): **118 errors, worse than the first attempt's 82.** The compiler named the next layer, and it is
+not tooling:
+
+| count | symbol |
+| --- | --- |
+| 24 | `MetalCompiledRenderPipeline.STAGE_VERTEX` / `STAGE_FRAGMENT` (nested constants) |
+| 10 | `MetalCompiledRenderPipeline.ArgumentBufferLayout` (nested record) |
+| 14 | **`MetalDevice.useLabels()` and `MetalDevice.metalDeviceHandle()`** - the facade's package-private members |
+| 30 | `cannot find symbol` (imports and their cascades) |
+
+**The frame path uses the facade's internals by package access.** That is the seam: `MetalCommandEncoder` calls
+`device.useLabels()` ten times and `device.metalDeviceHandle()` four, which works only while both classes sit in
+`com.metallum.render`. Moving the encoder makes those public widenings, which is what §H forbids - so the fix is
+a contract for what a generation's encoder may ask the device (labels, the native device handle) rather than a
+package accident. The nested constants and the layout record are the same shape one level down: they are part of
+the artifact's surface that the frame path reads directly.
+
+Reverted again under the rule, and this time the number went **up**, which is the useful part: the first attempt
+looked like an import problem (82) and the second shows it is a collaborator-surface problem (118). Until the
+encoder's device questions and the artifact's nested surface are contracts, no ordering of `git mv` will make
+this move compile without widening visibility, and widening is the thing that produced the original 100/118/144.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
