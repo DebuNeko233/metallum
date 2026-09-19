@@ -611,8 +611,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         if (!Metal4Path.present(layer, source.nativeHandle())) {
             commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
         }
-        // And the new command structure is given the same picture to draw with, off the presented path.
-        Metal4Path.source(source.nativeHandle());
     }
 
     @Override

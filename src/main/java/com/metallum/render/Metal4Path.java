@@ -95,9 +95,6 @@ public final class Metal4Path {
     @Nullable
     private static MTL4ArgumentTable table;
 
-    /** The picture this frame's submission samples, handed over where the frame says what it drew. */
-    private static MemorySegment source = MemorySegment.NULL;
-    private static long sourceWidth;
     @Nullable
     private static MemorySegment target;
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
@@ -224,18 +221,12 @@ public final class Metal4Path {
                 return;
             }
 
-            // The draw, when the frame has told this path what it drew: the engine's own present triangle,
-            // sampling the frame's picture through an argument table, into this path's target. It is the
-            // first thing the new command structure draws, and it is drawn off the picture's path - the
-            // frame that is presented is still the one the Metal 3 command buffer presented.
-            boolean drawn = false;
-            if (table != null && !ObjC.isNil(source)) {
-                boolean scaling = sourceWidth != TARGET_SIZE;
-                if (table.texture(source) && table.sampler(MTLBuiltinPipelines.presentSampler(scaling))) {
-                    drawn = MTLBuiltinPipelines.drawPresentWithTable(encoder, table.handle(), scaling);
-                }
-            }
-
+            // The pass is empty, and deliberately so now: the draw this path used to encode here sampled the
+            // frame's picture into a scratch target of its own, which proved the new command structure could
+            // draw before anything else could - and it made this submission depend on a frame that nothing
+            // waited for, so a heavy frame starved it and the ring gave up (measured, with a pack loaded:
+            // "the GPU did not signal slot 0 within 1000 ms"). The picture through this path is the present's,
+            // drawn into the drawable where it is the frame's own output rather than a copy of it.
             END_ENCODING.send(encoder);
             END.send(commandBuffer);
 
@@ -248,7 +239,7 @@ public final class Metal4Path {
             awaited[slot] = ++signalled;
             SIGNAL_EVENT.send(queue, event, awaited[slot]);
 
-            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, drawn);
+            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, false);
         } catch (RuntimeException failed) {
             // The cause and not only the wrapper: "objc_msgSend failed: <selector>" says which call and
             // nothing about why, and a wrong method handle, a critical downcall that was not leaf and a
@@ -263,22 +254,6 @@ public final class Metal4Path {
         String message = cause.getMessage();
         return failed.getMessage() + " (" + cause.getClass().getSimpleName()
                 + (message == null ? "" : ": " + message) + ")";
-    }
-
-    /**
-     * Hands this path the picture the frame just drew, which its own submission samples.
-     * <p>
-     * Taken at the moment the frame says what it is presenting, so what the new path draws is the frame's
-     * real output and not a stand-in. The width is kept because the present triangle picks its filter by
-     * whether the source and the target differ in size.
-     */
-    public static void source(final MemorySegment textureHandle) {
-        if (!carrying || ObjC.isNil(textureHandle)) {
-            return;
-        }
-
-        source = textureHandle;
-        sourceWidth = MTLTexture.width(textureHandle);
     }
 
     /**
@@ -356,6 +331,7 @@ public final class Metal4Path {
             // loading screen arrived 180 degrees over. The present pipeline and the sampler already handle the
             // convention, and the argument table is what the triangle is given its source through.
             boolean drawn = table != null && encodeDrawPresent(drawableTexture, sourceTexture);
+            MetalFrameProbe.metal4Present(drawn);
             if (!drawn) {
                 warnOnce("Metal 4 present: nothing could be drawn into the drawable, so the frame is presented "
                         + "by the new queue with nothing of the picture in it");
@@ -399,11 +375,20 @@ public final class Metal4Path {
             return false;
         }
 
+        // Filled here rather than once: the table holds the picture and the sampler this present samples, and
+        // both belong to the frame being presented. The filter is chosen by whether the drawable and the
+        // picture differ in size, which is the same question the engine's own drawable road asks.
+        boolean scaling = MTLTexture.width(drawableTexture) != MTLTexture.width(sourceTexture)
+                || MTLTexture.height(drawableTexture) != MTLTexture.height(sourceTexture);
+        if (!table.texture(sourceTexture) || !table.sampler(MTLBuiltinPipelines.presentSampler(scaling))) {
+            END.send(commandBuffer);
+            return false;
+        }
+
         boolean drawn = false;
         try {
             MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
             if (!ObjC.isNil(encoder)) {
-                boolean scaling = MTLTexture.width(drawableTexture) != MTLTexture.width(sourceTexture);
                 drawn = MTLBuiltinPipelines.drawPresentWithTable(encoder, table.handle(), scaling);
                 END_ENCODING.send(encoder);
             }

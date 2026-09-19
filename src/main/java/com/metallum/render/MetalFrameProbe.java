@@ -146,6 +146,7 @@ public final class MetalFrameProbe {
     private static int metal4Frames;
     private static long metal4Nanos;
     private static int metal4Draws;
+    private static int metal4Presents;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -307,6 +308,24 @@ public final class MetalFrameProbe {
         }
     }
 
+    /**
+     * One present carried by the Metal 4 queue, and whether the picture was drawn into the drawable.
+     * <p>
+     * Counted apart from the frame-shaped submission above, because the two are different questions: that one
+     * says the new command structure is being exercised every frame, this one says the picture the player sees
+     * came through it.
+     */
+    public static void metal4Present(final boolean drawn) {
+        if (!armed()) {
+            return;
+        }
+
+        metal4Presents++;
+        if (drawn) {
+            metal4Draws++;
+        }
+    }
+
     /** An encoder the engine itself opened, by the work it was opened for. */
     public static void encoderOpened(final int kind) {
         if (!armed()) {
@@ -445,14 +464,15 @@ public final class MetalFrameProbe {
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
                 "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} "
-                        + "metal4Frames={} metal4Us={} metal4Draws={}",
+                        + "metal4Frames={} metal4Us={} metal4Draws={} metal4Presents={}",
                 renderPassOpeners,
                 blitOpeners,
                 computeOpeners,
                 clearOpeners,
                 metal4Frames,
                 String.format(Locale.ROOT, "%.1f", metal4Frames == 0 ? 0.0 : metal4Nanos / 1000.0 / metal4Frames),
-                metal4Draws
+                metal4Draws,
+                metal4Presents
         );
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
@@ -515,6 +535,7 @@ public final class MetalFrameProbe {
         metal4Frames = 0;
         metal4Nanos = 0L;
         metal4Draws = 0;
+        metal4Presents = 0;
         pipelines = 0;
         textures = 0;
         samplers = 0;
