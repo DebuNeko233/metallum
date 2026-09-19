@@ -125,6 +125,7 @@ public final class MetalComputeBridge {
         prepareResources(commandEncoder, pipeline.bindings, buffers, textures, samplers);
 
         MTLComputeCommandEncoder compute = commandEncoder.computeCommandEncoder();
+        boolean bound = false;
         try {
             compute.setComputePipelineState(pipeline.pipelineState);
             for (Binding binding : pipeline.bindings.values()) {
@@ -138,8 +139,14 @@ public final class MetalComputeBridge {
                     groupsX, groupsY, groupsZ,
                     localX, localY, localZ
             );
+            bound = true;
         } finally {
-            commandEncoder.endEncoder();
+            // Left open on the way out of a successful dispatch, because that encoder is where the next
+            // dispatch belongs and sharing it is what takes a frame's compute encoders down; a dispatch that
+            // threw mid-binding is ended here rather than carried into the next one.
+            if (!bound) {
+                commandEncoder.endEncoder();
+            }
         }
         return true;
     }

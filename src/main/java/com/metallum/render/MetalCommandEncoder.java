@@ -129,6 +129,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     }
 
     MTLComputeCommandEncoder computeCommandEncoder() {
+        // Shared for the reason a blit is: the commands inside one encoder are ordered, the fence is updated
+        // when it ends either way, and a dispatch that binds its own pipeline and its own resources cannot be
+        // confused with the one before it. A materialised clear between two dispatches ends it first.
+        if (currentEncoder instanceof MTLComputeCommandEncoder open) {
+            return open;
+        }
+
         endEncoder();
         MetalFrameProbe.encoderOpened(2);
         MTLComputeCommandEncoder encoder = commandBuffer().makeComputeCommandEncoder();
@@ -219,7 +226,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 height,
                 depth
         );
-        endEncoder();
         return true;
     }
 

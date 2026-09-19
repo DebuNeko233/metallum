@@ -726,4 +726,15 @@ require("a blit shares the encoder that is already open",
     "        // A blit already open is where the next blit belongs.",
 ))
 
+require("a compute dispatch shares it the same way",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "if (currentEncoder instanceof MTLComputeCommandEncoder open) {",
+))
+require("a half-bound dispatch is still ended where it was opened",
+        "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+    "boolean bound = false;",
+    "if (!bound) {",
+    "commandEncoder.endEncoder();",
+))
+
 print("Metal and engine contracts: PASS")
