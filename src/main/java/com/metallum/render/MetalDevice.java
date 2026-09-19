@@ -69,6 +69,7 @@ final class MetalDevice implements GpuDeviceBackend {
         // about a frame: whether the image can be loaded at all and whether this GPU can run the
         // scaler. Said out loud either way, so that a session's log names which of the two it was.
         MetalFx.spatialSupported(metalDeviceHandle);
+        Metal4.available(this.metalDevice);
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }

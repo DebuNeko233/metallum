@@ -637,4 +637,33 @@ require("an absent sampler is not marked dirty again",
     "if (samplers.remove(name) != null) {",
 ))
 
+# ---------------------------------------------------------------------------
+# P5's first step: Metal 4 is detected, not assumed
+#
+# Metal 4 is a parallel API surface - MTL4-prefixed types beside the ones in use - so adopting it is a
+# runtime choice, and the framework's own guidance is to detect support and fall back. Two rules follow,
+# and both are here because guessing either one is how this project has been burned before: the
+# availability question is the device's own (`supportsFamily:` with MTLGPUFamilyMetal4, whose value is
+# the SDK's 5002 at MTLDevice.h, not a version table), and reaching the new entry point is asked for with
+# `respondsToSelector:` because a selector an object does not implement is an Objective-C exception that
+# ends the process rather than a nil. The answer is cached, the negative one included, because a session
+# cannot change its GPU.
+# ---------------------------------------------------------------------------
+require("Metal 4's availability is Apple's own question", "src/main/java/com/metallum/render/Metal4.java", (
+    "private static final long FAMILY_METAL4 = 5002L;",
+    "if (!device.supportsFamily(FAMILY_METAL4)) {",
+    'private static final String QUEUE_SELECTOR = "newMTL4CommandQueue";',
+    "if (!device.respondsTo(QUEUE_SELECTOR)) {",
+    "if (available != null) {",
+))
+require("the device is the one asked", "src/main/java/com/metallum/mtl/MTLDevice.java", (
+    'Msg.of("supportsFamily:", JAVA_LONG, JAVA_LONG)',
+    'Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS)',
+    "public boolean supportsFamily(final long family) {",
+    "public boolean respondsTo(final String name) {",
+))
+require("it is asked once, at device creation", "src/main/java/com/metallum/render/MetalDevice.java", (
+    "Metal4.available(this.metalDevice);",
+))
+
 print("Metal and engine contracts: PASS")

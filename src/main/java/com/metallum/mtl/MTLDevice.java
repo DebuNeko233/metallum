@@ -23,6 +23,8 @@ public record MTLDevice(MemorySegment handle) {
 
     private static final Msg NEW_BUFFER = Msg.of("newBufferWithLength:options:", ADDRESS, JAVA_LONG, JAVA_LONG);
     private static final Msg NEW_COMMAND_QUEUE = Msg.of("newCommandQueue", ADDRESS);
+    private static final Msg SUPPORTS_FAMILY = Msg.of("supportsFamily:", JAVA_LONG, JAVA_LONG);
+    private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
     private static final Msg NEW_TEXTURE = Msg.of("newTextureWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg NEW_SAMPLER_STATE = Msg.of("newSamplerStateWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg NEW_DEPTH_STENCIL_STATE = Msg.of("newDepthStencilStateWithDescriptor:", ADDRESS, ADDRESS);
@@ -84,6 +86,34 @@ public record MTLDevice(MemorySegment handle) {
             throw new IllegalStateException("newBufferWithLength:options: returned nil (length=" + length + ")");
         }
         return new MTLBuffer(buffer);
+    }
+
+    /**
+     * Whether this GPU has the features of a GPU family.
+     * <p>
+     * Apple's own availability question, asked of the device rather than answered from a version table:
+     * {@code supportsFamily:} takes an {@code MTLGPUFamily}, and the values are the SDK's -
+     * {@code MTLGPUFamilyMetal4} is 5002, available from macOS 26.0.
+     *
+     * @param family the family's value
+     * @return whether the device answers yes
+     */
+    public boolean supportsFamily(final long family) {
+        return SUPPORTS_FAMILY.sendLong(handle, family) != 0L;
+    }
+
+    /**
+     * Whether this object implements a selector.
+     * <p>
+     * The question to ask before reaching anything optional, because reaching a selector an object does
+     * not implement is an Objective-C exception and one of those ends the process rather than answering
+     * nil.
+     *
+     * @param name the selector's name, colons included
+     * @return whether the object answers to it
+     */
+    public boolean respondsTo(final String name) {
+        return RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector(name)) != 0L;
     }
 
     public MTLCommandQueue newCommandQueue() {
