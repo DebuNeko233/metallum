@@ -1073,6 +1073,55 @@ for _bridge in ("src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.ja
         if _gone in _src:
             raise SystemExit(f"{_bridge} still reaches the device for {_gone}")
 
+require("the flat compute facade is neutral and forwards",
+        "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+    "public static Object compile(final Object backend, final String label, final ByteBuffer spirv) {",
+    "return Metal3ComputeBridge.compile(device, device.executionState(), label, spirv);",
+    "return Metal3ComputeBridge.dispatch(encoderBackend, pipelineResource, buffers, textures, samplers,",
+    "Metal3ComputeBridge.close(pipelineResource);",
+))
+require("the flat depth-mipmap facade is neutral and forwards",
+        "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
+    "public static boolean generate(final Object encoderBackend, final GpuTexture texture) {",
+    "return Metal3DepthMipmapBridge.generate(encoderBackend, texture);",
+))
+import pathlib as _fp
+import re as _fr
+
+_root6 = _fp.Path(__file__).resolve().parent.parent
+
+
+def _code6(path):
+    text = (_root6 / path).read_text(encoding="utf-8")
+    text = _fr.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = _fr.sub(r"//[^\n]*", "", text)
+    return _fr.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
+# The facades keep the API and nothing else: the ledger counts names, these check the files themselves, so a
+# generation name that the ledger happens to allow still fails here.
+for _facade, _forbidden in (
+        ("src/main/java/com/metallum/render/MetalComputeBridge.java",
+         ("MetalCommandEncoder", "Metal3ExecutionState", "MTLComputeCommandEncoder", "MTLCommandBuffer",
+          "com.metallum.mtl.metal3")),
+        ("src/main/java/com/metallum/render/MetalDepthMipmapBridge.java",
+         ("MetalCommandEncoder", "Metal3ExecutionState", "MTLRenderCommandEncoder", "com.metallum.mtl.metal3")),
+):
+    _src = _code6(_facade)
+    for _name in _forbidden:
+        if _name in _src:
+            raise SystemExit(f"{_facade} names {_name}; a flat facade must not know the generation")
+
+# The cluster lives under render.metal3, and the flat paths are gone: a half-move that left a file behind would
+# otherwise compile from two places at once.
+for _name in ("Metal3ExecutionFactory", "Metal3ExecutionState", "Metal3CompilationContext",
+              "Metal3PipelineRetirement", "Metal3PipelineCompiler", "MetalCompiledRenderPipeline",
+              "MetalCommandEncoder", "MetalRenderPass"):
+    if not (_root6 / f"src/main/java/com/metallum/render/metal3/{_name}.java").is_file():
+        raise SystemExit(f"{_name} is not under render.metal3")
+    if (_root6 / f"src/main/java/com/metallum/render/{_name}.java").is_file():
+        raise SystemExit(f"{_name} still exists in the flat package as well")
+
 require("the shared execution boundary has four operations",
         "src/main/java/com/metallum/render/shared/MetalExecutionState.java", (
     "public interface MetalExecutionState extends AutoCloseable {",
