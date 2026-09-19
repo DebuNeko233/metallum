@@ -99,6 +99,15 @@ public final class MetalFrameProbe {
     private static int submitEnds;
     private static long loadedBytes;
     private static long storedBytes;
+
+    /**
+     * The depth attachment's share of the two above, and how many passes attached one. Kept apart
+     * because the depth slot is the one attachment the pack side cannot currently say anything about,
+     * and because a frame's depth is the largest single attachment in it.
+     */
+    private static int depthAttachments;
+    private static long depthLoadedBytes;
+    private static long depthStoredBytes;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -217,6 +226,38 @@ public final class MetalFrameProbe {
         }
     }
 
+    /**
+     * The depth attachment of a render pass, counted apart from the colour ones as well as inside the
+     * totals.
+     * <p>
+     * It is counted apart because it is the one attachment no answer of the pack side can currently
+     * reach: the lifetime capability that crosses the seam carries one flag an attachment slot and the
+     * depth slot is not one of them, so a depth load is clear-or-load and a depth store is a store,
+     * always. A frame's depth is also the largest single attachment in it, so how much of the totals
+     * this is decides whether teaching the depth slot to answer is worth doing - which is a question
+     * for a measurement rather than for an estimate.
+     */
+    public static void depthAttachment(final MemorySegment texture, final int pixelSize, final boolean loaded, final boolean stored) {
+        if (!armed()) {
+            return;
+        }
+
+        if (pixelSize <= 0) {
+            return;
+        }
+
+        long bytes = MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize;
+        depthAttachments++;
+        if (loaded) {
+            depthLoadedBytes += bytes;
+            loadedBytes += bytes;
+        }
+        if (stored) {
+            depthStoredBytes += bytes;
+            storedBytes += bytes;
+        }
+    }
+
     /** A pipeline state was pushed onto a render encoder. */
     public static void pipelineBound() {
         if (!armed()) {
@@ -296,6 +337,7 @@ public final class MetalFrameProbe {
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
+                        + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
                 frames,
                 BUDGET,
@@ -306,6 +348,9 @@ public final class MetalFrameProbe {
                 submitEnds,
                 mebibytes(loadedBytes),
                 mebibytes(storedBytes),
+                depthAttachments,
+                mebibytes(depthLoadedBytes),
+                mebibytes(depthStoredBytes),
                 pipelines,
                 textures,
                 samplers,
@@ -333,6 +378,9 @@ public final class MetalFrameProbe {
         submitEnds = 0;
         loadedBytes = 0L;
         storedBytes = 0L;
+        depthAttachments = 0;
+        depthLoadedBytes = 0L;
+        depthStoredBytes = 0L;
         pipelines = 0;
         textures = 0;
         samplers = 0;

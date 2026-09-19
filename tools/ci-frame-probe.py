@@ -203,6 +203,31 @@ if probe.index("long windowNanos = System.nanoTime() - windowStartedAt;") > prob
     raise SystemExit("frame probe: the window's time is read after the window's counters are cleared")
 
 # ---------------------------------------------------------------------------
+# The depth attachment is a share of the totals and not a replacement for them
+#
+# The depth slot is the one attachment the pack side cannot currently answer for: the lifetime
+# capability carries one flag a slot and the depth slot is not one of them, so a depth load is
+# clear-or-load and a depth store is always a store. A frame's depth is its largest single
+# attachment, so its share decides whether teaching that slot to answer is worth doing - and the
+# share has to be read beside the totals and not instead of them, or a comparison against the totals
+# already recorded here would silently be a comparison against something else.
+# ---------------------------------------------------------------------------
+require("frame-probe depth split", probe, (
+    "depthAttachments={} depthLoadedMiB={} depthStoredMiB={}",
+    "public static void depthAttachment(",
+    "depthAttachments++;",
+    "depthLoadedBytes += bytes;",
+    "depthStoredBytes += bytes;",
+    "depthAttachments = 0;",
+    "depthLoadedBytes = 0L;",
+    "depthStoredBytes = 0L;",
+))
+if probe.count("loadedBytes += bytes;") != 2 or probe.count("storedBytes += bytes;") != 2:
+    raise SystemExit(
+        "frame probe: the depth attachment is no longer counted inside the totals, so the share and the whole are not one reading"
+    )
+
+# ---------------------------------------------------------------------------
 # The unarmed path is one field read
 #
 # Every public entry point opens with the armed() guard, so an unarmed launch pays a boolean field
@@ -233,13 +258,15 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 10:
+if len(guarded) != 11:
     raise SystemExit(
-        "frame probe: expected 10 guarded entry points (encoder, frame, attachment, six binding "
-        f"kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
+        "frame probe: expected 11 guarded entry points (encoder, frame, colour attachment, depth "
+        f"attachment, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
     )
-if "MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize" not in probe:
-    raise SystemExit("frame probe: attachment bytes must come from the texture's own width, height and pixel size")
+if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
+    raise SystemExit(
+        "frame probe: the colour and depth entry points no longer size their attachments the same way"
+    )
 if probe.index("MTLTexture.width(texture)") < probe.index("public static void attachment("):
     raise SystemExit("frame probe: the attachment byte size is computed outside its entry point")
 
@@ -298,12 +325,15 @@ require("attachment byte counter", command_buffer, (
     "final int depthPixelSize",
     "Color attachment and pixel-size counts differ",
 ))
-if command_buffer.count("MetalFrameProbe.attachment(") != 2:
-    raise SystemExit("attachment byte counter: both the color and the depth attachment must reach the probe")
+if command_buffer.count("MetalFrameProbe.attachment(") != 1 or command_buffer.count("MetalFrameProbe.depthAttachment(") != 1:
+    raise SystemExit(
+        "attachment byte counter: the colour and the depth attachment must each reach the probe, and the "
+        "depth one must reach it through the entry point that counts it apart from the totals"
+    )
 color_loop = command_buffer.index("for (int index = 0; index < colorTextures.length; index++)")
 depth_block = command_buffer.index("if (!ObjC.isNil(depthTexture)) {", color_loop)
 color_probe = command_buffer.index("MetalFrameProbe.attachment(", color_loop)
-depth_probe = command_buffer.index("MetalFrameProbe.attachment(", depth_block)
+depth_probe = command_buffer.index("MetalFrameProbe.depthAttachment(", depth_block)
 if not color_loop < color_probe < depth_block < depth_probe:
     raise SystemExit("attachment byte counter: neither attachment is counted beside its own load/store decision")
 for action in (

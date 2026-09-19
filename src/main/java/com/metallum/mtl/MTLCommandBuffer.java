@@ -192,7 +192,10 @@ public final class MTLCommandBuffer {
                             ? MTLRenderPassDescriptor.LOAD_ACTION_CLEAR
                             : MTLRenderPassDescriptor.LOAD_ACTION_LOAD;
                     long storeAction = MTLRenderPassDescriptor.STORE_ACTION_STORE;
-                    MetalFrameProbe.attachment(
+                    // Counted apart from the colour attachments as well as inside their totals: this
+                    // slot is the one the pack side cannot say anything about, so how much of a frame
+                    // it is decides whether teaching it to answer is worth doing.
+                    MetalFrameProbe.depthAttachment(
                             depthTexture,
                             depthPixelSize,
                             loadAction == MTLRenderPassDescriptor.LOAD_ACTION_LOAD,

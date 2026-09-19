@@ -129,7 +129,8 @@ if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
 # picture it cannot read rather than guessing at one: a comparison against a number this side decided
 # would agree with itself.
 # ---------------------------------------------------------------------------
-for counter in ("loadedMiB", "storedMiB", "encoders", "passChanged", "windowMs"):
+for counter in ("loadedMiB", "storedMiB", "depthAttachments", "depthLoadedMiB", "depthStoredMiB",
+                "encoders", "passChanged", "windowMs"):
     if f'"{counter}"' not in compare:
         raise SystemExit(f"the comparison does not read the probe's {counter}")
 if "ms a frame" not in compare:
