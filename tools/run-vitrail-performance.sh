@@ -34,6 +34,7 @@ out_dir="$repo_root/run/performance"
 frames=600
 renderscale=100
 shadowmap_scale=100
+aim_args=()
 width=1600
 height=900
 timeout_seconds=900
@@ -58,6 +59,11 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
   --renderscale N        the render scale written into the pack selection (default 100). Below
                          100 the frame draws smaller and pays an upscale at the window's own
                          size, which is the setting the upscaling phase has to replace.
+  --at X,Y,Z             where the scene is looked at from, written into the staged world's player
+                         records before each run.
+  --yaw DEG --pitch DEG  how it is looked at. A comparison that judges pixels has to choose its frame:
+                         the same world holds an animated block texture from one angle and open sky
+                         from another, and the save's own angle is wherever the player left it.
   --shadowmapscale N     the shadow map scale written into the pack selection (default 100). It is
                          a separate setting from the render scale because it moves a different
                          half of the frame: shadows are geometry and vertex work, which the render
@@ -89,6 +95,9 @@ while [[ $# -gt 0 ]]; do
 		--frames) frames="$2"; shift 2 ;;
 		--renderscale) renderscale="$2"; shift 2 ;;
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
+		--at) aim_args+=(--at "$2"); shift 2 ;;
+		--yaw) aim_args+=(--yaw "$2"); shift 2 ;;
+		--pitch) aim_args+=(--pitch "$2"); shift 2 ;;
 		--width) width="$2"; shift 2 ;;
 		--height) height="$2"; shift 2 ;;
 		--timeout) timeout_seconds="$2"; shift 2 ;;
@@ -256,7 +265,8 @@ for run in "${runs[@]}"; do
 	# with it, because a player draws their own entity and their hand and those are the last things inside
 	# a frame that vary: with them, two runs of one configuration differ in five to nine per cent of their
 	# texture and sampler counts, which is enough to swamp an effect of a few per cent.
-	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --still-life --spectator
+	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --still-life --spectator \
+		${aim_args[@]+"${aim_args[@]}"}
 
 	# The marker is removed before the launch and created only once the pack has drawn a full frame.
 	# That order is the whole of what makes a window worth counting: armed at launch it counts the

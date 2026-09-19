@@ -10,18 +10,26 @@ rather than the switch under test.
 
 This rewrites the world's `level.dat` so that the scene stops moving by itself:
 
-  - `Time` is pinned, so every run starts from the same point of the day, and pinned away from the
-    boundaries vanilla changes what it draws at;
-  - the game rules that make a world change on its own are set: the daylight and weather cycles off,
-    mob spawning and its patrols and traders off, random ticks off and fire spread off - and under
-    `--still-life`, the entities the world already holds are taken out of it;
+  - the dimension's clock is pinned, in `data/minecraft/world_clocks.dat`, so every run starts from
+    the same point of the day and the sun does not move while one is counted - and it is pinned away
+    from the boundaries vanilla changes what it draws at;
+  - the game rules that make a world change on its own are set, in
+    `data/minecraft/game_rules.dat`: the daylight and weather cycles off, mob spawning and its patrols
+    and traders and phantoms off, random ticks off and fire spread off - and under `--still-life`, the
+    entities the world already holds are taken out of it;
   - under `--spectator`, the player is put into spectator mode, which is the last thing that moves: a
     player draws their own entity and their hand, and the packs draw both, so two runs of one
     configuration still differ in what is inside the frame's passes even when the pass set repeats.
 
-The rules are written under both `GameRules` and `game_rules`, because the schema this save was written
-with is mixed and a run is what says which spelling the game keeps: the client's own save has been read
-back and the survey is recorded in the performance plan. The entity store is the part a rule cannot
+The parts of a world this rewrites are not all in `level.dat` any more, and that is worth stating
+because writing only `level.dat` looks like it works and does nothing. Measured on a save this game
+wrote itself: the day-time clock is `data/minecraft/world_clocks.dat`'s `minecraft:overworld.total_ticks`,
+the weather is `data/minecraft/weather.dat`, and the rules are `data/minecraft/game_rules.dat` under
+names a command never says - `doDaylightCycle` is `minecraft:advance_time`, `doMobSpawning` is
+`minecraft:spawn_mobs` - so a run that wrote the command names into `level.dat` froze nothing: both
+spellings were absent from the save the client left behind and the clock had advanced 562 ticks across a
+single run. `level.dat`'s own `Time` is the world's age rather than its time of day, and the writes there
+are kept for an older schema's benefit and say so when the three files are missing. The entity store is the part a rule cannot
 reach - `doMobSpawning` stops new mobs and does nothing about the ones standing there, and a single extra
 entity draws a family's pass (measured: `cutout_cull entity` drawn in one run of one configuration and
 not the other, which moves the depth attachments by a tenth and the counted bytes by six per cent).
@@ -30,7 +38,8 @@ The file is gzipped NBT, and it is rewritten **losslessly**: every tag round-tri
 `--self-test` proves on a document carrying every tag type before anything touches a real world. Only the
 values this tool means to change are changed.
 
-Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--spectator] [--self-test]
+Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--spectator]
+                             [--at X,Y,Z] [--yaw DEG] [--pitch DEG] [--self-test]
 """
 from __future__ import annotations
 
@@ -189,6 +198,33 @@ def set_entry(compound: Compound, name: str, tag: int, value) -> None:
 # What makes a world change on its own. Rain and thunder move the sky and the light; mob spawning puts
 # entities into passes that attach depth, which is exactly the difference that was measured between two
 # runs of one comparison; random ticks grow and decay blocks, and fire spreads.
+# The rules that let a world move on its own, under the names *this* schema keeps them in. They are
+# not the names a command uses and not the names an older save holds: game rules moved out of
+# `level.dat` into `data/minecraft/game_rules.dat` and were renamed with a namespace, so what a
+# command calls `doDaylightCycle` is `minecraft:advance_time` here and `doMobSpawning` is
+# `minecraft:spawn_mobs`. Writing the old names costs nothing and does nothing - the game drops a
+# compound it does not recognise, measured: both spellings were absent from the save the client left
+# behind, and the world's clock had advanced 562 ticks across one run.
+FROZEN_RULES = {
+    "minecraft:advance_time": (TAG_BYTE, 0),
+    "minecraft:advance_weather": (TAG_BYTE, 0),
+    "minecraft:spawn_mobs": (TAG_BYTE, 0),
+    "minecraft:spawn_monsters": (TAG_BYTE, 0),
+    "minecraft:spawn_patrols": (TAG_BYTE, 0),
+    "minecraft:spawn_wandering_traders": (TAG_BYTE, 0),
+    "minecraft:spawn_phantoms": (TAG_BYTE, 0),
+    "minecraft:random_tick_speed": (TAG_INT, 0),
+    "minecraft:fire_spread_radius_around_player": (TAG_INT, 0),
+}
+
+# Where the game keeps the parts of a world that are not in `level.dat`: the day-time clock, the
+# weather it was left holding, and the rules.
+WORLD_DATA = ("data", "minecraft")
+
+# The clock a run starts from, per dimension. The overworld's is the one a scene is lit by; the end's
+# is left alone because nothing this tool measures is drawn there.
+OVERWORLD_CLOCK = "minecraft:overworld"
+
 GAME_RULES = {
     "doDaylightCycle": "false",
     "doWeatherCycle": "false",
@@ -201,9 +237,8 @@ GAME_RULES = {
     "randomTickSpeed": "0",
 }
 
-# Mid-morning, and deliberately not noon. The world's clock still advances while the run is being armed -
-# the rule that stops it is not being found in this save's schema yet - and noon is exactly the boundary
-# vanilla switches the sunrise band off and the sunset band on at. A comparison whose two runs straddled
+# Mid-morning, and deliberately not noon: noon is exactly the boundary vanilla switches the sunrise band
+# off and the sunset band on at. A comparison whose two runs straddled
 # that boundary drew a different number of sky passes, measured: 21 passes against 20, and eleven
 # per cent in pipelines. Four thousand ticks leaves a whole minute of world time on either side of any
 # day-phase boundary a run could cross.
@@ -226,6 +261,8 @@ def freeze(root: Compound, time: int) -> Compound:
     # snake_case where most of the compound is not - and a run of this tool checks which key the game
     # keeps by reading the save the client leaves behind. Writing a compound the game ignores costs
     # nothing; writing only the wrong one costs the whole fixture.
+    quiet_weather(root)
+
     for key in ("GameRules", "game_rules"):
         rules_tag, rules = entry(data, key)
         if rules_tag != TAG_COMPOUND:
@@ -317,6 +354,132 @@ def spectator(save: Path) -> int:
     return changed
 
 
+def place_player(root: Compound, position, yaw, pitch) -> bool:
+    """Puts one player record where and how a comparison should look from.
+
+    A frame repeats only if it is drawn from the same place at the same angle, and a player record
+    says wherever that player happened to stand when the world was saved. Aiming is therefore part of
+    freezing a scene rather than a separate trick: the same world holds a nether portal's animated
+    texture from one angle and open sky from another, and a comparison that means to judge pixels has
+    to be able to choose.
+    """
+    changed = False
+    if position is not None:
+        set_entry(root, "Pos", TAG_LIST, ListTag(TAG_DOUBLE, [float(axis) for axis in position]))
+        changed = True
+
+    rotation_tag, rotation = entry(root, "Rotation")
+    current = list(rotation.items) if rotation_tag == TAG_LIST else [0.0, 0.0]
+    if yaw is not None:
+        current[0] = float(yaw)
+        changed = True
+    if pitch is not None:
+        current[1] = float(pitch)
+        changed = True
+    if changed:
+        set_entry(root, "Rotation", TAG_LIST, ListTag(TAG_FLOAT, current))
+
+    return changed
+
+
+def aim(save: Path, position, yaw, pitch) -> int:
+    """Places every player record of a save, and answers how many it changed."""
+    changed = 0
+    for record in player_files(save):
+        root = load_level_dat(record)
+        if place_player(root, position, yaw, pitch):
+            save_level_dat(record, root)
+            changed += 1
+
+    return changed
+
+
+def world_data_file(save: Path, name: str) -> Path:
+    """One of the per-world data files this schema keeps beside `level.dat`."""
+    return save.joinpath(*WORLD_DATA, f"{name}.dat")
+
+
+def freeze_rules(path: Path) -> int:
+    """Sets the rules that let a world move on its own, and answers how many it wrote."""
+    if not path.is_file():
+        return 0
+
+    root = load_level_dat(path)
+    tag, data = entry(root, "data")
+    if tag != TAG_COMPOUND:
+        data = []
+        set_entry(root, "data", TAG_COMPOUND, data)
+
+    for name, (rule_tag, value) in FROZEN_RULES.items():
+        set_entry(data, name, rule_tag, value)
+    save_level_dat(path, root)
+
+    return len(FROZEN_RULES)
+
+
+def freeze_clock(path: Path, time: int) -> bool:
+    """Pins the dimension's own clock, which is what a scene is lit by."""
+    if not path.is_file():
+        return False
+
+    root = load_level_dat(path)
+    tag, data = entry(root, "data")
+    if tag != TAG_COMPOUND:
+        return False
+    clock_tag, clock = entry(data, OVERWORLD_CLOCK)
+    if clock_tag != TAG_COMPOUND:
+        return False
+
+    set_entry(clock, "total_ticks", TAG_LONG, time)
+    save_level_dat(path, root)
+
+    return True
+
+
+def freeze_weather_file(path: Path) -> bool:
+    """Stops the rain and the thunder the save was left holding, in the file this schema keeps."""
+    if not path.is_file():
+        return False
+
+    root = load_level_dat(path)
+    tag, data = entry(root, "data")
+    if tag != TAG_COMPOUND:
+        return False
+
+    for key in ("raining", "thundering"):
+        set_entry(data, key, TAG_BYTE, 0)
+    save_level_dat(path, root)
+
+    return True
+
+
+def freeze_world_data(save: Path, time: int) -> tuple:
+    """Freezes the clock, the weather and the rules where this schema actually keeps them.
+
+    The three answers are worth separating: a save written by an older schema has none of these
+    files, and a fixture that silently froze nothing is worse than one that says so.
+    """
+    return (freeze_clock(world_data_file(save, "world_clocks"), time),
+            freeze_weather_file(world_data_file(save, "weather")),
+            freeze_rules(world_data_file(save, "game_rules")))
+
+
+def quiet_weather(root: Compound) -> bool:
+    """Stops the rain and the thunder a save was left holding.
+
+    The rule that stops the weather cycle stops it *changing* and does nothing about what it already
+    is, so a world saved in a storm keeps raining for the whole of a measurement, and rain is drawn
+    and animated in every frame of one.
+    """
+    data_tag, data = entry(root, "Data")
+    if data_tag != TAG_COMPOUND:
+        return False
+
+    for key in ("raining", "thundering"):
+        set_entry(data, key, TAG_BYTE, 0)
+    return True
+
+
 def self_test() -> None:
     """Prove the reader and the writer are inverses before either touches a world."""
     document: Compound = [
@@ -351,6 +514,8 @@ def self_test() -> None:
         ("Data", TAG_COMPOUND, [
             ("Time", TAG_LONG, 1234),
             ("LevelName", TAG_STRING, "a world"),
+            ("raining", TAG_BYTE, 1),
+            ("thundering", TAG_BYTE, 1),
             ("GameRules", TAG_COMPOUND, [("keepThis", TAG_STRING, "true")]),
         ]),
     ]
@@ -359,9 +524,26 @@ def self_test() -> None:
     if entry(frozen_data, "Time") != (TAG_LONG, NOON):
         raise SystemExit("self-test: the world's time was not pinned")
     kept = [(name, tag, value) for name, tag, value in frozen_data
-            if name not in ("GameRules", "game_rules")]
+            if name not in ("GameRules", "game_rules", "raining", "thundering")]
     if kept != [("Time", TAG_LONG, NOON), ("LevelName", TAG_STRING, "a world")]:
         raise SystemExit("self-test: an unrelated entry was disturbed")
+    for key in ("raining", "thundering"):
+        if entry(frozen_data, key) != (TAG_BYTE, 0):
+            raise SystemExit(f"self-test: a storm the save was holding was left in it: {key}")
+
+    player: Compound = [
+        ("Pos", TAG_LIST, ListTag(TAG_DOUBLE, [1.0, 2.0, 3.0])),
+        ("Rotation", TAG_LIST, ListTag(TAG_FLOAT, [10.0, 20.0])),
+        ("playerGameType", TAG_INT, 1),
+    ]
+    if not place_player(player, (4.0, 5.0, 6.0), 90.0, -30.0):
+        raise SystemExit("self-test: placing a player reported no change")
+    if entry(player, "Pos") != (TAG_LIST, ListTag(TAG_DOUBLE, [4.0, 5.0, 6.0])):
+        raise SystemExit("self-test: the player's position was not written")
+    if entry(player, "Rotation") != (TAG_LIST, ListTag(TAG_FLOAT, [90.0, -30.0])):
+        raise SystemExit("self-test: the player's angle was not written")
+    if place_player([("Nothing", TAG_INT, 1)], None, None, None):
+        raise SystemExit("self-test: placing a player changed something it was not asked to")
     for key in ("GameRules", "game_rules"):
         tag, rules = entry(frozen_data, key)
         if tag != TAG_COMPOUND:
@@ -432,6 +614,14 @@ def main() -> int:
         time = int(args[args.index("--time") + 1])
     still = "--still-life" in args
     spectate = "--spectator" in args
+    position = None
+    if "--at" in args:
+        position = [float(axis) for axis in args[args.index("--at") + 1].split(",")]
+        if len(position) != 3:
+            print("--at wants three numbers, X,Y,Z", file=sys.stderr)
+            return 2
+    yaw = float(args[args.index("--yaw") + 1]) if "--yaw" in args else None
+    pitch = float(args[args.index("--pitch") + 1]) if "--pitch" in args else None
 
     level = save / "level.dat"
     if not level.is_file():
@@ -442,10 +632,18 @@ def main() -> int:
     before = level.read_bytes()
     save_level_dat(level, freeze(root, time))
     after = level.read_bytes()
-    if before == after:
+    clock, weather, rules = freeze_world_data(save, time)
+    if before == after and clock and weather:
         print(f"{save} was already frozen", file=sys.stderr)
     else:
-        print(f"Froze {save}: time pinned to {time}, {len(GAME_RULES)} game rules set")
+        print(f"Froze {save}: the overworld clock pinned to {time}"
+              + (", the rules set" if rules else ", and no rules file to set"))
+
+    absent = [name for name, present in (("clock", clock), ("weather", weather), ("rules", rules))
+              if not present]
+    if absent:
+        print(f"  no {' or '.join(absent)} under data/minecraft, so this save is an older schema and "
+              "only level.dat was written", file=sys.stderr)
 
     if still:
         removed = still_life(save)
@@ -454,6 +652,11 @@ def main() -> int:
 
     if spectate:
         print(f"Put {spectator(save)} record(s) of {save} into spectator mode")
+
+    if position is not None or yaw is not None or pitch is not None:
+        placed = aim(save, position, yaw, pitch)
+        where = "nowhere" if position is None else ",".join(f"{axis:g}" for axis in position)
+        print(f"Aimed {placed} record(s) of {save} at {where} yaw {yaw} pitch {pitch}")
 
     return 0
 

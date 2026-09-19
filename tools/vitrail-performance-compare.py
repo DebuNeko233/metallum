@@ -134,17 +134,30 @@ def compare_pictures(first: Path, other: Path) -> str:
     total = 0
     moved = 0
     beyond = 0
-    for (lr, lg, lb), (rr, rg, rb) in zip(left[2], right[2]):
+    beyond_two = 0
+    worst = 0
+    worst_at = (0, 0)
+    # The worst pixel and where it is, because that is the number a fixture's own acceptance test is
+    # written against: a mean is what an animated scene moves, and a single region at 200 levels is
+    # what a wrong attachment action looks like.
+    for index, ((lr, lg, lb), (rr, rg, rb)) in enumerate(zip(left[2], right[2])):
         delta = max(abs(lr - rr), abs(lg - rg), abs(lb - rb))
         total += delta
         if delta:
             moved += 1
+            if delta > 2:
+                beyond_two += 1
         if delta > 8:
             beyond += 1
+        if delta > worst:
+            worst = delta
+            worst_at = (index % left[0], index // left[0])
     count = max(1, len(left[2]))
     return (f"mean channel difference {total / count:.2f}, "
             f"{100 * moved / count:.2f}% of pixels differ at all, "
-            f"{100 * beyond / count:.2f}% differ by more than 8")
+            f"{100 * beyond / count:.2f}% differ by more than 8, "
+            f"{100 * beyond_two / count:.2f}% by more than 2, "
+            f"worst {worst} at {worst_at[0]},{worst_at[1]}")
 
 
 def main() -> int:
