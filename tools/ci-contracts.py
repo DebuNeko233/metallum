@@ -712,4 +712,18 @@ require("the Metal 4 submission is proven by the queue's own signal",
     'ObjC.clazz("MTL4RenderPassDescriptor")',
 ))
 
+# ---------------------------------------------------------------------------
+# A blit already open is where the next blit belongs
+#
+# Every copy method ended its blit encoder on the way out, so consecutive copies could never share one:
+# fifteen blit encoders a frame on this pack, measured. Sharing them is worth ten encoders a frame for
+# exactly the same bytes moved, and the rule is here because the shape that made it impossible is one line
+# at the end of eight methods - the kind of thing a later refactor puts back without noticing.
+# ---------------------------------------------------------------------------
+require("a blit shares the encoder that is already open",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "if (currentEncoder instanceof MTLBlitCommandEncoder open) {",
+    "        // A blit already open is where the next blit belongs.",
+))
+
 print("Metal and engine contracts: PASS")

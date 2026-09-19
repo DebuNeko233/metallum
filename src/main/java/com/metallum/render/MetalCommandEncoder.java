@@ -111,6 +111,15 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     }
 
     MTLBlitCommandEncoder blitCommandEncoder() {
+        // A blit already open is where the next blit belongs. Metal orders the commands inside one encoder,
+        // and the fence the following encoder waits on is updated when this one ends either way, so nothing
+        // is given up by sharing it - while ending and reopening per copy is what made a frame open fifteen
+        // blit encoders, measured at 100 per cent on this pack. A clear materialised between two copies ends
+        // this encoder, and the next copy opens a fresh one, which is correct.
+        if (currentEncoder instanceof MTLBlitCommandEncoder open) {
+            return open;
+        }
+
         endEncoder();
         MetalFrameProbe.encoderOpened(1);
         MTLBlitCommandEncoder encoder = commandBuffer().makeBlitCommandEncoder();
@@ -150,7 +159,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         flushPendingClear(metalTexture);
         MTLBlitCommandEncoder blit = blitCommandEncoder();
         blit.generateMipmapsForTexture(metalTexture.nativeHandle());
-        endEncoder();
         return true;
     }
 
@@ -263,7 +271,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 destinationY,
                 destinationZ
         );
-        endEncoder();
         return true;
     }
 
@@ -660,7 +667,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 destination.offset(),
                 length
         );
-        endEncoder();
     }
 
     private void orphanWrite(final MetalGpuBuffer buffer, final long offset, final ByteBuffer data) {
@@ -707,7 +713,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 target.offset(),
                 source.length()
         );
-        endEncoder();
     }
 
     @Override
@@ -743,7 +748,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 destX,
                 destY
         );
-        endEncoder();
     }
 
     @Override
@@ -782,7 +786,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 destinationX,
                 destinationY
         );
-        endEncoder();
     }
 
     @Override
@@ -824,7 +827,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 bytesPerImage
         );
 
-        endEncoder();
         queueForDestroy(callback);
     }
 
@@ -863,7 +865,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 destX,
                 destY
         );
-        endEncoder();
     }
 
     @Override
