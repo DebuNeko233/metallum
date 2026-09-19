@@ -39,6 +39,7 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.metal3.MetalFence;
 
 @Environment(EnvType.CLIENT)
 public final class MetalCommandEncoder implements CommandEncoderBackend {
@@ -914,7 +915,7 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
         destroyQueue.add(destroyAction);
     }
 
-    boolean awaitSubmitCompletion(final long submitIndex, final long timeoutMs) {
+    public boolean awaitSubmitCompletion(final long submitIndex, final long timeoutMs) {
         if (submitIndex == currentSubmitIndex) {
             if (timeoutMs == 0L) {
                 return false;
