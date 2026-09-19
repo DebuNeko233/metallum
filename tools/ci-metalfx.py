@@ -74,10 +74,55 @@ if "if (asked) {" not in metal_fx or "asked = true;" not in metal_fx:
     raise SystemExit("the availability answer is asked more than once, or not kept")
 if "public static String reason()" not in metal_fx:
     raise SystemExit("the reason for the answer is not available to a caller or a screen")
-if 'Metallum.LOGGER.info("MetalFX spatial scaling: {}, {}"' not in metal_fx:
+if 'Metallum.LOGGER.info("MetalFX spatial scaling: available, {}, factory {}"' not in metal_fx:
     raise SystemExit("availability is decided silently")
+if 'Metallum.LOGGER.info("MetalFX spatial scaling: unavailable, {}"' not in metal_fx:
+    raise SystemExit("a system that cannot scale is not told why")
 if "MetalFx.spatialSupported(metalDeviceHandle);" not in device:
     raise SystemExit("the device never asks whether it can scale, so the answer is never reached")
+
+# ---------------------------------------------------------------------------
+# A scaler per configuration, and the selector is asked for rather than assumed
+#
+# Making a scaler compiles its own pipeline, so one a frame would be a per-frame compile: the cache is
+# keyed by everything that would make a different scaler, and a configuration the device refused is
+# remembered as refused rather than retried every frame. The factory's Objective-C selector is asked of
+# the class, because the documentation names it in Swift and a wrong guess is a silent nil.
+# ---------------------------------------------------------------------------
+require = lambda label, source, needles: [
+    needle for needle in needles if needle not in source
+] and (_ for _ in ()).throw(SystemExit(f"{label}: missing " + ", ".join(
+    needle for needle in needles if needle not in source)))
+
+descriptor = (ROOT / "src/main/java/com/metallum/mtl/MTLFXSpatialScalerDescriptor.java").read_text(encoding="utf-8")
+scaler = (ROOT / "src/main/java/com/metallum/mtl/MTLFXSpatialScaler.java").read_text(encoding="utf-8")
+
+require("the factory is asked for, not assumed", descriptor, (
+    '"newSpatialScalerWithDevice:"',
+    '"makeSpatialScalerWithDevice:"',
+    'RESPONDS_TO_SELECTOR.sendLong(scalerClass, ObjC.selector(selector))',
+))
+if "Msg.of(selector, ADDRESS, ADDRESS).sendPtr(handle, device)" not in descriptor:
+    raise SystemExit("the factory is not the selector the class answered to")
+
+require("the scaler is encoded in Apple's order", scaler, (
+    'Msg.ofVoid("setColorTexture:", ADDRESS)',
+    'Msg.ofVoid("setOutputTexture:", ADDRESS)',
+    'Msg.ofVoid("setInputContentWidth:", JAVA_LONG)',
+    'Msg.ofVoid("setInputContentHeight:", JAVA_LONG)',
+    'Msg.ofVoid("encodeToCommandBuffer:", ADDRESS)',
+))
+
+require("one scaler per configuration", metal_fx, (
+    "private record Configuration(",
+    "private static final Map<Configuration, MTLFXSpatialScaler> scalers = new LinkedHashMap<>();",
+    "private static final Map<Configuration, Boolean> refused = new LinkedHashMap<>();",
+    "refused.put(configuration, Boolean.TRUE);",
+    "scalers.put(configuration, scaler);",
+    "public static void close() {",
+))
+if "MetalFx.close();" not in device:
+    raise SystemExit("the cached scalers are not released when the device goes down")
 
 if "tools/ci-metalfx.py" not in CI.read_text(encoding="utf-8"):
     raise SystemExit("this contract is not named by ci.yml, so nothing runs it")

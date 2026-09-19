@@ -299,6 +299,7 @@ final class MetalDevice implements GpuDeviceBackend {
         }
         MTLStorageTexturePipelines.close();
         MTLBuiltinPipelines.close();
+        MetalFx.close();
         this.commandQueue.close();
         for (MemorySegment state : depthStencilStates.values()) {
             ObjC.release(state);
