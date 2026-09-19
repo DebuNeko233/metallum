@@ -179,6 +179,23 @@ public final class MetalFrameProbe {
     private static long blittedBytes;
 
     /**
+     * The frame's two pacing waits, in milliseconds, as their own distributions.
+     * <p>
+     * An Unlimited-FPS session that is not unlimited is waiting somewhere, and there are two candidates on this
+     * path: the drawable the frame cannot start without, and the in-flight window the submit tail waits on. They
+     * are kept apart because they are different fixes - one is present-mode mapping, the other is the submission
+     * window - and a single "wait ms" would not say which. Explicit teardown waits are deliberately not here:
+     * they happen once, on the close path, and would read as pacing.
+     */
+    private static double[] drawableWaitTimes = new double[64];
+    private static int drawableWaits;
+    private static double drawableWaitTotal;
+
+    private static double[] submitWindowWaitTimes = new double[64];
+    private static int submitWindowWaits;
+    private static double submitWindowWaitTotal;
+
+    /**
      * Encoders opened by kind, which is the decomposition {@code passChanged} never had.
      * <p>
      * {@code encoders} counts encoder *ends* and {@code passChanged} counts those that ended because the
@@ -662,7 +679,49 @@ public final class MetalFrameProbe {
                     "Metal frame probe wrote its {} frame(s) and is off; the log holds the run it was armed for",
                     BUDGET
             );
+            // Said once, at the end, and never in a window line: these are the two waits a frame's rate is
+            // made of, and neither moves frame to frame in a way an average would hide.
+            Metallum.LOGGER.info(
+                    "frame-probe waits drawable calls={} p50={}ms p95={}ms max={}ms total={}ms; "
+                            + "submitWindow calls={} p50={}ms p95={}ms max={}ms total={}ms",
+                    drawableWaits,
+                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 0.50)),
+                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 0.95)),
+                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 1.00)),
+                    String.format(Locale.ROOT, "%.2f", drawableWaitTotal),
+                    submitWindowWaits,
+                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 0.50)),
+                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 0.95)),
+                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 1.00)),
+                    String.format(Locale.ROOT, "%.2f", submitWindowWaitTotal)
+            );
         }
+    }
+
+    /** One drawable acquisition, in nanoseconds: the wait before a frame can be drawn at all. */
+    public static void drawableWait(final long nanos) {
+        if (!armed()) {
+            return;
+        }
+        drawableWaitTimes = record(drawableWaitTimes, drawableWaits, nanos / 1_000_000.0);
+        drawableWaits++;
+        drawableWaitTotal += nanos / 1_000_000.0;
+    }
+
+    /** One frame-tail wait on the in-flight submission window, in nanoseconds. */
+    public static void submitWindowWait(final long nanos) {
+        if (!armed()) {
+            return;
+        }
+        submitWindowWaitTimes = record(submitWindowWaitTimes, submitWindowWaits, nanos / 1_000_000.0);
+        submitWindowWaits++;
+        submitWindowWaitTotal += nanos / 1_000_000.0;
+    }
+
+    private static double[] record(double[] samples, final int count, final double value) {
+        double[] grown = count == samples.length ? java.util.Arrays.copyOf(samples, samples.length * 2) : samples;
+        grown[count] = value;
+        return grown;
     }
 
     private static void reset() {

@@ -20,6 +20,8 @@ final class MetalSurface implements GpuSurfaceBackend {
     private static final Set<GpuSurface.PresentMode> SUPPORTED_PRESENT_MODES = EnumSet.of(GpuSurface.PresentMode.FIFO, GpuSurface.PresentMode.MAILBOX);
     private final MetalDevice device;
     private final CAMetalLayer metalLayer;
+    /** The present mode is a property of the session and is said once, at the first configure. */
+    private static boolean presentModeSaid;
     private GpuSurface.Configuration configuration;
     private MetalFramePresentation pendingPresentEncoder;
 
@@ -34,11 +36,19 @@ final class MetalSurface implements GpuSurfaceBackend {
             throw new SurfaceException("Metal surface configuration must be positive, got " + config.width() + "x" + config.height());
         }
 
-        this.metalLayer.configure(
-                config.width(),
-                config.height(),
-                config.presentMode() == GpuSurface.PresentMode.MAILBOX
-        );
+        // The one place the present mode becomes a layer property, so the one place that can say what the
+        // session's frame pacing is: `immediatePresentMode` is the equality the layer is handed, and the layer
+        // sets `displaySyncEnabled` to its negation. An Unlimited-FPS session that is display-locked is the
+        // question this line answers, and it cannot be answered after the fact - the marker that arms the probe
+        // does not exist yet at this point in a launch.
+        final boolean immediatePresentMode = config.presentMode() == GpuSurface.PresentMode.MAILBOX;
+        this.metalLayer.configure(config.width(), config.height(), immediatePresentMode);
+        if (!presentModeSaid) {
+            presentModeSaid = true;
+            com.metallum.Metallum.LOGGER.info(
+                    "Metal surface: presentMode={} immediatePresentMode={} displaySyncEnabled={}",
+                    config.presentMode(), immediatePresentMode, !immediatePresentMode);
+        }
 
         this.configuration = config;
     }

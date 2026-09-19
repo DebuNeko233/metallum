@@ -68,6 +68,16 @@ public final class CAMetalLayer {
 
     @Nullable
     public CAMetalDrawable nextDrawable() {
+        // What a frame waits for before it can be drawn at all. Gated on the probe so an unarmed session pays
+        // one static boolean and no clock reads, and measured around the send alone: this is the drawable, not
+        // the present or the submit.
+        if (com.metallum.render.shared.MetalFrameProbe.armed()) {
+            long begin = System.nanoTime();
+            MemorySegment drawable = NEXT_DRAWABLE.sendPtr(this.handle);
+            com.metallum.render.shared.MetalFrameProbe.drawableWait(System.nanoTime() - begin);
+            return ObjC.isNil(drawable) ? null : new CAMetalDrawable(drawable);
+        }
+
         MemorySegment drawable = NEXT_DRAWABLE.sendPtr(this.handle);
         return ObjC.isNil(drawable) ? null : new CAMetalDrawable(drawable);
     }

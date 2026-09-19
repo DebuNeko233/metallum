@@ -335,10 +335,24 @@ require("gpu frame time is taken from the completed submit", encoder, (
 ))
 order(
     encoder,
-    "if (!awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L))",
+    "boolean windowOpen = awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L);",
     "MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());",
     "the GPU time is read before the submit it belongs to has been waited on, so the driver has not reported it yet",
 )
+# The in-flight window's wait is measured at the frame tail and nowhere else. The same fence method is called
+# on the close path, whose wait is explicit teardown: counted together, teardown would read as frame pacing,
+# which is the one thing this measurement exists to decide.
+require("the submit-window wait is measured, frame tail only", encoder, (
+    "MetalFrameProbe.submitWindowWait(System.nanoTime() - windowWaitBegan);",
+    "boolean frameTailArmed = MetalFrameProbe.armed();",
+    "awaitSubmitCompletion(lastCommittedSubmitIndex, Long.MAX_VALUE);",
+))
+if encoder.count("MetalFrameProbe.submitWindowWait(") != 1:
+    raise SystemExit(
+        "the submit-window wait is recorded "
+        + str(encoder.count("MetalFrameProbe.submitWindowWait("))
+        + " times, and only the frame tail's wait is frame pacing - the close path's wait is teardown"
+    )
 order(
     encoder,
     "MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());",
@@ -415,11 +429,11 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 18:
+if len(guarded) != 20:
     raise SystemExit(
-        "frame probe: expected 18 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame probe: expected 20 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
-        "kinds, pipeline creation and the pipeline census), found "
+        "kinds, pipeline creation, the pipeline census, the drawable wait and the submit-window wait), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

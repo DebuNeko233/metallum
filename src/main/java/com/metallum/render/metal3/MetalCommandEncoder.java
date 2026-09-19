@@ -448,7 +448,16 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         }
         currentSubmitIndex++;
 
-        if (!awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L)) {
+        // The frame tail's own wait, measured where it is taken rather than inside the fence method: this is
+        // the in-flight window's back pressure, and the same method is also called on the close path, whose
+        // waits are teardown and would read as pacing if the two were counted together.
+        boolean frameTailArmed = MetalFrameProbe.armed();
+        long windowWaitBegan = frameTailArmed ? System.nanoTime() : 0L;
+        boolean windowOpen = awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L);
+        if (frameTailArmed) {
+            MetalFrameProbe.submitWindowWait(System.nanoTime() - windowWaitBegan);
+        }
+        if (!windowOpen) {
             throw new IllegalStateException("5s timeout reached when waiting for Metal submit completion");
         }
 
