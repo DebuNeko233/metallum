@@ -127,4 +127,29 @@ if "MetalFx.close();" not in device:
 if "tools/ci-metalfx.py" not in CI.read_text(encoding="utf-8"):
     raise SystemExit("this contract is not named by ci.yml, so nothing runs it")
 
+# ---------------------------------------------------------------------------
+# The door reflection can enter, and no selector sent blind
+#
+# Two faults found by running it. The pack-facing side reflects into this backend, and reflection cannot
+# enter a package-private class however public the method on it is: the capabilities that already worked
+# exposed a public class of their own, and so do these two. And a selector an object does not answer to
+# is not a wrong number - it is an Objective-C exception that ends the process, which is what
+# setInputContentOriginX: did when the spatial scaler was asked to move its content rectangle it does not
+# have. Both rules are pinned here so a later edit cannot quietly unlearn them.
+# ---------------------------------------------------------------------------
+require("the MetalFX door is public", (ROOT / "src/main/java/com/metallum/render/MetalScaleBridge.java").read_text(encoding="utf-8"), (
+    "public final class MetalScaleBridge {",
+    "public static boolean available(final Object encoder)",
+    "public static boolean scale(",
+))
+require("the attachment door is public", (ROOT / "src/main/java/com/metallum/render/MetalAttachmentBridge.java").read_text(encoding="utf-8"), (
+    "public final class MetalAttachmentBridge {",
+    "public static void setNextPassContents(final Object encoder",
+    "public static void setNextPassReadsStorageImage(final Object encoder",
+))
+if "RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector(\"setInputContentOriginX:\"))" not in scaler:
+    raise SystemExit(
+        "the scaler sends a selector it may not answer to; an unrecognized one is an Objective-C exception and ends the process"
+    )
+
 print("MetalFX availability contract: PASS")
