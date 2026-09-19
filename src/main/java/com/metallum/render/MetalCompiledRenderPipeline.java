@@ -89,7 +89,7 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
 
     MetalCompiledRenderPipeline(
             final MetalPipelineKey pipelineKey,
-            final MetalDevice device,
+            final Metal3CompilationContext compilation,
             final RenderPipeline info,
             final String vertexMsl,
             final String fragmentMsl,
@@ -134,7 +134,7 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
 
         if (usesArgumentBuffers) {
             long samplerCount = resources.stream().filter(binding -> binding.kind() == MetalResourceBinding.ResourceKind.SAMPLED_IMAGE).count();
-            long samplerLimit = device.metalDevice().maxArgumentBufferSamplerCount();
+            long samplerLimit = compilation.device().maxArgumentBufferSamplerCount();
             if (samplerLimit > 0 && samplerCount > samplerLimit) {
                 throw new IllegalStateException(
                         "Pipeline " + info.getLocation() + " needs " + samplerCount
@@ -161,7 +161,7 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
             this.depthBiasScaleFactor = depthStencilState.depthBiasScaleFactor();
             this.depthBiasConstant = depthStencilState.depthBiasConstant();
         }
-        this.depthStencilState = device.depthStencilState(depthCompareOp, depthWrite != 0);
+        this.depthStencilState = compilation.depthStencilState(depthCompareOp, depthWrite != 0);
 
         ColorTargetState[] colorTargets = info.getColorTargetStates();
         if (colorTargets.length > MAX_COLOR_ATTACHMENTS) {
@@ -171,18 +171,18 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
             );
         }
 
-        MemorySegment vertexFunction = device.getOrCompileFunction(vertexMsl, vertexEntryPoint);
-        MemorySegment fragmentFunction = device.getOrCompileFunction(fragmentMsl, fragmentEntryPoint);
+        MemorySegment vertexFunction = compilation.getOrCompileFunction(vertexMsl, vertexEntryPoint);
+        MemorySegment fragmentFunction = compilation.getOrCompileFunction(fragmentMsl, fragmentEntryPoint);
         this.argumentBuffers = usesArgumentBuffers
                 ? createArgumentBuffers(vertexFunction, fragmentFunction, vertexArgumentBufferSets, fragmentArgumentBufferSets)
                 : List.of();
 
         try (MTLVertexDescriptor vertexDescriptor = buildVertexDescriptor(info, this.firstAvailableVertexBufferSlot)) {
             this.withDepthPipeline = createPipeline(
-                    device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Depth32Float
+                    compilation, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Depth32Float
             );
             this.withoutDepthPipeline = createPipeline(
-                    device, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Invalid
+                    compilation, info, vertexFunction, fragmentFunction, vertexDescriptor, colorTargets, MTLPixelFormat.Invalid
             );
         }
     }
@@ -212,7 +212,7 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
     }
 
     private static MemorySegment createPipeline(
-            final MetalDevice device,
+            final Metal3CompilationContext compilation,
             final RenderPipeline info,
             final MemorySegment vertexFunction,
             final MemorySegment fragmentFunction,
@@ -256,7 +256,7 @@ public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline
             // Timed around the Metal call alone: building the descriptor above is this backend's
             // own work, and what the frame probe reports is what the driver was asked to do.
             long startNanos = System.nanoTime();
-            MemorySegment pipeline = device.metalDevice().newRenderPipelineState(pipelineDesc);
+            MemorySegment pipeline = compilation.device().newRenderPipelineState(pipelineDesc);
             MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);
             if (ObjC.isNil(pipeline)) {
                 Metallum.LOGGER.error(

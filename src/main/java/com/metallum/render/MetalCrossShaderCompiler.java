@@ -51,10 +51,10 @@ final class MetalCrossShaderCompiler {
     private MetalCrossShaderCompiler() {
     }
 
-    static MetalCompiledRenderPipeline compile(final MetalDevice device, final RenderPipeline pipeline, final ShaderSource shaderSource) {
+    static MetalCompiledRenderPipeline compile(final Metal3CompilationContext compilation, final RenderPipeline pipeline, final ShaderSource shaderSource) {
         try {
-            IntermediaryShaderModule vertexSpirv = device.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX, pipeline.getShaderDefines(), shaderSource);
-            IntermediaryShaderModule fragmentSpirv = device.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT, pipeline.getShaderDefines(), shaderSource);
+            IntermediaryShaderModule vertexSpirv = compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX, pipeline.getShaderDefines(), shaderSource);
+            IntermediaryShaderModule fragmentSpirv = compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT, pipeline.getShaderDefines(), shaderSource);
             if (vertexSpirv == IntermediaryShaderModule.INVALID || fragmentSpirv == IntermediaryShaderModule.INVALID) {
                 throw new IllegalStateException("Couldn't compile shader for pipeline " + pipeline.getLocation());
             }
@@ -74,7 +74,7 @@ final class MetalCrossShaderCompiler {
             List<String> vertexOutputs = extractVariableNames(vertexSpirv.outputs());
 
             boolean useArgumentBuffers = needsArgumentBuffers(layoutEntries, pipeline);
-            if (useArgumentBuffers && !device.metalDevice().supportsArgumentBuffersTier2()) {
+            if (useArgumentBuffers && !compilation.device().supportsArgumentBuffersTier2()) {
                 throw new IllegalStateException(
                         "Pipeline " + pipeline.getLocation() + " requires wide Metal resources, but Argument Buffer Tier 2 is unavailable"
                 );
@@ -127,7 +127,7 @@ final class MetalCrossShaderCompiler {
             );
             return new MetalCompiledRenderPipeline(
                     MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), useArgumentBuffers),
-                    device,
+                    compilation,
                     pipeline,
                     vertexMsl.source(),
                     fragmentMsl.source(),

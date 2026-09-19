@@ -457,7 +457,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         }
 
         return this.compiledPipelines.computeIfAbsent(
-                pipeline, p -> MetalCrossShaderCompiler.compile(this, p, source));
+                pipeline, p -> MetalCrossShaderCompiler.compile(this.compilation, p, source));
     }
 
     synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {

@@ -134,6 +134,11 @@ final class Metal3CompilationContext {
     private record MslFunctionKey(String msl, String entryPoint, String profile) {
     }
 
+    /** The native device this context compiles against. Package-private: it is not integration API. */
+    MTLDevice device() {
+        return this.device;
+    }
+
     /** A depth-stencil state for the comparison and write flags, made once and kept. */
     synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
