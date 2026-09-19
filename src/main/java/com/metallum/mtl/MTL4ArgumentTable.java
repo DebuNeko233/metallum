@@ -46,6 +46,10 @@ public final class MTL4ArgumentTable implements AutoCloseable {
     private static final Msg SET_MAX_TEXTURE = Msg.ofVoid("setMaxTextureBindCount:", JAVA_LONG);
     private static final Msg SET_MAX_SAMPLER = Msg.ofVoid("setMaxSamplerStateBindCount:", JAVA_LONG);
     private static final Msg SET_INITIALIZE = Msg.ofVoid("setInitializeBindings:", JAVA_LONG);
+    private static final Msg SET_ATTRIBUTE_STRIDES = Msg.ofVoid("setSupportAttributeStrides:", JAVA_LONG);
+    private static final Msg SET_ADDRESS = Msg.ofVoid("setAddress:atIndex:", JAVA_LONG, JAVA_LONG);
+    private static final Msg SET_ADDRESS_STRIDED =
+            Msg.ofVoid("setAddress:attributeStride:atIndex:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg SET_TEXTURE = Msg.ofVoid("setTexture:atIndex:", JAVA_LONG, JAVA_LONG);
     private static final Msg SET_SAMPLER = Msg.ofVoid("setSamplerState:atIndex:", JAVA_LONG, JAVA_LONG);
     private static final Msg RESOURCE_ID = Msg.of("gpuResourceID", JAVA_LONG);
@@ -64,6 +68,23 @@ public final class MTL4ArgumentTable implements AutoCloseable {
      */
     @Nullable
     public static MTL4ArgumentTable create(final MTLDevice device) {
+        return create(device, 0L, 1L, 1L);
+    }
+
+    /**
+     * The same, sized to what a layout binds: buffers, textures and samplers.
+     * <p>
+     * The counts are the descriptor's own limits and a table is made for what a layout uses rather than for
+     * what some other layout might. Metal caps them at 31 buffers, 128 textures and 16 samplers.
+     *
+     * @param device   the device binding
+     * @param buffers  the buffer slots this table is to have
+     * @param textures the texture slots
+     * @param samplers the sampler slots
+     */
+    @Nullable
+    public static MTL4ArgumentTable create(final MTLDevice device, final long buffers, final long textures,
+                                           final long samplers) {
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             boolean withError = device.respondsTo("newArgumentTableWithDescriptor:error:");
             boolean withoutError = device.respondsTo("newArgumentTableWithDescriptor:");
@@ -86,28 +107,61 @@ public final class MTL4ArgumentTable implements AutoCloseable {
                 return null;
             }
 
-            SET_MAX_BUFFER.send(descriptor, 0L);
-            SET_MAX_TEXTURE.send(descriptor, 1L);
-            SET_MAX_SAMPLER.send(descriptor, 1L);
+            SET_MAX_BUFFER.send(descriptor, buffers);
+            SET_MAX_TEXTURE.send(descriptor, textures);
+            SET_MAX_SAMPLER.send(descriptor, samplers);
             // The table is filled every frame before it is used, so its bindings need no initial values -
             // and one that was left uninitialised would be read as null and fault the draw rather than draw
             // the wrong thing, which is the direction to fail in.
             SET_INITIALIZE.send(descriptor, 0L);
+            // The header asks for this before a vertex buffer is bound with a stride: it is what reserves
+            // room for the strides in the table. Reserving it on a table with buffer slots costs a little
+            // memory and is what makes `setAddress:attributeStride:atIndex:` the call the header describes.
+            SET_ATTRIBUTE_STRIDES.send(descriptor, buffers > 0L ? 1L : 0L);
 
             MemorySegment made = withError
                     ? NEW_TABLE_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)
                     : NEW_TABLE.sendPtr(device.handle(), descriptor);
             ObjC.release(descriptor);
             if (ObjC.isNil(made)) {
-                Metallum.LOGGER.warn("Metal 4 argument table: the device made none for one texture and one "
-                        + "sampler (asked with {})", withError ? "the error slot" : "no error slot");
+                Metallum.LOGGER.warn("Metal 4 argument table: the device made none for {} buffers, {} textures "
+                        + "and {} samplers (asked with {})", buffers, textures, samplers,
+                        withError ? "the error slot" : "no error slot");
                 return null;
             }
 
-            Metallum.LOGGER.info("Metal 4 argument table: made for one texture and one sampler, through {}",
+            Metallum.LOGGER.info("Metal 4 argument table: made for {} buffers, {} textures and {} samplers, "
+                    + "through {}", buffers, textures, samplers,
                     withError ? "newArgumentTableWithDescriptor:error:" : "newArgumentTableWithDescriptor:");
             return new MTL4ArgumentTable(made);
         }
+    }
+
+    /**
+     * Points one of the table's buffer slots at a GPU address, which is how Metal 4 binds a buffer.
+     *
+     * @return whether there was an address to bind
+     */
+    public boolean address(final long gpuAddress, final long index) {
+        if (gpuAddress == 0L) {
+            return false;
+        }
+
+        SET_ADDRESS.send(handle, gpuAddress, index);
+        return true;
+    }
+
+    /**
+     * The same, with the stride a vertex-array buffer is read by, which is what {@code attributeStride}
+     * exists for: without it a table-bound vertex buffer has no layout to read.
+     */
+    public boolean address(final long gpuAddress, final long stride, final long index) {
+        if (gpuAddress == 0L) {
+            return false;
+        }
+
+        SET_ADDRESS_STRIDED.send(handle, gpuAddress, stride, index);
+        return true;
     }
 
     /** Points the table's one texture slot at a texture, by the resource id the framework gives it. */

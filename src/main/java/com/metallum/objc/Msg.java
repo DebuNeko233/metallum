@@ -112,6 +112,21 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * A pointer, a count, a pointer and a count - the shape a region copy takes.
+     * <p>
+     * Added when the frame probe's readback needed it, and named here for the same reason the three-integer
+     * overload is: a call whose shape is missing does not always fail to compile, it resolves to whatever
+     * overload the arguments widen into and fails at the first frame that reaches it.
+     */
+    public void send(MemorySegment self, MemorySegment a, long b, MemorySegment c, long d) {
+        try {
+            handle.invokeExact(self, sel, a, b, c, d);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, MemorySegment a, long b, long c) {
         try {
             handle.invokeExact(self, sel, a, b, c);

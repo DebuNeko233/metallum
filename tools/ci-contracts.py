@@ -785,6 +785,23 @@ require("the present is carried where a frame is committed",
     "Metal4Path.presentFrame();",
 ))
 
+# The two binding shapes a Metal 4 encoder needs, proven at device creation against the engine's own
+# pipelines and a pixel read back: a uniform by GPU address, and a vertex buffer by address and stride.
+# Without the second one the terrain and entity draws have no way to reach an encoder of the new kind,
+# and without the readback a table that was accepted would read the same as a table that was used.
+require("the Metal 4 binding shapes are proven, not assumed",
+        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+    "public static boolean canBindAndDraw(final MTLDevice device) {",
+    "uniformBuffer.gpuAddress() == 0L",
+    "table.address(uniformBuffer.gpuAddress(), 1L)",
+    "verticesTable.address(vertexBuffer.gpuAddress(), 16L, 0L)",
+    "MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);",
+    "EXPECTED_VERTEX_PIXEL",
+))
+require("a buffer's Metal 4 address is asked for rather than assumed",
+        "src/main/java/com/metallum/mtl/MTLBuffer.java", (
+    'MTL4Probe.respondsTo(handle, "gpuAddress")',
+))
 require("the argument table is asked for by the selector its header declares",
         "src/main/java/com/metallum/mtl/MTL4ArgumentTable.java", (
     'device.respondsTo("newArgumentTableWithDescriptor:error:")',

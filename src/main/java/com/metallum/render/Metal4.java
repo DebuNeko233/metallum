@@ -90,10 +90,22 @@ public final class Metal4 {
             return false;
         }
 
+        // And the question the migration of the frame's own passes turns on: a Metal 4 encoder has no
+        // binding methods, so a pass reads a buffer through an argument table, and the table binds a buffer
+        // by address. The engine's own clear pass is drawn on the new path with its uniform bound that way
+        // and the pixel it produced is read back, so this is whether the pass *used* the binding rather
+        // than whether the calls were accepted.
+        boolean binding = MTL4Probe.canBindAndDraw(device);
+
         available = Boolean.TRUE;
         reason = "the device has the family, answers to " + QUEUE_SELECTOR
                 + ", and a queue, an allocator and a command buffer carrying a render pass were made, "
-                + "encoded, submitted and released";
+                + "encoded, submitted and released"
+                + (binding
+                ? ", and two passes whose resources were bound through argument tables drew what they were "
+                        + "told to - a uniform by GPU address, and a vertex buffer by address and stride"
+                : ", but a pass whose resources were bound through an argument table did not draw what it was "
+                        + "told to");
         Metallum.LOGGER.info("Metal 4 core API: available, {}", reason);
         return true;
     }
