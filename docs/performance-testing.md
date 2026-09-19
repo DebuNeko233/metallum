@@ -99,6 +99,33 @@ Every run writes `<out>/<name>/`:
 | `gradle.log` | the launch, including a failure that stopped the client |
 | `order.txt` | the run order, at the top of the output directory |
 
+### Where a frame waits, when its rate is not what Unlimited asked for
+
+Three waits are instrumented, all probe-gated, and none of them changes anything: the present mode the
+session configured, the drawable it takes before a frame can be drawn, and the frame tail's wait on the
+in-flight submission window. Read them in this order.
+
+`Metal surface: presentMode=… immediatePresentMode=… displaySyncEnabled=…` is printed once, at the first
+configure, and it is the first thing to read: `CAMetalLayer` sets `displaySyncEnabled` to the negation of
+the `immediatePresentMode` it is handed, and `MetalSurface` hands it `presentMode()==MAILBOX`. So
+`presentMode=FIFO displaySyncEnabled=true` is a session locked to the display's refresh, and no amount of
+frame time will move it.
+
+`frame-probe waits drawable calls=… p50=… p95=… max=… total=…ms; submitWindow calls=… p50=… p95=… max=…
+total=…ms` is printed once, at the end of the armed window. It is two distributions and not one number
+because they are two different repairs: a drawable wait near the frame's period is present pacing, and a
+submit-window wait near it is the in-flight window. Explicit teardown and cache waits are deliberately not
+counted - they happen once, on the close path, and would read as pacing.
+
+Measured on the M5 Pro with an empty scene (no pack, and a pack scene whose window drew no terrain:
+`renderPasses` ~1 950 against ~21 000 for a real Photon frame): drawable `p50` 1.47 ms, `p95` 2.62 ms,
+`max` 10.03 ms over 600 frames; submit window `p50` 0.00 ms, `p95` 0.83 ms, `max` 1.67 ms over 1200 calls;
+`wallP50` 2.28 ms against `gpuP50` 1.14 ms. Nothing there is near a display period, and the session is
+MAILBOX with display sync off. **A trap this cost two arms to find:** the probe's `percentile` returns an
+already-formatted `String`, so a `String.format("%.2f", …)` around it throws `IllegalFormatConversionException`
+at runtime and the line silently never appears - which reads as "no wait". Percentiles are now empty-safe and
+passed through as they come.
+
 ## Traps
 
 ### The backend is not what the settings file says
