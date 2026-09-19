@@ -1,5 +1,6 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal3;
 
+import com.metallum.mtl.MTLDevice;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -7,7 +8,6 @@ import net.fabricmc.api.Environment;
 import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.Map;
-import com.metallum.mtl.metal3.MTLComputeCommandEncoder;
 
 /**
  * Backend-only compute kernels used for writable texture housekeeping.

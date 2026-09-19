@@ -29,6 +29,7 @@ import com.metallum.mtl.metal3.MTLCommandBuffer;
 import com.metallum.mtl.metal3.MTLCommandEncoder;
 import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 import com.metallum.mtl.metal3.MTLComputeCommandEncoder;
+import com.metallum.mtl.metal3.MTLStorageTexturePipelines;
 import com.metallum.mtl.metal3.MTLBlitCommandEncoder;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;

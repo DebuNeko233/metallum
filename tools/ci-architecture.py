@@ -162,7 +162,6 @@ def violations(root: Path) -> list[str]:
 FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     # Still called from `render` rather than from a generation package, so it is debt today and becomes one of
     # the delegations above on the day the encoder moves - and this ledger is where that shows up.
-    "com/metallum/mtl/MTLStorageTexturePipelines.java": ("MTLComputeCommandEncoder",),
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "Metal4Path", "MetalRenderPass",),
     "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),

@@ -36,6 +36,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import com.metallum.mtl.metal3.MTLCommandQueue;
+import com.metallum.mtl.metal3.MTLStorageTexturePipelines;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalGpuBuffer;
