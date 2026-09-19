@@ -17,7 +17,7 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | --- | --- | --- |
 | Is the Metal 4 core API there? | yes | `Metal 4 core API: available` ... |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
-| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **though the picture is not the Metal 3 road's picture, see the two-arm measurement below** |
+| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **its picture-equivalence to the Metal 3 road is unmeasured, because a single screenshot pair cannot resolve less than this scene's own picture noise; see below** |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
 | Can a **vertex buffer** be bound, by address and stride? | yes, and the pass read it | a pipeline taking `const device float4* [[buffer(0)]]` drew a colour it could only get from that buffer, with `attributeStride` 16, read back as `(0.25, 0.5, 0.5, 1)` |
 | Do Metal 3 pipeline states work on Metal 4 encoders? | yes | the present pipeline, the clear pipeline and a probe pipeline all draw on `MTL4RenderCommandEncoder` |
@@ -257,12 +257,33 @@ different image. Edges are where a temporal scaler differs most and flat areas w
 the split that was measured (1.652 against 8.027). One counter difference points the same way: the m4 arm sets
 600 fewer viewports and binds 4200 more buffers, because the present draw brings its own binding work.
 
-**The test that separates road from frame is a same-road repeat**, and it has not been run: `m4present` against
-`m4present` in one session. If that pair repeats tightly (the 0.14-0.41 per cent one configuration shows), the
-difference is road-specific and the frame's synchronisation is the next thing to vary deliberately; if it does
-not repeat tightly, the road is simply less stable frame to frame and the two-arm difference is mostly that.
-Until the pair is run, the row above stays "running"; **what changed in this reading is that the present is no
-longer the suspect** - its two implementations share every decision that makes a pixel.
+**The separating test has been run, and it says the measurement method was the problem, not the road.** A
+same-road pair in one session (`m4present` against `m4present`, 600 frames each, same scene, same camera):
+
+    arm m4a  wallP50 7.24 ms  gpuM3Ms 4362.10  gpuM4Ms 28.82  metal4Presents 600
+    arm m4b  wallP50 7.24 ms  gpuM3Ms 4365.27  gpuM4Ms 29.49  metal4Presents 600   (+0.1% wall)
+    picture, m4a against m4b: mean channel difference 4.10, 90.95% of pixels differ at all, 11.35% by more
+    than 8, 49.30% by more than 2, worst 174 at (357, 238)
+
+**The road against itself differs more than the two roads differ from each other** (4.10 against 3.65, 90.95
+against 88.84 per cent). So the cross-road picture difference is not a property of the road: it is inside the
+noise this scene shows between two runs of *one* configuration, and this configuration's picture noise is
+about the same size as the thing being measured. Frame time, in contrast, repeats tightly (+0.1 per cent, and
+the same `wallP50` to two decimals both times).
+
+That corrects the last three conclusions in this document's own history, and the correction is about method
+rather than about Metal 4: the filtering story was ruled out by reading the two present implementations, the
+frame-content story is not supported by a same-road repeat of the same size, and **the claim "the picture
+matches the Metal 3 road" is neither confirmed nor contradicted by any of it** - a single end-of-run screenshot
+pair cannot resolve a difference smaller than the scene's own run-to-run picture noise. The row above stays
+"running", and the honest statement is that this document has no valid picture-equivalence measurement yet.
+
+**What a valid one needs**, all of it available in the harness: the temporal state pinned. The pack's
+upscaler accumulates over frames, so two runs that draw the same 600 frames at different moments settle on
+different images - which is also why the same-road pair is the noisiest. Either the scaler is off for the
+comparison, or the picture is captured for a fixed frame index from a state the run reproduces, or several
+screenshots per arm are compared by median rather than one each. Until one of those is in place, no picture
+claim about the Metal 4 road should be recorded, in either direction.
 
 ### The present decision is two decisions, and only one of them can move
 
