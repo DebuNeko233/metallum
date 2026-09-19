@@ -84,7 +84,10 @@ logs the services' own answer at construction, and two arms in one session say t
 
 - while both execute Metal 3 (`1.78` and `1.78` ms wallP50, `-0.1 per cent`, and a picture difference of 0.03,
 which is the no-pack bed's own repeat). The AUTO line is the one that matters: before this change that arm's
-services would have answered `metal3` while the selection next to it said `metal4`.
+services would have answered `metal3` while the selection next to it said `metal4`. That line is now pinned by a contract, and the pin was mutation-proven: replacing the
+format string makes the contracts fail with `the seam prints the generation the services themselves carry:
+missing "Metal execution seam: ..."`, and restoring it passes - a log line nobody guards is a log line
+somebody deletes, and this one is the only observation this seam has.
 
 ## The API mapping
 

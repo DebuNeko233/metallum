@@ -892,6 +892,16 @@ require("the frame's queue comes from the execution services",
     "this.commandQueue = new MTLCommandQueue(",
     "this.services.commandQueue(this.metalDevice)",
 ))
+# The only observation of the seam's own answer. It exists because the claim "the services carry the selection
+# and not a constant" had nothing to read it with: `selectedGeneration` in the frame probe comes from the
+# telemetry, so before this line an AUTO launch that chose Metal 4 and a forced Metal 3 launch printed the same
+# thing at this seam. Pinned because a log line nobody guards is a log line somebody deletes.
+require("the seam prints the generation the services themselves carry",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    '"Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={}"',
+    "this.services.selected().token(), this.services.executing().token(),",
+    "this.services.isReferenceShell());",
+))
 require("the services own the queue factory without naming a generation type",
         "src/main/java/com/metallum/render/execution/MetalExecutionServices.java", (
     "long commandQueue(MTLDevice device);",
