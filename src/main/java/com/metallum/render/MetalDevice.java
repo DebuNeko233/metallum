@@ -367,13 +367,14 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
             this.cocoa.clearViewLayer();
             // The view only ever borrowed the layer; this is the reference this code was given.
             this.metalLayer.close();
-            // The new command structure's objects go with the device that made them.
-            this.services.closePresentPath();
         } catch (Throwable ignored) {
         }
         MTLStorageTexturePipelines.close();
         MTLBuiltinPipelines.close();
         MetalFx.close();
+        // The present road's objects go with the device that made them, and this is the one place they are
+        // released. The call used to appear twice: once inside the surface teardown above, where a throw from
+        // the layer release would have skipped it, and once here. The unconditional site is the one that stays.
         this.services.closePresentPath();
         this.compilation.close();
         ObjC.release(this.metalDeviceHandle);
