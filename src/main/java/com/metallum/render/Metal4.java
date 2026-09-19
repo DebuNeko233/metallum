@@ -107,6 +107,10 @@ public final class Metal4 {
                 : ", but a pass whose resources were bound through an argument table did not draw what it was "
                         + "told to");
         Metallum.LOGGER.info("Metal 4 core API: available, {}", reason);
+        if (binding) {
+            Metallum.LOGGER.info("Metal 4 sampler ceiling: {}", MTL4Probe.samplerCeiling(device));
+        }
+
         return true;
     }
 

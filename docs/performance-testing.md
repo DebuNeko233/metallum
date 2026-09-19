@@ -117,6 +117,11 @@ run, checks `Using graphics backend Metal` after it, and exits 3 when a run came
 that exit code: a comparison whose runs did not all come up on Metal is a comparison of another
 engine.
 
+A hand run has neither guard, and the game escalates: two startups that ended badly in a row and it
+writes the graphics API down to OpenGL, which is how a hand-run session came up on `4.1 Metal - 91.7`
+with no Metal device and no probe lines at all. Both keys are worth resetting by hand before a run that
+matters, or the run should go through the harness.
+
 `libMoltenVK.dylib` being loaded is **not** evidence of the Vulkan chain: the game constructs
 `VulkanBackend` while assembling its backend list, which loads the library. The log line, and F3's
 `system` group, are the evidence - both read `DeviceInfo.backendName()` and `driverInfo`.

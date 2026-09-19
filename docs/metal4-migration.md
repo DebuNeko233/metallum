@@ -22,11 +22,12 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | Can a **vertex buffer** be bound, by address and stride? | yes, and the pass read it | a pipeline taking `const device float4* [[buffer(0)]]` drew a colour it could only get from that buffer, with `attributeStride` 16, read back as `(0.25, 0.5, 0.5, 1)` |
 | Do Metal 3 pipeline states work on Metal 4 encoders? | yes | the present pipeline, the clear pipeline and a probe pipeline all draw on `MTL4RenderCommandEncoder` |
 | Two new-kind encoders in one command buffer? | yes | the probe encodes two render passes into one command buffer and commits once |
+| Is the sixteen-sampler ceiling a problem for the table? | no: it is MSL's, and the table took twenty slots | `sampler ceiling` probe, below |
 
-The one binding shape **not** proven is the engine's argument-buffer path, and it is not proven because
-it may not have an equivalent: a table's sampler slots are capped at 16 by the header, and the engine
-reaches for an argument buffer precisely when a program's highest sampler slot is 15 or more. That is
-the open risk of this migration and it is described under [Risks](#risks).
+The two things this document once listed as open are answered: the sampler ceiling is the compiler's
+(`sampler` attributes are 0 to 15) and not the table's (a table took twenty slots), and the engine's
+argument-buffer path binds as a buffer by address under Metal 4 - the same shape as a uniform, proven
+above. Nothing in the binding surface is now unknown, which is why the slices below can start.
 
 ## The API mapping
 
@@ -86,13 +87,16 @@ Each slice is measured before the next one starts, with the harness and the reci
 
 ## Risks
 
-- **Sixteen sampler slots.** The engine uses an argument buffer where a program's highest sampler slot is
-  15 or more, and a table holds at most 16 samplers. A program past that ceiling therefore cannot be bound
-  by the sampler slots alone, and the table protocol has one method that might cover it:
-  `setResource:atBufferIndex:` binds a resource *by id* into a buffer slot, which is the `[[id(n)]]`
-  mechanism rather than an argument buffer. **This is the first thing to answer, before slice 2**, because
-  it decides whether "the whole chain" is reachable at all - and it is a question about the device and the
-  compiler rather than about this tree, so it is a probe and not a design.
+- **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
+  answer the engine already has.** Asked on the M5 Pro, four ways, and answered:
+  seventeen direct samplers are **refused** - `'sampler' attribute parameter is out of bounds: must be
+  between 0 and 15`; a sampler or a texture named by a resource id on a function argument is **refused** -
+  `'id' attribute only applies to non-static data members`; and a table asking for **twenty sampler slots
+  is accepted**, so the header's "maximum value is 16" is a statement about the documented range rather
+  than a limit the runtime enforces. So the ceiling belongs to MSL, the engine's argument-buffer path is
+  what carries a program with more sampled images than slots, and under Metal 4 that path is **a buffer
+  bound by address** - which is the shape already proven above. What is left for those programs is
+  residency, not binding.
 - **Residency.** Every texture in the engine is created with `hazardTrackingMode` untracked; Metal 4 asks
   for residency sets and the present has so far worked without one. Whether a pack's frame needs a set is
   a measurement, not an assumption.

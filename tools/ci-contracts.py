@@ -798,6 +798,16 @@ require("the Metal 4 binding shapes are proven, not assumed",
     "MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);",
     "EXPECTED_VERTEX_PIXEL",
 ))
+# The ceiling question that decides whether every program can move: asked of the compiler rather than
+# assumed from the header, because the header's "maximum 16 sampler slots" is not what the runtime
+# enforces and the compiler's own limit is what a shader has to live inside.
+require("the sampler ceiling is asked of the compiler",
+        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+    "public static String samplerCeiling(final MTLDevice device) {",
+    "seventeenSamplersMsl()",
+    'device.newFunction(ID_SAMPLER_MSL, "probe_id_sampler")',
+    "MTL4ArgumentTable.create(device, 0L, 0L, 20L)",
+))
 require("a buffer's Metal 4 address is asked for rather than assumed",
         "src/main/java/com/metallum/mtl/MTLBuffer.java", (
     'MTL4Probe.respondsTo(handle, "gpuAddress")',

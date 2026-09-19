@@ -357,6 +357,85 @@ public final class MTL4Probe {
         }
     }
 
+
+    /** Seventeen sampled images with seventeen samplers, which is one past Metal's sampler slots. */
+    private static String seventeenSamplersMsl() {
+        StringBuilder source = new StringBuilder(
+                "#include <metal_stdlib>\nusing namespace metal;\n\nfragment float4 probe_seventeen(\n");
+        for (int index = 0; index < 17; index++) {
+            source.append("  texture2d<float> t").append(index)
+                    .append(" [[texture(").append(index).append(")]],\n");
+        }
+        for (int index = 0; index < 17; index++) {
+            source.append("  sampler s").append(index).append(" [[sampler(").append(index).append(")]]")
+                    .append(index == 16 ? "\n" : ",\n");
+        }
+        source.append(") {\n  float4 sum = float4(0.0);\n");
+        for (int index = 0; index < 17; index++) {
+            source.append("  sum += t").append(index).append(".sample(s").append(index)
+                    .append(", float2(0.5, 0.5));\n");
+        }
+        source.append("  return sum;\n}\n");
+        return source.toString();
+    }
+
+    /** A sampler named by a resource id in the buffer index space, which is the other way to bind one. */
+    private static final String ID_SAMPLER_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            fragment float4 probe_id_sampler(
+              texture2d<float> t0 [[texture(0)]],
+              sampler s0 [[id(0)]]
+            ) {
+              return t0.sample(s0, float2(0.5, 0.5));
+            }
+            """;
+
+    /** A texture named the same way, for the case where the sampler is the one with a slot left. */
+    private static final String ID_TEXTURE_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            fragment float4 probe_id_texture(
+              texture2d<float> t0 [[id(0)]],
+              sampler s0 [[sampler(0)]]
+            ) {
+              return t0.sample(s0, float2(0.5, 0.5));
+            }
+            """;
+
+    /**
+     * What a stage past the sixteen sampler slots can do, asked of the compiler and the device.
+     * <p>
+     * The engine reaches for an argument buffer when a program's highest sampler slot is fifteen or more,
+     * and a Metal 4 table holds sixteen samplers - so the question "can the whole chain move" turns on
+     * whether there is a second way to bind a sampler. Three answers are worth having and each is one call:
+     * whether the compiler takes seventeen direct samplers (it should not), whether it takes a sampler named
+     * by a resource id, and whether a table will even be made for twenty sampler slots (the header says the
+     * maximum is sixteen, and a header is not the runtime).
+     *
+     * @return one line of answers, or the empty string where the device cannot be asked at all
+     */
+    public static String samplerCeiling(final MTLDevice device) {
+        String direct = device.newFunction(seventeenSamplersMsl(), "probe_seventeen") == MemorySegment.NULL
+                ? "refused" : "accepted";
+        String byId = device.newFunction(ID_SAMPLER_MSL, "probe_id_sampler") == MemorySegment.NULL
+                ? "refused" : "accepted";
+        String textureById = device.newFunction(ID_TEXTURE_MSL, "probe_id_texture") == MemorySegment.NULL
+                ? "refused" : "accepted";
+
+        MTL4ArgumentTable wide = MTL4ArgumentTable.create(device, 0L, 0L, 20L);
+        String table = wide == null ? "refused" : "accepted";
+        if (wide != null) {
+            wide.close();
+        }
+
+        return "seventeen direct samplers " + direct + ", a sampler by resource id " + byId
+                + ", a texture by resource id " + textureById + ", a table asking for twenty sampler slots "
+                + table;
+    }
+
     /** Lets a wrapper go by its handle, so a probe that failed half way still releases what it made. */
     private static void releaseIfPresent(final @Nullable MemorySegment object) {
         if (object != null && !ObjC.isNil(object)) {
