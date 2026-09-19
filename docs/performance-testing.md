@@ -169,6 +169,18 @@ claims about the picture before it was found.
 without them an entity that happens to be in one run's view moves the counters by a tenth. `--at`,
 `--yaw` and `--pitch` pin the camera, because a comparison that judges pixels has to choose its frame.
 
+### Pinning the camera does not fix it, and the pack floor is larger than three and a half per cent
+
+The obvious candidate was the view: the pack runs above were taken at whatever angle the save held, so two
+more were staged with `--at 548.5,63,-248.5 --yaw 0 --pitch 7.8` on the same commit and the same
+configuration. They read **7.26 and 7.58 ms a frame - 4.4 per cent apart**, with the structural counters
+still drifting (`renderPasses` 20922 against 20946, `loadedMiB` 93922.0 against 94007.2). So the camera is
+not what varies; the window's own opening is the next suspect, because the harness arms on the pack's
+*first* full frame and the world, the pack's temporal history and the machine's state all differ at that
+instant between launches. Until the arming moment is made to wait for a settled frame, **a pack-scene
+difference below about four and a half per cent is not attributable**, and the pinning of the camera is
+worth doing for the picture comparison and not for the numbers.
+
 ### The pack scene's floor is larger than the no-pack one, and it was measured today
 
 Two runs of **one** configuration on **one** commit, Photon v1.3b at 55 per cent with MetalFX, 600 frames
