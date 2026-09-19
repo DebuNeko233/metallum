@@ -53,13 +53,33 @@ mutation of the live tree - a file naming `com.metallum.render.metal3.MetalComma
 name and went back to zero when removed. The two mixins that remain there name the flat facades
 (`com.metallum.render.MetalBackend`, `com.metallum.render.MetalDevice`), which is this document's own allowlist.
 
-### Batch 2 - the Attachment ABI, which is broken today
+### Batch 2 - the Attachment ABI, which is broken today - **done** (metallum `3394d67`, vitrail `ab21e38a`, `ff344317`)
 
-Vitrail resolves `com.metallum.render.AttachmentContents`, a path that does not exist (the type is in
-`render.shared`). The fix is not to correct the string but to stop needing it:
+Vitrail resolved `com.metallum.render.AttachmentContents`, a path that does not exist (the type is in
+`render.shared`). The fix was not to correct the string but to stop needing it:
 `MetalAttachmentBridge.setNextPassContents(Object encoder, boolean[] readAfterwards, boolean[] overwritten)`,
-with `AttachmentContents` constructed inside metallum; Vitrail passes only the two facts it has decided.
-`setNextPassReadsStorageImage(Object, boolean)` is unchanged.
+with `AttachmentContents` constructed inside metallum, one entry per slot, defaulting per slot to the interface's
+own `CARRIED`; Vitrail passes only the two facts it has decided. `setNextPassReadsStorageImage(Object, boolean)`
+is unchanged. The value-typed overload is gone rather than kept beside it, so no name has to be resolved at
+runtime for the two facts to arrive, and `tools/ci-metalfx.py` refuses the value-typed signature - proved by
+mutation (re-adding it fails with its own message; removing it passes). The Vitrail half is pinned in
+`test_pack_pass_writes_every_pixel`, with the same two-way mutation proof.
+
+**What proved it is live, and why that took a new line.** The first A/B (`run/b2-attach`, plain against
+`-Dvitrail.narrowStorageBoundary=true`) moved **nothing**: every counter identical (`encoders` 21445,
+`passChanged` 20845, `loadedMiB` 93964.6, `storedMiB` 132795.0, `blits` 6600), frame time identical, and a
+picture difference of 4.61 mean channel - at this scene's recorded same-configuration floor of 4.10, so it
+resolves nothing. The reading is that this pack's passes all answer "may read" for the boundary, which is the
+interface's default, so that switch is a no-op here and cannot evidence the ABI either way. What it did expose
+is that the adapter had no way to say whether it was delivering at all - the whole fault was silence - so a
+Vitrail-side `INFO` line now says once, on the first statement the backend accepts, how many slots it described
+(`ff344317`). The second A/B (`run/b2-elide`, plain against `-Dvitrail.elideTargetTraffic=true`) is the one that
+evidences it, and all three of its facts agree: the line appears **exactly once** in the elide arm and not at
+all in the plain arm ("the backend was told what a pass needs of 2 colour attachment slot(s)"), `loadedMiB`
+falls **93964.6 to 65250.7 (-30.6 per cent)** and `storedMiB` **132795.0 to 131199.7 (-1.2 per cent)** with
+`encoders`/`passChanged`/`blits`/`depthAttachments` unchanged and frame time +0.2 per cent, and the pictures
+differ by **4.05** mean channel - within the same floor, so the elision is not visible on this scene. `Error
+loading class` is 0 in every arm.
 
 ### Batch 3 - compute/depth/close neutrality (metallum side is partly done)
 
@@ -76,4 +96,16 @@ and every `tools/ci-*.py`. Vitrail: `./gradlew build` plus the contract tests. T
 `depthAttachments`, `pipelineIdentities`, `pipelineKeys`, `compiles`, `compileMs`, `metal4Presents` from that
 run's log - and for batch 1, the capability path in the log (not a screenshot) is the evidence that the
 capabilities are back: the last regression was invisible in every counter and visible only as a picture.
+
+**Batch 1 on hardware** (`run/b1-caps`, `run/b1-caps2`, 2026-09-19 23:57/23:59, Photon v1.3b at 55 %, 600
+frames, camera at `548.5,63,-248.5 yaw 0 pitch 7.8`, settle 25, fullscreen). The second arm is counter for
+counter identical to `run/mixin-fixed`, where the retargeted mixin still carried the capabilities - and that
+equality is the proof, not the individual numbers: `renderPasses` 20934, `blitEncoders` 3000, `computeEncoders`
+1800, `clearEncoders` 600, `encoders` 21445, `passChanged` 20845, `loadedMiB` 93964.6, `storedMiB` 132795.0,
+`depthAttachments` 4800, `depthLoadedMiB` 14385.6, `depthStoredMiB` 32449.5, `blits` 6600, `compiles` 0,
+`compileMs` 0.00, `pipelineIdentities == pipelineKeys` 345, `metal4Presents` 0, `wallP50` 7.38. The two broken
+arms (`run/m3-sealed`, `run/sealed-check`) read `Error loading class` 1, `blitEncoders` 2400 and
+**`computeEncoders` 0** - the regression in counter form. The first arm read `renderPasses` 21741,
+`depthAttachments` 5622, `encoders` 22252, which is **weather, not the change**: its screenshot shows rain, the
+one thing this harness does not pin.
 
