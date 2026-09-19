@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 20 couplings in 8 files)
+    still owes 18 couplings in 7 files, and 1 the other way)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -170,9 +170,19 @@ package-private and is now public, **because the interface is what needs it** - 
 between opening a member by contract and the hand-opening that produced a hundred "not public" errors in the
 moves that failed.
 
-The ledger reads 20 couplings in 8 files. Verified on the settled pack scene: 7.26 ms with `gpuM3Ms=4364.86`
-(`wallP50` 7.23), counters within the range runs of this configuration show (21435 encoders, 6600 blits, 345
-identities against 345 keys).
+The ledger reads 18 couplings in 7 files, and **1 the other way** - and that second number is the point of
+this paragraph. `MTLBuiltinPipelines` is the neutral home of the built-in pipelines: the present pipeline
+lives there once, drawn by Metal 3 through `MTLCommandBuffer` and by Metal 4 through `drawPresentWithTable`,
+and the Metal 3 wrappers call into it from their own convenience methods. Wrapper calls neutral is the
+direction that takes a generation out of the engine; counting it as work to be removed pushed towards pulling
+the encode bodies into the wrappers, which is the opposite of the split. So the guard now lists those
+separately and checks the direction is still what it claims: the neutral class must be called from inside a
+generation package, or the line fails. `MTLStorageTexturePipelines` is deliberately **not** in that group yet
+- it is called from `render` today, so it is debt until the encoder moves, and the ledger is where that
+becomes a delegation.
+
+The lesson is the metric's, not the code's: a count that cannot tell a design from a debt will eventually
+argue for a bad change, and the fix is to make the count say which is which.
 
 ## Risks
 

@@ -160,7 +160,8 @@ def violations(root: Path) -> list[str]:
 # A file in a generation package (`render.metal3`, `render.metal4`, `mtl.metal3`, `mtl.metal4`) is where these
 # names belong and is not listed. Everything else is.
 FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
-    "com/metallum/mtl/MTLBuiltinPipelines.java": ("MTLCommandBuffer", "MTLRenderCommandEncoder",),
+    # Still called from `render` rather than from a generation package, so it is debt today and becomes one of
+    # the delegations above on the day the encoder moves - and this ledger is where that shows up.
     "com/metallum/mtl/MTLStorageTexturePipelines.java": ("MTLComputeCommandEncoder",),
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "Metal4Path", "MetalRenderPass",),
     "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
@@ -177,6 +178,41 @@ _GENERATION_PACKAGES = (
 )
 
 _FRAME_PATH_TYPES = METAL3_COMMAND_TYPES + ("MetalCommandEncoder", "MetalRenderPass", "Metal4Path")
+
+
+# ---------------------------------------------------------------------------
+# The bindings-side built-ins, which name a generation's encoder *on purpose*.
+#
+# The debt rule is textual and cannot tell a coupling somebody has to remove from the one direction that is
+# the design: `MTLBuiltinPipelines` and `MTLStorageTexturePipelines` are the neutral home of the built-in
+# pipelines - the present pipeline lives there once, drawn by Metal 3 through `MTLCommandBuffer` and by Metal 4
+# through `drawPresentWithTable` - and the Metal 3 wrappers call into them from their own convenience methods.
+# Wrapper calls neutral is the direction that removes a generation from the engine; the reverse would be the
+# debt. Counting them as work pushed towards moving encode bodies into the wrappers, which is what the split
+# is against, so they are listed separately and the checker requires the delegation to still be a delegation:
+# each class here must be called from inside a generation package.
+WRAPPER_DELEGATIONS: dict[str, tuple[str, ...]] = {
+    "com/metallum/mtl/MTLBuiltinPipelines.java": ("MTLCommandBuffer", "MTLRenderCommandEncoder"),
+}
+
+
+def undelivered_delegations(root: Path) -> list[str]:
+    """The pinned delegations whose neutral class nothing in a generation package calls."""
+    missing = []
+    for relative in WRAPPER_DELEGATIONS:
+        name = Path(relative).stem
+        called = False
+        for path in root.rglob("*.java"):
+            source = path.read_text(encoding="utf-8")
+            package = package_of(source)
+            if not any(package == gen or package.startswith(gen + ".") for gen in _GENERATION_PACKAGES):
+                continue
+            if f"{name}." in source:
+                called = True
+                break
+        if not called:
+            missing.append(relative)
+    return missing
 
 
 def frame_path_debt(root: Path) -> dict[str, tuple[str, ...]]:
@@ -322,8 +358,16 @@ def main() -> int:
     # number is that it can only go down. Nothing generation-specific was added to it since the day it was
     # written; if that changes, the diff says so.
     debt = frame_path_debt(SOURCE_ROOT)
-    for path in sorted(set(debt) | set(FRAME_PATH_DEBT)):
-        actual, recorded = debt.get(path), FRAME_PATH_DEBT.get(path)
+    for path in sorted(set(debt) | set(FRAME_PATH_DEBT) | set(WRAPPER_DELEGATIONS)):
+        actual = debt.get(path)
+        if path in WRAPPER_DELEGATIONS:
+            if actual != WRAPPER_DELEGATIONS[path]:
+                found.append(
+                    f"{path}: the delegation ledger records {', '.join(WRAPPER_DELEGATIONS[path])} and the "
+                    f"file names {'nothing' if actual is None else ', '.join(actual)}"
+                )
+            continue
+        recorded = FRAME_PATH_DEBT.get(path)
         if actual == recorded:
             continue
         if recorded is None:
@@ -332,7 +376,19 @@ def main() -> int:
             found.append(f"{path}: the debt ledger still lists {', '.join(recorded)}, and the file no longer names them; remove the line, the ledger records work that is left")
         else:
             found.append(f"{path}: the debt ledger records {', '.join(recorded)} and the file names {', '.join(actual)}")
+    overlap = set(FRAME_PATH_DEBT) & set(WRAPPER_DELEGATIONS)
+    if overlap:
+        found.append(
+            "the same file is in the debt ledger and the delegation ledger, so one of the two numbers is "
+            "counting it twice: " + ", ".join(sorted(overlap))
+        )
     couplings = sum(len(names) for names in FRAME_PATH_DEBT.values())
+    stray_delegations = undelivered_delegations(SOURCE_ROOT)
+    for relative in stray_delegations:
+        found.append(
+            f"{relative}: listed as a wrapper delegation and nothing in a generation package calls it, so it "
+            "is not a delegation any more"
+        )
     if scanned == 0:
         raise SystemExit(f"no sources under {SOURCE_ROOT}, so nothing was checked")
 
@@ -343,7 +399,8 @@ def main() -> int:
 
     print(
         f"architecture guard: PASS ({scanned} sources, {len(LAYERS)} package rules, one mixing rule; "
-        f"the frame path's isolation still owes {couplings} couplings in {len(FRAME_PATH_DEBT)} files)"
+        f"the frame path's isolation still owes {couplings} couplings in {len(FRAME_PATH_DEBT)} files, and "
+        f"{len(WRAPPER_DELEGATIONS)} the other way)"
     )
     return 0
 
