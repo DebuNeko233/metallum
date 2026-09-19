@@ -206,9 +206,24 @@ fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true" el
 # The graphics API is written too, and for a reason that has cost this harness several runs: Vitrail puts
 # the API back to Vulkan by design when a session ends badly, so a run that follows a failed one comes up on
 # MoltenVK - a different engine - and every number it produces is about that engine. Written before every run,
-# and checked after it below.
+# and checked after it below. The word is the game's own `default`, which is the state Metallum's "Prefer
+# Metal" (`config/metallum.properties`, written just below) needs: Metallum puts its backend in front of the
+# game's list while the vanilla preference is Default, and only then, so a file naming Vulkan or OpenGL takes
+# the Metal device out of the list entirely. An earlier version wrote the unparseable word `metal` here, which
+# worked only because a value the game cannot parse falls back to that same default - a coincidence, not a
+# spelling, and one that would have read as a harness fault the day it stopped.
+#
+# `startedCleanly` is the other half of the same trap, and writing the API alone does not close it. That flag
+# is the game's own, read once at the head of `Minecraft`'s constructor, where it is set false and saved; a
+# session killed before startup finishes leaves it false on disk, and Vitrail's `StartupGuard` answers the
+# next launch by setting the API back to Vulkan *in memory*, before the backend list is built - which beats
+# anything this harness wrote a second earlier. Measured: a Metal 4 run that hung left the two runs after it
+# on MoltenVK, each of them logging "The last startup ended badly ... the API is put back to vulkan". Written
+# true, so the guard has nothing to answer and the run after a hang is still the run that was asked for; a
+# real player's instance is untouched, and the check below still refuses any run that came up elsewhere.
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
-           "renderClouds": '"false"', "preferredGraphicsBackend": '"metal"'}
+           "renderClouds": '"false"', "preferredGraphicsBackend": '"default"',
+           "startedCleanly": "true"}
 lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
 written = set()
 for index, line in enumerate(lines):

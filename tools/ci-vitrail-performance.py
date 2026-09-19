@@ -188,11 +188,12 @@ if 'fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true
     )
 
 for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": fullscreen,',
-                '"preferredGraphicsBackend": \'"metal"\''):
+                '"preferredGraphicsBackend": \'"default"\'', '"startedCleanly": "true"'):
     if setting not in launcher:
         raise SystemExit(
             "the harness does not write the measurement profile it compares under, so a run can be "
-            f"capped by the instance it stages (missing {setting})"
+            f"capped by the instance it stages, or sent to another engine by the guard that reads "
+            f"the clean-start flag (missing {setting})"
         )
 
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
