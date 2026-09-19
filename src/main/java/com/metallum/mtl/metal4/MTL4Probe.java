@@ -177,18 +177,36 @@ public final class MTL4Probe {
         return failure;
     }
 
-    private static boolean failed(final String why) {
+    /**
+     * Which stage of the probe the last answer stopped at, or null when it worked. Every stage name is a place
+     * the probe can stop, so a failure is locatable rather than merely reported: the first version of this probe
+     * collapsed a dozen exits - a nil render pass, an encoder that would not open, a target that was never made,
+     * a submission that never signalled - into one `false`, which is why a capability record could disagree with
+     * itself between two runs and say nothing about why.
+     */
+    public static String lastFailureStage() {
+        return failureStage;
+    }
+
+    private static boolean failed(final String stage, final String why) {
+        failureStage = stage;
         failure = why;
         return false;
     }
 
     private static String failure;
+    private static String failureStage;
 
     public static boolean canBindAndDraw(final MTLDevice device) {
         failure = null;
+        failureStage = null;
         if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
                 || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
-            return false;
+            return failed("selectors", "the device does not answer one of newMTL4CommandQueue,"
+                    + " newCommandAllocator, newCommandBuffer or newSharedEvent - queue="
+                    + device.respondsTo("newMTL4CommandQueue") + " allocator="
+                    + device.respondsTo("newCommandAllocator") + " buffer="
+                    + device.respondsTo("newCommandBuffer") + " event=" + device.respondsTo("newSharedEvent"));
         }
 
         MemorySegment queue = MemorySegment.NULL;
@@ -207,14 +225,17 @@ public final class MTL4Probe {
             event = NEW_SHARED_EVENT.sendPtr(device.handle());
             if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)
                     || !responds(event, "waitUntilSignaledValue:timeoutMS:")) {
-                return failed("a Metal 4 queue, allocator, command buffer or shared event came back nil");
+                return failed("objects", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil, or the event does not answer waitUntilSignaledValue:timeoutMS: - queue="
+                        + !ObjC.isNil(queue) + " allocator=" + !ObjC.isNil(allocator) + " buffer="
+                        + !ObjC.isNil(buffer) + " event=" + !ObjC.isNil(event));
             }
 
             // The address is the whole difference between this path and the Metal 3 one, so it is asked for
             // rather than assumed: a buffer whose address this OS will not give cannot be bound here.
             uniformBuffer = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
             if (uniformBuffer.gpuAddress() == 0L) {
-                return failed("the device gave the uniform buffer no GPU address");
+                return failed("uniform", "the device gave the uniform buffer no GPU address");
             }
             MemorySegment uniforms = uniformBuffer.contents().reinterpret(UNIFORM_LENGTH);
             uniforms.set(JAVA_FLOAT, 0, 0.0f);
@@ -225,21 +246,27 @@ public final class MTL4Probe {
 
             table = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
             if (table == null) {
-                return failed("newArgumentTableWithDescriptor:error: answered nil");
+                return failed("table", "newArgumentTableWithDescriptor:error: answered nil");
             }
 
             if (!table.address(uniformBuffer.gpuAddress(), 1L)) {
-                return failed("the table refused setAddress:atIndex: for the uniform buffer");
+                return failed("uniform", "the table refused setAddress:atIndex: for the uniform buffer");
             }
 
             MemorySegment drawTarget = newTarget(device);
             target = drawTarget;
+            if (ObjC.isNil(drawTarget)) {
+                // The one exit that had no reason at all, and the one whose failure used to surface later and
+                // elsewhere: a nil target is not a draw that went wrong, it is a target that was never made.
+                return failed("target", "newTextureWithDescriptor: answered nil for the " + TARGET_SIZE + "x"
+                        + TARGET_SIZE + " RGBA8 render target");
+            }
 
             // The second shape: a vertex buffer bound by address *and* stride, read by a pipeline whose
             // colour comes out of that buffer.
             vertexBuffer = device.newBuffer(VERTEX_LENGTH, STORAGE_SHARED);
             if (vertexBuffer.gpuAddress() == 0L) {
-                return failed("the device gave the vertex buffer no GPU address");
+                return failed("vertex", "the device gave the vertex buffer no GPU address");
             }
             MemorySegment vertices = vertexBuffer.contents().reinterpret(VERTEX_LENGTH);
             float[][] corners = {{-1.0f, 1.0f, 0.25f, 0.5f}, {3.0f, 1.0f, 0.25f, 0.5f},
@@ -251,8 +278,13 @@ public final class MTL4Probe {
             }
 
             MTL4ArgumentTable verticesTable = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
-            if (verticesTable == null || !verticesTable.address(vertexBuffer.gpuAddress(), 16L, 0L)) {
-                return false;
+            if (verticesTable == null) {
+                return failed("table", "the vertex table answered nil for the second argument table");
+            }
+
+            if (!verticesTable.address(vertexBuffer.gpuAddress(), 16L, 0L)) {
+                return failed("table", "the table refused setAddress:attributeStride:atIndex: for the vertex"
+                        + " buffer (does the device support attribute strides?)");
             }
 
             MemorySegment clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(
@@ -263,7 +295,8 @@ public final class MTL4Probe {
             if (ObjC.isNil(clearPipeline) || ObjC.isNil(vertexPipeline)) {
                 ObjC.release(vertexPipeline);
                 verticesTable.close();
-                return false;
+                return failed("pipelines", "a built-in pipeline came back nil: clear=" + !ObjC.isNil(clearPipeline)
+                        + " vertex=" + !ObjC.isNil(vertexPipeline) + " (the probe's own MSL compiles here)");
             }
 
             BEGIN.send(buffer, allocator);
@@ -272,7 +305,7 @@ public final class MTL4Probe {
                 END.send(buffer);
                 ObjC.release(vertexPipeline);
                 verticesTable.close();
-                return false;
+                return failed("pass", "newRenderPassDescriptor answered nil for the first pass");
             }
             SET_TARGET_WIDTH.send(pass, TARGET_SIZE);
             SET_TARGET_HEIGHT.send(pass, TARGET_SIZE);
@@ -284,7 +317,7 @@ public final class MTL4Probe {
                 END.send(buffer);
                 ObjC.release(vertexPipeline);
                 verticesTable.close();
-                return false;
+                return failed("attachment", "the render pass descriptor gave no colour attachment at index 0");
             }
             SET_TEXTURE.send(attachment, drawTarget);
             SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
@@ -312,7 +345,8 @@ public final class MTL4Probe {
             ObjC.release(vertexPipeline);
             verticesTable.close();
             if (!drew) {
-                return false;
+                return failed("encoder", "a render command encoder could not be opened on the Metal 4 command"
+                        + " buffer, or one of the two passes did not encode");
             }
 
             try (Arena arena = Arena.ofConfined()) {
@@ -322,7 +356,8 @@ public final class MTL4Probe {
             }
             SIGNAL_EVENT.send(queue, event, 1L);
             if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
-                return false;
+                return failed("completion", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " work never completed");
             }
 
             try (Arena arena = Arena.ofConfined()) {
@@ -332,7 +367,7 @@ public final class MTL4Probe {
                     if ((pixel.get(JAVA_BYTE, index) & 0xFF) != EXPECTED_VERTEX_PIXEL[index]) {
                         // A call that was accepted and a picture that did not arrive are different findings: one
                         // is a binding the encoder took and the GPU ignored, the other is a call that failed.
-                        return failed("the vertex-buffer pass drew " + (pixel.get(JAVA_BYTE, index) & 0xFF)
+                        return failed("pixel", "the vertex-buffer pass drew " + (pixel.get(JAVA_BYTE, index) & 0xFF)
                                 + " in channel " + index + " where " + EXPECTED_VERTEX_PIXEL[index]
                                 + " was asked for");
                     }
@@ -344,7 +379,7 @@ public final class MTL4Probe {
             // The deep half of the probe fails here - a pipeline that would not compile, an encoder that refused
             // an argument table, a readback that threw - and it used to return false as silently as a device
             // that cannot do this at all. Naming the throwable is what tells the two apart.
-            return failed("the draw or the readback threw " + failed);
+            return failed("exception", "the draw or the readback threw " + failed);
         } finally {
             if (table != null) {
                 table.close();
@@ -377,7 +412,7 @@ public final class MTL4Probe {
                                             final MemorySegment vertexTable, final MemorySegment pipeline) {
         MemorySegment pass = NEW_RENDER_PASS.sendPtr(ObjC.clazz("MTL4RenderPassDescriptor"));
         if (ObjC.isNil(pass)) {
-            return false;
+            return failed("pass", "newRenderPassDescriptor answered nil for the second pass");
         }
 
         try {
@@ -388,7 +423,7 @@ public final class MTL4Probe {
                     ? MemorySegment.NULL
                     : ATTACHMENT_AT.sendPtr(attachments, 0L);
             if (ObjC.isNil(attachment)) {
-                return false;
+                return failed("attachment", "the second pass's descriptor gave no colour attachment at index 0");
             }
             SET_TEXTURE.send(attachment, target);
             SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
@@ -396,7 +431,8 @@ public final class MTL4Probe {
 
             MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
             if (ObjC.isNil(encoder)) {
-                return false;
+                return failed("encoder", "the second render command encoder could not be opened on the same"
+                        + " command buffer as the first");
             }
             SET_ARGUMENT_TABLE.send(encoder, vertexTable, STAGE_VERTEX);
             SET_RENDER_PIPELINE_STATE.send(encoder, pipeline);

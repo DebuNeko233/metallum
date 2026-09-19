@@ -157,6 +157,28 @@ call, and the `executing()` literal - each naming the line that had moved. The t
 had pinned an implementation detail (`return MetalApiGeneration.METAL3;`) as if it were the design, and now pins
 `return executing;` for the property it was actually about.
 
+### The probe is staged, and the cold/warm question has a harness shape
+
+Every exit of `MTL4Probe.canBindAndDraw()` now names a stage and a reason - nineteen call sites: `selectors`,
+`objects`, `uniform`, `table`, `vertex`, `target`, `pipelines`, `pass`, `attachment`, `encoder`, `commit`,
+`completion`, `pixel`, `exception` - and `MTL4Probe.lastFailureStage()` is printed by the capability record
+beside the reason. Two exits had no reason at all before this and both could produce the flip silently: the
+**selector pre-check** at the top (which says nothing about *which* of the four selectors is missing, and now
+prints all four answers) and **`newTarget` returning nil**, which had no check on the result at all - a nil
+target was not reported as a failed target but surfaced later as a draw or a readback that went wrong. The
+vertex table's nil check and its `setAddress:attributeStride:atIndex:` refusal were two conditions in one
+`return false` and are now two findings, because a device without attribute strides is a different fact from a
+device that would not make a second table.
+
+**What this does not yet have is the cheap trigger.** The right instrument is a harness that does
+`create device → run the probe once → report → exit`, with no Minecraft world and no 600-frame arm: the arms
+used so far cost about seventy seconds each and, at two flips in fourteen, cannot be run often enough to catch
+one on demand. With a process that starts and exits in a second or two, the cold/warm question becomes
+`first probe in a process` against `second and later probes in the same process`, run dozens of times, which is
+the experiment the tally actually calls for. Two flips in fourteen arms is a **hypothesis about cold first use
+and nothing more**; it is not a root cause, and no document here should say otherwise until a run has been
+captured with its stage named.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
