@@ -745,15 +745,24 @@ require("a half-bound dispatch is still ended where it was opened",
 ))
 
 # ---------------------------------------------------------------------------
-# The two facts an F3 line and the log both read
+# The two questions an F3 line reads, and they are two questions
 #
-# Which generation of the Metal API is running, and what the upscaler made of the device. Apple has no
-# API version to query, so the generation is the newest family the device answers for; the scaler's
-# sentence is the same one it logs. Both are narrow strings on the integration surface, because the
-# pack-facing side reads them by reflection and may not see a Metal type.
+# "Which API is running" and "which API could the device run" are different facts, and one name answering
+# both is what put "Metal 4" on the F3 screen of a session encoding every frame through Metal 3's command
+# buffer. So the integration surface carries both, named for which one each answers: `metalApiGeneration()`
+# is the executing one - read off the telemetry the device records, never off the family probe - and
+# `deviceMetalApiGeneration()` is the hardware's newest family. Apple has no API version to query, and the
+# upscaler's sentence is the same one it logs. All of them are narrow strings, because the pack-facing side
+# reads them by reflection and may not see a Metal type.
 # ---------------------------------------------------------------------------
-require("the API generation is named", "src/main/java/com/metallum/api/MetallumApi.java", (
+require("the API generation in use is named", "src/main/java/com/metallum/api/MetallumApi.java", (
     "public static String metalApiGeneration() {",
+    "MetalApiGeneration executing = MetalExecutionTelemetry.executing();",
+    "return executing == null ? \"\" : executing.label();",
+))
+require("what the device could run is a separate answer", "src/main/java/com/metallum/api/MetallumApi.java", (
+    "public static String deviceMetalApiGeneration() {",
+    "return Metal4.generation();",
 ))
 require("the generation is a family answer, not a version table",
         "src/main/java/com/metallum/render/Metal4.java", (
@@ -762,6 +771,15 @@ require("the generation is a family answer, not a version table",
     'return "Metal 4";',
     'return metal3 ? "Metal 3" : "Metal";',
 ))
+# And the executing fact may not be sourced from the hardware probe again: this is the regression, stated as
+# a rule, because the two readings differ on exactly the machine this engine is developed on.
+_api_text = read("src/main/java/com/metallum/api/MetallumApi.java")
+_in_use_body = _api_text.split("public static String metalApiGeneration() {", 1)[1].split("}", 1)[0]
+if "Metal4.generation()" in _in_use_body:
+    raise SystemExit(
+        "the generation in use is answered from the device's family probe, which is a different question: "
+        "that is what reported Metal 4 for a session whose every frame is Metal 3's"
+    )
 # ---------------------------------------------------------------------------
 # The Metal 4 path presents the frame through its own queue, one commit a frame
 #
@@ -803,11 +821,24 @@ require("the present is carried where a frame is committed",
 # Metal 4 queue returns nothing to its caller, so a submission's GPU time exists only in the commit
 # feedback - without it, moving work to the new queue makes the frame probe read *faster*.
 # ---------------------------------------------------------------------------
-require("the executing generation is recorded and said in one line",
+require("the selected and executing generations are recorded as two facts and said in one line",
         "src/main/java/com/metallum/render/MetalExecutionTelemetry.java", (
-    '"Metal execution: {} selected ({})"',
-    "public static void selected(final MetalApiGeneration selected, final String why) {",
-    "public static String token() {",
+    '"Metal execution: {} selected, {} executes ({})"',
+    "public static void record(final MetalApiGeneration selected, final MetalApiGeneration executing,",
+    "public static MetalApiGeneration executing() {",
+    "public static MetalApiGeneration selected() {",
+    "public static String executingToken() {",
+))
+# One field for two facts is the fault, stated as a rule: the selector decides and cannot know what executes,
+# so the record is written where both are known, and it is the device that holds the executing generation.
+_selector_text = read("src/main/java/com/metallum/render/execution/MetalExecutionSelector.java")
+forbid("the selector does not write the session's record", _selector_text, (
+    "MetalExecutionTelemetry.selected(",
+    "MetalExecutionTelemetry.record(",
+))
+require("the device records both, where both are known",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "MetalExecutionTelemetry.record(decision.selected(), this.services.executing(), decision.reason());",
 ))
 require("the generations are the two API surfaces and nothing else",
         "src/main/java/com/metallum/render/execution/MetalApiGeneration.java", (
@@ -860,13 +891,15 @@ require("a compiled function's identity names the profile",
     "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
     "MetalShaderLanguageProfile.selected().token()",
 ))
-require("the selection is made from capability and said out loud",
+require("the selection is made from capability and nothing else",
         "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java", (
     "public static Decision decide(final MetalExecutionPreference preference,",
     '"metallum.execution=metal4 was asked for, and this device does not satisfy the "',
     "throw new UnsatisfiedPreferenceException(",
     "capabilities.metalFxParityForMetal4()",
-    "MetalExecutionTelemetry.selected(decision.selected(), decision.reason());",
+    # The selector decides; the record of what executes is written where both facts are known. A selector
+    # that writes it is a selector that can only write the selection - which is the fault this pins.
+    "return decide(preference, capabilities);",
 ))
 selector_source = (ROOT / "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java"
                    ).read_text(encoding="utf-8")

@@ -115,6 +115,11 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // nothing asks is a readiness seam that answers wrongly the first time something does.
         this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);
         this.presentGate = this.services.startPresentPath(this.metalDevice);
+        // Both facts, written where both are known. The selector decides which generation was selected and
+        // cannot know which one executes - that is this constructor's own choice, made on the line above - and
+        // recording the selection as if it were the executing generation is what made a Metal 3 frame report
+        // itself as Metal 4 to the F3 screen and to the integration API.
+        MetalExecutionTelemetry.record(decision.selected(), this.services.executing(), decision.reason());
         if (!this.services.framePathReady()) {
             com.metallum.Metallum.LOGGER.info(
                     "Metal execution: {} was selected and has no frame path yet, so the frame is {}'s and the "

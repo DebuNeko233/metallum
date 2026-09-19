@@ -2,6 +2,8 @@ package com.metallum.api;
 
 import com.metallum.config.GraphicsApiPreferenceStore;
 import com.metallum.render.Metal4;
+import com.metallum.render.MetalExecutionTelemetry;
+import com.metallum.render.execution.MetalApiGeneration;
 
 /**
  * Narrow compatibility surface for optional integrations such as shader mods.
@@ -44,14 +46,34 @@ public final class MetallumApi {
     }
 
     /**
-     * The generation of the Metal API this session's device runs, as one word.
+     * The generation of the Metal API this session's frames are encoded through, as one word.
+     * <p>
+     * <strong>This is what is in use, not what the device could use.</strong> It answers the question a
+     * debug screen or a bug report is asking, and until Metal 4 has a frame path the answer is
+     * {@code Metal 3} on every device - including one that satisfies the whole Metal 4 minimum contract,
+     * which is what {@link #deviceMetalApiGeneration()} is for. Empty before a device has been created, so a
+     * caller shows nothing rather than guessing.
+     *
+     * @return {@code Metal 3}, {@code Metal 4} or the empty string
+     */
+    public static String metalApiGeneration() {
+        MetalApiGeneration executing = MetalExecutionTelemetry.executing();
+        return executing == null ? "" : executing.label();
+    }
+
+    /**
+     * The newest generation of the Metal API the device this session came up on can run, as one word.
      * <p>
      * Apple does not publish an "API version" to query; what a device can run is a set of families, so the
      * newest family it answers for is the generation - {@code Metal 4} where the core API is there,
-     * {@code Metal 3} where that is the newest, {@code Metal} for anything older. Empty before a device has
-     * been created, so a caller shows nothing rather than guessing.
+     * {@code Metal 3} where that is the newest, {@code Metal} for anything older. This is a fact about the
+     * hardware and says nothing about what the backend does with it: a session on a device that answers
+     * {@code Metal 4} here still encodes every frame through Metal 3, which is what
+     * {@link #metalApiGeneration()} reports and what an integration should show.
+     *
+     * @return {@code Metal 4}, {@code Metal 3}, {@code Metal} or the empty string
      */
-    public static String metalApiGeneration() {
+    public static String deviceMetalApiGeneration() {
         return Metal4.generation();
     }
 

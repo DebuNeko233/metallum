@@ -1,7 +1,6 @@
 package com.metallum.render.execution;
 
 import com.metallum.Metallum;
-import com.metallum.render.MetalExecutionTelemetry;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 
@@ -53,7 +52,12 @@ public final class MetalExecutionSelector {
     }
 
     /**
-     * The decision, recorded where the engine says which generation is executing.
+     * The decision, and nothing else.
+     * <p>
+     * It records nothing: this call decides which generation was <em>selected</em>, and the generation that
+     * <em>executes</em> is decided where the execution services are built. Writing the selection into the
+     * session's record of what runs is the fault that made a Metal 3 frame report itself as Metal 4, so that
+     * record is written by {@code MetalDevice}, which knows both facts.
      *
      * @param preference   what the launch asked for
      * @param capabilities what the device answered
@@ -61,9 +65,7 @@ public final class MetalExecutionSelector {
      */
     public static Decision select(final MetalExecutionPreference preference,
                                   final MetalDeviceCapabilities capabilities) {
-        Decision decision = decide(preference, capabilities);
-        MetalExecutionTelemetry.selected(decision.selected(), decision.reason());
-        return decision;
+        return decide(preference, capabilities);
     }
 
     /**

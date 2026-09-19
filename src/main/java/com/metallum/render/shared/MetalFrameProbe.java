@@ -606,7 +606,7 @@ public final class MetalFrameProbe {
         );
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={} "
-                        + "selectedGeneration={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
+                        + "selectedGeneration={} executingGeneration={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
                         + "pipelineIdentities={} pipelineKeys={} "
@@ -622,7 +622,8 @@ public final class MetalFrameProbe {
                 String.format(Locale.ROOT, "%.2f", gpuMillis),
                 String.format(Locale.ROOT, "%.2f", metal4GpuNanos.get() / 1_000_000.0),
                 String.format(Locale.ROOT, "%.2f", gpuMillis + metal4GpuNanos.get() / 1_000_000.0),
-                MetalExecutionTelemetry.token(),
+                MetalExecutionTelemetry.selectedToken(),
+                MetalExecutionTelemetry.executingToken(),
                 encoders,
                 passChanged,
                 submitEnds,

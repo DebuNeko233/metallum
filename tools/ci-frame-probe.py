@@ -207,7 +207,7 @@ require("frame-probe window time", probe, (
 # move, which is a measurement that flatters the change it is supposed to judge.
 require("frame-probe generation GPU time", probe, (
     "gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={}",
-    "selectedGeneration={}",
+    "selectedGeneration={} executingGeneration={}",
     "public static void gpuFrameMetal4(final double milliseconds) {",
     "metal4FeedbacksTotal.incrementAndGet();",
     "metal4Feedbacks.incrementAndGet();",
@@ -217,7 +217,9 @@ require("frame-probe generation GPU time", probe, (
     # one and not the other prints every counter after it under another counter's name - which happened
     # twice while this line was being built.
     "gpuFrames,\n                metal4Feedbacks.get(),\n                metal4FeedbacksTotal.get(),\n                metal4GpuFrames.get(),",
-    "MetalExecutionTelemetry.token(),",
+    # Both facts, in the order the placeholders name them: a probe line carrying only the selection is what
+    # let a Metal 3 frame be read as Metal 4.
+    "MetalExecutionTelemetry.selectedToken(),\n                MetalExecutionTelemetry.executingToken(),",
 ))
 require("frame-probe pipeline census", probe, (
     "pipelineIdentities={} pipelineKeys={}",
