@@ -296,6 +296,14 @@ differ only where the presentation differs by construction: the m4 arm sets 600 
 present sets one per frame; the Metal 4 present leaves the encoder's default) and its present's GPU time is
 accounted on the other queue (`gpuM4Ms` 47.03), which is what makes its `gpuM3Ms` read lower.
 
+The pack scene was then given the same treatment at a scale where the scaler is out of the picture
+(`--renderscale 100`: `scaling` is false, both roads use the nearest sampler), and it settled the question the
+other way: `plain` against `m4present` read **2.06**, but the *control* - two runs of `plain` alone, same
+session, same scene - read **36.37**. In the pack scene the road-against-road difference is smaller than the
+scene against itself, at both scales measured (3.65 against 4.10 at 55 per cent, 2.06 against 36.37 at 100 per
+cent), so **no picture claim is supportable there** and the no-pack scene is the only bed this test has. The
+full table and the rule live in `performance-testing.md`.
+
 **What a valid one needs was measured the same way** - the same
 configuration twice, camera pinned, 600 frames each, no shader pack:
 

@@ -181,6 +181,30 @@ instant between launches. Until the arming moment is made to wait for a settled 
 difference below about four and a half per cent is not attributable**, and the pinning of the camera is
 worth doing for the picture comparison and not for the numbers.
 
+### A picture comparison needs its own control, and in a pack scene the control is huge
+
+The counters table has a picture comparison beside it, and it is easy to read it as an equivalence test. It is
+one only where the scene's own run-to-run picture spread is smaller than the difference being judged, so every
+picture claim needs the control first: **two runs of one configuration, same scene, same session**. Measured on
+this machine, camera pinned, 600 frames each:
+
+| scene | same configuration, two runs | two different presentations of it |
+| --- | --- | --- |
+| no pack | mean channel difference **0.04-0.05**, 0.03-1.61 per cent of pixels | plain against `-Dmetallum.metal4Present=true`: **0.04**, 0.08 per cent |
+| Photon v1.3b at 55 per cent (MetalFX on) | **4.10**, 90.95 per cent of pixels | **3.65**, 88.84 per cent |
+| Photon v1.3b at 100 per cent | **36.37**, 83.89 per cent of pixels | 2.06, 73.01 per cent |
+
+**In the pack scenes the road-against-road difference is smaller than the scene against itself.** A pack brings
+temporal history of its own - and at 100 per cent, where MetalFX is out of the picture entirely, the spread
+grows to 36, which says the noise is the pack's and not the scaler's. So a picture claim in a pack scene is not
+supported by one screenshot pair at any scale, however tight the counters are, and the no-pack scene is where
+this test belongs: it is three orders of magnitude sharper, and it is the scene a frame-path change is judged
+in first anyway.
+
+Frame time does not follow the picture: the same 100 per cent pair read `wallP50` 10.75 and 10.73 ms while the
+pictures differed by 36. Numbers and pictures have different noise floors, and a run that is quiet in one can
+be loud in the other.
+
 ### The pack scene's spread was the settling time, and it is 0.14 per cent once settled
 
 Two runs of one configuration, Photon v1.3b at 55 per cent with MetalFX, 600 frames each, camera pinned:
