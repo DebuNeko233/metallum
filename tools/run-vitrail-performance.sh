@@ -33,6 +33,7 @@ world_path=""
 out_dir="$repo_root/run/performance"
 frames=600
 renderscale=100
+shadowmap_scale=100
 width=1600
 height=900
 timeout_seconds=900
@@ -57,6 +58,10 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
   --renderscale N        the render scale written into the pack selection (default 100). Below
                          100 the frame draws smaller and pays an upscale at the window's own
                          size, which is the setting the upscaling phase has to replace.
+  --shadowmapscale N     the shadow map scale written into the pack selection (default 100). It is
+                         a separate setting from the render scale because it moves a different
+                         half of the frame: shadows are geometry and vertex work, which the render
+                         scale does not touch.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --out DIR              where the collected logs and pictures go.
@@ -83,6 +88,7 @@ while [[ $# -gt 0 ]]; do
 		--vitrail) vitrail_root="$2"; shift 2 ;;
 		--frames) frames="$2"; shift 2 ;;
 		--renderscale) renderscale="$2"; shift 2 ;;
+		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
 		--width) width="$2"; shift 2 ;;
 		--height) height="$2"; shift 2 ;;
 		--timeout) timeout_seconds="$2"; shift 2 ;;
@@ -148,7 +154,7 @@ pack=$pack_name
 enabled=true
 shadowdistance=32
 renderscale=$renderscale
-shadowmapscale=100
+shadowmapscale=$shadowmap_scale
 EOF
 
 # The Metal path is the one being measured, and a run that came up on another backend would measure
