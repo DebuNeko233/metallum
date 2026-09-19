@@ -1151,8 +1151,6 @@ require("the key is built where the pipeline is compiled",
         "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
     "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers())",
     "MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
-)),",
-    "TranslatedRenderPipeline translated = translate(vertexSpirv, fragmentSpirv, pipeline, argumentBuffersTier2);",
 ))
 require("the Metal 4 binding shapes are proven, not assumed",
         "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
