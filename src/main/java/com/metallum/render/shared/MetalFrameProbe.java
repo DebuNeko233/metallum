@@ -680,19 +680,21 @@ public final class MetalFrameProbe {
                     BUDGET
             );
             // Said once, at the end, and never in a window line: these are the two waits a frame's rate is
-            // made of, and neither moves frame to frame in a way an average would hide.
+            // made of, and neither moves frame to frame in a way an average would hide. Read through the
+            // empty-safe percentile: a line that can fail to appear is a line whose absence reads as "no
+            // wait", which is the one reading this measurement may not produce.
             Metallum.LOGGER.info(
                     "frame-probe waits drawable calls={} p50={}ms p95={}ms max={}ms total={}ms; "
                             + "submitWindow calls={} p50={}ms p95={}ms max={}ms total={}ms",
                     drawableWaits,
-                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 0.50)),
-                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 0.95)),
-                    String.format(Locale.ROOT, "%.2f", percentile(drawableWaitTimes, drawableWaits, 1.00)),
+                    emptySafePercentile(drawableWaitTimes, drawableWaits, 0.50),
+                    emptySafePercentile(drawableWaitTimes, drawableWaits, 0.95),
+                    emptySafePercentile(drawableWaitTimes, drawableWaits, 1.00),
                     String.format(Locale.ROOT, "%.2f", drawableWaitTotal),
                     submitWindowWaits,
-                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 0.50)),
-                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 0.95)),
-                    String.format(Locale.ROOT, "%.2f", percentile(submitWindowWaitTimes, submitWindowWaits, 1.00)),
+                    emptySafePercentile(submitWindowWaitTimes, submitWindowWaits, 0.50),
+                    emptySafePercentile(submitWindowWaitTimes, submitWindowWaits, 0.95),
+                    emptySafePercentile(submitWindowWaitTimes, submitWindowWaits, 1.00),
                     String.format(Locale.ROOT, "%.2f", submitWindowWaitTotal)
             );
         }
@@ -716,6 +718,11 @@ public final class MetalFrameProbe {
         submitWindowWaitTimes = record(submitWindowWaitTimes, submitWindowWaits, nanos / 1_000_000.0);
         submitWindowWaits++;
         submitWindowWaitTotal += nanos / 1_000_000.0;
+    }
+
+    /** The percentile of a sample set that may be empty, because an absent line reads as "no wait". */
+    private static String emptySafePercentile(final double[] samples, final int count, final double quantile) {
+        return count == 0 ? "0.00" : percentile(samples, count, quantile);
     }
 
     private static double[] record(double[] samples, final int count, final double value) {
