@@ -36,6 +36,8 @@ COUNTERS = (
     "depthAttachments",
     "depthLoadedMiB",
     "depthStoredMiB",
+    "blits",
+    "blittedMiB",
     "pipeline",
     "texture",
     "sampler",

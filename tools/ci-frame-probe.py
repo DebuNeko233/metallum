@@ -229,6 +229,32 @@ if probe.count("loadedBytes += bytes;") != 2 or probe.count("storedBytes += byte
     )
 
 # ---------------------------------------------------------------------------
+# What a frame moves outside a pass
+#
+# The copy-backs a pack's kept targets need at the end of a frame are blits, and every other counter
+# here counts an attachment, an encoder or a binding: without this one they are inside the frame's GPU
+# time and invisible in its decomposition. The size arrives as two integers and a pixel size rather
+# than as a texture, so an unarmed session pays the guard and no question is asked of Metal.
+# ---------------------------------------------------------------------------
+require("blit counter", probe, (
+    "blits={} blittedMiB={}",
+    "public static void blit(final int width, final int height, final int pixelSize) {",
+    "blits++;",
+    "blittedBytes += (long) width * height * pixelSize;",
+    "blits = 0;",
+    "blittedBytes = 0L;",
+))
+require("blit counter is reached from the blit", encoder, (
+    "MetalFrameProbe.blit(width, height, srcTexture.pixelSize());",
+))
+order(
+    encoder,
+    "MTLBlitCommandEncoder blit = blitCommandEncoder();",
+    "MetalFrameProbe.blit(width, height, srcTexture.pixelSize());",
+    "the blit is counted after the encoder is opened rather than at the decision",
+)
+
+# ---------------------------------------------------------------------------
 # The one reading of GPU time in the session
 #
 # Apple documents the two times as "the host time, in seconds, when the GPU starts command buffer
@@ -314,10 +340,10 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 12:
+if len(guarded) != 13:
     raise SystemExit(
-        "frame probe: expected 12 guarded entry points (encoder, frame, gpu frame, colour attachment, "
-        f"depth attachment, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
+        "frame probe: expected 13 guarded entry points (encoder, frame, gpu frame, colour attachment, "
+        f"depth attachment, blit, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
     raise SystemExit(

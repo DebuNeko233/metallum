@@ -118,6 +118,15 @@ public final class MetalFrameProbe {
     private static int depthAttachments;
     private static long depthLoadedBytes;
     private static long depthStoredBytes;
+
+    /**
+     * How much a frame moved by blitting one texture into another, and how many blits that was. The
+     * copy-backs a pack's kept targets need at the end of every frame are blits, and every other
+     * counter here counts an attachment, an encoder or a binding, so without this they are inside the
+     * frame's GPU time and invisible in its decomposition.
+     */
+    private static int blits;
+    private static long blittedBytes;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -257,6 +266,24 @@ public final class MetalFrameProbe {
     }
 
     /**
+     * A blit moved a rectangle of one texture into another, as its pixel size. The caller hands the
+     * size over rather than the texture so that an unarmed session pays the guard and nothing else -
+     * the size is a number the caller already has, not a question asked of Metal.
+     */
+    public static void blit(final int width, final int height, final int pixelSize) {
+        if (!armed()) {
+            return;
+        }
+
+        if (width <= 0 || height <= 0 || pixelSize <= 0) {
+            return;
+        }
+
+        blits++;
+        blittedBytes += (long) width * height * pixelSize;
+    }
+
+    /**
      * The depth attachment of a render pass, counted apart from the colour ones as well as inside the
      * totals.
      * <p>
@@ -367,7 +394,7 @@ public final class MetalFrameProbe {
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
-                        + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} "
+                        + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
                 frames,
                 BUDGET,
@@ -383,6 +410,8 @@ public final class MetalFrameProbe {
                 depthAttachments,
                 mebibytes(depthLoadedBytes),
                 mebibytes(depthStoredBytes),
+                blits,
+                mebibytes(blittedBytes),
                 pipelines,
                 textures,
                 samplers,
@@ -415,6 +444,8 @@ public final class MetalFrameProbe {
         depthAttachments = 0;
         depthLoadedBytes = 0L;
         depthStoredBytes = 0L;
+        blits = 0;
+        blittedBytes = 0L;
         pipelines = 0;
         textures = 0;
         samplers = 0;

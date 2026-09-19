@@ -822,6 +822,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         flushPendingClear(srcTexture);
         flushPendingClearForWrite(dstTexture);
         MTLBlitCommandEncoder blit = blitCommandEncoder();
+        // Counted because nothing else in the probe sees a blit, and the copies a pack's kept targets
+        // need at the end of a frame - the 2D texture-to-texture copies this is - are the largest
+        // thing a frame moves outside a pass.
+        MetalFrameProbe.blit(width, height, srcTexture.pixelSize());
         blit.copyFromTextureToTexture(
                 srcTexture.nativeHandle(),
                 0,
