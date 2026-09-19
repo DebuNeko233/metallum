@@ -41,11 +41,20 @@ timeout_seconds=900
 runs=()
 keep=false
 fresh_world=true
+no_pack=false
+fullscreen=false
 
 usage() {
 	cat >&2 <<'USAGE'
 Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
 
+  --fullscreen           ask the game for a fullscreen window, which is the configuration a frame's
+                         ceiling is read in: the display's own mode, no window chrome, and no compositor
+                         limit on the frame rate.
+  --no-pack              measure the game's own renderer through this engine's backend: no pack is
+                         staged and the pack selection is written disabled, so nothing of a pack is in
+                         the frame. This is the baseline a pack's cost is read against, and the
+                         configuration a migration of the frame path is judged in first.
   --pack ZIP             the shader pack to measure, staged into the dev instance together with the
                          options file beside it, if there is one. It is copied and never committed;
                          run/ is ignored by git.
@@ -95,6 +104,8 @@ while [[ $# -gt 0 ]]; do
 		--frames) frames="$2"; shift 2 ;;
 		--renderscale) renderscale="$2"; shift 2 ;;
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
+		--fullscreen) fullscreen=true; shift ;;
+		--no-pack) no_pack=true; shift ;;
 		--at) aim_args+=(--at "$2"); shift 2 ;;
 		--yaw) aim_args+=(--yaw "$2"); shift 2 ;;
 		--pitch) aim_args+=(--pitch "$2"); shift 2 ;;
@@ -109,14 +120,14 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ -z "$pack_path" || -z "$world_path" ]]; then
+if [[ -z "$world_path" || ( -z "$pack_path" && "$no_pack" == false ) ]]; then
 	usage
 	exit 2
 fi
 if [[ ${#runs[@]} -eq 0 ]]; then
 	runs=("plain")
 fi
-if [[ ! -f "$pack_path" ]]; then
+if [[ "$no_pack" == false && ! -f "$pack_path" ]]; then
 	echo "No pack at: $pack_path" >&2
 	exit 2
 fi
@@ -128,6 +139,7 @@ fi
 game_dir="$repo_root/run"
 marker_dir="$game_dir/metallum"
 marker="$marker_dir/probe-frames"
+export VITRAIL_PROFILE_FULLSCREEN="$fullscreen"
 saves_dir="$game_dir/saves"
 pack_dir="$game_dir/shaderpacks"
 pack_name="$(basename "$pack_path")"
@@ -139,7 +151,9 @@ mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marke
 
 # The pack is copied rather than moved or linked: a run must not be able to write to the owner's
 # copy of it, and the harness must be re-runnable against the same archive.
-cp -f "$pack_path" "$pack_dir/$pack_name"
+if [[ "$no_pack" == false ]]; then
+	cp -f "$pack_path" "$pack_dir/$pack_name"
+fi
 
 # The choices the owner made in the pack's own settings screen sit beside the archive in a file named
 # after it with .txt after that, and they travel with the archive or the pack comes up on its own
@@ -149,7 +163,9 @@ cp -f "$pack_path" "$pack_dir/$pack_name"
 # said out loud, because a run that quietly measured a pack nobody has configured would still look
 # like a run.
 pack_options="$pack_path.txt"
-if [[ -f "$pack_options" ]]; then
+if [[ "$no_pack" == true ]]; then
+	:
+elif [[ -f "$pack_options" ]]; then
 	cp -f "$pack_options" "$pack_dir/$pack_name.txt"
 else
 	echo "No options beside the pack, so it comes up on its own defaults: $pack_options" >&2
@@ -158,9 +174,16 @@ fi
 # What the pack-selection UI would have written, written here instead, so that the game comes up
 # with the pack already applied rather than waiting for a click. The four keys are the whole of the
 # file, and leaving the ones this harness has no opinion about at their defaults is deliberate.
+if [[ "$no_pack" == true ]]; then
+	echo "No pack: the game draws its own image through this engine's backend" >&2
+	pack_name=""
+	enabled=false
+else
+	enabled=true
+fi
 cat > "$game_dir/vitrail/pack.txt" <<EOF
 pack=$pack_name
-enabled=true
+enabled=$enabled
 shadowdistance=32
 renderscale=$renderscale
 shadowmapscale=$shadowmap_scale
@@ -173,11 +196,14 @@ EOF
 # Fullscreen is off because every baseline is a window, and the vanilla clouds are off because the pack
 # draws its own.
 python3 - "$game_dir/options.txt" <<'OPTIONS'
+import os
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": "false", "renderClouds": '"false"'}
+fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true" else "false"
+profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
+           "renderClouds": '"false"'}
 lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
 written = set()
 for index, line in enumerate(lines):
@@ -190,7 +216,7 @@ for name, value in profile.items():
         lines.append(f"{name}:{value}")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 OPTIONS
-echo "measurement profile: maxFps 260, vsync off, windowed, vanilla clouds off" >&2
+echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds off" >&2
 
 # The Metal path is the one being measured, and a run that came up on another backend would measure
 # nothing at all.
@@ -318,7 +344,18 @@ for run in "${runs[@]}"; do
 	launcher=$!
 
 	deadline="$(( $(date +%s) + timeout_seconds ))"
-	wait_for_log "first full frame opened" "$deadline" "$launcher" && reached=0 || reached=$?
+	# What a window worth counting waits for. With a pack it is that pack's own first full frame, which is
+	# the moment the chain it will be measured on has drawn something end to end. With no pack there is no
+	# such line to wait for: the game draws its own image through this backend, and the signal that there is
+	# a world to draw it in is the server's own world-load line. The window then opens a moment earlier in
+	# the session than a pack's would, which is the same moment for every arm of a comparison.
+	if [[ "$no_pack" == true ]]; then
+		arm_pattern="Time elapsed:"
+	else
+		arm_pattern="first full frame opened"
+	fi
+
+	wait_for_log "$arm_pattern" "$deadline" "$launcher" && reached=0 || reached=$?
 	if [[ "$reached" != 0 ]]; then
 		if [[ "$reached" == 2 ]]; then
 			echo "Run '$name' stopped before the pack drew a frame; see $run_dir/gradle.log" >&2
@@ -344,7 +381,7 @@ for run in "${runs[@]}"; do
 
 	cp -f "$game_dir/logs/latest.log" "$run_dir/latest.log" 2>/dev/null || true
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
-	grep -F "first full frame opened" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
+	grep -F "$arm_pattern" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
 
 	stop_run
 	# Gradle's own run task waits on the client, so a stopped client ends it; the wait is bounded so

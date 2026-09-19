@@ -45,10 +45,16 @@ before(
     "the marker is not cleared before the client starts, so a window would count the frames before a world",
 )
 before(
-    'wait_for_log "first full frame opened"',
+    'wait_for_log "$arm_pattern"',
     'touch "$marker"',
-    "the marker is not held back until the pack has drawn a full frame",
+    "the marker is not held back until the scene has drawn a frame",
 )
+for setting in ('arm_pattern="Time elapsed:"', 'arm_pattern="first full frame opened"'):
+    if setting not in launcher:
+        raise SystemExit(
+            "the harness no longer chooses what a window waits for by the run's shape, so a run with no "
+            f"pack would wait for a pack frame that never comes (missing {setting})"
+        )
 if 'rm -f "$marker"\nfi' not in launcher:
     raise SystemExit("the marker outlives the runs, so the next session would arm from a leftover file")
 
@@ -62,7 +68,7 @@ if 'rm -f "$marker"\nfi' not in launcher:
 # ---------------------------------------------------------------------------
 if '"--args=--quickPlaySingleplayer' not in launcher:
     raise SystemExit("the game's arguments are not passed with --args=, so Gradle reads them as options")
-if 'wait_for_log "first full frame opened" "$deadline" "$launcher"' not in launcher:
+if 'wait_for_log "$arm_pattern" "$deadline" "$launcher"' not in launcher:
     raise SystemExit("the wait does not watch the launcher, so a launch that failed looks like a slow one")
 if "return 2" not in launcher:
     raise SystemExit("a launcher that exited is waited on until the timeout instead of ending the wait")
@@ -166,7 +172,13 @@ if "order.txt" not in compare or "order.txt" not in launcher:
 # A capped run reads exactly like a slow engine, and this cost four runs to find: the staged instance's
 # own maxFps and vsync were never part of what the harness set, so a window that had been 120 a second
 # because the game limited it looked like the display doing it.
-for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": "false"'):
+if 'fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true" else "false"' not in launcher:
+    raise SystemExit(
+        "the harness no longer writes the window mode into the profile, so a fullscreen run and a "
+        "windowed one cannot be told apart by what they set"
+    )
+
+for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": fullscreen,'):
     if setting not in launcher:
         raise SystemExit(
             "the harness does not write the measurement profile it compares under, so a run can be "
