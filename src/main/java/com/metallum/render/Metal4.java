@@ -31,10 +31,14 @@ public final class Metal4 {
     /** {@code MTLGPUFamilyMetal4}, as this machine's SDK defines it. */
     private static final long FAMILY_METAL4 = 5002L;
 
+    /** {@code MTLGPUFamilyMetal3}, as the SDK defines it. */
+    private static final long FAMILY_METAL3 = 5001L;
+
     /** The entry point to the new command structure, as the SDK's {@code MTLDevice.h} spells it. */
     private static final String QUEUE_SELECTOR = "newMTL4CommandQueue";
 
     private static Boolean available;
+    private static boolean metal3;
     private static String reason = "not asked yet";
 
     private Metal4() {
@@ -56,6 +60,11 @@ public final class Metal4 {
             reason = "there is no device to ask";
             return false;
         }
+
+        // Asked either way, because the answer is worth a line of its own where the Metal 4 answer is no:
+        // a reader wants to know which generation of the API this device runs, not only that it is not the
+        // newest one.
+        metal3 = device.supportsFamily(FAMILY_METAL3);
 
         if (!device.supportsFamily(FAMILY_METAL4)) {
             available = Boolean.FALSE;
@@ -99,6 +108,25 @@ public final class Metal4 {
      */
     public static boolean isAvailable() {
         return Boolean.TRUE.equals(available);
+    }
+
+    /**
+     * The generation of the Metal API this device runs, as one word.
+     * <p>
+     * Apple has no "API version" to ask for: what a device can run is expressed as families, so the newest
+     * family it answers for is the generation. Empty before a device has been asked, which is what a reader
+     * with no device should see rather than a guess.
+     *
+     * @return {@code Metal 4}, {@code Metal 3}, {@code Metal} or the empty string
+     */
+    public static String generation() {
+        if (Boolean.TRUE.equals(available)) {
+            return "Metal 4";
+        }
+        if (available == null) {
+            return "";
+        }
+        return metal3 ? "Metal 3" : "Metal";
     }
 
     /** Why the last answer came out the way it did, for a log line or a report. */

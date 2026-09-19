@@ -232,6 +232,16 @@ public final class MetalFx {
     }
 
     /** Why the last answer came out the way it did, for a log line or a settings screen. */
+    /**
+     * Whether the device answered yes, for a caller that has no device handle to hand.
+     * <p>
+     * False before the question has been asked, which is the failing-closed direction: a frame may act on
+     * this, so it is never true before the device has said so.
+     */
+    public static boolean isSupported() {
+        return supported;
+    }
+
     public static String reason() {
         return reason;
     }

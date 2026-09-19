@@ -2,6 +2,7 @@ package com.metallum.api;
 
 import com.metallum.config.GraphicsApiPreferenceStore;
 import com.metallum.render.Metal4;
+import com.metallum.render.MetalFx;
 
 /**
  * Narrow compatibility surface for optional integrations such as shader mods.
@@ -41,6 +42,33 @@ public final class MetallumApi {
      */
     public static boolean supportsMetal4CoreApi() {
         return Metal4.isAvailable();
+    }
+
+    /**
+     * The generation of the Metal API this session's device runs, as one word.
+     * <p>
+     * Apple does not publish an "API version" to query; what a device can run is a set of families, so the
+     * newest family it answers for is the generation - {@code Metal 4} where the core API is there,
+     * {@code Metal 3} where that is the newest, {@code Metal} for anything older. Empty before a device has
+     * been created, so a caller shows nothing rather than guessing.
+     */
+    public static String metalApiGeneration() {
+        return Metal4.generation();
+    }
+
+    /**
+     * What the MetalFX spatial scaler made of this device, in one line, or empty before it was asked.
+     * <p>
+     * The scaler is asked once at device creation and its answer and reason are kept: this is the same
+     * sentence the log carries, so a debug screen and a log read against each other.
+     */
+    public static String metalFxStatus() {
+        String reason = MetalFx.reason();
+        if (reason == null || reason.isEmpty() || "not asked yet".equals(reason)) {
+            return "";
+        }
+
+        return (MetalFx.isSupported() ? "available - " : "unavailable - ") + reason;
     }
 
     /**

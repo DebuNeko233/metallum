@@ -737,4 +737,28 @@ require("a half-bound dispatch is still ended where it was opened",
     "commandEncoder.endEncoder();",
 ))
 
+# ---------------------------------------------------------------------------
+# The two facts an F3 line and the log both read
+#
+# Which generation of the Metal API is running, and what the upscaler made of the device. Apple has no
+# API version to query, so the generation is the newest family the device answers for; the scaler's
+# sentence is the same one it logs. Both are narrow strings on the integration surface, because the
+# pack-facing side reads them by reflection and may not see a Metal type.
+# ---------------------------------------------------------------------------
+require("the API generation is named", "src/main/java/com/metallum/api/MetallumApi.java", (
+    "public static String metalApiGeneration() {",
+    "public static String metalFxStatus() {",
+))
+require("the generation is a family answer, not a version table",
+        "src/main/java/com/metallum/render/Metal4.java", (
+    "private static final long FAMILY_METAL3 = 5001L;",
+    "metal3 = device.supportsFamily(FAMILY_METAL3);",
+    'return "Metal 4";',
+    'return metal3 ? "Metal 3" : "Metal";',
+))
+require("the scaler answers about itself without a device to hand",
+        "src/main/java/com/metallum/render/MetalFx.java", (
+    "public static boolean isSupported() {",
+))
+
 print("Metal and engine contracts: PASS")
