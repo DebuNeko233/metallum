@@ -14,6 +14,15 @@ import com.mojang.blaze3d.pipeline.RenderPipeline;
  * Everything here is read from the game's own pipeline description plus the two facts the compiler adds: the
  * MSL profile the session will emit, and whether the program is carried by argument buffers. Nothing is
  * inferred from the object's identity or from a counter.
+ * <p>
+ * <strong>This is not yet a sufficient cache identity, and the difference was measured rather than guessed.</strong>
+ * The artifact a compile produces also depends on five things this key does not name - the depth and stencil
+ * state (including its colour-target formats), the polygon mode, whether the pipeline culls, the primitive
+ * topology and the vertex format bindings - each of which `MetalCompiledRenderPipeline` reads from the
+ * pipeline description while it builds. Two pipelines that differ only in their depth state would collide
+ * under this key and one of them would be handed the other's artifact. The key is what a diagnostic and the
+ * cross-generation isolation need today; making it the cache's identity means adding those five, and that is
+ * the step the task file names.
  *
  * @param location         the pipeline's own location, which is the pack program it names
  * @param vertexShader     the vertex shader's location
