@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -13,5 +13,5 @@ import net.fabricmc.api.Environment;
  * MSL for a different layout without being rewritten.
  */
 @Environment(EnvType.CLIENT)
-record TranslationLayout(int pushConstantSlot, int argumentBufferSlotCount) {
+public record TranslationLayout(int pushConstantSlot, int argumentBufferSlotCount) {
 }

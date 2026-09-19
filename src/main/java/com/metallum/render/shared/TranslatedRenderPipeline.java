@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import com.metallum.render.shared.MetalResourceBinding;
 import net.fabricmc.api.EnvType;
@@ -18,7 +18,7 @@ import java.util.Set;
  * crosses between them, so a field left behind would be a compile error rather than a silently missing binding.
  */
 @Environment(EnvType.CLIENT)
-record TranslatedRenderPipeline(
+public record TranslatedRenderPipeline(
         String vertexMsl,
         String fragmentMsl,
         String vertexEntryPoint,

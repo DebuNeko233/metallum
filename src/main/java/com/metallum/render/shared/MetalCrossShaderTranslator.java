@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.mojang.blaze3d.GpuFormat;
@@ -35,7 +35,7 @@ import com.metallum.render.shared.MetalShaderStages;
 import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
-final class MetalCrossShaderCompiler {
+public final class MetalCrossShaderTranslator {
     private static final Set<String> BUILT_IN_UNIFORMS = Set.of("Projection", "Lighting", "Fog", "Globals");
     private static final int DIRECT_SAMPLER_LIMIT = 16;
     private static final Pattern VERTEX_ENTRY_PATTERN = Pattern.compile("\\bvertex\\s+\\w+\\s+(\\w+)\\s*\\(");
@@ -49,18 +49,19 @@ final class MetalCrossShaderCompiler {
             Spvc.SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS
     };
 
-    private MetalCrossShaderCompiler() {
+    private MetalCrossShaderTranslator() {
     }
 
     /**
      * Turns the two stages' SPIR-V into MSL and the resource metadata that goes with it.
      * <p>
      * This is the translation half of what used to be one method: it reflects, rebinds and translates, and it
-     * hands back everything a Metal 3 pipeline needs to be built - which is why the result is a record and not a
-     * bag of locals. The stage mask constants and the binding slots it still reads are Metal 3's layout policy
-     * and move out of it in the next step.
+     * hands back everything a pipeline needs to be built - which is why the result is a record and not a bag of
+     * locals. It names no generation: the stage masks come from {@link MetalShaderStages} and the binding slots
+     * from the {@link TranslationLayout} it is given, so a Metal 4 caller can ask for a different layout without
+     * this code changing.
      */
-    static TranslatedRenderPipeline translate(
+    public static TranslatedRenderPipeline translate(
             final IntermediaryShaderModule vertexSpirv,
             final IntermediaryShaderModule fragmentSpirv,
             final RenderPipeline pipeline,

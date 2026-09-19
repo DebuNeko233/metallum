@@ -56,7 +56,7 @@ device = read("src/main/java/com/metallum/render/MetalDevice.java")
 encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
 pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
 render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
-compiler = read("src/main/java/com/metallum/render/MetalCrossShaderCompiler.java")
+compiler = read("src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java")
 texture = read("src/main/java/com/metallum/render/shared/MetalGpuTexture.java")
 formats = read("src/main/java/com/metallum/mtl/MTLPixelFormat.java")
 compare = read("src/main/java/com/metallum/mtl/MTLCompareFunction.java")
@@ -129,7 +129,7 @@ require("Metal draw and direct sampling", "src/main/java/com/metallum/render/Met
     "enc.setFragmentTexture(texture, index);",
     "enc.setFragmentSamplerState(sampler, index);",
 ))
-require("Direct/wide resource numbering", "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+require("Direct/wide resource numbering", "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java", (
     "int metalIndex = useArgumentBuffers ? index * 2 : index;",
     "int samplerIndex = useArgumentBuffers ? metalIndex + 1 : metalIndex;",
 ))
@@ -269,7 +269,7 @@ forbid("Dimension routing semantics in Metallum", dimension_sources, (
     "world0", "world-1", "world1", "minecraft:the_nether", "minecraft:the_end", "vitrail:moon",
 ), lower=True)
 
-require("Wide resource compiler", "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+require("Wide resource compiler", "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java", (
     "DIRECT_SAMPLER_LIMIT = 16",
     "lastSamplerSlot >= DIRECT_SAMPLER_LIMIT",
     "requires wide Metal resources, but Argument Buffer Tier 2 is unavailable",
@@ -842,7 +842,7 @@ require("the Metal 3 profile is probed by compiling, newest first",
     "NEW_LIBRARY_WITH_SOURCE.sendPtr(device.handle(), source, options.handle(), errorOut)",
 ))
 require("both translators read the session's profile",
-        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+        "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java", (
     "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
 ))
 require("the compute translator reads the same one",
@@ -931,8 +931,8 @@ require("a translated shader module is keyed by its MSL profile",
 # M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
 # access, which is why moving it needed widening; the contract says what it may ask instead.
 require("the translator knows no generation type",
-        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
-    "static TranslatedRenderPipeline translate(",
+        "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java", (
+    "public static TranslatedRenderPipeline translate(",
     "TranslatedRenderPipeline(",
     "MetalShaderStages.VERTEX",
     "layout.pushConstantSlot()",
@@ -941,7 +941,7 @@ require("the translator knows no generation type",
 import pathlib as _p
 
 _root = _p.Path(__file__).resolve().parent.parent
-_translator = (_root / "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java").read_text(encoding="utf-8")
+_translator = (_root / "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java").read_text(encoding="utf-8")
 for _forbidden in ("Metal3CompilationContext", "MetalCompiledRenderPipeline", "MetalDevice",
                    "MetalCommandEncoder", "com.metallum.mtl.metal3", "MTLCommand"):
     if _forbidden in _translator:
@@ -952,7 +952,7 @@ require("the Metal 3 compiler owns lookup, translation, key and artifact",
     "compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX,",
     "compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT,",
     "compilation.device().supportsArgumentBuffersTier2()",
-    "MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
+    "MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
     "new TranslationLayout(PUSH_CONSTANT_SLOT, ARGUMENT_BUFFER_SLOT_COUNT)",
     "new MetalCompiledRenderPipeline(",
 ))
@@ -961,7 +961,7 @@ require("the cache miss path asks the Metal 3 compiler",
     "pipeline, p -> Metal3PipelineCompiler.compile(this, p, source));",
 ))
 require("the translation result carries every field a pipeline needs",
-        "src/main/java/com/metallum/render/TranslatedRenderPipeline.java", (
+        "src/main/java/com/metallum/render/shared/TranslatedRenderPipeline.java", (
     "String vertexMsl,", "String fragmentMsl,", "String vertexEntryPoint,", "String fragmentEntryPoint,",
     "List<MetalResourceBinding> resources,", "boolean usesArgumentBuffers,",
     "Set<Integer> vertexArgumentBufferSets,", "Set<Integer> fragmentArgumentBufferSets",
@@ -1150,7 +1150,7 @@ require("the identity is read from the game's description plus the session's own
 require("the key is built where the pipeline is compiled",
         "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
     "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers())",
-    "MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
+    "MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
 ))
 require("the Metal 4 binding shapes are proven, not assumed",
         "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (

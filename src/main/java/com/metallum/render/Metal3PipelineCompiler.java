@@ -1,6 +1,9 @@
 package com.metallum.render;
 
 import com.metallum.render.execution.MetalShaderLanguageProfile;
+import com.metallum.render.shared.MetalCrossShaderTranslator;
+import com.metallum.render.shared.TranslatedRenderPipeline;
+import com.metallum.render.shared.TranslationLayout;
 import com.metallum.render.shared.MetalPipelineKey;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.shaders.ShaderSource;
@@ -44,7 +47,7 @@ final class Metal3PipelineCompiler {
             boolean argumentBuffersTier2 = compilation.device().supportsArgumentBuffersTier2();
             TranslationLayout layout = new TranslationLayout(PUSH_CONSTANT_SLOT, ARGUMENT_BUFFER_SLOT_COUNT);
             TranslatedRenderPipeline translated =
-                    MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2);
+                    MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2);
 
             return new MetalCompiledRenderPipeline(
                     MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers()),
