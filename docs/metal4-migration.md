@@ -16,8 +16,8 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | Question | Answer | Evidence |
 | --- | --- | --- |
 | Is the Metal 4 core API there? | yes | `Metal 4 core API: available` ... |
-| Is the selection deterministic between two runs? | **no, measured** | two identical no-pack arms in one session reported `selectedGeneration=metal3` and `selectedGeneration=metal4` |
-| Why not? | a **functional** probe flipped, not a selector | the two arms' capability lines differ in exactly two fields - arm `a` `argumentTable=false render=false`, arm `b` `argumentTable=true render=true`, 40 s apart on one device - and those two fields are the only ones read through `Metal4.canBindAndDraw()` |
+| Is the selection deterministic between two runs? | **it flipped once and did not again** | one session's two identical no-pack arms reported `metal3` then `metal4`; a later session's **three** identical arms all reported `metal4`, all three capability lines identical (`argumentTable=true render=true`) and all three probes saying they "drew what they were told to" |
+| Why? | a **functional** probe, and probably a cold one | in the flipping session the capability lines differed in exactly two fields (`argumentTable=false render=false` against `true/true`), which are the only fields read through `Metal4.canBindAndDraw()`; the session that did not flip ran minutes after several runs that had each presented 600 frames through Metal 4 argument tables |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
 | Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **its picture-equivalence to the Metal 3 road is unmeasured, because a single screenshot pair cannot resolve less than this scene's own picture noise; see below** |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
@@ -316,6 +316,22 @@ session is a false negative. Two things follow, and both are small:
   what failed rather than collapsing into `false`. This project already holds that rule for its own guards
   ("a guard that cannot fail is a guard that is not there"); a capability probe deserves it more, because the
   whole AUTO rule - capability, never a chip name - is only as good as the honesty of this one answer.
+
+**The repeat did not reproduce it, and that is now the state of the finding.** Three identical no-pack arms in a
+later session all reported `selectedGeneration=metal4`, all three capability lines identical and all three
+functional probes succeeding: `... and two passes whose resources were bound through argument tables drew what
+they were told to - a uniform by GPU address, and a vertex buffer by address and stride`. So the flip is
+**observed once, not reproduced on demand**, and the leading explanation is a **cold** first attempt: the
+session that flipped was the first to touch Metal 4 argument tables in a while, while the session that did not
+ran minutes after runs that had each presented 600 frames through them. Testing that needs a genuinely cold
+state - a reboot, or a long idle, or the first run of the day - not another warm session, and it has not been
+done.
+
+Two honest notes about what this does and does not say. The `lastFailure()` plumbing added for the diagnosis
+**has not fired yet**, because nothing failed in the session that was run after it: it is unproven usefulness,
+not a fix. And "not reproduced in three runs" is not "does not happen": one session did flip, so a selection
+that can differ between two runs of one build is a real observation, and it stays ahead of M4 - which is the
+milestone whose behaviour depends on that answer - until a cold session either reproduces it or does not.
 
 **The same run turned up something else, and it is not about pictures.** The two arms of that pair reported
 different selections: arm `a` `selectedGeneration=metal3`, arm `b` `selectedGeneration=metal4`, in one session,
