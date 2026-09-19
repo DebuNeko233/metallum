@@ -111,7 +111,7 @@ public final class Metal4 {
                 ? ", and two passes whose resources were bound through argument tables drew what they were "
                         + "told to - a uniform by GPU address, and a vertex buffer by address and stride"
                 : ", but a pass whose resources were bound through an argument table did not draw what it was "
-                        + "told to");
+                        + "told to: " + MTL4Probe.lastFailure());
         Metallum.LOGGER.info("Metal 4 core API: available, {}", reason);
         if (binding) {
             Metallum.LOGGER.info("Metal 4 sampler ceiling: {}", MTL4Probe.samplerCeiling(device));

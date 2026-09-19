@@ -163,7 +163,29 @@ public final class MTL4Probe {
      * @param device the device binding, asked for every selector before it is sent
      * @return whether a table-bound uniform drew the colour it was given
      */
+    /**
+     * Why the last {@link #canBindAndDraw(MTLDevice)} answered the way it did, or null when it worked.
+     * <p>
+     * It exists because a false negative and an absence looked identical: the capability record reads this
+     * probe, so a transient failure in its first attempt at a Metal 4 argument table was recorded as "this
+     * device cannot", and AUTO then chose Metal 3 - measured as two identical runs in one session selecting
+     * different generations (arm a `argumentTable=false render=false`, arm b `argumentTable=true
+     * render=true`, forty seconds apart on one device). A probe that can only say no cannot be told apart
+     * from a device that can only do no.
+     */
+    public static String lastFailure() {
+        return failure;
+    }
+
+    private static boolean failed(final String why) {
+        failure = why;
+        return false;
+    }
+
+    private static String failure;
+
     public static boolean canBindAndDraw(final MTLDevice device) {
+        failure = null;
         if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
                 || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
             return false;
@@ -185,14 +207,14 @@ public final class MTL4Probe {
             event = NEW_SHARED_EVENT.sendPtr(device.handle());
             if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)
                     || !responds(event, "waitUntilSignaledValue:timeoutMS:")) {
-                return false;
+                return failed("a Metal 4 queue, allocator, command buffer or shared event came back nil");
             }
 
             // The address is the whole difference between this path and the Metal 3 one, so it is asked for
             // rather than assumed: a buffer whose address this OS will not give cannot be bound here.
             uniformBuffer = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
             if (uniformBuffer.gpuAddress() == 0L) {
-                return false;
+                return failed("the device gave the uniform buffer no GPU address");
             }
             MemorySegment uniforms = uniformBuffer.contents().reinterpret(UNIFORM_LENGTH);
             uniforms.set(JAVA_FLOAT, 0, 0.0f);
@@ -202,8 +224,12 @@ public final class MTL4Probe {
             uniforms.set(JAVA_FLOAT, 44, 1.0f);
 
             table = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
-            if (table == null || !table.address(uniformBuffer.gpuAddress(), 1L)) {
-                return false;
+            if (table == null) {
+                return failed("newArgumentTableWithDescriptor:error: answered nil");
+            }
+
+            if (!table.address(uniformBuffer.gpuAddress(), 1L)) {
+                return failed("the table refused setAddress:atIndex: for the uniform buffer");
             }
 
             MemorySegment drawTarget = newTarget(device);
@@ -213,7 +239,7 @@ public final class MTL4Probe {
             // colour comes out of that buffer.
             vertexBuffer = device.newBuffer(VERTEX_LENGTH, STORAGE_SHARED);
             if (vertexBuffer.gpuAddress() == 0L) {
-                return false;
+                return failed("the device gave the vertex buffer no GPU address");
             }
             MemorySegment vertices = vertexBuffer.contents().reinterpret(VERTEX_LENGTH);
             float[][] corners = {{-1.0f, 1.0f, 0.25f, 0.5f}, {3.0f, 1.0f, 0.25f, 0.5f},
