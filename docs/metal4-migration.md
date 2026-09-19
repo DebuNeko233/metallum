@@ -208,6 +208,31 @@ What remains to do about it, and only this:
 5. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
    inert unless the property is set, and nothing in the frame path reads it).
 
+### Ownership, not count, is what the frame path's isolation has been moving on
+
+This round the facade stopped naming any generation type at all: the frame's queue became the Metal 3 encoder's
+own object (built from the services' address factory, closed with its teardown), and `Metal4Path.start`/`close`
+moved behind `MetalExecutionServices.startPresentPath`/`closePresentPath`, with `Metal4PresentGate` holding the
+road's static start and close and the gate chosen and kept once per session. `MetalDevice` now names
+`MTLCommandQueue`, `Metal4Path` and `MetalCommandEncoder` **zero times**, and its ledger line is gone; the ledger
+reads **15 couplings in 6 files**, the queue's type having moved into the encoder's entry and the present path's
+into the services' - both relocations toward the owner, which is why the number moves less than the coupling does.
+
+**What is left is one coupled change, and that is why step 5 was not done piecemeal.** `MetalComputeBridge` is
+547 lines whose body is inseparable from `MTLComputeCommandEncoder` - it binds buffers, sampled images and
+storage images through a compute encoder and shares that encoder across dispatches on purpose. A neutral
+interface cannot hand out a compute encoder, so the bridge cannot become a thin facade without its body moving
+as a file, and the body belongs in the same package as the encoder it drives. Steps 5 and 6 are therefore one
+step: move the two bridges' implementations into `render.metal3` behind thin public facades that keep their names
+and signatures, and move `MetalCommandEncoder`/`MetalRenderPass` at the same time - otherwise the cast inside a
+moved body points backwards at a class still outside its package.
+
+**Recorded, non-blocking (M2 follow-up).** The pipeline cache's generation/MSL safety is *validate-on-hit*: a hit
+whose artifact was translated for another profile is recompiled. That is a safety mechanism and it is pinned, but
+the better long-term shape is for the cache **identity itself** to contain the generation and MSL profile -
+especially ahead of concurrent pre-compilation, `MTL4Compiler` and a binary archive. It is not in this phase's
+scope and nothing depends on it now.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
