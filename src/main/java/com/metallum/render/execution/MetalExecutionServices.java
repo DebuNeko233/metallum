@@ -72,10 +72,14 @@ public interface MetalExecutionServices {
     }
 
     /**
-     * The services as they stand: the selected generation from the selector, and Metal 3 encoding the frame
-     * until the new path has one of its own.
+     * The services as they stand: which generation was selected, and which one really encodes the frame.
+     * <p>
+     * Both are parameters rather than one parameter and one literal, because the literal was the bug next door:
+     * `selected()` was a constant `METAL3` until it was made the selection, and `executing()` was a constant
+     * for as long as the answer happened to be Metal 3. A caller that passes the executing generation has to
+     * know why it is passing it, and the day a Metal 4 frame path runs, this is the one line that changes.
      */
-    static MetalExecutionServices of(final MetalApiGeneration selected) {
+    static MetalExecutionServices of(final MetalApiGeneration selected, final MetalApiGeneration executing) {
         return new MetalExecutionServices() {
             @Override
             public MetalApiGeneration selected() {
@@ -84,12 +88,15 @@ public interface MetalExecutionServices {
 
             @Override
             public MetalApiGeneration executing() {
-                return MetalApiGeneration.METAL3;
+                return executing;
             }
 
             @Override
             public boolean isReferenceShell() {
-                return selected != MetalApiGeneration.METAL3;
+                // The selection has no frame path of its own while something else executes for it. It used to be
+                // asked as "is the selection not Metal 3", which gave the right answer for the wrong reason: the
+                // question is not what was selected but whether the selected generation is the one running.
+                return executing != selected;
             }
 
             @Override

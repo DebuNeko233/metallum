@@ -106,16 +106,26 @@ public final class MetalDevice implements GpuDeviceBackend {
         // seam asks - the queue, the present policy - disagree with the selection this same constructor had
         // just logged. Nothing read it yet, so nothing broke; the day something does, an AUTO launch that
         // chose Metal 4 and a forced Metal 3 launch would have looked identical to it.
-        this.services = MetalExecutionServices.of(decision.selected());
+        // Metal 3 executes the frame whatever was selected: the selected generation's own frame path is what
+        // M4 builds, and until it exists this argument is the honest answer rather than a constant baked into
+        // the services. `framePathReady()` is then asked - not to change anything, but because a readiness seam
+        // nothing asks is a readiness seam that answers wrongly the first time something does.
+        this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);
+        if (!this.services.framePathReady()) {
+            com.metallum.Metallum.LOGGER.info(
+                    "Metal execution: {} was selected and has no frame path yet, so the frame is {}'s and the "
+                            + "selected generation is a reference shell for it",
+                    this.services.selected().token(), this.services.executing().token());
+        }
         this.commandQueue = new MTLCommandQueue(
                 MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
         // Said out loud, because "the seams ask the selection and not a constant" is a claim about a value
         // nothing else prints: `selectedGeneration` in the frame probe comes from the telemetry, not from this
         // instance. Two of these lines - one from an AUTO launch, one from a forced Metal 3 launch - are what
         // says the services really carry the selection.
-        com.metallum.Metallum.LOGGER.info("Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={}",
+        com.metallum.Metallum.LOGGER.info("Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={} framePathReady={}",
                 this.services.selected().token(), this.services.executing().token(),
-                this.services.isReferenceShell());
+                this.services.isReferenceShell(), this.services.framePathReady());
 
         // The shader profile follows what *executes*, not what was selected: a session that has chosen
         // Metal 4 but still encodes its frame through Metal 3 needs MSL the Metal 3 path can compile, and
