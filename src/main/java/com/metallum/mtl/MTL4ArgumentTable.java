@@ -21,6 +21,15 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * class is that table for the shape this engine needs - one texture and one sampler - and it hides the id
  * step, so a caller hands it the resource handles the rest of the engine already carries.
  * <p>
+ * <strong>The factory's name is the header's, out-parameter and all.</strong> This class asked for
+ * {@code newArgumentTableWithDescriptor:} for a day and got no, and the no was read as the device refusing
+ * to make tables - which stopped the whole Metal 4 picture path. The header declares two arguments
+ * ({@code MTLDevice.h}: {@code newArgumentTableWithDescriptor:(MTL4ArgumentTableDescriptor *)descriptor
+ * error:(NSError * _Nullable *)error}), so the selector is {@code newArgumentTableWithDescriptor:error:},
+ * and a native probe on the M5 Pro answers yes to it and makes a table with an error slot of null. The
+ * plain name is kept as a fallback rather than as the first question: a device that implements the one a
+ * header does not describe is the surprising case, not this one.
+ * <p>
  * Every selector is asked for before it is sent, like the rest of the new path: an unimplemented one is an
  * Objective-C exception, not a nil.
  */
@@ -28,6 +37,10 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 public final class MTL4ArgumentTable implements AutoCloseable {
 
     private static final Msg NEW_DESCRIPTOR = Msg.of("new", ADDRESS);
+    /** The header's own factory: the descriptor and a null error slot. */
+    private static final Msg NEW_TABLE_WITH_ERROR =
+            Msg.of("newArgumentTableWithDescriptor:error:", ADDRESS, ADDRESS, ADDRESS);
+    /** The name without the error slot, which this device does not implement - kept for a device that does. */
     private static final Msg NEW_TABLE = Msg.of("newArgumentTableWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg SET_MAX_BUFFER = Msg.ofVoid("setMaxBufferBindCount:", JAVA_LONG);
     private static final Msg SET_MAX_TEXTURE = Msg.ofVoid("setMaxTextureBindCount:", JAVA_LONG);
@@ -52,9 +65,12 @@ public final class MTL4ArgumentTable implements AutoCloseable {
     @Nullable
     public static MTL4ArgumentTable create(final MTLDevice device) {
         try (AutoreleasePool _ = AutoreleasePool.push()) {
-            if (!device.respondsTo("newArgumentTableWithDescriptor:")) {
-                Metallum.LOGGER.warn("Metal 4 argument table: this device answers to no "
-                        + "newArgumentTableWithDescriptor:, so nothing can be bound on the new path");
+            boolean withError = device.respondsTo("newArgumentTableWithDescriptor:error:");
+            boolean withoutError = device.respondsTo("newArgumentTableWithDescriptor:");
+            if (!withError && !withoutError) {
+                Metallum.LOGGER.warn("Metal 4 argument table: this device answers to neither "
+                        + "newArgumentTableWithDescriptor:error: nor newArgumentTableWithDescriptor:, so "
+                        + "nothing can be bound on the new path");
                 return null;
             }
 
@@ -78,14 +94,18 @@ public final class MTL4ArgumentTable implements AutoCloseable {
             // the wrong thing, which is the direction to fail in.
             SET_INITIALIZE.send(descriptor, 0L);
 
-            MemorySegment made = NEW_TABLE.sendPtr(device.handle(), descriptor);
+            MemorySegment made = withError
+                    ? NEW_TABLE_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)
+                    : NEW_TABLE.sendPtr(device.handle(), descriptor);
             ObjC.release(descriptor);
             if (ObjC.isNil(made)) {
                 Metallum.LOGGER.warn("Metal 4 argument table: the device made none for one texture and one "
-                        + "sampler");
+                        + "sampler (asked with {})", withError ? "the error slot" : "no error slot");
                 return null;
             }
 
+            Metallum.LOGGER.info("Metal 4 argument table: made for one texture and one sampler, through {}",
+                    withError ? "newArgumentTableWithDescriptor:error:" : "newArgumentTableWithDescriptor:");
             return new MTL4ArgumentTable(made);
         }
     }

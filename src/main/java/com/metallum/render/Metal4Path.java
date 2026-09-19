@@ -155,10 +155,11 @@ public final class Metal4Path {
                 allocators[index] = allocator;
             }
 
-            // A table is what a Metal 4 encoder is given its resources through, and this device does not
-            // make one - so nothing can be *drawn* with resources here. That is not a reason to stop
-            // carrying the submission itself, which needs no bindings: the path says what it cannot do and
-            // keeps doing what it can.
+            // A table is what a Metal 4 encoder is given its resources through, and this device makes one:
+            // the factory's name carries the error out-parameter its header declares, and asking with the
+            // shorter name was what made this read as a device that could not bind at all. Made here because
+            // it belongs to the path rather than to a frame - one texture and one sampler for now, which is
+            // the shape a probe pass binds; the passes of the chain get the tables item 3 sizes.
             table = MTL4ArgumentTable.create(device);
             if (table == null) {
                 Metallum.LOGGER.warn("Metal 4 path: carrying frames without a draw, because this device makes "

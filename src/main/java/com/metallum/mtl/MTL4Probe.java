@@ -18,9 +18,13 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * The shape {@code MTLFXSpatialScalerDescriptor} was probed with, for a reason this class learned the hard
  * way: the first version of it sent {@code newCommandAllocatorWithDescriptor:} without asking, and the
  * device - which does support the Metal 4 family and does answer to {@code newMTL4CommandQueue} - answered
- * with an {@code NSInvalidArgumentException} that ended the process. **A device implements a subset of the
- * factory surface its SDK declares**, so every selector here is asked for before it is sent, and a device
- * that answers no to one is a device this path cannot be built on rather than a crash.
+ * with an {@code NSInvalidArgumentException} that ended the process. The cause was not the device's subset
+ * of its header but the name: the header's factory has an error out-parameter, so the selector is
+ * {@code newCommandAllocatorWithDescriptor:error:} and the shorter name describes a method no object has.
+ * Both are asked for now, and the descriptor-less {@code newCommandAllocator} is preferred where it is
+ * offered. **A selector is the header's, out-parameters included** - and a probe that guesses a name
+ * measures its own guess, which is how the argument table came to be recorded as something this device
+ * could not make.
  * <p>
  * What is proven is reachability, encoding and submission: a queue of the new command structure, an
  * allocator for a command buffer's working memory, a command buffer begun on that allocator, a render pass
@@ -34,6 +38,8 @@ public final class MTL4Probe {
 
     private static final Msg NEW_QUEUE = Msg.of("newMTL4CommandQueue", ADDRESS);
     private static final Msg NEW_ALLOCATOR = Msg.of("newCommandAllocator", ADDRESS);
+    private static final Msg NEW_ALLOCATOR_WITH_ERROR =
+            Msg.of("newCommandAllocatorWithDescriptor:error:", ADDRESS, ADDRESS, ADDRESS);
     private static final Msg NEW_ALLOCATOR_WITH_DESCRIPTOR = Msg.of("newCommandAllocatorWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg NEW_COMMAND_BUFFER = Msg.of("newCommandBuffer", ADDRESS);
     private static final Msg BEGIN = Msg.ofVoid("beginCommandBufferWithAllocator:", ADDRESS);
@@ -82,7 +88,9 @@ public final class MTL4Probe {
      */
     public static boolean canMakeAndSubmit(final MTLDevice device) {
         boolean allocatorWithoutDescriptor = device.respondsTo("newCommandAllocator");
-        boolean allocatorWithDescriptor = device.respondsTo("newCommandAllocatorWithDescriptor:");
+        boolean allocatorWithError = device.respondsTo("newCommandAllocatorWithDescriptor:error:");
+        boolean allocatorWithDescriptor =
+                allocatorWithError || device.respondsTo("newCommandAllocatorWithDescriptor:");
         if (!device.respondsTo("newMTL4CommandQueue")
                 || !device.respondsTo("newCommandBuffer")
                 || !device.respondsTo("newSharedEvent")
@@ -102,9 +110,13 @@ public final class MTL4Probe {
             } else {
                 descriptorClass = ObjC.clazz("MTL4CommandAllocatorDescriptor");
                 descriptor = ObjC.isNil(descriptorClass) ? MemorySegment.NULL : NEW_DESCRIPTOR.sendPtr(descriptorClass);
+                // The error slot is part of this factory's name, the same way it is for the argument
+                // table: `newCommandAllocatorWithDescriptor:` alone is a selector no device implements.
                 allocator = ObjC.isNil(descriptor)
                         ? MemorySegment.NULL
-                        : NEW_ALLOCATOR_WITH_DESCRIPTOR.sendPtr(device.handle(), descriptor);
+                        : (allocatorWithError
+                                ? NEW_ALLOCATOR_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)
+                                : NEW_ALLOCATOR_WITH_DESCRIPTOR.sendPtr(device.handle(), descriptor));
             }
 
             buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
