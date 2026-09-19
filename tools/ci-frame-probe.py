@@ -347,10 +347,11 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 15:
+if len(guarded) != 16:
     raise SystemExit(
-        "frame probe: expected 15 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
-        "frame, colour attachment, depth attachment, blit, six binding kinds and pipeline creation), found "
+        "frame probe: expected 16 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame, Metal 4 present, colour attachment, depth attachment, blit, six binding kinds and pipeline "
+        "creation), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
