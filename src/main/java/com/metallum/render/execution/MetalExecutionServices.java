@@ -66,6 +66,15 @@ public interface MetalExecutionServices {
         return false;
     }
 
+    /**
+     * The gate the frame's encoder asks while it draws a frame: signal before the commit, present after it, and
+     * say whether this road takes the picture. It is a contract rather than the present path itself, so the
+     * generation that encodes the frame never names the generation that presents it.
+     */
+    default com.metallum.render.shared.MetalFramePresentGate presentGate() {
+        return com.metallum.render.shared.MetalFramePresentGate.NONE;
+    }
+
     /** Whether the selected generation can encode a frame yet. */
     default boolean framePathReady() {
         return !isReferenceShell() && this.selected() == this.executing();
@@ -97,6 +106,15 @@ public interface MetalExecutionServices {
                 // asked as "is the selection not Metal 3", which gave the right answer for the wrong reason: the
                 // question is not what was selected but whether the selected generation is the one running.
                 return executing != selected;
+            }
+
+            @Override
+            public com.metallum.render.shared.MetalFramePresentGate presentGate() {
+                // Chosen once, from the same policy the encoder used to ask per frame: the property is a
+                // property of the session, so which gate this is cannot change under a running frame.
+                return presentsThroughMetal4()
+                        ? new com.metallum.render.Metal4PresentGate()
+                        : com.metallum.render.shared.MetalFramePresentGate.NONE;
             }
 
             @Override

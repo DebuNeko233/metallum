@@ -782,7 +782,7 @@ require("the Metal 4 present is guarded, ordered and carried at the frame bounda
 ))
 require("the present is carried where a frame is committed",
         "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
-    "Metal4Path.presentFrame();",
+    "presentGate.afterCommit();",
 ))
 
 # The two binding shapes a Metal 4 encoder needs, proven at device creation against the engine's own

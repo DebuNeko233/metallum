@@ -56,6 +56,11 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     private final Semaphore[] submitSemaphores = new Semaphore[MAX_SUBMITS_IN_FLIGHT];
     private final MemorySegment[] submitSignalBlocks = new MemorySegment[MAX_SUBMITS_IN_FLIGHT];
     private final MetalDestructionQueue destroyQueue = new MetalDestructionQueue(MAX_SUBMITS_IN_FLIGHT);
+    /**
+     * Who presents this frame, as the three questions a frame asks. Metal 3's own answer is the do-nothing
+     * gate; the Metal 4 present path is the other implementation, chosen by the services and never named here.
+     */
+    private final com.metallum.render.shared.MetalFramePresentGate presentGate;
     private final MetalTransientMemory transientMemory;
     private final Map<MetalGpuTexture, Vector4fc> pendingColorClears = new IdentityHashMap<>();
     private final Map<MetalGpuTexture, Double> pendingDepthClears = new IdentityHashMap<>();
@@ -115,6 +120,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         // host is that its retired blocks are released on the same rotation as the encoder's own, and
         // naming the queue says exactly that - where naming the encoder made a shared-layer file reach
         // into the frame path's concrete class.
+        this.presentGate = device.executionServices().presentGate();
         this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         fence = device.metalDevice().newFence();
         for (int slot = 0; slot < MAX_SUBMITS_IN_FLIGHT; slot++) {
@@ -356,7 +362,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
             // Before the commit, because an encoding made after one is ignored: the new path's present waits
             // on this signal, so a signal that never runs is a present that never completes and a slot of its
             // ring that never comes back - measured as "the GPU did not signal slot 2 within 1000 ms".
-            Metal4Path.frameSignal(commandBuffer.handle());
+            presentGate.beforeCommit(commandBuffer.handle());
             commandBuffer.commitWithCompletionBlock(submitSignalBlocks[slot]);
 
             // The frame boundary the probe counts at, and only inside this block: a commit is what
@@ -369,7 +375,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
             // queue here rather than where the surface asked, because the wait it does is on the event value
             // this commit signals. The surface's present-time submit finds no command buffer and commits
             // nothing, so this runs once a frame and not once a submit.
-            Metal4Path.presentFrame();
+            presentGate.afterCommit();
 
             lastCommittedSubmitIndex = currentSubmitIndex;
             toClose = inFlight[slot];
@@ -640,8 +646,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         // Policy from the services, readiness from the present path: asked in that order, so a session that
         // does not want this road does not even record a layer for it (the short circuit is what keeps that
         // true - `presenting` records the layer and the picture as it answers).
-        if (!this.device.executionServices().presentsThroughMetal4()
-                || !Metal4Path.presenting(layer, source.nativeHandle())) {
+        if (!presentGate.takesPicture(layer, source.nativeHandle())) {
             commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
         }
     }
