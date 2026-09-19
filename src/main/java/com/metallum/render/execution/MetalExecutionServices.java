@@ -46,6 +46,26 @@ public interface MetalExecutionServices {
      */
     long commandQueue(MTLDevice device);
 
+    /**
+     * Whether a frame that is ready to present through the Metal 4 path should.
+     * <p>
+     * This is the **policy** half of the present decision and only that half. Readiness - a queue, a command
+     * buffer, a frame event with a value, an argument table and the selectors the present consults - stays
+     * with the present path, which is the only thing that knows whether its objects exist. The two were
+     * conjoined in one condition inside the present path itself, which put a policy about generations in a
+     * place that builds them.
+     * <p>
+     * Today the policy is read from {@code -Dmetallum.metal4Present} here and nowhere else, because the
+     * present-only Metal 4 path is still a probe rather than the frame's road: the property is the interlock,
+     * and this method is where it lives so that removing it is one edit in one file. It deliberately does
+     * **not** yet consult {@link #selected()}: that would silently change which road a forced-Metal-3 session
+     * presents through, and the change that ties the policy to the selection is the one that makes the Metal 4
+     * frame path the frame's own road.
+     */
+    default boolean presentsThroughMetal4() {
+        return false;
+    }
+
     /** Whether the selected generation can encode a frame yet. */
     default boolean framePathReady() {
         return !isReferenceShell() && this.selected() == this.executing();
@@ -70,6 +90,11 @@ public interface MetalExecutionServices {
             @Override
             public boolean isReferenceShell() {
                 return selected != MetalApiGeneration.METAL3;
+            }
+
+            @Override
+            public boolean presentsThroughMetal4() {
+                return Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"));
             }
 
             @Override

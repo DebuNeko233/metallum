@@ -260,14 +260,13 @@ public final class Metal4Path {
      * {@code -[AGXG17XFamilyRenderContext_mtlnext signalOnCommandQueue:]: unrecognized selector}, which is the
      * framework telling a drawable to register itself on this queue - the half of Apple's order that says which
      * drawable the queue is about to wait for, before any command buffer targeting it is committed. The wait
-     * half is here now; whether that is the whole of what the signal half needs is what the next run answers,
-     * and until it does this stays behind {@code -Dmetallum.metal4Present=true}.
+     * half is here now; whether that is the whole of what the signal half needs is what the next run answers.
+     * <p>
+     * This answers **readiness** only. Whether the frame should present this way at all is policy and is asked
+     * by the caller from the execution services, which is where the switch that used to stand in for it lives -
+     * so a caller that skips that question gets a readiness answer, not permission.
      */
     public static boolean presenting(final CAMetalLayer layer, final MemorySegment picture) {
-        if (!Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"))) {
-            return false;
-        }
-
         if (!carrying || queue == null || commandBuffer == null || frameEvent == null || frameValue == 0L
                 || table == null || layer == null || ObjC.isNil(picture)) {
             return false;

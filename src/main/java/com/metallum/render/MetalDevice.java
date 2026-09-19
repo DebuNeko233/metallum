@@ -404,6 +404,11 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.commandEncoder.waitForSubmittedGpuWork();
     }
 
+    /** The execution services this device was opened with, for the seams that ask which generation runs. */
+    MetalExecutionServices executionServices() {
+        return this.services;
+    }
+
     public     void queueResourceRelease(final MemorySegment handle) {
         this.commandEncoder.queueForDestroy(() -> ObjC.release(handle));
     }

@@ -17,7 +17,7 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | --- | --- | --- |
 | Is the Metal 4 core API there? | yes | `Metal 4 core API: available` ... |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
-| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames, and the picture matches the Metal 3 road |
+| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **though the picture is not the Metal 3 road's picture, see the two-arm measurement below** |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
 | Can a **vertex buffer** be bound, by address and stride? | yes, and the pass read it | a pipeline taking `const device float4* [[buffer(0)]]` drew a colour it could only get from that buffer, with `attributeStride` 16, read back as `(0.25, 0.5, 0.5, 1)` |
 | Do Metal 3 pipeline states work on Metal 4 encoders? | yes | the present pipeline, the clear pipeline and a probe pipeline all draw on `MTL4RenderCommandEncoder` |
@@ -198,6 +198,33 @@ the present-only Metal 4 path can only ever be reached by the Metal 3 path askin
 talks to a contract, which is where that decision can move to the execution services; until then the ledger's
 `Metal4Path` entries stay. Verified on the settled pack scene: 7.25 ms, `gpuM3Ms=4359.03`, `submit=600`, with
 the counters this configuration repeats (21435 encoders, 6600 blits, 345 identities against 345 keys).
+
+### The present policy moved, and the two roads do not draw the same picture
+
+The policy half of the present decision now lives in the execution services
+(`MetalExecutionServices.presentsThroughMetal4()`, `-Dmetallum.metal4Present` parsed there and nowhere else),
+the readiness half stays with the present path, and the encoder asks them in that order so a session that does
+not want the road never records a layer for it. It deliberately does not yet consult `selected()`: that would
+silently change which road a forced-Metal-3 session presents through, and it is the change that makes the
+Metal 4 frame path the frame's own road rather than a probe.
+
+Verified as a two-arm A/B in one session on the settled pack scene (600 frames each, camera pinned), which is
+the pair the step needs because it moves a safety interlock:
+
+    arm plain     (property off) wallP50 7.20 ms  gpuM3Ms 4355.64  metal4Presents 0   metal4Frames 0
+    arm m4present (property on)  wallP50 7.27 ms  gpuM3Ms 4359.57  metal4Presents 600 metal4Frames 600
+                                  gpuM4Ms 28.97, metal4Us 54.8, gpuM4Feedbacks 600 (+0.1% wall against plain)
+
+Both roads run and both are selectable, which is the point of the step. **What the picture comparison says is
+not what this document used to claim.** The compare tool reports, plain against m4present: mean channel
+difference 3.65, 88.84 per cent of pixels differing at all, 9.24 per cent differing by more than 8, worst 174
+at (43, 45). A difference of that size is not the 0.14-0.41 per cent two runs of **one** configuration repeat
+to; the two arms differ by their own present encoding as well (the m4 arm sets 600 fewer viewports and binds
+4200 more buffers, because it presents by drawing rather than by blitting), so the frames are not the same
+frame either. So the honest state of the claim "the Metal 4 present shows the same picture" is: **it was made
+on the earlier five-second protocol and is not reproduced by a settled two-arm run**, and until it is
+explained - a different scale filter, the V-flip, the drawable's own contents, or the frame itself differing -
+the Metal 4 present road is verified as *running*, not as *equivalent*.
 
 ### The present decision is two decisions, and only one of them can move
 

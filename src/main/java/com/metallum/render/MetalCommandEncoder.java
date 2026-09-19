@@ -635,7 +635,11 @@ public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFr
         // Asked, not done: the surface says what it presents before this frame's command buffer is
         // committed, and the picture is only the frame's once that commit has happened. `Metal4Path` presents
         // it from `submit()`, on the frame's own event value.
-        if (!Metal4Path.presenting(layer, source.nativeHandle())) {
+        // Policy from the services, readiness from the present path: asked in that order, so a session that
+        // does not want this road does not even record a layer for it (the short circuit is what keeps that
+        // true - `presenting` records the layer and the picture as it answers).
+        if (!this.device.executionServices().presentsThroughMetal4()
+                || !Metal4Path.presenting(layer, source.nativeHandle())) {
             commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
         }
     }
