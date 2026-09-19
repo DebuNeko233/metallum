@@ -1,6 +1,7 @@
 package com.metallum.mtl;
 
 import com.metallum.objc.AutoreleasePool;
+import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -9,6 +10,9 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 
 import java.lang.foreign.MemorySegment;
+
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -92,6 +96,10 @@ public final class MTLBuiltinPipelines {
             """;
 
     private static MTLDevice device;
+    private static final Msg SET_RENDER_PIPELINE_STATE = Msg.ofVoid("setRenderPipelineState:", ADDRESS);
+    private static final Msg SET_ARGUMENT_TABLE = Msg.ofVoid("setArgumentTable:atStages:", ADDRESS, JAVA_LONG);
+    private static final Msg DRAW = Msg.ofVoid("drawPrimitives:vertexStart:vertexCount:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
+
     private static MemorySegment presentPipeline = MemorySegment.NULL;
     private static MemorySegment presentLinearSampler = MemorySegment.NULL;
     private static MemorySegment presentNearestSampler = MemorySegment.NULL;
@@ -253,6 +261,39 @@ public final class MTLBuiltinPipelines {
 
             encoder.endEncoding();
         }
+    }
+
+    /**
+     * Draws the present pass into a target of the caller's, for the Metal 4 path.
+     * <p>
+     * The same three-vertex triangle, the same pipeline and the same samplers the drawable path draws with -
+     * with the source texture and the sampler carried by an argument table, because Metal 4's encoder
+     * protocols have no per-resource binding methods at all. The viewport is not set: Metal's default is the
+     * render target's own size, which is exactly what this draw wants.
+     *
+     * @param encoder     a Metal 4 render encoder, already open on the target
+     * @param argumentTable the table holding the source texture and one sampler
+     * @param scaling     whether the source and the target differ in size, which chooses the filter
+     * @return whether the draw was encoded
+     */
+    public static boolean drawPresentWithTable(
+            final MemorySegment encoder,
+            final MemorySegment argumentTable,
+            final boolean scaling
+    ) {
+        if (ObjC.isNil(encoder) || ObjC.isNil(argumentTable) || ObjC.isNil(presentPipeline)) {
+            return false;
+        }
+
+        SET_RENDER_PIPELINE_STATE.send(encoder, presentPipeline);
+        SET_ARGUMENT_TABLE.send(encoder, argumentTable, MTLRenderStages.Fragment.value);
+        DRAW.send(encoder, MTLPrimitiveType.Triangle.value, 0L, 3L);
+        return true;
+    }
+
+    /** The sampler the drawable path picks when the picture is not being scaled, for the Metal 4 path. */
+    public static MemorySegment presentSampler(final boolean scaling) {
+        return scaling ? presentLinearSampler : presentNearestSampler;
     }
 
     static void encodePresentTextureToDrawable(

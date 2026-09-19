@@ -782,4 +782,16 @@ require("the submission is carried where a frame is committed",
     "Metal4Path.frame();",
 ))
 
+require("the argument table is asked for, and the path carries on without it",
+        "src/main/java/com/metallum/mtl/MTL4ArgumentTable.java", (
+    'device.respondsTo("newArgumentTableWithDescriptor:")',
+    'SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);',
+    'SET_INITIALIZE.send(descriptor, 0L);',
+))
+require("a missing table is said out loud rather than hidden",
+        "src/main/java/com/metallum/render/Metal4Path.java", (
+    "carrying frames without a draw, because this device makes",
+    "private static boolean refuse(final String why) {",
+))
+
 print("Metal and engine contracts: PASS")

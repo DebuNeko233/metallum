@@ -145,6 +145,7 @@ public final class MetalFrameProbe {
     /** Frames carried through the Metal 4 command structure, and what that path cost on the CPU. */
     private static int metal4Frames;
     private static long metal4Nanos;
+    private static int metal4Draws;
     private static int pipelines;
     private static int textures;
     private static int samplers;
@@ -294,13 +295,16 @@ public final class MetalFrameProbe {
      * The path is beside the frame rather than in it, so the number to read is the cost of carrying it: on
      * the GPU it is a 64x64 pass, and on the CPU it is the messages a frame-shaped submission takes.
      */
-    public static void metal4Frame(final long nanos) {
+    public static void metal4Frame(final long nanos, final boolean drawn) {
         if (!armed()) {
             return;
         }
 
         metal4Frames++;
         metal4Nanos += nanos;
+        if (drawn) {
+            metal4Draws++;
+        }
     }
 
     /** An encoder the engine itself opened, by the work it was opened for. */
@@ -441,13 +445,14 @@ public final class MetalFrameProbe {
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
                 "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} "
-                        + "metal4Frames={} metal4Us={}",
+                        + "metal4Frames={} metal4Us={} metal4Draws={}",
                 renderPassOpeners,
                 blitOpeners,
                 computeOpeners,
                 clearOpeners,
                 metal4Frames,
-                String.format(Locale.ROOT, "%.1f", metal4Frames == 0 ? 0.0 : metal4Nanos / 1000.0 / metal4Frames)
+                String.format(Locale.ROOT, "%.1f", metal4Frames == 0 ? 0.0 : metal4Nanos / 1000.0 / metal4Frames),
+                metal4Draws
         );
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
@@ -509,6 +514,7 @@ public final class MetalFrameProbe {
         clearOpeners = 0;
         metal4Frames = 0;
         metal4Nanos = 0L;
+        metal4Draws = 0;
         pipelines = 0;
         textures = 0;
         samplers = 0;

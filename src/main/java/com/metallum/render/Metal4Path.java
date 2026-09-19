@@ -1,9 +1,12 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
+import com.metallum.mtl.MTL4ArgumentTable;
 import com.metallum.mtl.MTL4Probe;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLPixelFormat;
+import com.metallum.mtl.MTLTexture;
 import com.metallum.mtl.MTLTextureDescriptor;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
@@ -46,6 +49,9 @@ public final class Metal4Path {
     private static final long WAIT_MILLIS = 1000L;
 
     private static final long TARGET_SIZE = 64L;
+
+    /** The drawable's own format, so the built-in present pipeline is the one this target was built for. */
+    private static final MTLPixelFormat TARGET_FORMAT = MTLPixelFormat.BGRA8Unorm;
     private static final long USAGE_RENDER_TARGET = 4L;
     private static final long LOAD_DONT_CARE = 0L;
     private static final long STORE_STORE = 1L;
@@ -81,6 +87,12 @@ public final class Metal4Path {
     @Nullable
     private static MemorySegment pass;
     @Nullable
+    private static MTL4ArgumentTable table;
+
+    /** The picture this frame's submission samples, handed over where the frame says what it drew. */
+    private static MemorySegment source = MemorySegment.NULL;
+    private static long sourceWidth;
+    @Nullable
     private static MemorySegment target;
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
     private static final long[] awaited = new long[FRAMES_IN_FLIGHT];
@@ -107,7 +119,7 @@ public final class Metal4Path {
                     || !device.respondsTo("newCommandAllocator")
                     || !device.respondsTo("newCommandBuffer")
                     || !device.respondsTo("newSharedEvent")) {
-                return false;
+                return refuse("the device is missing one of the entry points this path needs");
             }
 
             MemorySegment madeQueue = NEW_QUEUE.sendPtr(device.handle());
@@ -118,7 +130,7 @@ public final class Metal4Path {
                 ObjC.release(madeEvent);
                 ObjC.release(madeBuffer);
                 ObjC.release(madeQueue);
-                return false;
+                return refuse("the device would not make a queue, a command buffer and a shared event");
             }
 
             for (int index = 0; index < FRAMES_IN_FLIGHT; index++) {
@@ -126,9 +138,19 @@ public final class Metal4Path {
                 if (ObjC.isNil(allocator) || !responds(allocator, "reset")) {
                     ObjC.release(allocator);
                     stop(madeQueue, madeBuffer, madeEvent);
-                    return false;
+                    return refuse("the device would not make an allocator that can be reset");
                 }
                 allocators[index] = allocator;
+            }
+
+            // A table is what a Metal 4 encoder is given its resources through, and this device does not
+            // make one - so nothing can be *drawn* with resources here. That is not a reason to stop
+            // carrying the submission itself, which needs no bindings: the path says what it cannot do and
+            // keeps doing what it can.
+            table = MTL4ArgumentTable.create(device);
+            if (table == null) {
+                Metallum.LOGGER.warn("Metal 4 path: carrying frames without a draw, because this device makes "
+                        + "no argument table and a Metal 4 encoder cannot be bound any other way");
             }
 
             try {
@@ -138,7 +160,7 @@ public final class Metal4Path {
                 target = madeTarget;
             } catch (RuntimeException refused) {
                 stop(madeQueue, madeBuffer, madeEvent);
-                return false;
+                return refuse("the pass or its target could not be made: " + refused.getMessage());
             }
 
             queue = madeQueue;
@@ -180,6 +202,19 @@ public final class Metal4Path {
                 giveUp("a render encoder for the frame-shaped submission came back nil");
                 return;
             }
+
+            // The draw, when the frame has told this path what it drew: the engine's own present triangle,
+            // sampling the frame's picture through an argument table, into this path's target. It is the
+            // first thing the new command structure draws, and it is drawn off the picture's path - the
+            // frame that is presented is still the one the Metal 3 command buffer presented.
+            boolean drawn = false;
+            if (table != null && !ObjC.isNil(source)) {
+                boolean scaling = sourceWidth != TARGET_SIZE;
+                if (table.texture(source) && table.sampler(MTLBuiltinPipelines.presentSampler(scaling))) {
+                    drawn = MTLBuiltinPipelines.drawPresentWithTable(encoder, table.handle(), scaling);
+                }
+            }
+
             END_ENCODING.send(encoder);
             END.send(commandBuffer);
 
@@ -192,10 +227,26 @@ public final class Metal4Path {
             awaited[slot] = ++signalled;
             SIGNAL_EVENT.send(queue, event, awaited[slot]);
 
-            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt);
+            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, drawn);
         } catch (RuntimeException failed) {
             giveUp(failed.getMessage());
         }
+    }
+
+    /**
+     * Hands this path the picture the frame just drew, which its own submission samples.
+     * <p>
+     * Taken at the moment the frame says what it is presenting, so what the new path draws is the frame's
+     * real output and not a stand-in. The width is kept because the present triangle picks its filter by
+     * whether the source and the target differ in size.
+     */
+    public static void source(final MemorySegment textureHandle) {
+        if (!carrying || ObjC.isNil(textureHandle)) {
+            return;
+        }
+
+        source = textureHandle;
+        sourceWidth = MTLTexture.width(textureHandle);
     }
 
     /** Releases everything this path made. */
@@ -209,6 +260,12 @@ public final class Metal4Path {
             target = null;
             carrying = false;
         }
+    }
+
+    /** Says why this path is not carrying frames, which a silent false never does. */
+    private static boolean refuse(final String why) {
+        Metallum.LOGGER.warn("Metal 4 path: not carrying frames ({})", why);
+        return false;
     }
 
     private static void giveUp(final @Nullable String why) {
@@ -225,6 +282,10 @@ public final class Metal4Path {
         // Every release goes through the guard: a field that was never set is a Java null and a nil handle
         // is a no-op, and an exception thrown from the path's own cleanup is what took the device down with
         // it rather than failing this path closed.
+        if (table != null) {
+            table.close();
+            table = null;
+        }
         releaseIfPresent(pass);
         releaseIfPresent(target);
         pass = null;
@@ -255,7 +316,7 @@ public final class Metal4Path {
     private static MemorySegment newTarget(final MTLDevice device, final MemorySegment passDescriptor) {
         MemorySegment made;
         try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
-            descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+            descriptor.pixelFormat(TARGET_FORMAT);
             descriptor.width(TARGET_SIZE);
             descriptor.height(TARGET_SIZE);
             descriptor.usage(USAGE_RENDER_TARGET);
