@@ -30,6 +30,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.metallum.render.shared.MetalPipelineSupport;
+import com.metallum.render.shared.MetalResourceBinding;
 
 @Environment(EnvType.CLIENT)
 final class MetalCrossShaderCompiler {
@@ -114,7 +115,7 @@ final class MetalCrossShaderCompiler {
 
             String vertexEntryPoint = extractEntryPoint(vertexMsl.source(), VERTEX_ENTRY_PATTERN, "main0");
             String fragmentEntryPoint = extractEntryPoint(fragmentMsl.source(), FRAGMENT_ENTRY_PATTERN, "main0");
-            List<MetalCompiledRenderPipeline.ResourceBinding> resources = buildResourceBindings(
+            List<MetalResourceBinding> resources = buildResourceBindings(
                     layoutEntries,
                     storageBuffers,
                     storageImages,
@@ -421,7 +422,7 @@ final class MetalCrossShaderCompiler {
         return matcher.find() ? matcher.group(1) : fallback;
     }
 
-    private static List<MetalCompiledRenderPipeline.ResourceBinding> buildResourceBindings(
+    private static List<MetalResourceBinding> buildResourceBindings(
             final List<VulkanBindGroupLayout.Entry> entries,
             final Set<String> storageBuffers,
             final Set<String> storageImages,
@@ -430,23 +431,23 @@ final class MetalCrossShaderCompiler {
             final boolean useArgumentBuffers,
             final int pushConstantBinding
     ) {
-        List<MetalCompiledRenderPipeline.ResourceBinding> resources = new ArrayList<>(entries.size() + 1);
+        List<MetalResourceBinding> resources = new ArrayList<>(entries.size() + 1);
         for (int index = 0; index < entries.size(); index++) {
             VulkanBindGroupLayout.Entry entry = entries.get(index);
-            MetalCompiledRenderPipeline.ResourceKind kind = switch (entry.type()) {
+            MetalResourceBinding.ResourceKind kind = switch (entry.type()) {
                 case UNIFORM_BUFFER -> storageBuffers.contains(entry.name())
-                        ? MetalCompiledRenderPipeline.ResourceKind.STORAGE_BUFFER
-                        : MetalCompiledRenderPipeline.ResourceKind.UNIFORM_BUFFER;
+                        ? MetalResourceBinding.ResourceKind.STORAGE_BUFFER
+                        : MetalResourceBinding.ResourceKind.UNIFORM_BUFFER;
                 case SAMPLED_IMAGE -> storageImages.contains(entry.name())
-                        ? MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE
-                        : MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE;
-                case TEXEL_BUFFER -> MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER;
+                        ? MetalResourceBinding.ResourceKind.STORAGE_IMAGE
+                        : MetalResourceBinding.ResourceKind.SAMPLED_IMAGE;
+                case TEXEL_BUFFER -> MetalResourceBinding.ResourceKind.TEXEL_BUFFER;
             };
             GpuFormat texelFormat = entry.type() == VulkanBindGroupEntryType.TEXEL_BUFFER ? entry.texelBufferFormat() : null;
             int argumentSet = useArgumentBuffers ? descriptorSet(entry.name(), vertexMsl, fragmentMsl) : -1;
             int metalIndex = useArgumentBuffers ? index * 2 : index;
             int samplerIndex = useArgumentBuffers ? metalIndex + 1 : metalIndex;
-            resources.add(new MetalCompiledRenderPipeline.ResourceBinding(
+            resources.add(new MetalResourceBinding(
                     kind,
                     entry.name(),
                     index,
@@ -461,8 +462,8 @@ final class MetalCrossShaderCompiler {
         int pushConstantStageMask = (vertexMsl.hasPushConstants() ? MetalCompiledRenderPipeline.STAGE_VERTEX : 0)
                 | (fragmentMsl.hasPushConstants() ? MetalCompiledRenderPipeline.STAGE_FRAGMENT : 0);
         if (pushConstantStageMask != 0) {
-            resources.add(new MetalCompiledRenderPipeline.ResourceBinding(
-                    MetalCompiledRenderPipeline.ResourceKind.UNIFORM_BUFFER,
+            resources.add(new MetalResourceBinding(
+                    MetalResourceBinding.ResourceKind.UNIFORM_BUFFER,
                     "push_constants",
                     entries.size(),
                     pushConstantStageMask,

@@ -124,7 +124,7 @@ require("Metal draw and direct sampling", "src/main/java/com/metallum/render/Met
     "commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());",
     "if (!sameBinding(samplers.put(name, requested), requested)) {",
     "markDescriptorDirty(name);",
-    "if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {",
+    "if (binding.kind() == MetalResourceBinding.ResourceKind.SAMPLED_IMAGE) {",
     "bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());",
     "enc.setFragmentTexture(texture, index);",
     "enc.setFragmentSamplerState(sampler, index);",
@@ -155,7 +155,7 @@ require("Generic carried vertex ABI", "src/main/java/com/metallum/render/MetalCo
     "MTLVertexFormat vertexFormat = MTLVertexFormat.from(element.format());",
     "descriptor.setAttribute(attributeIndex, vertexFormat.value, element.offset(), bufferIndex);",
     "attributeIndex++;",
-    "TEXEL_BUFFER",
+    "MetalResourceBinding",
     "if (format == null || format.getElements().isEmpty()) {",
 ))
 require("Generic vertex/resource binding", "src/main/java/com/metallum/render/MetalRenderPass.java", (
@@ -168,7 +168,7 @@ require("Generic vertex/resource binding", "src/main/java/com/metallum/render/Me
     "public void setUniform(final @NonNull String name, final GpuBuffer value)",
     "setUniform(name, value.slice());",
     "if (!sameSlice(uniforms.put(name, value), value)) {",
-    "if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER)",
+    "if (binding.kind() == MetalResourceBinding.ResourceKind.TEXEL_BUFFER)",
     "pushDirectTexelBufferDescriptor(enc, binding);",
     "private MemorySegment createTexelBufferTexture(",
     "GpuBufferSlice texelSlice = requiredBuffer(binding);",

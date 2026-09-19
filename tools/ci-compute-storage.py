@@ -89,8 +89,8 @@ require("Untracked storage buffer hazards", "src/main/java/com/metallum/render/s
 ))
 
 require("Render storage resource binding", "src/main/java/com/metallum/render/MetalRenderPass.java", (
-    "binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE",
-    "binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_BUFFER",
+    "binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_IMAGE",
+    "binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_BUFFER",
     "RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_WRITE",
 ))
 

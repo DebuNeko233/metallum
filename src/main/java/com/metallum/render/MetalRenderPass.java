@@ -40,6 +40,7 @@ import com.metallum.render.shared.MetalGpuSampler;
 import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalResourceBinding;
 
 @Environment(EnvType.CLIENT)
 final class MetalRenderPass implements RenderPassBackend {
@@ -674,7 +675,7 @@ final class MetalRenderPass implements RenderPassBackend {
             if (compiledPipeline.usesArgumentBuffers()) {
                 ensureArgumentBuffersBound(enc);
             }
-            for (MetalCompiledRenderPipeline.ResourceBinding binding : compiledPipeline.resources()) {
+            for (MetalResourceBinding binding : compiledPipeline.resources()) {
                 if (dirtyDescriptors.get(binding.bindingIndex())) {
                     pushDescriptor(enc, binding);
                 }
@@ -718,7 +719,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void markDescriptorDirty(final String name) {
         if (compiledPipeline != null) {
-            MetalCompiledRenderPipeline.ResourceBinding binding = compiledPipeline.resource(name);
+            MetalResourceBinding binding = compiledPipeline.resource(name);
             if (binding != null) {
                 dirtyDescriptors.set(binding.bindingIndex());
             }
@@ -753,7 +754,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void pushDescriptor(
             final MTLRenderCommandEncoder enc,
-            final MetalCompiledRenderPipeline.ResourceBinding binding
+            final MetalResourceBinding binding
     ) {
         if (binding.indirect()) {
             pushArgumentDescriptor(enc, binding);
@@ -764,9 +765,9 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void pushDirectDescriptor(
             final MTLRenderCommandEncoder enc,
-            final MetalCompiledRenderPipeline.ResourceBinding binding
+            final MetalResourceBinding binding
     ) {
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.SAMPLED_IMAGE) {
             TextureViewAndSampler textureBinding = samplers.get(binding.name());
             if (textureBinding == null) {
                 throw new IllegalStateException("Missing sampler " + binding.name());
@@ -776,7 +777,7 @@ final class MetalRenderPass implements RenderPassBackend {
             bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());
             return;
         }
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_IMAGE) {
             TextureViewAndSampler textureBinding = samplers.get(binding.name());
             if (textureBinding == null) {
                 throw new IllegalStateException("Missing storage image " + binding.name());
@@ -786,7 +787,7 @@ final class MetalRenderPass implements RenderPassBackend {
             bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());
             return;
         }
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.TEXEL_BUFFER) {
             pushDirectTexelBufferDescriptor(enc, binding);
             return;
         }
@@ -797,9 +798,9 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void pushArgumentDescriptor(
             final MTLRenderCommandEncoder enc,
-            final MetalCompiledRenderPipeline.ResourceBinding binding
+            final MetalResourceBinding binding
     ) {
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.SAMPLED_IMAGE) {
             TextureViewAndSampler textureBinding = requiredTexture(binding.name(), "sampler");
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
             MetalGpuSampler sampler = (MetalGpuSampler) textureBinding.sampler();
@@ -818,7 +819,7 @@ final class MetalRenderPass implements RenderPassBackend {
             });
             return;
         }
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_IMAGE) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_IMAGE) {
             TextureViewAndSampler textureBinding = requiredTexture(binding.name(), "storage image");
             MetalGpuTextureView textureView = (MetalGpuTextureView) textureBinding.textureView();
             noteGraphicsStorageImageWrite(textureView);
@@ -835,14 +836,14 @@ final class MetalRenderPass implements RenderPassBackend {
             });
             return;
         }
-        if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER) {
+        if (binding.kind() == MetalResourceBinding.ResourceKind.TEXEL_BUFFER) {
             pushArgumentTexelBufferDescriptor(enc, binding);
             return;
         }
 
         GpuBufferSlice uniformSlice = requiredBuffer(binding);
         MetalGpuBuffer uniformBuffer = (MetalGpuBuffer) uniformSlice.buffer();
-        long usage = binding.kind() == MetalCompiledRenderPipeline.ResourceKind.STORAGE_BUFFER
+        long usage = binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_BUFFER
                 ? MTLRenderCommandEncoder.RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_WRITE
                 : MTLRenderCommandEncoder.RESOURCE_USAGE_READ;
         forEachArgumentLayout(binding, layout -> {
@@ -856,7 +857,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void pushDirectTexelBufferDescriptor(
             final MTLRenderCommandEncoder enc,
-            final MetalCompiledRenderPipeline.ResourceBinding binding
+            final MetalResourceBinding binding
     ) {
         MemorySegment texelTexture = createTexelBufferTexture(binding);
         bindTexture(enc, texelTexture, binding.bindingIndex(), binding.stageMask());
@@ -864,7 +865,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
     private void pushArgumentTexelBufferDescriptor(
             final MTLRenderCommandEncoder enc,
-            final MetalCompiledRenderPipeline.ResourceBinding binding
+            final MetalResourceBinding binding
     ) {
         MemorySegment texelTexture = createTexelBufferTexture(binding);
         forEachArgumentLayout(binding, layout -> {
@@ -880,7 +881,7 @@ final class MetalRenderPass implements RenderPassBackend {
         });
     }
 
-    private MemorySegment createTexelBufferTexture(final MetalCompiledRenderPipeline.ResourceBinding binding) {
+    private MemorySegment createTexelBufferTexture(final MetalResourceBinding binding) {
         GpuBufferSlice texelSlice = requiredBuffer(binding);
         GpuFormat texelFormat = binding.texelBufferFormat();
         if (texelFormat == null) {
@@ -926,7 +927,7 @@ final class MetalRenderPass implements RenderPassBackend {
         return textureBinding;
     }
 
-    private GpuBufferSlice requiredBuffer(final MetalCompiledRenderPipeline.ResourceBinding binding) {
+    private GpuBufferSlice requiredBuffer(final MetalResourceBinding binding) {
         GpuBufferSlice slice = uniforms.get(binding.name());
         if (slice == null) {
             throw new IllegalStateException("Missing uniform " + binding.name());
@@ -948,7 +949,7 @@ final class MetalRenderPass implements RenderPassBackend {
     }
 
     private void forEachArgumentLayout(
-            final MetalCompiledRenderPipeline.ResourceBinding binding,
+            final MetalResourceBinding binding,
             final java.util.function.Consumer<MetalCompiledRenderPipeline.ArgumentBufferLayout> consumer
     ) {
         boolean matched = false;

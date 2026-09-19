@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import com.metallum.render.shared.MetalFrameProbe;
+import com.metallum.render.shared.MetalResourceBinding;
 
 @Environment(EnvType.CLIENT)
 final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
@@ -32,32 +33,9 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     static final int PUSH_CONSTANT_BUFFER_SLOT = 8;
     private static final int WIDE_VERTEX_BUFFER_BASE = 9;
 
-    enum ResourceKind {
-        UNIFORM_BUFFER,
-        STORAGE_BUFFER,
-        SAMPLED_IMAGE,
-        STORAGE_IMAGE,
-        TEXEL_BUFFER
-    }
-
     static final int STAGE_VERTEX = 1;
     static final int STAGE_FRAGMENT = 2;
     static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
-
-    record ResourceBinding(
-            ResourceKind kind,
-            String name,
-            int bindingIndex,
-            int stageMask,
-            @Nullable GpuFormat texelBufferFormat,
-            int metalIndex,
-            int samplerMetalIndex,
-            int argumentBufferSet
-    ) {
-        boolean indirect() {
-            return argumentBufferSet >= 0;
-        }
-    }
 
     record ArgumentBufferLayout(
             int stageMask,
@@ -68,8 +46,8 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     ) {
     }
 
-    private final List<ResourceBinding> resources;
-    private final Map<String, ResourceBinding> resourcesByName;
+    private final List<MetalResourceBinding> resources;
+    private final Map<String, MetalResourceBinding> resourcesByName;
     private final BitSet allResources;
     private final boolean usesArgumentBuffers;
     private final List<ArgumentBufferLayout> argumentBuffers;
@@ -92,17 +70,17 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             final String fragmentMsl,
             final String vertexEntryPoint,
             final String fragmentEntryPoint,
-            final List<ResourceBinding> resources,
+            final List<MetalResourceBinding> resources,
             final boolean usesArgumentBuffers,
             final Set<Integer> vertexArgumentBufferSets,
             final Set<Integer> fragmentArgumentBufferSets
     ) {
         this.resources = List.copyOf(resources);
-        this.resourcesByName = resources.stream().collect(Collectors.toUnmodifiableMap(ResourceBinding::name, binding -> binding));
+        this.resourcesByName = resources.stream().collect(Collectors.toUnmodifiableMap(MetalResourceBinding::name, binding -> binding));
         this.usesArgumentBuffers = usesArgumentBuffers;
 
         BitSet resourceBits = new BitSet();
-        for (ResourceBinding binding : resources) {
+        for (MetalResourceBinding binding : resources) {
             if (binding.bindingIndex() < 0) {
                 throw new IllegalStateException(
                         "Pipeline " + info.getLocation() + " has negative logical binding index " + binding.bindingIndex()
@@ -129,7 +107,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         }
 
         if (usesArgumentBuffers) {
-            long samplerCount = resources.stream().filter(binding -> binding.kind() == ResourceKind.SAMPLED_IMAGE).count();
+            long samplerCount = resources.stream().filter(binding -> binding.kind() == MetalResourceBinding.ResourceKind.SAMPLED_IMAGE).count();
             long samplerLimit = device.metalDevice().maxArgumentBufferSamplerCount();
             if (samplerLimit > 0 && samplerCount > samplerLimit) {
                 throw new IllegalStateException(
@@ -267,7 +245,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         return !ObjC.isNil(this.withDepthPipeline);
     }
 
-    List<ResourceBinding> resources() {
+    List<MetalResourceBinding> resources() {
         return this.resources;
     }
 
@@ -284,7 +262,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     }
 
     @Nullable
-    ResourceBinding resource(final String name) {
+    MetalResourceBinding resource(final String name) {
         return this.resourcesByName.get(name);
     }
 
@@ -337,10 +315,10 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         }
     }
 
-    private static int firstAvailableVertexBufferSlot(final List<ResourceBinding> resources) {
+    private static int firstAvailableVertexBufferSlot(final List<MetalResourceBinding> resources) {
         int maxVertexBufferBinding = -1;
-        for (ResourceBinding resource : resources) {
-            if ((resource.kind() == ResourceKind.UNIFORM_BUFFER || resource.kind() == ResourceKind.STORAGE_BUFFER)
+        for (MetalResourceBinding resource : resources) {
+            if ((resource.kind() == MetalResourceBinding.ResourceKind.UNIFORM_BUFFER || resource.kind() == MetalResourceBinding.ResourceKind.STORAGE_BUFFER)
                     && (resource.stageMask() & STAGE_VERTEX) != 0) {
                 maxVertexBufferBinding = Math.max(maxVertexBufferBinding, resource.metalIndex());
             }
