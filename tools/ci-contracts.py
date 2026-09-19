@@ -980,6 +980,37 @@ for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
 if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
     raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
 
+require("an encoder answers for the state it was handed",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "Metal3ExecutionState executionState() {",
+    "return this.executionState;",
+))
+require("the depth bridge asks the encoder, not the device",
+        "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
+    "Metal3ExecutionState metal3 = encoder.executionState();",
+))
+import pathlib as _dp
+import re as _dr
+
+_root5 = _dp.Path(__file__).resolve().parent.parent
+
+
+def _code5(path):
+    text = (_root5 / path).read_text(encoding="utf-8")
+    text = _dr.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = _dr.sub(r"//[^\n]*", "", text)
+    return _dr.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
+if "device.executionState()" in _code5("src/main/java/com/metallum/render/MetalDepthMipmapBridge.java"):
+    raise SystemExit("the depth bridge still reaches the device for the execution state")
+
+# One caller cannot be rerouted and is allowed by name: compute bridge compile(Object backend, ...) holds the
+# device, not an encoder, so the device accessor stays until the bridge's body moves into render.metal3.
+_compute = _code5("src/main/java/com/metallum/render/MetalComputeBridge.java")
+if _compute.count("device.executionState()") != 1:
+    raise SystemExit("the compute bridge's use of the device accessor changed shape")
+
 require("the device holds the generation state as the shared contract",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "private final MetalExecutionState executionState;",

@@ -404,6 +404,21 @@ What this means for the next attempt, exactly:
 Until that lands, `MetalDevice` still owns the shader module cache: `shaderCache` and `getOrCompileShader` are
 the implementation there, not delegates, and `Metal3CompilationContext` owns only the depth-stencil cache.
 
+
+**The sealing's two remaining items, and the one exception that stays.** Moving the eight-file cluster into
+`render.metal3` now compiles down to exactly two files - `MetalComputeBridge` and `MetalDepthMipmapBridge` - whose
+bodies are Metal 3 implementations wearing public names; the compiler's list from the attempt is `Metal3ExecutionState`
+(16), `MetalCommandEncoder.flushPendingClear` (12), `endEncoder` (8), `renderCommandEncoder` (4). The depth bridge
+now takes the state from the encoder it already holds (`encoder.executionState()`), so it is ready to move; the
+encoder answers for its own state through a package-private accessor, which is generation-internal and needs no
+widening.
+
+**`MetalComputeBridge.compile(Object backend, String label, ByteBuffer spirv)` is the one caller that cannot be
+rerouted**: its backend is the device, not an encoder, so `MetalDevice.executionState()` stays - package-private,
+typed `MetalExecutionState`, naming no generation - and the contract records that shape rather than forbidding it.
+Phase D's condition ("delete it if no neutral caller needs it") is therefore not met, and the accessor is the
+seam the moved `Metal3ComputeBridge.compile` will use.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

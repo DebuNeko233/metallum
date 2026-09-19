@@ -98,9 +98,7 @@ public final class MetalDepthMipmapBridge {
         encoder.flushPendingClear(metalTexture);
 
         MetalDevice device = metalTexture.device();
-        if (!(device.executionState() instanceof Metal3ExecutionState metal3)) {
-            return false;
-        }
+        Metal3ExecutionState metal3 = encoder.executionState();
 
         MemorySegment vertexFunction = metal3.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_vs");
         MemorySegment fragmentFunction = metal3.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_fs");

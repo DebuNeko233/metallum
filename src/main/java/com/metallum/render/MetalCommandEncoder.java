@@ -155,6 +155,17 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         }
     }
 
+    /**
+     * The generation state this encoder was constructed with, for the Metal 3 helpers that need it.
+     * <p>
+     * It exists so those helpers can ask the encoder they already hold instead of the device: reaching the state
+     * through the device is the seam that has to disappear when this file and its helpers move into
+     * {@code render.metal3}, and an object that was handed the state should be the one to answer for it.
+     */
+    Metal3ExecutionState executionState() {
+        return this.executionState;
+    }
+
     MTLCommandBuffer commandBuffer() {
         if (commandBuffer != null) {
             return commandBuffer;
