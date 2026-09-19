@@ -140,6 +140,18 @@ Metal 4 with the probe succeeding, so the flip stands at **two observations in n
 four or five), and its cause is still unlocated. What is in place is the instrument that will name it the next
 time it happens - which is the honest description of this step, not a fix.
 
+**Eight arms later it still has not fired, and the tally now carries a pattern.** Five more no-pack arms in one
+session all selected Metal 4 with the probe succeeding, so the flip stands at **two observations in fourteen
+arms** - and both were a session's **first arm**: the run whose arm `a` answered `metal3` while arm `b` answered
+`metal4`, and a single-arm pack run. Other first-arm runs did not flip, so this is a tendency and not a rule,
+but it is the first thing about the flip that is not just "sometimes": the leading explanation is now **the
+first Metal 4 argument-table attempt in a session**, which is what the original observation suggested too (the
+session that flipped was the first to touch Metal 4 in a while; the one that did not ran minutes after runs
+that had each presented 600 frames through it).
+
+The next attempt wants a cheaper trigger than a reboot: a fresh process against an idle GPU, as the first arm,
+several times. Eight warm arms cost six minutes and answered nothing, which is the shape of this bug.
+
 **Three contract pins fired while this was being written** - the seam's log format, the queue seam's factory
 call, and the `executing()` literal - each naming the line that had moved. The third is the interesting one: it
 had pinned an implementation detail (`return MetalApiGeneration.METAL3;`) as if it were the design, and now pins
