@@ -112,6 +112,26 @@ rather than a constant baked into the services. What a contract cannot prove is 
 generation that really executes - only M4's own frame path can settle that, which is exactly what
 `framePathReady()` is for.
 
+**And the next pack run showed the trap this seam sets.** Two things came back at once from a single settled
+pack run: the capability probe answered `argumentTable=false render=false` **again** - the second independent
+observation of the flip, in a different session from the first - and with the selection degraded to Metal 3 the
+seam read
+
+    Metal execution: metal3 selected (the device does not satisfy the Metal 4 minimum contract (no render
+    encoder) (no argument table), so Metal 3 is used)
+    Metal execution seam: servicesSelected=metal3 servicesExecuting=metal3 referenceShell=false framePathReady=true
+
+`framePathReady()` is **true here**, because the selected generation *is* the one executing - which is exactly
+what the predicate says and not what a caller wants to hear. It answers "does the selected generation have a
+frame path of its own", so on a machine (or a run) whose Metal 4 contract fails, it reports ready while the
+frame is drawn by Metal 3. **M4 must not gate on `framePathReady()` to decide whether the new path can be
+used**; the question it needs is whether *the Metal 4 path* is available, which is the capability record's
+answer, not this one. The predicate is a self-consistency check and the difference only shows up on the runs
+where the probe disagrees with itself - which is why the second observation above matters twice.
+
+Frame time did not care: `wallP50` 7.24 ms with `gpuM3Ms=4368.17`, inside the band this scene has held all
+session (7.24-7.31), because both selections execute Metal 3.
+
 **Three contract pins fired while this was being written** - the seam's log format, the queue seam's factory
 call, and the `executing()` literal - each naming the line that had moved. The third is the interesting one: it
 had pinned an implementation detail (`return MetalApiGeneration.METAL3;`) as if it were the design, and now pins
