@@ -315,7 +315,7 @@ public final class MetalDevice implements GpuDeviceBackend {
     @Override
     public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
-        MetalCompiledRenderPipeline compiled = this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
+        MetalCompiledRenderPipeline compiled = compiledFor(pipeline, effectiveSource);
         MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
         return compiled;
     }
@@ -437,8 +437,40 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.commandEncoder.queueForDestroy(() -> ObjC.release(handle));
     }
 
+    /**
+     * The compiled artifact for this pipeline, recompiling it if the one held was translated for another MSL
+     * profile.
+     * <p>
+     * <strong>Why a guard and not a composite key.</strong> The identity cache is keyed by the game's own
+     * pipeline object, which is the shader identity and is what makes two equal descriptions share one artifact
+     * (measured: 345 identities against 345 keys on the settled pack scene, so a keyed cache would hold exactly
+     * these entries). What that key does not name is the <em>profile the artifact was translated for</em>, and a
+     * module or a pipeline state is not profile-independent - it carries the MSL the translator produced and the
+     * language version Metal accepted it under. Today the profile is chosen once per process before any compile,
+     * which is why this cannot bite yet; the guard is what makes a cross-profile hit impossible rather than
+     * merely unlikely, at the cost of one string comparison per pipeline request.
+     * <p>
+     * The other half of the artifact's identity, the binding layout mode, is not checkable here - it is derived
+     * from the pipeline's bind group layouts inside the compiler, which is where the artifact is built - but it
+     * is carried on the artifact's {@link MetalPipelineKey} and it is a pure function of the pipeline and the
+     * device's capabilities, both of which are constant for the life of this cache. The profile is the one input
+     * that is a property of the <em>session</em>, so it is the one that is checked.
+     */
+    private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {
+        MetalCompiledRenderPipeline held = this.compiledPipelines.get(pipeline);
+        if (held != null && !held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())) {
+            // Released on the same deferred path an eviction uses: already-recorded GPU work may still be
+            // referencing the artifact, so the native objects outlive the map entry by design.
+            this.compiledPipelines.remove(pipeline);
+            this.deferredPipelineReleases.add(held);
+        }
+
+        return this.compiledPipelines.computeIfAbsent(
+                pipeline, p -> MetalCrossShaderCompiler.compile(this, p, source));
+    }
+
     synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-        MetalCompiledRenderPipeline compiled = this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, this.defaultShaderSource));
+        MetalCompiledRenderPipeline compiled = compiledFor(pipeline, this.defaultShaderSource);
         MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
         return compiled;
     }

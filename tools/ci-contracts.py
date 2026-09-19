@@ -886,6 +886,16 @@ require("the capability record asks every clause of the minimum contract",
 # cache did not, which made the reuse of a Metal 3 module by a Metal 4 session a thing that merely did not
 # happen rather than a thing that could not. Both halves are pinned, because a key that forgot the profile again
 # would compile cleanly and pass every other test in this file.
+# M2: no compilation artifact may be reused across MSL profiles. The module and function caches name the profile
+# in their keys; the pipeline cache cannot (its key is the game's pipeline identity, deliberately), so it is
+# guarded on every hit instead. Pinned because the guard is one comparison that no other test would notice losing.
+require("a compiled pipeline is recompiled when its profile is not the session's",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {",
+    "held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())",
+    "this.compiledPipelines.remove(pipeline);",
+    "this.deferredPipelineReleases.add(held);",
+))
 require("a translated shader module is keyed by its MSL profile",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,",
