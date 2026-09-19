@@ -169,6 +169,16 @@ claims about the picture before it was found.
 without them an entity that happens to be in one run's view moves the counters by a tenth. `--at`,
 `--yaw` and `--pitch` pin the camera, because a comparison that judges pixels has to choose its frame.
 
+### The pack scene's floor is larger than the no-pack one, and it was measured today
+
+Two runs of **one** configuration on **one** commit, Photon v1.3b at 55 per cent with MetalFX, 600 frames
+each, read **7.01 and 7.25 ms a frame** (3.4 per cent apart) with the structural counters moving with them
+(`renderPasses` 20904 against 20922, `loadedMiB` 93858.0 against 93922.0). The no-pack scene repeats to
+about 1.4 per cent; this one does not, because the world is drawn slightly differently every launch - the
+same effect this file records as "two launches of this world do not draw the same frame". So a pack-scene
+difference below roughly three and a half per cent is not attributable without the deterministic fixture,
+and a claim about one needs the same-configuration pair taken in the same session.
+
 ### Machine state drifts, and the floor is the number to respect
 
 Long sessions drift: the same configuration has read 23.0 and 28 ms in one afternoon. The fixture's
