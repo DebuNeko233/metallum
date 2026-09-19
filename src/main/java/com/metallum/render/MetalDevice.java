@@ -65,6 +65,10 @@ final class MetalDevice implements GpuDeviceBackend {
         MTLCommandQueue.setDebugLabelsEnabled(this.useLabels());
         this.commandQueue = this.metalDevice.newCommandQueue();
         MTLBuiltinPipelines.init(this.metalDevice);
+        // Asked once, here, because the answer is a fact about the device and the system rather than
+        // about a frame: whether the image can be loaded at all and whether this GPU can run the
+        // scaler. Said out loud either way, so that a session's log names which of the two it was.
+        MetalFx.spatialSupported(metalDeviceHandle);
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }

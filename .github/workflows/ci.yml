@@ -77,6 +77,7 @@ jobs:
           python3 tools/ci-graphics-storage-images.py
           python3 tools/ci-shader-diagnostics.py
           python3 tools/ci-vitrail-performance.py
+          python3 tools/ci-metalfx.py
 
       - name: build
         run: ./gradlew build

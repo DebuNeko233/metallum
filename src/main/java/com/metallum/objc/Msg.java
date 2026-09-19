@@ -222,6 +222,14 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    public long sendLong(MemorySegment self, MemorySegment a) {
+        try {
+            return (long) handle.invokeExact(self, sel, a);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public long sendLong(MemorySegment self, long a) {
         try {
             return (long) handle.invokeExact(self, sel, a);

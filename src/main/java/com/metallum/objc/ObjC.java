@@ -15,6 +15,19 @@ public final class ObjC {
     public static final SymbolLookup METAL = SymbolLookup.libraryLookup("/System/Library/Frameworks/Metal.framework/Metal", Arena.global());
     public static final SymbolLookup QUARTZ_CORE = SymbolLookup.libraryLookup("/System/Library/Frameworks/QuartzCore.framework/QuartzCore", Arena.global());
 
+    /**
+     * A framework that may not be installed. {@link SymbolLookup#libraryLookup} loads the image, which
+     * is what makes its classes visible to {@link #clazz(String)}; on a system without it, that call
+     * throws, so a framework this engine can live without is looked up through here and answers null.
+     */
+    public static SymbolLookup optionalLibrary(final String path) {
+        try {
+            return SymbolLookup.libraryLookup(path, Arena.global());
+        } catch (IllegalArgumentException | UnsatisfiedLinkError missing) {
+            return null;
+        }
+    }
+
     private static final MemorySegment MSG_SEND = RUNTIME.findOrThrow("objc_msgSend");
     private static final MethodHandle OBJC_GET_CLASS =
             LINKER.downcallHandle(RUNTIME.findOrThrow("objc_getClass"), FunctionDescriptor.of(ADDRESS, ADDRESS));
