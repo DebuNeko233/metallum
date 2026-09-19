@@ -921,15 +921,19 @@ require("a translated shader module is keyed by its MSL profile",
 ))
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    # The services are built for the generation the selector chose, not for a constant, so that every seam
-    # asking them - the queue here, the present policy elsewhere - reads the same answer the log printed. The
-    # pin used to name METAL3 because that was the constant; what it is really pinning is that the device has
-    # no opinion of its own about which queue to make.
     "this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);",
     "this.commandEncoder = this.services.createFrameEncoder(this);",
-    "if (!this.services.framePathReady()) {",
-    "this.commandQueue = new MTLCommandQueue(",
-    "this.services.commandQueue(this.metalDevice)",
+    "this.presentGate = this.services.startPresentPath(this.metalDevice);",
+))
+# The queue itself is the Metal 3 implementation's object: the address still comes from the services, but the
+# type and its teardown live where the generation does, so the facade names no command-generation type for the
+# sake of one caller.
+require("the frame's queue belongs to the generation that encodes the frame",
+        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+    "private final com.metallum.mtl.metal3.MTLCommandQueue commandQueue;",
+    "device.executionServices().commandQueue(device.metalDevice())",
+    "return commandBuffer = this.commandQueue.makeCommandBuffer(",
+    "this.commandQueue.close();",
 ))
 # The only observation of the seam's own answer. It exists because the claim "the services carry the selection
 # and not a constant" had nothing to read it with: `selectedGeneration` in the frame probe comes from the

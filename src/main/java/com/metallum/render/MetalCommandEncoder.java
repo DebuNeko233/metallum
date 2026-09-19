@@ -61,6 +61,12 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * gate; the Metal 4 present path is the other implementation, chosen by the services and never named here.
      */
     private final com.metallum.render.shared.MetalFramePresentGate presentGate;
+    /**
+     * The frame's queue, made here because it is this generation's object: the device used to own it and hand it
+     * out, which made the facade name a command-generation type for the sake of one caller. The address still
+     * comes from the execution services, so the queue's factory is the one seam it was.
+     */
+    private final com.metallum.mtl.metal3.MTLCommandQueue commandQueue;
     private final MetalTransientMemory transientMemory;
     private final Map<MetalGpuTexture, Vector4fc> pendingColorClears = new IdentityHashMap<>();
     private final Map<MetalGpuTexture, Double> pendingDepthClears = new IdentityHashMap<>();
@@ -128,6 +134,10 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         // naming the queue says exactly that - where naming the encoder made a shared-layer file reach
         // into the frame path's concrete class.
         this.presentGate = device.executionServices().presentGate();
+        com.metallum.mtl.metal3.MTLCommandQueue.setDebugLabelsEnabled(device.useLabels());
+        this.commandQueue = new com.metallum.mtl.metal3.MTLCommandQueue(
+                java.lang.foreign.MemorySegment.ofAddress(
+                        device.executionServices().commandQueue(device.metalDevice())));
         this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         fence = device.metalDevice().newFence();
         for (int slot = 0; slot < MAX_SUBMITS_IN_FLIGHT; slot++) {
@@ -141,7 +151,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         if (commandBuffer != null) {
             return commandBuffer;
         }
-        return commandBuffer = device.commandQueue.makeCommandBuffer(
+        return commandBuffer = this.commandQueue.makeCommandBuffer(
                 device.useLabels() ? "Metallum frame " + currentSubmitIndex : null
         );
     }
@@ -969,6 +979,8 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
 
     @Override
     public void close() {
+        // The queue is this encoder's own now, so its teardown is here beside the rest of its release.
+        this.commandQueue.close();
         submitRenderPass();
         endEncoder();
         for (int slot = 0; slot < inFlight.length; slot++) {

@@ -2,6 +2,7 @@ package com.metallum.render.execution;
 
 import com.metallum.mtl.MTLDevice;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalFramePresentGate;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 
@@ -81,6 +82,18 @@ public interface MetalExecutionServices {
      */
     MetalFrameEncoder createFrameEncoder(com.metallum.render.MetalDevice device);
 
+    /**
+     * Starts whatever presenting needs and returns the gate the frame's encoder will ask. Neutral: the device
+     * asks for a gate, and only the road that presents knows what starting it means.
+     */
+    default MetalFramePresentGate startPresentPath(final MTLDevice device) {
+        return MetalFramePresentGate.NONE;
+    }
+
+    /** Releases what {@link #startPresentPath(MTLDevice)} started. A road that started nothing does nothing. */
+    default void closePresentPath() {
+    }
+
     default com.metallum.render.shared.MetalFramePresentGate presentGate() {
         return com.metallum.render.shared.MetalFramePresentGate.NONE;
     }
@@ -123,13 +136,29 @@ public interface MetalExecutionServices {
                 return new com.metallum.render.MetalCommandEncoder(device);
             }
 
+            private com.metallum.render.shared.MetalFramePresentGate presentGate =
+                    com.metallum.render.shared.MetalFramePresentGate.NONE;
+
+            @Override
+            public com.metallum.render.shared.MetalFramePresentGate startPresentPath(final MTLDevice device) {
+                // Chosen once, here, from the same policy the encoder used to ask per frame, and kept: which road
+                // presents is a property of the session, not of a frame.
+                this.presentGate = presentsThroughMetal4()
+                        ? com.metallum.render.Metal4PresentGate.start(device)
+                        : com.metallum.render.shared.MetalFramePresentGate.NONE;
+                return this.presentGate;
+            }
+
+            @Override
+            public void closePresentPath() {
+                if (presentsThroughMetal4()) {
+                    com.metallum.render.Metal4PresentGate.close();
+                }
+            }
+
             @Override
             public com.metallum.render.shared.MetalFramePresentGate presentGate() {
-                // Chosen once, from the same policy the encoder used to ask per frame: the property is a
-                // property of the session, so which gate this is cannot change under a running frame.
-                return presentsThroughMetal4()
-                        ? new com.metallum.render.Metal4PresentGate()
-                        : com.metallum.render.shared.MetalFramePresentGate.NONE;
+                return this.presentGate;
             }
 
             @Override

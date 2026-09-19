@@ -16,6 +16,18 @@ import net.fabricmc.api.Environment;
 @Environment(EnvType.CLIENT)
 public final class Metal4PresentGate implements MetalFramePresentGate {
 
+    /** Starts the road, if the device can carry it, and answers the gate for it. */
+    public static MetalFramePresentGate start(final com.metallum.mtl.MTLDevice device) {
+        return Metal4Path.start(device)
+                ? new Metal4PresentGate()
+                : MetalFramePresentGate.NONE;
+    }
+
+    /** Releases the road. Called once, by the services, when the device closes. */
+    public static void close() {
+        Metal4Path.close();
+    }
+
     @Override
     public void beforeCommit(final MemorySegment frameCommandBuffer) {
         Metal4Path.frameSignal(frameCommandBuffer);

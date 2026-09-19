@@ -35,7 +35,6 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
-import com.metallum.mtl.metal3.MTLCommandQueue;
 import com.metallum.mtl.metal3.MTLStorageTexturePipelines;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameProbe;
@@ -55,9 +54,9 @@ public final class MetalDevice implements GpuDeviceBackend {
     private final GpuDebugOptions debugOptions;
     // The frame's encoder as a contract rather than as this generation's class: the device owns the frame's
     // lifetime and calls four operations on it, and none of them needs to know which generation encodes it.
+    private final com.metallum.render.shared.MetalFramePresentGate presentGate;
     private final MetalFrameEncoder commandEncoder;
     private final DeviceInfo deviceInfo;
-    public final MTLCommandQueue commandQueue;
 
     /** What executes, and the queue it submits on; the selection replaces this in M4. */
     private final MetalExecutionServices services;
@@ -82,14 +81,12 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.metalDevice = new MTLDevice(metalDeviceHandle);
         this.metalLayer = metalLayer;
         this.cocoa = cocoa;
-        MTLCommandQueue.setDebugLabelsEnabled(this.useLabels());
         MTLBuiltinPipelines.init(this.metalDevice);
         // Asked once, here, because the answer is a fact about the device and the system rather than
         // about a frame: whether the image can be loaded at all and whether this GPU can run the
         // scaler. Said out loud either way, so that a session's log names which of the two it was.
         MetalFx.spatialSupported(metalDeviceHandle);
         Metal4.available(this.metalDevice);
-        boolean newPath = Metal4Path.start(this.metalDevice);
         // What this device can run, asked once and immutable; then which generation this launch executes.
         // The selector answers from capability - never from a chip name - and a forced preference the device
         // cannot satisfy fails the launch rather than falling back to the path nobody asked for. What is
@@ -115,14 +112,13 @@ public final class MetalDevice implements GpuDeviceBackend {
         // the services. `framePathReady()` is then asked - not to change anything, but because a readiness seam
         // nothing asks is a readiness seam that answers wrongly the first time something does.
         this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);
+        this.presentGate = this.services.startPresentPath(this.metalDevice);
         if (!this.services.framePathReady()) {
             com.metallum.Metallum.LOGGER.info(
                     "Metal execution: {} was selected and has no frame path yet, so the frame is {}'s and the "
                             + "selected generation is a reference shell for it",
                     this.services.selected().token(), this.services.executing().token());
         }
-        this.commandQueue = new MTLCommandQueue(
-                MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
         // Said out loud, because "the seams ask the selection and not a constant" is a claim about a value
         // nothing else prints: `selectedGeneration` in the frame probe comes from the telemetry, not from this
         // instance. Two of these lines - one from an AUTO launch, one from a forced Metal 3 launch - are what
@@ -377,13 +373,13 @@ public final class MetalDevice implements GpuDeviceBackend {
             // The view only ever borrowed the layer; this is the reference this code was given.
             this.metalLayer.close();
             // The new command structure's objects go with the device that made them.
-            Metal4Path.close();
+            this.services.closePresentPath();
         } catch (Throwable ignored) {
         }
         MTLStorageTexturePipelines.close();
         MTLBuiltinPipelines.close();
         MetalFx.close();
-        this.commandQueue.close();
+        this.services.closePresentPath();
         for (MemorySegment state : depthStencilStates.values()) {
             ObjC.release(state);
         }
