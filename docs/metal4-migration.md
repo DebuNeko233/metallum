@@ -16,6 +16,7 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | Question | Answer | Evidence |
 | --- | --- | --- |
 | Is the Metal 4 core API there? | yes | `Metal 4 core API: available` ... |
+| Is the selection deterministic between two runs? | **no, measured** | two identical no-pack arms in one session reported `selectedGeneration=metal3` and `selectedGeneration=metal4` |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
 | Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **its picture-equivalence to the Metal 3 road is unmeasured, because a single screenshot pair cannot resolve less than this scene's own picture noise; see below** |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
@@ -278,12 +279,27 @@ matches the Metal 3 road" is neither confirmed nor contradicted by any of it** -
 pair cannot resolve a difference smaller than the scene's own run-to-run picture noise. The row above stays
 "running", and the honest statement is that this document has no valid picture-equivalence measurement yet.
 
-**What a valid one needs**, all of it available in the harness: the temporal state pinned. The pack's
-upscaler accumulates over frames, so two runs that draw the same 600 frames at different moments settle on
-different images - which is also why the same-road pair is the noisiest. Either the scaler is off for the
-comparison, or the picture is captured for a fixed frame index from a state the run reproduces, or several
-screenshots per arm are compared by median rather than one each. Until one of those is in place, no picture
-claim about the Metal 4 road should be recorded, in either direction.
+**What a valid one needs is now known, because the no-pack scene was measured the same way** - the same
+configuration twice, camera pinned, 600 frames each, no shader pack:
+
+    picture, a against b: mean channel difference 0.05, 1.61% of pixels differ at all, 0.09% by more than 8
+
+**0.05 against the pack scene's 4.10 is the whole story**: without a pack the screenshot comparison is sharp
+(one and a half per cent of pixels differ at all), and with one it is not. The difference is the pack's
+temporal upscaler accumulating differently over the two runs, exactly as the same-road pair suggested, and it
+means the **no-pack scene is where picture equivalence can be measured** - which is the scene a frame-path
+change should be judged in first anyway, by this document's own rule. The Metal 4 present has not yet been
+compared there; that is the next experiment, and it is a valid one now.
+
+**The same run turned up something else, and it is not about pictures.** The two arms of that pair reported
+different selections: arm `a` `selectedGeneration=metal3`, arm `b` `selectedGeneration=metal4`, in one session,
+same device, same build, no switch between them. Two identical runs selecting different generations means the
+capability verdict is not deterministic run to run, which is a problem for the one rule this migration leans on
+-hardest ("AUTO is chosen from capability, never from a chip name"): a selection that flips between two runs of
+one build cannot be argued about, tested against, or shipped. It is also small to chase - the probe that reads
+the capabilities and the selector that consumes them are both in `render.execution`, and the log already prints
+the capability line - but it comes before M4, because M4 is the milestone whose behaviour depends on that
+answer.
 
 ### The present decision is two decisions, and only one of them can move
 
