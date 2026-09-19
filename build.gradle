@@ -43,6 +43,16 @@ loom {
 				property("vitrail.experimentalMetal", "true")
 			}
 
+			// macOS's own Metal Performance HUD, on for every dev client run, so the frame can be
+			// watched while it is being drawn instead of inferred from a log afterwards: it reads
+			// frames a second, the GPU time of the frame the card really ran, the device, and the
+			// scaler's own metrics when MetalFX is on. It costs a little of what it reads, and both
+			// arms of a comparison carry the same overlay, so a number read under it is a number
+			// about the same frame either way. The ambient value wins where there is one, which is
+			// the way to take a reading with the overlay out of the frame entirely:
+			// MTL_HUD_ENABLED=0 ./gradlew runClient.
+			environmentVariable("MTL_HUD_ENABLED", System.getenv("MTL_HUD_ENABLED") ?: "1")
+
 			if (vitrailPerfVmArgs.isPresent()) {
 				vitrailPerfVmArgs.get().split("\\s+").each { argument ->
 					if (!argument.isEmpty()) {
