@@ -330,14 +330,21 @@ public final class MTL4Probe {
                 MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);
                 for (int index = 0; index < EXPECTED_VERTEX_PIXEL.length; index++) {
                     if ((pixel.get(JAVA_BYTE, index) & 0xFF) != EXPECTED_VERTEX_PIXEL[index]) {
-                        return false;
+                        // A call that was accepted and a picture that did not arrive are different findings: one
+                        // is a binding the encoder took and the GPU ignored, the other is a call that failed.
+                        return failed("the vertex-buffer pass drew " + (pixel.get(JAVA_BYTE, index) & 0xFF)
+                                + " in channel " + index + " where " + EXPECTED_VERTEX_PIXEL[index]
+                                + " was asked for");
                     }
                 }
             }
 
             return true;
         } catch (RuntimeException failed) {
-            return false;
+            // The deep half of the probe fails here - a pipeline that would not compile, an encoder that refused
+            // an argument table, a readback that threw - and it used to return false as silently as a device
+            // that cannot do this at all. Naming the throwable is what tells the two apart.
+            return failed("the draw or the readback threw " + failed);
         } finally {
             if (table != null) {
                 table.close();

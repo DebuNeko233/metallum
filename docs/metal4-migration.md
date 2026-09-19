@@ -132,6 +132,14 @@ where the probe disagrees with itself - which is why the second observation abov
 Frame time did not care: `wallP50` 7.24 ms with `gpuM3Ms=4368.17`, inside the band this scene has held all
 session (7.24-7.31), because both selections execute Metal 3.
 
+The probe's deep half now speaks too: the `catch (RuntimeException)` that used to `return false` silently
+records the throwable (`the draw or the readback threw ...`), and a pixel that arrives wrong says which channel
+was wrong and what was asked for, because "the encoder took the binding and the GPU ignored it" and "the call
+failed" are different findings. **It has not fired yet**: three more no-pack arms after the change all selected
+Metal 4 with the probe succeeding, so the flip stands at **two observations in nine arms** (roughly one arm in
+four or five), and its cause is still unlocated. What is in place is the instrument that will name it the next
+time it happens - which is the honest description of this step, not a fix.
+
 **Three contract pins fired while this was being written** - the seam's log format, the queue seam's factory
 call, and the `executing()` literal - each naming the line that had moved. The third is the interesting one: it
 had pinned an implementation detail (`return MetalApiGeneration.METAL3;`) as if it were the design, and now pins
