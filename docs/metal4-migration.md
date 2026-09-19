@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 25 couplings in 13 files)
+    still owes 24 couplings in 12 files)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -134,6 +134,14 @@ what will become Metal 3's package, which the layer rule will fail the day the e
 `mtl/MTLDevice.java` names `MTLCommandQueue`, with `MTLBuiltinPipelines` and `MTLStorageTexturePipelines`
 naming Metal 3 encoders from the bindings side. A file naming its own class is not counted, because
 `MetalRenderPass` declaring `MetalRenderPass` says nothing about generations.
+
+The first of those is gone, and the ledger's own rule is what removed the line: `MetalTransientMemory` took
+the encoder only to retire its rotated blocks, so what it needs is the **destruction queue** the encoder
+itself adds to, not the encoder. Taking the same instance keeps the semantics identical by construction -
+retired blocks are released on the encoder's rotation, as before - while the shared layer stops naming the
+frame path's concrete class, which the layer rule would have failed the day the encoder moved to
+`render.metal3`. Verified on the settled pack scene: 7.31 ms with `gpuM3Ms=4391.78` against the immediately
+preceding run's 7.31 ms and `gpuM3Ms=4392.35`, every counter equal.
 
 ## Risks
 

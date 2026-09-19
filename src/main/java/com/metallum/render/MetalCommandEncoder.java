@@ -107,7 +107,11 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
 
     MetalCommandEncoder(final MetalDevice device) {
         this.device = device;
-        this.transientMemory = new MetalTransientMemory(device, this);
+        // The same destruction queue rather than the encoder: what the transient memory needs from its
+        // host is that its retired blocks are released on the same rotation as the encoder's own, and
+        // naming the queue says exactly that - where naming the encoder made a shared-layer file reach
+        // into the frame path's concrete class.
+        this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         fence = device.metalDevice().newFence();
         for (int slot = 0; slot < MAX_SUBMITS_IN_FLIGHT; slot++) {
             Semaphore semaphore = new Semaphore(0);

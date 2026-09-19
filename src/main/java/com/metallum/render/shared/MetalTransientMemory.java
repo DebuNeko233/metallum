@@ -1,6 +1,5 @@
 package com.metallum.render.shared;
 
-import com.metallum.render.MetalCommandEncoder;
 
 import com.metallum.render.MetalDevice;
 
@@ -32,16 +31,16 @@ public final class MetalTransientMemory implements TransientMemory {
     private static final int BLOCK_USAGE = GpuBuffer.USAGE_MAP_READ | GpuBuffer.USAGE_MAP_WRITE;
 
     private final MetalDevice device;
-    private final MetalCommandEncoder encoder;
+    private final MetalDestructionQueue destructionQueue;
     private final TransientBlockAllocator<Long> cpuBlockAllocator = new TransientBlockAllocator<>(
             BLOCK_SIZE, MAX_CPU_ALIGNMENT, TransientBlockAllocator.Allocator.create(MemoryUtil::nmemAlloc, MemoryUtil::nmemFree)
     );
     private final TransientBlockAllocator<MetalGpuBuffer> gpuBlockAllocator;
     private long submitIndex = 0L;
 
-    public     MetalTransientMemory(final MetalDevice device, final MetalCommandEncoder encoder) {
+    public     MetalTransientMemory(final MetalDevice device, final MetalDestructionQueue destructionQueue) {
         this.device = device;
-        this.encoder = encoder;
+        this.destructionQueue = destructionQueue;
         this.gpuBlockAllocator = new TransientBlockAllocator<>(
                 BLOCK_SIZE, MAX_GPU_ALIGNMENT, TransientBlockAllocator.Allocator.create(this::allocateGpuBlock, this::freeGpuBlock)
         );
@@ -49,7 +48,7 @@ public final class MetalTransientMemory implements TransientMemory {
 
     public     void rotate() {
         cpuBlockAllocator.rotate().run();
-        encoder.queueForDestroy(gpuBlockAllocator.rotate());
+        destructionQueue.add(gpuBlockAllocator.rotate());
         submitIndex++;
     }
 
