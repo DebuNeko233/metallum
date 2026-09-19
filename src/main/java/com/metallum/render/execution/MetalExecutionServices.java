@@ -1,7 +1,9 @@
 package com.metallum.render.execution;
 
+import com.metallum.mtl.MTLDevice;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+
 
 /**
  * What the frame asks for when it needs a command path, so that the choice of generation is one seam and not
@@ -18,6 +20,13 @@ import net.fabricmc.api.Environment;
 @Environment(EnvType.CLIENT)
 public interface MetalExecutionServices {
 
+    /**
+     * The Metal 3 queue factory, for the reference shell below: the shell is the seam until the generation
+     * packages own their own services, and it must not import a Metal 3 wrapper to do its job.
+     */
+    com.metallum.objc.Msg MTL3_QUEUE = com.metallum.objc.Msg.of("newCommandQueue",
+            java.lang.foreign.ValueLayout.ADDRESS);
+
     /** The generation this session was selected to execute. */
     MetalApiGeneration selected();
 
@@ -26,6 +35,16 @@ public interface MetalExecutionServices {
 
     /** Whether {@link #executing()} is the selected generation's own path, or a provisional stand-in. */
     boolean isReferenceShell();
+
+    /**
+     * The command queue this generation submits on, as the native handle a command encoder takes.
+     * <p>
+     * This is the seam the frame path's isolation turns on: the device used to make its own Metal 3 queue,
+     * which is the one thing that made "the device belongs to shared and the generation belongs to its own
+     * package" impossible to write down. The handle is a plain foreign address rather than a wrapper class,
+     * because a wrapper would put a generation's type in a version-neutral interface.
+     */
+    long commandQueue(MTLDevice device);
 
     /** Whether the selected generation can encode a frame yet. */
     default boolean framePathReady() {
@@ -51,6 +70,13 @@ public interface MetalExecutionServices {
             @Override
             public boolean isReferenceShell() {
                 return selected != MetalApiGeneration.METAL3;
+            }
+
+            @Override
+            public long commandQueue(final MTLDevice device) {
+                // The reference shell submits on the generation that executes, which is Metal 3 until the new
+                // path has a frame of its own - the same answer `executing()` gives, so the two cannot drift.
+                return MTL3_QUEUE.sendPtr(device.handle()).address();
             }
         };
     }

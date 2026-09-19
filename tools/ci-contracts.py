@@ -878,6 +878,28 @@ require("the capability record asks every clause of the minimum contract",
     "device.respondsTo(\"newMTL4CommandQueue\")",
     'MetalFx.metal4SpatialSupported(device.handle())',
 ))
+# The device used to make its own Metal 3 queue, and that one line is what made "the device belongs to
+# shared" impossible to write down. The queue now comes through the execution services, whose first consumer
+# this is; the handle crosses as an address rather than as a wrapper class, so a version-neutral interface
+# never names a generation's type.
+require("the frame's queue comes from the execution services",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "this.services = MetalExecutionServices.of(MetalApiGeneration.METAL3);",
+    "this.commandQueue = new MTLCommandQueue(",
+    "this.services.commandQueue(this.metalDevice)",
+))
+require("the services own the queue factory without naming a generation type",
+        "src/main/java/com/metallum/render/execution/MetalExecutionServices.java", (
+    "long commandQueue(MTLDevice device);",
+    'Msg.of("newCommandQueue"',
+    "return MTL3_QUEUE.sendPtr(device.handle()).address();",
+))
+device_source = (ROOT / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8")
+if "this.metalDevice.newCommandQueue()" in device_source:
+    raise SystemExit(
+        "the device makes its own command queue again, which puts a generation inside the device and is what "
+        "the execution-services seam exists to prevent"
+    )
 require("the services say what executes, not only what was chosen",
         "src/main/java/com/metallum/render/execution/MetalExecutionServices.java", (
     "MetalApiGeneration selected();",

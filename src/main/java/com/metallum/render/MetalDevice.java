@@ -53,6 +53,9 @@ public final class MetalDevice implements GpuDeviceBackend {
     private final MetalCommandEncoder commandEncoder;
     private final DeviceInfo deviceInfo;
     public final MTLCommandQueue commandQueue;
+
+    /** What executes, and the queue it submits on; the selection replaces this in M4. */
+    private final MetalExecutionServices services;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
     private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
@@ -75,7 +78,12 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.metalLayer = metalLayer;
         this.cocoa = cocoa;
         MTLCommandQueue.setDebugLabelsEnabled(this.useLabels());
-        this.commandQueue = this.metalDevice.newCommandQueue();
+        // The queue comes from the execution services rather than from the device, which is the seam the
+        // frame path's isolation needs: a device that makes its own Metal 3 queue is a device that belongs to
+        // one generation, and the package split cannot be written until that is untrue.
+        this.services = MetalExecutionServices.of(MetalApiGeneration.METAL3);
+        this.commandQueue = new MTLCommandQueue(
+                MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
         MTLBuiltinPipelines.init(this.metalDevice);
         // Asked once, here, because the answer is a fact about the device and the system rather than
         // about a frame: whether the image can be loaded at all and whether this GPU can run the
