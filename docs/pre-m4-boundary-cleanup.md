@@ -81,12 +81,50 @@ falls **93964.6 to 65250.7 (-30.6 per cent)** and `storedMiB` **132795.0 to 1311
 differ by **4.05** mean channel - within the same floor, so the elision is not visible on this scene. `Error
 loading class` is 0 in every arm.
 
-### Batch 3 - compute/depth/close neutrality (metallum side is partly done)
+### Batch 3 - compute/depth/close neutrality (metallum side is partly done) - **done** (metallum `0d38f0f`, `b77b1bf`, vitrail `83c19d40`)
 
 `MetalFrameDepthMipmaps`, `MetalFrameComputeCommands`, `MetalComputeCompiler` and `MetalComputePipelineResource`
 exist and the Metal 3 encoder and execution state implement them; the flat compute and depth facades already
-route through them (`96ed4dd`). What is left is the cross-repo half: Vitrail's `MetallumComputeBridge` and
-`MetallumDepthMipmapBridge` calling the flat facades (they already do) and the fixtures that prove it.
+route through them (`96ed4dd`). The cross-repo half was the fixtures that prove it, and there are now three,
+each proved by mutation:
+
+1. **metallum's architecture guard refuses a flat facade reaching a generation package** (`0d38f0f`). Every
+   earlier rule pointed elsewhere - the package rules cover the neutral layer and the generations between
+   themselves, the mixing rule stops one file naming both, and the debt ledger counts the frame path's concrete
+   classes - so `com.metallum.render.MetalFrameBridge` importing `render.metal3.Metal3ComputeBridge` would have
+   passed every check in that file. The crossings that exist are frozen in `GENERATION_REACH`, seven files and
+   nine class names, on the same two-way terms as the other ledger, each line saying which kind it is: the
+   composition root that has to name a provider, the device's capability probe, the Metal 4 skeleton the earlier
+   milestones left, and one that is simply work (`MetalDevice` reaching `MTLStorageTexturePipelines`). Proved by
+   mutation: the import added to the flat `MetalFrameBridge` is reported, and removing it passes.
+2. **metallum's compute/storage contract pins what the three facades route through** (`b77b1bf`): the neutral
+   compiler, command and resource interfaces for compute, `MetalFrameDepthMipmaps` for the depth chain, and the
+   present path closed exactly once. Proved by mutation in both shapes.
+3. **Vitrail's reach contract closes the flat surface** (`83c19d40`). Every backend class name this repository
+   resolves in a string must be one of ten - the nine flat facades plus `com.metallum.api.MetallumApi` - and the
+   list is the ABI, because a class reached by name is a runtime lookup. It also gains the depth-bridge fixture,
+   which is the one whose absence was visible: the answer arrives when the flat bridge is there, an older
+   backend answers "not mine" rather than throwing, and the negative is cached. Proved by mutation: renaming the
+   method the depth adapter looks up fails the fixture, and taking a sampler adapter off the closed list fails
+   the reach contract.
+
+Two limits are worth writing down rather than discovering later. The Vitrail fixture compiles a *synthetic*
+class carrying the signature the adapter looks up, so it proves Vitrail's half and cannot see metallum drift;
+what closes that direction is metallum's own pins plus the reach ledger, and the pairing is a convention between
+the two repositories rather than a check either CI can run, because neither checkout can see the other. And a
+`com/mojang` type named by a Vitrail adapter is not on any list here: the flat surface is closed, the public
+Minecraft API it bridges to is not, and that is a different boundary with a different owner.
+
+### What the cleanup leaves
+
+The shape at the top of this document holds: Vitrail names only the stable flat surface, and it does so by
+closed list; the five capabilities it adds arrive through an adapter resolved from the backend rather than
+injected into a class; the two facts a pass states about its attachments cross as booleans; and the flat
+facades route through `render.shared`, with the generation reach that remains written down as a number that can
+only go down. What is *not* done, and was never part of this cleanup: `Metal4ExecutionProvider` does not exist,
+so a selection of Metal 4 executes nothing and fails fast; the intermittent Metal 4 argument-table probe is
+still open and blocks Metal 4 AUTO alone; and `Metal4Path`/`Metal4PresentGate` remain in the flat package,
+recorded in both ledgers rather than hidden.
 
 ### Verification, per batch
 
