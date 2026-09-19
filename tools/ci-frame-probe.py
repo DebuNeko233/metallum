@@ -38,12 +38,12 @@ def order(text: str, first: str, second: str, why: str) -> None:
 
 
 probe = read(PROBE_PATH)
-encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
+encoder = read("src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java")
 command_buffer = read("src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java")
-render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
+render_pass = read("src/main/java/com/metallum/render/metal3/MetalRenderPass.java")
 device = read("src/main/java/com/metallum/render/MetalDevice.java")
 render_encoder = read("src/main/java/com/metallum/mtl/metal3/MTLRenderCommandEncoder.java")
-pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
+pipeline = read("src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java")
 
 # ---------------------------------------------------------------------------
 # Off unless asked for, and a window can be opened late
@@ -610,7 +610,7 @@ require("pipeline compile counter", pipeline, (
     "MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);",
 ))
 start = pipeline.index("long startNanos = System.nanoTime();")
-created = pipeline.index("device.metalDevice().newRenderPipelineState(pipelineDesc)")
+created = pipeline.index("compilation.device().newRenderPipelineState(pipelineDesc)")
 stopped = pipeline.index("MetalFrameProbe.pipelineCompiled(System.nanoTime() - startNanos);")
 if not start < created < stopped:
     raise SystemExit("pipeline compile counter: the Metal pipeline creation is not wrapped by the two timestamps")

@@ -169,7 +169,7 @@ require("the scaler takes a fence", scaler, (
     "SET_FENCE.send(handle, fence)",
 ))
 require("the encoder hands the frame's fence to the scaler",
-        (ROOT / "src/main/java/com/metallum/render/MetalCommandEncoder.java").read_text(encoding="utf-8"), (
+        (ROOT / "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java").read_text(encoding="utf-8"), (
     "MetalFx.scale(device.metalDeviceHandle(), commandBuffer().handle(), fence.handle(), color,",
 ))
 require("the scaler is given it before it encodes", (ROOT / "src/main/java/com/metallum/render/MetalFx.java").read_text(encoding="utf-8"), (

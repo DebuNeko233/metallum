@@ -6,9 +6,10 @@ import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = ROOT / "src/main/java/com/metallum/render/MetalDevice.java"
-CROSS = ROOT / "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java"
-STRIPPER = ROOT / "src/main/java/com/metallum/render/GlslCommentStripper.java"
-source = DEVICE.read_text(encoding="utf-8")
+COMPILATION = ROOT / "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java"
+CROSS = ROOT / "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java"
+STRIPPER = ROOT / "src/main/java/com/metallum/render/metal3/GlslCommentStripper.java"
+source = COMPILATION.read_text(encoding="utf-8")
 cross_source = CROSS.read_text(encoding="utf-8")
 
 required = (
@@ -43,7 +44,7 @@ if '"spvc_compiler_options_set_bool(MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS)"' not in
 
 harness = textwrap.dedent(
     r'''
-    package com.metallum.render;
+    package com.metallum.render.metal3;
 
     public final class GlslCommentStripperContract {
         public static void main(String[] args) {
@@ -118,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix="metallum-shader-comments-") as tmp:
     out = root / "out"
     subprocess.run(["javac", "-d", str(out), str(STRIPPER), str(contract)], check=True)
     subprocess.run(
-        ["java", "-cp", str(out), "com.metallum.render.GlslCommentStripperContract"],
+        ["java", "-cp", str(out), "com.metallum.render.metal3.GlslCommentStripperContract"],
         check=True,
     )
 

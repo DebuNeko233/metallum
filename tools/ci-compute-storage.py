@@ -25,7 +25,7 @@ def source_tree() -> str:
     )
 
 
-require("Metal compute pipeline", "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+require("Metal compute pipeline", "src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java", (
     "newComputePipelineState(function)",
     "commandEncoder.computeCommandEncoder()",
     "compute.setComputePipelineState(pipeline.pipelineState)",
@@ -52,7 +52,7 @@ require("Metal compute encoder wrapper", "src/main/java/com/metallum/mtl/metal3/
     "waitForFence:",
 ))
 
-require("Generic compute/render/blit fence lifecycle", "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+require("Generic compute/render/blit fence lifecycle", "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "MTLBlitCommandEncoder blitCommandEncoder() {",
     "MTLComputeCommandEncoder computeCommandEncoder() {",
     "endEncoder();",
@@ -88,7 +88,7 @@ require("Untracked storage buffer hazards", "src/main/java/com/metallum/render/s
     "void zeroContents()",
 ))
 
-require("Render storage resource binding", "src/main/java/com/metallum/render/MetalRenderPass.java", (
+require("Render storage resource binding", "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_IMAGE",
     "binding.kind() == MetalResourceBinding.ResourceKind.STORAGE_BUFFER",
     "RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_WRITE",

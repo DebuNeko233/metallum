@@ -2,9 +2,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-render = (ROOT / "src/main/java/com/metallum/render/MetalRenderPass.java").read_text(encoding="utf-8")
-command = (ROOT / "src/main/java/com/metallum/render/MetalCommandEncoder.java").read_text(encoding="utf-8")
-compute = (ROOT / "src/main/java/com/metallum/render/MetalComputeBridge.java").read_text(encoding="utf-8")
+render = (ROOT / "src/main/java/com/metallum/render/metal3/MetalRenderPass.java").read_text(encoding="utf-8")
+command = (ROOT / "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java").read_text(encoding="utf-8")
+compute = (ROOT / "src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java").read_text(encoding="utf-8")
 
 if render.count("noteGraphicsStorageImageWrite(textureView);") != 2:
     raise SystemExit("direct and argument-buffer graphics storage-image paths must both invalidate ownership state")
