@@ -212,6 +212,71 @@ def undelivered_delegations(root: Path) -> list[str]:
     return missing
 
 
+# ---------------------------------------------------------------------------
+# The flat surface's reach into a generation package, frozen the same way.
+#
+# The rule above the ledger stops one file naming *both* generations, and the debt ledger counts the names of
+# the frame path's concrete classes. Neither says anything about the direction this phase is built around:
+# `com.metallum.render.*` and `com.metallum.mtl.*` are the surface a pack-facing engine is allowed to know, so
+# a class there that reaches into `render.metal3`, `render.metal4`, `mtl.metal3` or `mtl.metal4` has put a
+# generation back on that surface - the thing the split exists to prevent, and the one shape no rule here could
+# see. A flat bridge that routes through `render.shared.MetalFrameComputeCommands` is the design; one that
+# imports `render.metal3.Metal3ComputeBridge` is the fault, and it would have passed every other check.
+#
+# Writing the crossings down is what makes the goal measurable: the count below is the work left, it can only
+# go down, and the checker requires the ledger and the tree to agree in both directions. Each line says which
+# kind of crossing it is - the composition root that has to name a provider, the device's capability probe,
+# the Metal 4 skeleton the earlier milestones left, and the one that is simply work.
+#
+# A file in `WRAPPER_DELEGATIONS` is not listed here even when it names a generation package: that ledger
+# already counts it, in the direction the design allows, and two ledgers would count one coupling twice.
+GENERATION_REACH: dict[str, tuple[str, ...]] = {
+    # The composition root. Choosing a generation means naming one; this is the seam the choice is made at,
+    # and it is the only place a provider is constructed.
+    "com/metallum/render/execution/MetalExecutionServices.java": (
+        "com.metallum.render.metal3.Metal3ExecutionProvider",
+    ),
+    # The device's own capability question, which is what the selector asks before a generation is chosen.
+    "com/metallum/render/execution/MetalDeviceCapabilities.java": ("com.metallum.mtl.metal4.MTL4Probe",),
+    # The Metal 4 skeleton the earlier milestones left in place: the capability advertisement, its probe at
+    # device creation, and the present path behind its developer switch.
+    "com/metallum/render/Metal4.java": ("com.metallum.mtl.metal4.MTL4Probe",),
+    "com/metallum/render/MetalFx.java": ("com.metallum.mtl.metal4.MTL4Probe",),
+    "com/metallum/render/Metal4Path.java": (
+        "com.metallum.mtl.metal4.MTL4ArgumentTable",
+        "com.metallum.mtl.metal4.MTL4CommitOptions",
+        "com.metallum.mtl.metal4.MTL4Probe",
+    ),
+    # The bindings library asking the same capability question of the same device.
+    "com/metallum/mtl/MTLBuffer.java": ("com.metallum.mtl.metal4.MTL4Probe",),
+    # Work: a flat facade reaching a Metal 3 class for a pipeline the neutral layer should own, in the shape
+    # `MTLBuiltinPipelines` already has. The line is here so the crossing is a decision with a number rather
+    # than a habit nobody has looked at.
+    "com/metallum/render/MetalDevice.java": ("com.metallum.mtl.metal3.MTLStorageTexturePipelines",),
+}
+
+_GENERATION_NAME = re.compile(
+    r"\b(com\.metallum\.(?:render|mtl)\.(?:metal3|metal4)\.[A-Za-z0-9_]+)"
+)
+
+
+def generation_reach(root: Path) -> dict[str, tuple[str, ...]]:
+    """Which files outside the generation packages name a class inside one, by import or by use."""
+    reach: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*.java")):
+        source = path.read_text(encoding="utf-8")
+        package = package_of(source)
+        if any(package == gen or package.startswith(gen + ".") for gen in _GENERATION_PACKAGES):
+            continue
+        relative = str(path.relative_to(root))
+        if relative in WRAPPER_DELEGATIONS:
+            continue
+        named = tuple(sorted(set(_GENERATION_NAME.findall(code_only(source)))))
+        if named:
+            reach[relative] = named
+    return reach
+
+
 def frame_path_debt(root: Path) -> dict[str, tuple[str, ...]]:
     """Which files outside the generation packages still name the frame path's concrete generations."""
     debt: dict[str, tuple[str, ...]] = {}
@@ -332,12 +397,48 @@ def self_test() -> None:
         finally:
             FRAME_PATH_DEBT = kept
 
+    # And the flat surface's reach into a generation package, in both directions: a facade that starts
+    # reaching one is reported, and a ledger line for a reach that is gone is reported too.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        facade = root / "com/metallum/render/MetalFrameBridge.java"
+        facade.parent.mkdir(parents=True, exist_ok=True)
+        facade.write_text(
+            "package com.metallum.render;\nimport com.metallum.render.metal3.Metal3ComputeBridge;\n"
+            "public final class MetalFrameBridge { Metal3ComputeBridge bridge; }\n",
+            encoding="utf-8",
+        )
+        if "com/metallum/render/MetalFrameBridge.java" not in generation_reach(root):
+            failures.append("a flat facade reaching a generation package was not recorded as reach")
+
+        settled = root / "com/metallum/render/MetalSettledReach.java"
+        settled.write_text(
+            "package com.metallum.render;\npublic final class MetalSettledReach { int free; }\n",
+            encoding="utf-8",
+        )
+        global GENERATION_REACH
+        kept_reach = GENERATION_REACH
+        GENERATION_REACH = {
+            "com/metallum/render/MetalSettledReach.java": ("com.metallum.render.metal3.Metal3ComputeBridge",)
+        }
+        try:
+            reach = generation_reach(root)
+            reach_found = [
+                path
+                for path in sorted(set(reach) | set(GENERATION_REACH))
+                if reach.get(path) != GENERATION_REACH.get(path)
+            ]
+            if "com/metallum/render/MetalSettledReach.java" not in reach_found:
+                failures.append("a ledger line for a generation reach that is gone was not reported")
+        finally:
+            GENERATION_REACH = kept_reach
+
     if failures:
         raise SystemExit("architecture guard self-test failed: " + "; ".join(failures))
 
     print(
         f"architecture guard self-test: PASS ({len(cases)} rules fire, a compliant file passes, "
-        "the debt ledger fires both ways)"
+        "both ledgers fire in both directions)"
     )
 
 
@@ -379,6 +480,38 @@ def main() -> int:
             "the same file is in the debt ledger and the delegation ledger, so one of the two numbers is "
             "counting it twice: " + ", ".join(sorted(overlap))
         )
+
+    # The flat surface's reach into a generation package, on the same both-ways terms. This is the number the
+    # phase can actually move: the rule above stops a file mixing two generations, and this one says how much
+    # of one generation is still named from the surface a pack-facing engine is allowed to know.
+    reach = generation_reach(SOURCE_ROOT)
+    for path in sorted(set(reach) | set(GENERATION_REACH)):
+        actual = reach.get(path)
+        recorded = GENERATION_REACH.get(path)
+        if actual == recorded:
+            continue
+        if recorded is None:
+            found.append(
+                f"{path}: names a class inside a generation package ({', '.join(actual)}) from outside one, so "
+                "the flat surface has reached past the neutral layer; route it through render.shared or record "
+                "the crossing in GENERATION_REACH with the reason"
+            )
+        elif actual is None:
+            found.append(
+                f"{path}: the generation-reach ledger still lists {', '.join(recorded)} and the file names them "
+                "nowhere; remove the line, the ledger records work that is left"
+            )
+        else:
+            found.append(
+                f"{path}: the generation-reach ledger records {', '.join(recorded)} and the file names "
+                f"{', '.join(actual)}"
+            )
+    counted_twice = set(GENERATION_REACH) & (set(FRAME_PATH_DEBT) | set(WRAPPER_DELEGATIONS))
+    if counted_twice:
+        found.append(
+            "the same file is in the generation-reach ledger and in another one, so a coupling is counted "
+            "twice: " + ", ".join(sorted(counted_twice))
+        )
     couplings = sum(len(names) for names in FRAME_PATH_DEBT.values())
     stray_delegations = undelivered_delegations(SOURCE_ROOT)
     for relative in stray_delegations:
@@ -397,7 +530,9 @@ def main() -> int:
     print(
         f"architecture guard: PASS ({scanned} sources, {len(LAYERS)} package rules, one mixing rule; "
         f"the frame path's isolation still owes {couplings} couplings in {len(FRAME_PATH_DEBT)} files, and "
-        f"{len(WRAPPER_DELEGATIONS)} the other way)"
+        f"{len(WRAPPER_DELEGATIONS)} the other way; the flat surface still reaches "
+        f"{sum(len(names) for names in GENERATION_REACH.values())} generation class(es) in "
+        f"{len(GENERATION_REACH)} file(s))"
     )
     return 0
 
