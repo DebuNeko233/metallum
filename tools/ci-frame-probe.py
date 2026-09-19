@@ -225,6 +225,7 @@ require("frame-probe pipeline census", probe, (
     "if (!pipelineIdentities.add(pipeline)) {",
     "if (pipelineKeys.add(key)) {",
     "Collections.newSetFromMap(new IdentityHashMap<>())",
+    "censusClosed = true;",
 ))
 # The census counts belong with the counters and ahead of the pacing values: a number inserted between the
 # percentiles would print every distribution value under another name, and one inserted before compileMs
@@ -405,7 +406,7 @@ for index, line in enumerate(lines):
     census_unarmed = "pipelineRequested" in declaration
     if first != "if (!armed()) {" and not (
             (counts_unarmed and first == "metal4FeedbacksTotal.incrementAndGet();")
-            or (census_unarmed and first == "if (!pipelineIdentities.add(pipeline)) {")):
+            or (census_unarmed and first == "if (censusClosed) {")):
         raise SystemExit(
             f"frame probe: {declaration} does not open with the armed() guard, so an unarmed call "
             "is no longer a single field read"

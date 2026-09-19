@@ -212,6 +212,13 @@ public final class MetalFrameProbe {
     private static final Set<MetalPipelineKey> pipelineKeys = new java.util.HashSet<>();
     private static int identityCount;
     private static int keyCount;
+    /**
+     * Set when the census is first reported. Pipelines are built during startup and the report is the
+     * measurement, so everything the number is about has happened by then; closing the census there is what
+     * keeps it a diagnostic instead of a session-long retention of every pipeline object the game built -
+     * which would defeat the eviction the caches do on purpose.
+     */
+    private static boolean censusClosed;
 
     private MetalFrameProbe() {
     }
@@ -544,12 +551,19 @@ public final class MetalFrameProbe {
      * number, moving the cache onto the key buys nothing and costs the eviction contract; if the key
      * count is lower, the difference is the pipeline compilations the move would save.
      * <p>
+     * The census closes at its first report: everything it counts is built during startup and settling, and
+     * a set that kept growing afterwards would hold pipeline objects the caches are entitled to release.
+     * <p>
      * The identity test comes first and the key is only hashed when the identity is new, because this is
      * reached wherever a pipeline is asked for and the key's hash reads seven strings. That is still the
      * whole question: a second identity carrying a key already seen is exactly the deduplication the move
      * would buy, and it is counted when that second identity appears.
      */
     public static void pipelineRequested(final RenderPipeline pipeline, final MetalPipelineKey key) {
+        if (censusClosed) {
+            return;
+        }
+
         if (!pipelineIdentities.add(pipeline)) {
             return;
         }
@@ -639,6 +653,7 @@ public final class MetalFrameProbe {
                 percentile(gpuTimes, gpuSamples, 0.99),
                 percentile(gpuTimes, gpuSamples, 1.00)
         );
+        censusClosed = true;
         reset();
 
         if (frames >= BUDGET) {
