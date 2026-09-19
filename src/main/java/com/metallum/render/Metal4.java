@@ -76,6 +76,18 @@ public final class Metal4 {
         return true;
     }
 
+    /**
+     * The cached answer, for a caller that has no device to hand.
+     * <p>
+     * False before the question has been asked, which is the failing-closed direction: a capability a
+     * caller may act on is never reported before the device has said so.
+     *
+     * @return whether the device creation that ran answered yes
+     */
+    public static boolean isAvailable() {
+        return Boolean.TRUE.equals(available);
+    }
+
     /** Why the last answer came out the way it did, for a log line or a report. */
     public static String reason() {
         return reason;

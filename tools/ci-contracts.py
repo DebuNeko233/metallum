@@ -666,4 +666,13 @@ require("it is asked once, at device creation", "src/main/java/com/metallum/rend
     "Metal4.available(this.metalDevice);",
 ))
 
+require("Metal 4's answer is advertised, not only logged", "src/main/java/com/metallum/api/MetallumApi.java", (
+    "public static boolean supportsMetal4CoreApi() {",
+    "return Metal4.isAvailable();",
+))
+require("a capability nobody has asked about is false", "src/main/java/com/metallum/render/Metal4.java", (
+    "public static boolean isAvailable() {",
+    "return Boolean.TRUE.equals(available);",
+))
+
 print("Metal and engine contracts: PASS")

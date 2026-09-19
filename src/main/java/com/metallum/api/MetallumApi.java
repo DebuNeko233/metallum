@@ -1,6 +1,7 @@
 package com.metallum.api;
 
 import com.metallum.config.GraphicsApiPreferenceStore;
+import com.metallum.render.Metal4;
 
 /**
  * Narrow compatibility surface for optional integrations such as shader mods.
@@ -24,6 +25,22 @@ public final class MetallumApi {
      */
     public static boolean isMetalPreferred() {
         return GraphicsApiPreferenceStore.isMetalPreferred();
+    }
+
+    /**
+     * Returns whether the device this session came up on has the Metal 4 core API.
+     * <p>
+     * For an integration that may one day take the Metal 4 path through a capability of its own, the way
+     * it takes background precompilation today. The answer is the device's own - {@code supportsFamily:}
+     * with {@code MTLGPUFamilyMetal4} and the Metal 4 entry point, both asked once when the device was
+     * created - and it is remembered, the negative answer included, because a session cannot change its
+     * GPU. False before a device has been created, and false on a device that does not have it.
+     * <p>
+     * Nothing in this engine renders through Metal 4 yet: this reports what the hardware offers and
+     * promises nothing about what the backend does with it.
+     */
+    public static boolean supportsMetal4CoreApi() {
+        return Metal4.isAvailable();
     }
 
     /**
