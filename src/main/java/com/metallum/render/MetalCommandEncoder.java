@@ -329,6 +329,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
             int slot = (int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT);
             submitSemaphores[slot].drainPermits();
+
+            // Before the commit, because an encoding made after one is ignored: the new path's copy waits on
+            // this signal, so a signal that never runs is a copy that never completes and a slot of its ring
+            // that never comes back - measured as "the GPU did not signal slot 2 within 1000 ms".
+            Metal4Path.frameSignal(commandBuffer.handle());
             commandBuffer.commitWithCompletionBlock(submitSignalBlocks[slot]);
 
             // The frame boundary the probe counts at, and only inside this block: a commit is what
@@ -341,7 +346,6 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // commits nothing, and carrying a second submission there would double what this path costs for
             // a frame it is not shaped like. What it touches is its own 64x64 target, so no order between
             // the two queues is needed.
-            Metal4Path.frameSignal(commandBuffer.handle());
             Metal4Path.frame();
 
             lastCommittedSubmitIndex = currentSubmitIndex;

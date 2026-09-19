@@ -358,6 +358,9 @@ public final class Metal4Path {
         BEGIN.send(commandBuffer, allocators[slot]);
         MemorySegment compute = COMPUTE_ENCODER.sendPtr(commandBuffer);
         if (ObjC.isNil(compute)) {
+            // Ended rather than abandoned: a command buffer left open cannot be begun again, and this path
+            // has to be able to try again next frame.
+            END.send(commandBuffer);
             return false;
         }
         COPY_TEXTURE.send(compute, sourceTexture, drawableTexture);
