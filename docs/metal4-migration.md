@@ -330,6 +330,48 @@ So the shape of the finished move is now known end to end, and it is not a `git 
 
 Reverted under the rule again; `./gradlew build` clean; ledger unchanged at 15 couplings in 6 files.
 
+### The Metal 3 compilation chain, audited as one owner
+
+The chain is `shader source → IntermediaryShaderModule → MTLFunction → MetalCompiledRenderPipeline → retirement`,
+and it is one lifetime, not four: a module is kept because a function was made from it, a function because a
+pipeline holds it, and a pipeline because the frame may still reference it. So `Metal3CompilationContext` is the
+owner and stays one object; the migration into it is done one cache at a time only so that every step is a build
+and a contract run away from a working tree.
+
+**Moved so far:** the depth-stencil cache and its factory (`848dc5c`) - first, because it is the only one of the
+five with a self-contained key and no dependency on the shader chain.
+
+**Remaining, with what each needs:** `shaderCache` + `getOrCompileShader` (its only caller is
+`MetalCrossShaderCompiler`; the key already carries the MSL profile, and that key must not change in this
+migration); `functionCache` + `getOrCompileFunction` (three callers, all Metal 3 frame-path classes);
+`compiledPipelines` + `deferredPipelineReleases` + `compiledFor` and the profile guard + `getOrCompilePipeline`,
+`precompilePipeline`, `evictCachedPipelines`, `clearPipelineCache`. The device keeps thin **migration-only**
+delegates for the callers until the frame classes move; those delegates are to be deleted before M3 ends, and no
+new generation-specific getter is to be added to the device in the meantime - the context is injected where the
+Metal 3 implementation is constructed, not fetched from the device.
+
+**`deferredPipelineReleases` is not a cache.** It exists so native objects outlive their map entry while
+already-recorded GPU work may still reference them, and it is drained where the device waits for submitted work
+before releasing. That is **GPU retirement lifetime**, not cache lifetime, and the two must not be conflated to
+save a class: the compilation context may hold it temporarily to keep behaviour identical, but its final home is
+a Metal 3 execution-lifetime/retirement service, and the audit note is here so that a future reader does not read
+"cache" and shrink it away.
+
+**`MetalCrossShaderCompiler` has two responsibilities and only one of them is Metal 3's.** It translates -
+GLSL through `GlslCompiler` to SPIR-V and on to MSL through SPIRV-Cross, with the MSL profile chosen from
+`MetalShaderLanguageProfile` - and it *also* builds the native side: it asks the device for shader modules and
+functions and constructs a `MetalCompiledRenderPipeline`. The translation, the profile choice and the
+resource/entry-point metadata are what a Metal 4 compiler would need again, so they stay shared and must not be
+dragged into `render.metal3` by the package move; the native construction and its caches belong to the context.
+The intended shape is `MetalCrossShaderTranslator` (shared) → MSL source/module description →
+`Metal3CompilationContext` → `MTLLibrary`/`MTLFunction`/pipeline.
+
+**A failed step, recorded rather than hidden.** The first attempt at relocating the four remaining caches and
+their factories mechanically - by extracting each method body and rewriting `this.` to the context or to the
+device - stopped on a declaration whose annotations (`public synchronized @NonNull`) the extractor did not
+match, before it wrote anything. The tree was left untouched and verified clean; the next attempt should move
+one cache at a time by hand with the compiler as the oracle, which is how the depth-stencil cache was done.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
