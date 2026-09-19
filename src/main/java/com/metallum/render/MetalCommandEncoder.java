@@ -321,6 +321,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         if (toClose != null) {
+            // The submit this slot held three frames ago, whose semaphore the wait above has already
+            // seen signalled, so the driver's own answer for how long the GPU ran it is available:
+            // Apple says both times "remain 0.0 until the GPU finishes running the command buffer".
+            // Asked behind the guard so that an unarmed session pays the boolean and not two messages.
+            if (MetalFrameProbe.armed()) {
+                MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());
+            }
             toClose.buffer.close();
         }
 

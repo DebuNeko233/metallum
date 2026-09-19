@@ -94,6 +94,16 @@ public final class MetalFrameProbe {
      * between the two.
      */
     private static long windowStartedAt;
+
+    /**
+     * What the driver said the GPU spent on the frames of this window, summed, and how many frames it
+     * answered for. The window's wall-clock says how fast frames arrive; this says how much of that the
+     * GPU was running, and the difference between the two is what the CPU and the presentation cost.
+     * It is also the yardstick the pack side's own per-pass report needs: that report is filled from the
+     * host clock, so this is the only GPU time in the session.
+     */
+    private static int gpuFrames;
+    private static double gpuMillis;
     private static int encoders;
     private static int passChanged;
     private static int submitEnds;
@@ -227,6 +237,26 @@ public final class MetalFrameProbe {
     }
 
     /**
+     * One command buffer finished, and the driver's own answer for how long the GPU ran it. Called
+     * once a frame, a few frames behind the frame it describes, because Apple's two times "remain 0.0
+     * until the GPU finishes running the command buffer" - so this is a reading of a completed frame
+     * rather than of the frame being encoded, which is the whole difference between this and the
+     * pack side's per-pass report.
+     */
+    public static void gpuFrame(final double milliseconds) {
+        if (!armed()) {
+            return;
+        }
+
+        if (milliseconds <= 0.0) {
+            return;
+        }
+
+        gpuFrames++;
+        gpuMillis += milliseconds;
+    }
+
+    /**
      * The depth attachment of a render pass, counted apart from the colour ones as well as inside the
      * totals.
      * <p>
@@ -336,13 +366,15 @@ public final class MetalFrameProbe {
         // Read before reset(), which clears the window's first frame along with its counts.
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
-                "frame-probe {}/{} windowFrames={} windowMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
+                "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
                 frames,
                 BUDGET,
                 windowFrames,
                 millis(windowNanos),
+                gpuFrames,
+                String.format(Locale.ROOT, "%.2f", gpuMillis),
                 encoders,
                 passChanged,
                 submitEnds,
@@ -373,6 +405,8 @@ public final class MetalFrameProbe {
     private static void reset() {
         windowFrames = 0;
         windowStartedAt = 0L;
+        gpuFrames = 0;
+        gpuMillis = 0.0;
         encoders = 0;
         passChanged = 0;
         submitEnds = 0;

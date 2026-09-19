@@ -41,6 +41,7 @@ probe = read(PROBE_PATH)
 encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
 command_buffer = read("src/main/java/com/metallum/mtl/MTLCommandBuffer.java")
 render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
+device = read("src/main/java/com/metallum/render/MetalDevice.java")
 render_encoder = read("src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.java")
 pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
 
@@ -228,6 +229,61 @@ if probe.count("loadedBytes += bytes;") != 2 or probe.count("storedBytes += byte
     )
 
 # ---------------------------------------------------------------------------
+# The one reading of GPU time in the session
+#
+# Apple documents the two times as "the host time, in seconds, when the GPU starts command buffer
+# execution" and the same for its end, and says both "remain 0.0 until the GPU finishes running the
+# command buffer" and are to be read after the wait or inside a completion handler. So they are read
+# here after the submit they belong to has been waited on and before its buffer is released, which is
+# what makes the number an answer about a finished frame rather than a guess about a running one.
+# ---------------------------------------------------------------------------
+require("gpu frame time", command_buffer, (
+    'Msg.of("GPUStartTime", JAVA_DOUBLE)',
+    'Msg.of("GPUEndTime", JAVA_DOUBLE)',
+    "public double gpuMillis() {",
+    "return end > start ? (end - start) * 1000.0 : 0.0;",
+))
+require("gpu frame time is taken from the completed submit", encoder, (
+    "MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());",
+))
+order(
+    encoder,
+    "if (!awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L))",
+    "MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());",
+    "the GPU time is read before the submit it belongs to has been waited on, so the driver has not reported it yet",
+)
+order(
+    encoder,
+    "MetalFrameProbe.gpuFrame(toClose.buffer.gpuMillis());",
+    "toClose.buffer.close();",
+    "the GPU time is read after the command buffer is released",
+)
+require("frame-probe gpu window", probe, (
+    "gpuFrames={} gpuMs={}",
+    "public static void gpuFrame(final double milliseconds) {",
+    "gpuFrames++;",
+    "gpuMillis += milliseconds;",
+    "gpuFrames = 0;",
+    "gpuMillis = 0.0;",
+))
+
+# ---------------------------------------------------------------------------
+# The per-pass report is the host clock, and this says so out loud
+#
+# The pack side reads its query pool as GPU ticks. The API that would make that true is a counter
+# sample buffer - `sampleCounters(sampleBuffer:sampleIndex:barrier:)`, where "A barrier ensures that the
+# commands you encode before this one complete before the GPU samples the hardware counters" - and
+# neither encoder implements one: both fill the pool from `device.getTimestampNow()` at encode time,
+# and that is `System.nanoTime()`. So `-Dvitrail.passTimings` prints what encoding the passes cost the
+# CPU and nothing about the GPU, and this assertion exists so that a future change cannot quietly
+# change what the table means: implementing counter sample buffers has to fail this line on purpose.
+# ---------------------------------------------------------------------------
+require("the pass-timing pool is the host clock", encoder + render_pass + device, (
+    "metalPool.setValue(index, device.getTimestampNow());",
+    "return System.nanoTime();",
+))
+
+# ---------------------------------------------------------------------------
 # The unarmed path is one field read
 #
 # Every public entry point opens with the armed() guard, so an unarmed launch pays a boolean field
@@ -258,10 +314,10 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 11:
+if len(guarded) != 12:
     raise SystemExit(
-        "frame probe: expected 11 guarded entry points (encoder, frame, colour attachment, depth "
-        f"attachment, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
+        "frame probe: expected 12 guarded entry points (encoder, frame, gpu frame, colour attachment, "
+        f"depth attachment, six binding kinds and pipeline creation), found {len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
     raise SystemExit(

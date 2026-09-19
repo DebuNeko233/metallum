@@ -26,6 +26,8 @@ from pathlib import Path
 COUNTERS = (
     "windowFrames",
     "windowMs",
+    "gpuFrames",
+    "gpuMs",
     "encoders",
     "passChanged",
     "submit",
@@ -191,6 +193,11 @@ def main() -> int:
     # The rate is the two numbers the probe printed divided by each other and not a second opinion:
     # bytes are the cost a change moves, and this is what the frame paid for them. A change that
     # lowers the bytes and leaves this where it was is a change to a counter and not to a frame.
+    #
+    # The GPU's own time is printed beside it and divided by the frames the driver answered for rather
+    # than by the window, because the two are read at different moments: the window is counted when a
+    # frame is committed and the GPU time arrives when the driver says a frame finished, three frames
+    # later. The difference between the two rates is what the CPU and the presentation cost.
     print()
     for run in runs:
         counted = measured[run.name]
@@ -206,7 +213,12 @@ def main() -> int:
         if len(runs) > 1 and run is not first and baseline_ms and baseline_frames:
             baseline = baseline_ms / baseline_frames
             change = f", {100 * (rate - baseline) / baseline:+.1f}% against {first.name}"
-        print(f"{run.name}: {rate:.2f} ms a frame, {1000 / rate:.1f} frames a second{change}")
+        gpu = ""
+        gpu_frames = counted.get("gpuFrames")
+        gpu_millis = counted.get("gpuMs")
+        if gpu_frames and gpu_millis:
+            gpu = f", {gpu_millis / gpu_frames:.2f} ms of GPU time a frame over {gpu_frames:.0f} answered frames"
+        print(f"{run.name}: {rate:.2f} ms a frame, {1000 / rate:.1f} frames a second{change}{gpu}")
 
     print()
     for run in runs:

@@ -13,6 +13,7 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 @Environment(EnvType.CLIENT)
@@ -28,6 +29,8 @@ public final class MTLCommandBuffer {
     private static final Msg COMMIT = Msg.ofVoid("commit");
     private static final Msg ADD_COMPLETED_HANDLER = Msg.ofVoid("addCompletedHandler:", ADDRESS);
     private static final Msg STATUS = Msg.of("status", JAVA_LONG);
+    private static final Msg GPU_START_TIME = Msg.of("GPUStartTime", JAVA_DOUBLE);
+    private static final Msg GPU_END_TIME = Msg.of("GPUEndTime", JAVA_DOUBLE);
     private static final Msg WAIT_UNTIL_COMPLETED = Msg.ofVoid("waitUntilCompleted", true);
     private static final Msg PUSH_DEBUG_GROUP = Msg.ofVoid("pushDebugGroup:", ADDRESS);
     private static final Msg POP_DEBUG_GROUP = Msg.ofVoid("popDebugGroup");
@@ -291,6 +294,26 @@ public final class MTLCommandBuffer {
 
     public void popDebugGroup() {
         POP_DEBUG_GROUP.send(handle());
+    }
+
+    /**
+     * How long the GPU spent running this command buffer, in milliseconds, or nought when the driver
+     * has not reported it.
+     * <p>
+     * Apple documents the two times as "the host time, in seconds, when the GPU starts command buffer
+     * execution" and the same for its end, both "relative to system mach time", and says plainly that
+     * they "remain 0.0 until the GPU finishes running the command buffer" and that they are to be read
+     * after {@code waitUntilCompleted} returns or inside a completion handler. That is the only reading
+     * of GPU time this backend has: the query pool the pack side writes timestamps into is filled from
+     * the host clock at encode time, which measures encoding and not execution.
+     */
+    public double gpuMillis() {
+        if (ObjC.isNil(handle)) {
+            return 0.0;
+        }
+        double start = GPU_START_TIME.sendDouble(handle);
+        double end = GPU_END_TIME.sendDouble(handle);
+        return end > start ? (end - start) * 1000.0 : 0.0;
     }
 
     public void close() {
