@@ -89,6 +89,21 @@ format string makes the contracts fail with `the seam prints the generation the 
 missing "Metal execution seam: ..."`, and restoring it passes - a log line nobody guards is a log line
 somebody deletes, and this one is the only observation this seam has.
 
+### The readiness seam is declared and never asked
+
+`MetalExecutionServices.framePathReady()` exists, is documented, and **nothing calls it**: a search for it and
+for `isReferenceShell()` across the sources finds exactly one reader, the log line added above. So the question
+"can this generation encode a frame yet" is currently unasked, and its answer is structurally `false` - the
+default implementation is `!isReferenceShell() && selected() == executing()`, and `executing()` is a constant
+`METAL3` in the only implementation there is, while AUTO's `selected()` is `metal4`.
+
+That is the shape M4 turns on, and it is the same shape as the bug just fixed next door: `selected()` was a
+constant until it was made the selection, and `executing()` is a constant today. **The first change M4 needs is
+not a Metal 4 command buffer - it is making `executing()` a property of the session rather than a literal**, so
+that `framePathReady()` can become true, and so that a forced Metal 3 launch and an AUTO launch that chose
+Metal 4 stop being indistinguishable at the seam that decides which frame path runs. A readiness seam nothing
+asks is a readiness seam that will be answered wrongly the first time something does.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
