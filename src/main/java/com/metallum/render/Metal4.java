@@ -100,6 +100,20 @@ public final class Metal4 {
         // and the pixel it produced is read back, so this is whether the pass *used* the binding rather
         // than whether the calls were accepted.
         boolean binding = MTL4Probe.canBindAndDraw(device);
+
+        // The cold/warm question needs the probe called more than once in one process, which is the one thing
+        // the client never does: the answer is cached here and every capability record reads the cache. With
+        // `-Dmetallum.probeRepeat=N` the probe is run N more times and each answer is written out with its
+        // stage, so "the first call in a process" and "the calls after it" become comparable without a
+        // 600-frame arm - and the intermittent false negative this is chasing (two observations in fourteen
+        // arms, both on a session's first arm) either shows up in the first position or it does not.
+        String repeat = System.getProperty("metallum.probeRepeat", "0");
+        int repeats = Integer.parseInt(repeat);
+        for (int attempt = 1; attempt <= repeats; attempt++) {
+            boolean answer = MTL4Probe.canBindAndDraw(device);
+            Metallum.LOGGER.info("Metal 4 probe repeat {}/{}: answer={} stage={} reason={}",
+                    attempt, repeats, answer, MTL4Probe.lastFailureStage(), MTL4Probe.lastFailure());
+        }
         makeAndSubmit = true;
         bindAndDraw = binding;
 
