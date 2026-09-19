@@ -206,6 +206,14 @@ if "would delete it before copying it" not in launcher:
 
 # The picture a comparison reads is a screenshot, so the Metal HUD's changing numbers and graph are most
 # of what would differ between two arms of a scene that was drawn twice. Off for a measured run.
+# The same trap as the world, for the pack: `cp` refuses a file that is already the destination, and under
+# `set -e` that ends the run before it launches. Measured on `--pack run/shaderpacks/photon_v1.3b.zip`.
+if "The shader pack asked for is already inside the instance" not in launcher:
+    raise SystemExit(
+        "the harness copies the pack into the instance without refusing one that is already there, so a run "
+        "with a pack staged in place ends at the copy"
+    )
+
 if "-PvitrailHud=0" not in launcher:
     raise SystemExit(
         "the harness leaves the Metal HUD in the frame it photographs, so a picture comparison reads the "

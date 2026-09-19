@@ -156,6 +156,16 @@ if [[ "$(cd "$world_path" && pwd -P)" == "$saves_dir/"* ]]; then
 	exit 2
 fi
 
+# The pack is copied in under its own name the same way, and `cp` refuses a file that is already the
+# destination rather than silently doing nothing - which, under `set -e`, ends the run before it starts.
+# Measured on a pack staged where it was being copied to. Refused here with the reason, because the fix is
+# the same one: the pack to measure is the staged copy outside the instance.
+if [[ "$no_pack" == false && "$(cd "$(dirname "$pack_path")" && pwd -P)/$(basename "$pack_path")" == "$pack_dir/"* ]]; then
+	echo "The shader pack asked for is already inside the instance: $pack_path" >&2
+	echo "Point --pack at a copy outside $pack_dir; the harness stages it into the instance itself." >&2
+	exit 2
+fi
+
 echo "Preparing the dev instance at $game_dir"
 mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" \
 	"$game_dir/logs" "$out_dir"
