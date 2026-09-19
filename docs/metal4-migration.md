@@ -283,6 +283,28 @@ looked like an import problem (82) and the second shows it is a collaborator-sur
 encoder's device questions and the artifact's nested surface are contracts, no ordering of `git mv` will make
 this move compile without widening visibility, and widening is the thing that produced the original 100/118/144.
 
+### The third attempt: the compiled artifact is a collaborator, not a value
+
+With the device-fact contract and the artifact's surface in place, the move was retried: **96 errors, down from
+118 - and the remaining ones are the answer.** They are not imports and not the class's visibility; they are its
+**accessors**, read by the Metal 3 render pass:
+
+    stageMask() 18 · descriptorSet() 4 · bufferIndex() 4 · argumentBuffers() 4 · vertexBufferCount() 2
+    firstAvailableVertexBufferSlot() 2 · executionServices() 4 (the device's own)
+
+Thirteen-odd package-private accessors of `MetalCompiledRenderPipeline` and its layout record are called from the
+frame path. **That is a collaborator, not a value being carried**, and it falsifies the decision recorded above:
+keeping the record in `render` and opening its surface would mean opening a dozen members one at a time, which is
+the widening this milestone forbids and the shape of the original 100/118/144 failures.
+
+So the cluster is at least **`MetalCommandEncoder`, `MetalRenderPass`, `MetalCompiledRenderPipeline`** - and the
+entities that stay behind (the device's pipeline cache and its profile guard, which reads `pipelineKey()` on that
+record) must then talk to it through a contract, exactly as the encoder now talks to the device through
+`MetalDeviceFacts`. The move is therefore: one contract for the artifact (key/profile, what a cache needs), one
+for the device facts (done), and then the three files in one commit - not another ordering of `git mv`.
+
+Reverted again under the rule. `./gradlew build` clean, ledger unchanged at 15 couplings in 6 files.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
