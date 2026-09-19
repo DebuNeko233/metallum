@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.GpuSurface;
 import com.mojang.blaze3d.systems.GpuSurfaceBackend;
 import com.mojang.blaze3d.systems.SurfaceException;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.metallum.render.shared.MetalFramePresentation;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.NonNull;
@@ -20,7 +21,7 @@ final class MetalSurface implements GpuSurfaceBackend {
     private final MetalDevice device;
     private final CAMetalLayer metalLayer;
     private GpuSurface.Configuration configuration;
-    private MetalCommandEncoder pendingPresentEncoder;
+    private MetalFramePresentation pendingPresentEncoder;
 
     MetalSurface(final MetalDevice device, final CAMetalLayer metalLayer) {
         this.device = device;
@@ -53,12 +54,16 @@ final class MetalSurface implements GpuSurfaceBackend {
 
     @Override
     public void blitFromTexture(final @NonNull CommandEncoderBackend commandEncoder, final @NonNull GpuTextureView textureView) {
-        if (!(commandEncoder instanceof MetalCommandEncoder metalEncoder)) {
-            throw new IllegalArgumentException("Metal surface requires MetalCommandEncoder");
+        if (!(commandEncoder instanceof MetalFramePresentation presentation)) {
+            throw new IllegalArgumentException(
+                    "the surface was handed a " + commandEncoder.getClass().getName()
+                            + ", which cannot be presented through; it asks for "
+                            + MetalFramePresentation.class.getSimpleName() + " rather than for a class"
+            );
         }
 
-        metalEncoder.presentTextureToDrawable(metalLayer, textureView);
-        this.pendingPresentEncoder = metalEncoder;
+        presentation.presentTextureToDrawable(metalLayer, textureView);
+        this.pendingPresentEncoder = presentation;
     }
 
     @Override

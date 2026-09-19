@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 18 couplings in 7 files, and 1 the other way)
+    still owes 17 couplings in 6 files, and 1 the other way)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -183,6 +183,21 @@ becomes a delegation.
 
 The lesson is the metric's, not the code's: a count that cannot tell a design from a debt will eventually
 argue for a bad change, and the fix is to make the count say which is which.
+
+The surface followed the recipe next, and it is the closest one to the frame the migration is for.
+`MetalSurface` is handed whatever backend the frame was encoded through and had to name `MetalCommandEncoder`
+to present, so the take and the submit became `render/shared/MetalFramePresentation`, implemented by the
+encoder and asked for by the surface - which now holds one type and presents through it, with the class it
+actually got named in the exception instead. It is deliberately separate from `MetalFrameExtras`: an encoder
+that can scale is not the same thing as one that can be presented through, and a caller should be able to say
+which it needs.
+
+What this does **not** yet decide is the thing the seam is really about: whether the frame presents through
+Metal 3 or Metal 4 is still asked *inside* the Metal 3 encoder (`Metal4Path.presenting(layer, texture)`), so
+the present-only Metal 4 path can only ever be reached by the Metal 3 path asking for it. The surface now
+talks to a contract, which is where that decision can move to the execution services; until then the ledger's
+`Metal4Path` entries stay. Verified on the settled pack scene: 7.25 ms, `gpuM3Ms=4359.03`, `submit=600`, with
+the counters this configuration repeats (21435 encoders, 6600 blits, 345 identities against 345 keys).
 
 ## Risks
 

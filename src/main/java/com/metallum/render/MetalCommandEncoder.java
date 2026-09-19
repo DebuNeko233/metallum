@@ -40,10 +40,11 @@ import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalFrameExtras;
+import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.metal3.MetalFence;
 
 @Environment(EnvType.CLIENT)
-public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFrameExtras {
+public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFrameExtras, MetalFramePresentation {
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
@@ -620,7 +621,8 @@ public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFr
         }
     }
 
-    void presentTextureToDrawable(final CAMetalLayer layer, final GpuTextureView textureView) {
+    @Override
+    public void presentTextureToDrawable(final CAMetalLayer layer, final GpuTextureView textureView) {
         MetalGpuTexture source = (MetalGpuTexture) textureView.texture();
         flushPendingClear(source);
         submitRenderPass();
