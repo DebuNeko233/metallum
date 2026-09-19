@@ -122,4 +122,39 @@ for needle in (
     if needle not in launcher_text:
         raise SystemExit("PHASE 15 launcher contract missing: " + needle)
 
+# ---------------------------------------------------------------------------
+# The flat facades, and the neutral interfaces they are allowed to route through.
+#
+# The generation-reach ledger in `ci-architecture.py` refuses a class in `com.metallum.render` that names a
+# generation package; that rule says where a facade may NOT go. This is the other half: what it does
+# instead, so the neutrality of the compute/depth/close path is a shape a contract can read rather than a
+# property that happens to hold. Each of these is an entry point a pack-facing engine reaches by name, so
+# one drifting back to a generation class is a boundary change that would otherwise be invisible until the
+# class it names moved.
+# ---------------------------------------------------------------------------
+require("the flat compute facade is neutral", "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+    "import com.metallum.render.shared.MetalComputeCompiler;",
+    "import com.metallum.render.shared.MetalComputePipelineResource;",
+    "import com.metallum.render.shared.MetalFrameComputeCommands;",
+    "device.executionState() instanceof MetalComputeCompiler compiler",
+    "return compiler.compileCompute(device, label, spirv);",
+    "encoderBackend instanceof MetalFrameComputeCommands commands",
+    "pipelineResource instanceof MetalComputePipelineResource",
+))
+
+require("the flat depth facade is neutral", "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
+    "import com.metallum.render.shared.MetalFrameDepthMipmaps;",
+    "instanceof MetalFrameDepthMipmaps",
+    "generateDepthMipmaps(",
+))
+
+# The present path is closed exactly once, at the one site that owns it. It was called from two places once,
+# and a second close is a released queue being released again.
+device = read("src/main/java/com/metallum/render/MetalDevice.java")
+closes = device.count("services.closePresentPath()")
+if closes != 1:
+    raise SystemExit(
+        f"the present path is closed {closes} times in MetalDevice, and the device owns exactly one of them"
+    )
+
 print("PHASE 15 generic Metal Compute / Storage contracts: PASS")
