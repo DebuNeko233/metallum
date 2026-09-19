@@ -202,8 +202,11 @@ Counters, and what a change in each means:
 | `blits`, `blittedMiB` | copy-back traffic, which is invisible in a frame-time decomposition otherwise |
 | `pipeline`, `texture`, `sampler`, `buffer`, `viewport`, `scissor` | bindings and state set on the encoders |
 | `compiles`, `compileMs` | pipeline compilation during the window; zero on a warm store |
-| `metal4Frames`, `metal4Us` | frames carried through the Metal 4 command structure, and the CPU cost of carrying one |
-| `metal4Presents`, `metal4Draws` | presents carried by the Metal 4 queue, and how many of them drew the picture |
+| `metal4Frames`, `metal4Us` | frames whose present the Metal 4 queue carried - one command buffer and one commit a frame - and the CPU cost of that one submission |
+| `metal4Presents`, `metal4Draws` | drawables taken and presented by the Metal 4 queue, and how many of them drew the picture into it |
+
+A present carried by the Metal 4 queue is the whole of that path's frame work, so `metal4Frames` and
+`metal4Presents` should agree; when they do not, a frame was presented by the engine's own road.
 
 Two instrument gaps to know before quoting a GPU number:
 

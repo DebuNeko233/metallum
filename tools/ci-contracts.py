@@ -756,41 +756,45 @@ require("the generation is a family answer, not a version table",
     'return metal3 ? "Metal 3" : "Metal";',
 ))
 # ---------------------------------------------------------------------------
-# The Metal 4 path carries a frame-shaped submission, once per committed frame
+# The Metal 4 path presents the frame through its own queue, one commit a frame
 #
-# The step after detection: every frame the new command structure takes one submission of its own shape -
-# an allocator from a ring of three, a command buffer begun on it, work encoded and ended, the buffer
-# committed and its completion signalled - beside the real frame, touching nothing the picture uses. Three
-# rules are pinned because each of them was learned here: every selector is asked for first (an
-# unimplemented one is an Objective-C exception, not a nil), the submission is carried where a frame is
-# *committed* rather than where a submit is attempted (the present-time submit commits nothing, and two
-# submissions a frame is not the shape being proven), and every release goes through the guard, because the
-# first version threw a NullPointerException out of its own cleanup and took the device down with it.
+# Apple's order for a Metal 4 game ("Explore Metal 4 games", WWDC25): `nextDrawable`, `waitForDrawable:`,
+# encode, `commit:count:`, `signalDrawable:`, `present` - and one command buffer and one commit a frame.
+# Three rules are pinned because each of them was learned here: every selector is asked for first (an
+# unimplemented one is an Objective-C exception, not a nil), the present is carried out where a frame is
+# *committed* rather than where the surface asks (the picture is only the frame's once that commit has
+# happened, and a present encoded before it samples a frame that frame has not drawn), and every release
+# goes through the guard, because the first version threw a NullPointerException out of its own cleanup and
+# took the whole Metal device down with it.
 # ---------------------------------------------------------------------------
-require("the frame-shaped path is guarded and carried at the frame boundary",
+require("the Metal 4 present is guarded, ordered and carried at the frame boundary",
         "src/main/java/com/metallum/render/Metal4Path.java", (
     "public static boolean start(final MTLDevice device) {",
     'device.respondsTo("newMTL4CommandQueue")',
     'device.respondsTo("newSharedEvent")',
-    "public static void frame() {",
+    "public static boolean presenting(final CAMetalLayer layer, final MemorySegment picture) {",
+    "public static void presentFrame() {",
+    "WAIT_DRAWABLE.send(queue, drawable.handle());",
+    "SIGNAL_DRAWABLE.send(queue, drawable.handle());",
     "awaited[slot] = ++signalled;",
     "private static void releaseIfPresent(final @Nullable MemorySegment object) {",
     'System.getProperty("metallum.metal4Frame", "true")',
 ))
-require("the submission is carried where a frame is committed",
+require("the present is carried where a frame is committed",
         "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
-    "Metal4Path.frame();",
+    "Metal4Path.presentFrame();",
 ))
 
-require("the argument table is asked for, and the path carries on without it",
+require("the argument table is asked for by the selector its header declares",
         "src/main/java/com/metallum/mtl/MTL4ArgumentTable.java", (
-    'device.respondsTo("newArgumentTableWithDescriptor:")',
-    'SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);',
-    'SET_INITIALIZE.send(descriptor, 0L);',
+    'device.respondsTo("newArgumentTableWithDescriptor:error:")',
+    "NEW_TABLE_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)",
+    "SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);",
+    "SET_INITIALIZE.send(descriptor, 0L);",
 ))
 require("a missing table is said out loud rather than hidden",
         "src/main/java/com/metallum/render/Metal4Path.java", (
-    "carrying frames without a draw, because this device makes",
+    "not carrying the present, because this device makes",
     "private static boolean refuse(final String why) {",
 ))
 

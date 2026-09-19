@@ -7,9 +7,7 @@ import com.metallum.mtl.MTL4ArgumentTable;
 import com.metallum.mtl.MTL4Probe;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.MTLBuiltinPipelines;
-import com.metallum.mtl.MTLPixelFormat;
 import com.metallum.mtl.MTLTexture;
-import com.metallum.mtl.MTLTextureDescriptor;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
@@ -24,22 +22,24 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
- * The Metal 4 command structure carrying a frame-shaped submission, every frame.
+ * The Metal 4 command structure presenting the frame, one command buffer and one commit a frame.
  * <p>
- * Metal 4 is a parallel API surface, not a replacement, and this is the step after detection: a frame's
- * shape - an allocator to hold the commands, a command buffer begun on it, work encoded and ended, the
- * buffer committed to a queue and its completion signalled and waited for - runs once per frame beside the
- * real one. What the work touches is a 64x64 scratch target of this class's own, so nothing here can
- * change the picture, and the real frame is untouched: no resource is shared, no order between the two
- * queues is needed, and the counters the frame probe reports are the real frame's.
+ * Metal 4 is a parallel API surface, not a replacement, and this is the step after detection: the frame's
+ * picture is drawn into the drawable by the new queue, through the engine's own present pipeline and an
+ * argument table that carries the picture and a sampler. The shape is Apple's own order -
+ * {@code nextDrawable}, {@code waitForDrawable:}, encode, {@code commit:count:}, {@code signalDrawable:},
+ * {@code present} - and it is the same order printed on the framework's page for a Metal 4 game, which is
+ * why the frame's own command buffer signals a shared event this path waits on rather than the two halves
+ * being ordered by luck.
  * <p>
- * <strong>The discipline this proves is the frame-in-flight one.</strong> A command buffer's memory comes
- * from its allocator and an allocator may only be reset once the GPU is finished with it, so a small ring
- * of allocators is rotated and each slot waits for the value that slot's commit signalled - the documented
- * pattern, and the thing a later path that shares resources with the frame will have to get right.
+ * <strong>The discipline this has to keep is the frame-in-flight one.</strong> A command buffer's memory
+ * comes from its allocator and an allocator may only be reset once the GPU is finished with it, so a small
+ * ring of allocators is rotated and each slot waits for the value that slot's commit signalled.
  * <p>
- * Off where the device has no Metal 4 API, and off by {@code -Dmetallum.metal4Frame=false} so the cost of
- * carrying it can be measured against a run that does not.
+ * Off where the device has no Metal 4 API. The frame's present goes through it under
+ * {@code -Dmetallum.metal4Present=true} and the path is not built at all under
+ * {@code -Dmetallum.metal4Frame=false}, which is how the cost of carrying it is measured against a run
+ * that does not.
  */
 @Environment(EnvType.CLIENT)
 public final class Metal4Path {
@@ -50,11 +50,6 @@ public final class Metal4Path {
     /** What one frame's submission may wait for the GPU to finish before this path gives up. */
     private static final long WAIT_MILLIS = 1000L;
 
-    private static final long TARGET_SIZE = 64L;
-
-    /** The drawable's own format, so the built-in present pipeline is the one this target was built for. */
-    private static final MTLPixelFormat TARGET_FORMAT = MTLPixelFormat.BGRA8Unorm;
-    private static final long USAGE_RENDER_TARGET = 4L;
     private static final long LOAD_DONT_CARE = 0L;
     private static final long STORE_STORE = 1L;
 
@@ -91,8 +86,6 @@ public final class Metal4Path {
     @Nullable
     private static MemorySegment event;
     @Nullable
-    private static MemorySegment pass;
-    @Nullable
     private static MTL4ArgumentTable table;
 
     /**
@@ -103,8 +96,6 @@ public final class Metal4Path {
     private static CAMetalLayer pendingLayer;
     private static MemorySegment pendingPicture = MemorySegment.NULL;
 
-    @Nullable
-    private static MemorySegment target;
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
     private static final long[] awaited = new long[FRAMES_IN_FLIGHT];
     private static long signalled;
@@ -162,23 +153,15 @@ public final class Metal4Path {
 
             // A table is what a Metal 4 encoder is given its resources through, and this device makes one:
             // the factory's name carries the error out-parameter its header declares, and asking with the
-            // shorter name was what made this read as a device that could not bind at all. Made here because
-            // it belongs to the path rather than to a frame - one texture and one sampler for now, which is
-            // the shape a probe pass binds; the passes of the chain get the tables item 3 sizes.
+            // shorter name was what made this read as a device that could not bind at all. One texture and
+            // one sampler, which is the shape the present draw binds; the passes of the chain get the tables
+            // item 3 sizes.
             table = MTL4ArgumentTable.create(device);
             if (table == null) {
-                Metallum.LOGGER.warn("Metal 4 path: carrying frames without a draw, because this device makes "
-                        + "no argument table and a Metal 4 encoder cannot be bound any other way");
-            }
-
-            try {
-                MemorySegment madePass = newPass();
-                MemorySegment madeTarget = newTarget(device, madePass);
-                pass = madePass;
-                target = madeTarget;
-            } catch (RuntimeException refused) {
+                Metallum.LOGGER.warn("Metal 4 path: not carrying the present, because this device makes no "
+                        + "argument table and a Metal 4 encoder cannot be bound any other way");
                 stop(madeQueue, madeBuffer, madeEvent);
-                return refuse("the pass or its target could not be made: " + refused.getMessage());
+                return refuse("no argument table, so nothing can be bound on the new path");
             }
 
             MemorySegment madeFrameEvent = NEW_SHARED_EVENT.sendPtr(device.handle());
@@ -193,66 +176,10 @@ public final class Metal4Path {
             commandBuffer = madeBuffer;
             event = madeEvent;
             carrying = true;
-            Metallum.LOGGER.info("Metal 4 path: carrying a frame-shaped submission every frame, {} allocators, "
-                    + "a shared event bounding the frames in flight, and a {}}x{} scratch target",
-                    FRAMES_IN_FLIGHT, TARGET_SIZE, TARGET_SIZE);
+            Metallum.LOGGER.info("Metal 4 path: carrying the frame's present, one command buffer and one "
+                    + "commit a frame, {} allocators and a shared event bounding the frames in flight",
+                    FRAMES_IN_FLIGHT);
             return true;
-        }
-    }
-
-    /**
-     * Carries one frame: the next allocator in the ring, waited for, reset, begun on, encoded into, ended,
-     * committed and signalled.
-     * <p>
-     * A slot is only reused after the value its own commit signalled has been seen, which is what keeps the
-     * CPU from resetting an allocator the GPU is still reading.
-     */
-    public static void frame() {
-        if (!carrying || queue == null || commandBuffer == null || event == null || pass == null) {
-            return;
-        }
-
-        long startedAt = System.nanoTime();
-        try {
-            slot = (slot + 1) % FRAMES_IN_FLIGHT;
-            if (awaited[slot] != 0L
-                    && WAIT_UNTIL_SIGNALED.sendLong(event, awaited[slot], WAIT_MILLIS) == 0L) {
-                giveUp("the GPU did not signal slot " + slot + " within " + WAIT_MILLIS + " ms");
-                return;
-            }
-
-            RESET.send(allocators[slot]);
-            BEGIN.send(commandBuffer, allocators[slot]);
-            MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
-            if (ObjC.isNil(encoder)) {
-                giveUp("a render encoder for the frame-shaped submission came back nil");
-                return;
-            }
-
-            // The pass is empty, and deliberately so now: the draw this path used to encode here sampled the
-            // frame's picture into a scratch target of its own, which proved the new command structure could
-            // draw before anything else could - and it made this submission depend on a frame that nothing
-            // waited for, so a heavy frame starved it and the ring gave up (measured, with a pack loaded:
-            // "the GPU did not signal slot 0 within 1000 ms"). The picture through this path is the present's,
-            // drawn into the drawable where it is the frame's own output rather than a copy of it.
-            END_ENCODING.send(encoder);
-            END.send(commandBuffer);
-
-            try (Arena arena = Arena.ofConfined()) {
-                MemorySegment buffers = arena.allocate(ADDRESS, 1);
-                buffers.set(ADDRESS, 0L, commandBuffer);
-                COMMIT.send(queue, buffers, 1L);
-            }
-
-            awaited[slot] = ++signalled;
-            SIGNAL_EVENT.send(queue, event, awaited[slot]);
-
-            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, false);
-        } catch (RuntimeException failed) {
-            // The cause and not only the wrapper: "objc_msgSend failed: <selector>" says which call and
-            // nothing about why, and a wrong method handle, a critical downcall that was not leaf and a
-            // MissingLayout are three different repairs behind the same sentence.
-            giveUp(describe(failed));
         }
     }
 
@@ -360,8 +287,10 @@ public final class Metal4Path {
             // engine's own present triangle flips V and a copy has no coordinates to flip: measured, the
             // loading screen arrived 180 degrees over. The present pipeline and the sampler already handle the
             // convention, and the argument table is what the triangle is given its source through.
+            long startedAt = System.nanoTime();
             boolean drawn = !ObjC.isNil(drawableTexture) && encodeDrawPresent(drawableTexture, picture);
-            MetalFrameProbe.metal4Present(drawn);
+            MetalFrameProbe.metal4Frame(System.nanoTime() - startedAt, drawn);
+            MetalFrameProbe.metal4Present();
             if (!drawn) {
                 warnOnce("Metal 4 present: nothing could be drawn into the drawable, so the frame is presented "
                         + "by the new queue with nothing of the picture in it");
@@ -474,8 +403,6 @@ public final class Metal4Path {
             queue = null;
             commandBuffer = null;
             event = null;
-            pass = null;
-            target = null;
             carrying = false;
         }
     }
@@ -504,10 +431,6 @@ public final class Metal4Path {
             table.close();
             table = null;
         }
-        releaseIfPresent(pass);
-        releaseIfPresent(target);
-        pass = null;
-        target = null;
         for (int index = 0; index < FRAMES_IN_FLIGHT; index++) {
             releaseIfPresent(allocators[index]);
             allocators[index] = MemorySegment.NULL;
@@ -525,35 +448,6 @@ public final class Metal4Path {
         if (object != null && !ObjC.isNil(object)) {
             ObjC.release(object);
         }
-    }
-
-    private static MemorySegment newPass() {
-        MemorySegment passDescriptor = NEW.sendPtr(ObjC.clazz("MTL4RenderPassDescriptor"));
-        SET_TARGET_WIDTH.send(passDescriptor, TARGET_SIZE);
-        SET_TARGET_HEIGHT.send(passDescriptor, TARGET_SIZE);
-        return passDescriptor;
-    }
-
-    private static MemorySegment newTarget(final MTLDevice device, final MemorySegment passDescriptor) {
-        MemorySegment made;
-        try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
-            descriptor.pixelFormat(TARGET_FORMAT);
-            descriptor.width(TARGET_SIZE);
-            descriptor.height(TARGET_SIZE);
-            descriptor.usage(USAGE_RENDER_TARGET);
-            made = device.newTexture(descriptor);
-        }
-
-        MemorySegment attachments = COLOR_ATTACHMENTS.sendPtr(passDescriptor);
-        MemorySegment attachment = ObjC.isNil(attachments) ? MemorySegment.NULL : ATTACHMENT_AT.sendPtr(attachments, 0L);
-        if (ObjC.isNil(attachment)) {
-            throw new IllegalStateException("the Metal 4 pass descriptor has no colour attachment to set");
-        }
-        SET_TEXTURE.send(attachment, made);
-        SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
-        SET_STORE_ACTION.send(attachment, STORE_STORE);
-
-        return made;
     }
 
     /** Whether this path is wanted: on where the device has the API, off when the property says so. */

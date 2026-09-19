@@ -341,16 +341,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // commits nothing, so counting every submit() would count each drawn frame twice.
             MetalFrameProbe.frameSubmitted();
 
-            // A frame is a commit, and the new command structure carries one of its own beside it - once per
-            // frame, not once per submit: the surface's present-time submit finds no command buffer and
-            // commits nothing, and carrying a second submission there would double what this path costs for
-            // a frame it is not shaped like. What it touches is its own 64x64 target, so no order between
-            // the two queues is needed.
-            Metal4Path.frame();
-
-            // The frame has been committed and its event signalled, so the new path can be told to present
-            // the picture that commit drew. Here rather than where the surface asked, because the wait it
-            // does is on the event value this commit signals.
+            // The frame has been committed and its event signalled, so the new path can present the picture
+            // that commit drew - its own single command buffer, one commit a frame, committed to the Metal 4
+            // queue here rather than where the surface asked, because the wait it does is on the event value
+            // this commit signals. The surface's present-time submit finds no command buffer and commits
+            // nothing, so this runs once a frame and not once a submit.
             Metal4Path.presentFrame();
 
             lastCommittedSubmitIndex = currentSubmitIndex;

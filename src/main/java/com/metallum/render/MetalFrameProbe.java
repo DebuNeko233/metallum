@@ -309,21 +309,19 @@ public final class MetalFrameProbe {
     }
 
     /**
-     * One present carried by the Metal 4 queue, and whether the picture was drawn into the drawable.
+     * One present carried by the Metal 4 queue, which is one drawable taken and presented.
      * <p>
-     * Counted apart from the frame-shaped submission above, because the two are different questions: that one
-     * says the new command structure is being exercised every frame, this one says the picture the player sees
-     * came through it.
+     * Counted apart from the submission above because the two are different questions: that one says the new
+     * command structure ran a frame's submission and whether it drew, this one says the picture the player
+     * sees came through the new queue. They agree frame for frame unless a frame was presented by the
+     * engine's own road, and `metal4Draws` belongs to the submission above so that a draw is counted once.
      */
-    public static void metal4Present(final boolean drawn) {
+    public static void metal4Present() {
         if (!armed()) {
             return;
         }
 
         metal4Presents++;
-        if (drawn) {
-            metal4Draws++;
-        }
     }
 
     /** An encoder the engine itself opened, by the work it was opened for. */
