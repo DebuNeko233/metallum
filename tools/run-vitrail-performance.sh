@@ -424,6 +424,10 @@ for run in "${runs[@]}"; do
 		else
 			echo "Run '$name' never reached a full frame; see $run_dir/gradle.log" >&2
 		fi
+		# An arm that never armed measured nothing, and a harness that ends zero on it hands back an empty
+		# comparison as if it were a result. Measured: the pass-timings arm timed out at 900 s and this
+		# script still exited 0.
+		run_failed=1
 		stop_run
 		wait "$launcher" 2>/dev/null || true
 		continue
@@ -436,6 +440,7 @@ for run in "${runs[@]}"; do
 	touch "$marker"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
+		run_failed=1
 	fi
 
 	# Taken while the game is still drawing, so the picture is the frame the numbers describe. The
@@ -508,4 +513,9 @@ fi
 if [[ "${scene_bad:-0}" == 1 ]]; then
 	echo "At least one run's window did not draw the pack it asked for; the comparison above holds that window's numbers and they are not a measurement of the pack." >&2
 	exit 4
+fi
+
+if [[ "${run_failed:-0}" == 1 ]]; then
+	echo "At least one run never armed, so the comparison above is missing it entirely." >&2
+	exit 5
 fi
