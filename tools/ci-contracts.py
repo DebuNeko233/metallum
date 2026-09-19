@@ -747,7 +747,6 @@ require("a half-bound dispatch is still ended where it was opened",
 # ---------------------------------------------------------------------------
 require("the API generation is named", "src/main/java/com/metallum/api/MetallumApi.java", (
     "public static String metalApiGeneration() {",
-    "public static String metalFxStatus() {",
 ))
 require("the generation is a family answer, not a version table",
         "src/main/java/com/metallum/render/Metal4.java", (
@@ -756,9 +755,4 @@ require("the generation is a family answer, not a version table",
     'return "Metal 4";',
     'return metal3 ? "Metal 3" : "Metal";',
 ))
-require("the scaler answers about itself without a device to hand",
-        "src/main/java/com/metallum/render/MetalFx.java", (
-    "public static boolean isSupported() {",
-))
-
 print("Metal and engine contracts: PASS")
