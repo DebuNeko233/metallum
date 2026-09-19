@@ -97,12 +97,25 @@ for `isReferenceShell()` across the sources finds exactly one reader, the log li
 default implementation is `!isReferenceShell() && selected() == executing()`, and `executing()` is a constant
 `METAL3` in the only implementation there is, while AUTO's `selected()` is `metal4`.
 
-That is the shape M4 turns on, and it is the same shape as the bug just fixed next door: `selected()` was a
-constant until it was made the selection, and `executing()` is a constant today. **The first change M4 needs is
-not a Metal 4 command buffer - it is making `executing()` a property of the session rather than a literal**, so
-that `framePathReady()` can become true, and so that a forced Metal 3 launch and an AUTO launch that chose
-Metal 4 stop being indistinguishable at the seam that decides which frame path runs. A readiness seam nothing
-asks is a readiness seam that will be answered wrongly the first time something does.
+That was the shape M4 turned on, and it is the same shape as the bug fixed next door - so it was fixed next:
+**`executing()` is now a parameter of the services rather than a literal**, `isReferenceShell()` asks whether the
+executing generation is the selected one instead of whether the selection is Metal 3 (the right answer for the
+wrong reason, until now), and the device **asks `framePathReady()`** where it used to leave the seam dormant:
+
+    Metal execution: metal4 was selected and has no frame path yet, so the frame is metal3's and the selected
+    generation is a reference shell for it
+    Metal execution seam: servicesSelected=metal4 servicesExecuting=metal3 referenceShell=true framePathReady=false
+
+The device passes `MetalApiGeneration.METAL3` for what executes, with the reason written where it is passed: the
+selected generation's own frame path is what M4 builds, so until it exists that argument is the honest answer
+rather than a constant baked into the services. What a contract cannot prove is that the caller passes the
+generation that really executes - only M4's own frame path can settle that, which is exactly what
+`framePathReady()` is for.
+
+**Three contract pins fired while this was being written** - the seam's log format, the queue seam's factory
+call, and the `executing()` literal - each naming the line that had moved. The third is the interesting one: it
+had pinned an implementation detail (`return MetalApiGeneration.METAL3;`) as if it were the design, and now pins
+`return executing;` for the property it was actually about.
 
 ## The API mapping
 
