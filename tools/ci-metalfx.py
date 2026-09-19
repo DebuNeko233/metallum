@@ -136,17 +136,31 @@ if "tools/ci-metalfx.py" not in CI.read_text(encoding="utf-8"):
 # is not a wrong number - it is an Objective-C exception that ends the process, which is what
 # setInputContentOriginX: did when the spatial scaler was asked to move its content rectangle it does not
 # have. Both rules are pinned here so a later edit cannot quietly unlearn them.
+#
+# A third fault was found the same way, and it is the reason the attachment door takes primitives. It used
+# to take this layer's own value type, which the pack-facing side built by reflection from a class name -
+# `com.metallum.render.AttachmentContents`, a path that does not exist, because the type is in
+# `render.shared`. The lookup threw, every call was caught, and every pass silently kept its default for as
+# long as the name was wrong. A name resolved at runtime is not an ABI; two arrays of booleans are.
 # ---------------------------------------------------------------------------
 require("the MetalFX door is public", (ROOT / "src/main/java/com/metallum/render/MetalScaleBridge.java").read_text(encoding="utf-8"), (
     "public final class MetalScaleBridge {",
     "public static boolean available(final Object encoder)",
     "public static boolean scale(",
 ))
-require("the attachment door is public", (ROOT / "src/main/java/com/metallum/render/MetalAttachmentBridge.java").read_text(encoding="utf-8"), (
+attachment_door = (ROOT / "src/main/java/com/metallum/render/MetalAttachmentBridge.java").read_text(encoding="utf-8")
+require("the attachment door is public", attachment_door, (
     "public final class MetalAttachmentBridge {",
-    "public static void setNextPassContents(final Object encoder",
+    "public static void setNextPassContents(final Object encoder, final @Nullable boolean[] readAfterwards,",
+    "final @Nullable boolean[] overwritten) {",
     "public static void setNextPassReadsStorageImage(final Object encoder",
 ))
+if "setNextPassContents(final Object encoder, final @Nullable AttachmentContents[]" in attachment_door:
+    raise SystemExit(
+        "the attachment door hands this layer's own value type across a repository boundary, where it can only "
+        "be resolved by name - and a name that moves stops answering without failing, which is the fault this "
+        "door already had once"
+    )
 if "RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector(\"setInputContentOriginX:\"))" not in scaler:
     raise SystemExit(
         "the scaler sends a selector it may not answer to; an unrecognized one is an Objective-C exception and ends the process"
