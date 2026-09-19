@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import com.metallum.Metallum;
 import com.metallum.mtl.*;
@@ -45,6 +45,9 @@ import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.metal3.MetalFence;
 import com.mojang.blaze3d.shaders.ShaderSource;
+import com.metallum.render.Metal4Path;
+import com.metallum.render.MetalDevice;
+import com.metallum.render.MetalFx;
 
 @Environment(EnvType.CLIENT)
 public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation {

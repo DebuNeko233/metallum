@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;

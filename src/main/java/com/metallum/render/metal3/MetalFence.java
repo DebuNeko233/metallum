@@ -1,6 +1,5 @@
 package com.metallum.render.metal3;
 
-import com.metallum.render.MetalCommandEncoder;
 
 import com.mojang.blaze3d.buffers.GpuFence;
 import net.fabricmc.api.EnvType;

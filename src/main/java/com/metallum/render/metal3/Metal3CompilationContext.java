@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.MTLDepthStencilDescriptor;

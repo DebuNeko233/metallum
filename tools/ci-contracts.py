@@ -53,9 +53,9 @@ def source_tree(rel: str = "src/main/java/com/metallum") -> str:
 
 
 device = read("src/main/java/com/metallum/render/MetalDevice.java")
-encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
-pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
-render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
+encoder = read("src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java")
+pipeline = read("src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java")
+render_pass = read("src/main/java/com/metallum/render/metal3/MetalRenderPass.java")
 compiler = read("src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java")
 texture = read("src/main/java/com/metallum/render/shared/MetalGpuTexture.java")
 formats = read("src/main/java/com/metallum/mtl/MTLPixelFormat.java")
@@ -90,7 +90,7 @@ require("Metal texture allocation", "src/main/java/com/metallum/render/shared/Me
     "result |= MTLTextureUsage.RenderTarget.value;",
     "result |= MTLTextureUsage.ShaderRead.value;",
 ))
-require("Metal render pipeline", "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+require("Metal render pipeline", "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java", (
     "ColorTargetState[] colorTargets = info.getColorTargetStates();",
     "pipelineDesc.setColorAttachmentFormat(index, MTLPixelFormat.from(colorTarget.format()));",
     "long writeMask = MTLColorWriteMask.from(colorTarget.writeMask());",
@@ -99,7 +99,7 @@ require("Metal render pipeline", "src/main/java/com/metallum/render/MetalCompile
     "depthCompareOp = MTLCompareFunction.from(depthStencilState.depthTest());",
     "depthWrite = depthStencilState.writeDepth() ? 1 : 0;",
 ))
-require("Metal MRT encoder", "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+require("Metal MRT encoder", "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "Vector4fc[] colorClears = new Vector4fc[colorAttachments.size()];",
     "Vector4fc colorClear = colorAttachment.clearValue().orElse(null);",
     "colorTextures[index] = colorTexture;",
@@ -117,7 +117,7 @@ require("Native render-pass store/clear", "src/main/java/com/metallum/mtl/metal3
     "MTLRenderPassDescriptor.LOAD_ACTION_CLEAR",
     "MTLRenderPassDescriptor.STORE_ACTION_STORE",
 ))
-require("Metal draw and direct sampling", "src/main/java/com/metallum/render/MetalRenderPass.java", (
+require("Metal draw and direct sampling", "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "enc.setRenderPipelineState(pipelineHandle);",
     "enc.drawPrimitives(primitiveType, firstVertex, vertexCount, instanceCount, firstInstance);",
     "TextureViewAndSampler requested = new TextureViewAndSampler(textureView, sampler);",
@@ -144,7 +144,7 @@ if "NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, options.handle(), errorOut
 if "NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, MemorySegment.NULL, errorOut)" in mtl_device:
     raise SystemExit("Metal shader-library compilation still discards compile options")
 
-require("Generic carried vertex ABI", "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+require("Generic carried vertex ABI", "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java", (
     "long attributeIndex = 0L;",
     "int bindingCount = info.getVertexFormatBindings().length;",
     "VertexFormat format = info.getVertexFormatBinding(binding);",
@@ -158,7 +158,7 @@ require("Generic carried vertex ABI", "src/main/java/com/metallum/render/MetalCo
     "MetalResourceBinding",
     "if (format == null || format.getElements().isEmpty()) {",
 ))
-require("Generic vertex/resource binding", "src/main/java/com/metallum/render/MetalRenderPass.java", (
+require("Generic vertex/resource binding", "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "int firstSlot = compiledPipeline.firstAvailableVertexBufferSlot();",
     "int count = compiledPipeline.vertexBufferCount();",
     "int metalSlot = firstSlot + slot;",
@@ -176,7 +176,7 @@ require("Generic vertex/resource binding", "src/main/java/com/metallum/render/Me
     "GpuFormat texelFormat = binding.texelBufferFormat();",
     "MTLTexture.newBufferTextureView(",
 ))
-require("Triangle-fan conversion", "src/main/java/com/metallum/render/MetalRenderPass.java", (
+require("Triangle-fan conversion", "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "if (primitiveType == MTLPrimitiveType.TriangleFan)",
     "drawTriangleFan(enc, firstVertex, vertexCount, instanceCount, firstInstance);",
     "private void drawTriangleFan(",
@@ -189,7 +189,7 @@ forbid("Sky semantics in Metallum", backend, ("gbuffers_skybasic", "gbuffers_sky
 forbid("Cloud semantics in Metallum", backend, ("gbuffers_clouds", "CloudInfo", "CloudFaces"))
 forbid("Weather semantics in Metallum", all_java, ("gbuffers_weather", "RAIN_SNOW"))
 
-require("Generic texture copy/mipmap", "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+require("Generic texture copy/mipmap", "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "public void copyTextureToTexture(",
     "flushPendingClear(srcTexture);",
     "flushPendingClearForWrite(dstTexture);",
@@ -202,13 +202,13 @@ require("Generic texture copy/mipmap", "src/main/java/com/metallum/render/MetalC
     "RGBA8_UNORM, RGBA8_SNORM,",
     "endEncoder();",
 ))
-require("Composite render/blit fences", "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+require("Composite render/blit fences", "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "encoder.waitForFence(fence);",
     "blitEncoder.updateFence(fence);",
     "renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);",
     "encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);",
 ))
-require("Generic D32 mip bridge", "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
+require("Generic D32 mip bridge", "src/main/java/com/metallum/render/metal3/Metal3DepthMipmapBridge.java", (
     "texture.getFormat() != GpuFormat.D32_FLOAT",
     "GpuTexture.USAGE_TEXTURE_BINDING",
     "GpuTexture.USAGE_RENDER_ATTACHMENT",
@@ -225,7 +225,7 @@ require("Generic D32 mip bridge", "src/main/java/com/metallum/render/MetalDepthM
     "render.drawPrimitives(MTLPrimitiveType.Triangle, 0, 3, 1, 0);",
     "encoder.endEncoder();",
 ))
-depth_bridge = read("src/main/java/com/metallum/render/MetalDepthMipmapBridge.java")
+depth_bridge = read("src/main/java/com/metallum/render/metal3/Metal3DepthMipmapBridge.java")
 forbid("Depth mip bridge shader-pack neutrality", depth_bridge.lower(), ("shadowtex0", "shadowtex1", "shadowcolor0", "shadowcolor1", "shader pack"))
 if "MetalDevice device()" not in texture:
     raise SystemExit("MetalGpuTexture must expose its device package-locally for generic depth mip generation")
@@ -233,7 +233,7 @@ forbid("Depth semantics in Metallum", backend, ("depthtex0", "depthtex1", "depth
 forbid("Shadow semantics in Metallum", backend, ("shadow_entities", "shadowtex0", "shadowtex1", "shadowcolor0", "shadowcolor1", "shadow_solid", "shadow_cutout", "shadow_water"))
 forbid("Deferred fixture semantics in Metallum", backend, ("deferred-mrt-contract", "deferred-mipmap-contract", "colortex0mipmapenabled"), lower=True)
 
-require("Generic Final present entry", "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+require("Generic Final present entry", "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "void presentTextureToDrawable(final CAMetalLayer layer, final GpuTextureView textureView)",
     "flushPendingClear(source);",
     "submitRenderPass();",
@@ -260,7 +260,7 @@ forbid("Composite semantics in Metallum", backend, (
 forbid("Final semantics in Metallum", backend, ("final-direct-contract", "final-chain-contract", "phase 12 final"), lower=True)
 
 dimension_sources = "\n".join(read(path) for path in (
-    "src/main/java/com/metallum/render/MetalCommandEncoder.java",
+    "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java",
     "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java",
     "src/main/java/com/metallum/mtl/MTLBuiltinPipelines.java",
 ))
@@ -279,18 +279,18 @@ require("Wide resource compiler", "src/main/java/com/metallum/render/shared/Meta
 # The capability question belongs to the Metal 3 compiler now: the translator is handed the answer, which is
 # what keeps MTLDevice out of it. Pinned separately so the split cannot quietly put the query back.
 require("the argument-buffer capability is asked by the Metal 3 compiler",
-        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3PipelineCompiler.java", (
     "compilation.device().supportsArgumentBuffersTier2()",
     "boolean argumentBuffersTier2 = ",
 ))
-require("Wide resource pipeline", "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+require("Wide resource pipeline", "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java", (
     "private final BitSet allResources;",
     "uses Metal Argument Buffers: resources={}, sampledImages={}",
     "maxArgumentBufferSamplerCount()",
     "createArgumentBuffers(",
     "WIDE_VERTEX_BUFFER_BASE",
 ))
-require("Wide resource draw routing", "src/main/java/com/metallum/render/MetalRenderPass.java", (
+require("Wide resource draw routing", "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "private final BitSet dirtyDescriptors = new BitSet();",
     "layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());",
     "layout.encoder().setSamplerState(sampler.nativeHandle(), binding.samplerMetalIndex());",
@@ -590,13 +590,13 @@ print("Consolidated Metallum CI contracts: PASS")
 #    detaches rather than releases: the layer outlived every device made for it.
 # ---------------------------------------------------------------------------
 require("the wait names the newest commit and not the newest submit",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "private long lastCommittedSubmitIndex = -1L;",
     "lastCommittedSubmitIndex = currentSubmitIndex;",
     "awaitSubmitCompletion(lastCommittedSubmitIndex, Long.MAX_VALUE);",
 ))
 forbid("the wait no longer derives its index from the submit counter",
-       read("src/main/java/com/metallum/render/MetalCommandEncoder.java"),
+       read("src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java"),
        ("currentSubmitIndex - 1L",))
 
 require("a failed command buffer can be read", "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java", (
@@ -604,7 +604,7 @@ require("a failed command buffer can be read", "src/main/java/com/metallum/mtl/m
     "public String errorDescription()",
 ))
 require("the frame says when a command buffer failed",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "toClose.buffer.errorDescription()",
 ))
 
@@ -629,18 +629,18 @@ require("a failed device creation releases the layer",
 # pass) and it is kept for the surface P5 binds through, not for a number it produced.
 # ---------------------------------------------------------------------------
 require("a texture binding is compared before the descriptor is marked",
-        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+        "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "private static boolean sameBinding(@Nullable final TextureViewAndSampler left,",
     "leftView.texture() == rightView.texture()",
     "leftView.baseMipLevel() == rightView.baseMipLevel()",
     "if (!sameBinding(samplers.put(name, requested), requested)) {",
 ))
 require("a uniform is compared before the descriptor is marked",
-        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+        "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "if (!sameSlice(uniforms.put(name, value), value)) {",
 ))
 require("an absent sampler is not marked dirty again",
-        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+        "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "if (samplers.remove(name) != null) {",
 ))
 
@@ -728,17 +728,17 @@ require("the Metal 4 submission is proven by the queue's own signal",
 # at the end of eight methods - the kind of thing a later refactor puts back without noticing.
 # ---------------------------------------------------------------------------
 require("a blit shares the encoder that is already open",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "if (currentEncoder instanceof MTLBlitCommandEncoder open) {",
     "        // A blit already open is where the next blit belongs.",
 ))
 
 require("a compute dispatch shares it the same way",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "if (currentEncoder instanceof MTLComputeCommandEncoder open) {",
 ))
 require("a half-bound dispatch is still ended where it was opened",
-        "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java", (
     "boolean bound = false;",
     "if (!bound) {",
     "commandEncoder.endEncoder();",
@@ -788,7 +788,7 @@ require("the Metal 4 present is guarded, ordered and carried at the frame bounda
     'System.getProperty("metallum.metal4Frame", "true")',
 ))
 require("the present is carried where a frame is committed",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "presentGate.afterCommit();",
 ))
 
@@ -846,7 +846,7 @@ require("both translators read the session's profile",
     "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
 ))
 require("the compute translator reads the same one",
-        "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java", (
     "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
 ))
 require("the library is compiled for the profile the translator emitted",
@@ -855,7 +855,7 @@ require("the library is compiled for the profile the translator emitted",
     "MetalShaderLanguageProfile.selected().metalLanguageVersion()",
 ))
 require("a compiled function's identity names the profile",
-        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java", (
     "new MslFunctionKey(msl, entryPoint,",
     "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
     "MetalShaderLanguageProfile.selected().token()",
@@ -912,14 +912,14 @@ require("the device hands out the frame encoder as that contract",
     "public @NonNull MetalFrameEncoder createCommandEncoder() {",
 ))
 require("a compiled pipeline is recompiled when its profile is not the session's",
-        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java", (
     "private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {",
     "held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())",
     "this.compiledPipelines.remove(pipeline);",
     "this.retirement.retire(held);",
 ))
 require("a translated shader module is keyed by its MSL profile",
-        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java", (
     "private static final Pattern GLSL_ERROR_LINE",
     "private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,",
     "String shaderProfile) {",
@@ -948,7 +948,7 @@ for _forbidden in ("Metal3CompilationContext", "MetalCompiledRenderPipeline", "M
         raise SystemExit(f"the translator still names {_forbidden}")
 
 require("the Metal 3 compiler owns lookup, translation, key and artifact",
-        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3PipelineCompiler.java", (
     "compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX,",
     "compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT,",
     "compilation.device().supportsArgumentBuffersTier2()",
@@ -957,7 +957,7 @@ require("the Metal 3 compiler owns lookup, translation, key and artifact",
     "new MetalCompiledRenderPipeline(",
 ))
 require("the cache miss path asks the Metal 3 compiler",
-        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java", (
     "pipeline, p -> Metal3PipelineCompiler.compile(this, p, source));",
 ))
 require("the translation result carries every field a pipeline needs",
@@ -972,8 +972,8 @@ require("the stage masks are shared vocabulary",
     "public static final int VERTEX = 1;", "public static final int FRAGMENT = 2;",
     "public static final int ALL = VERTEX | FRAGMENT;",
 ))
-_m3c = (_root / "src/main/java/com/metallum/render/Metal3PipelineCompiler.java").read_text(encoding="utf-8")
-_art = (_root / "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java").read_text(encoding="utf-8")
+_m3c = (_root / "src/main/java/com/metallum/render/metal3/Metal3PipelineCompiler.java").read_text(encoding="utf-8")
+_art = (_root / "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java").read_text(encoding="utf-8")
 for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
     if _const not in _m3c:
         raise SystemExit(f"the Metal 3 layout policy {_const} is not the compiler's")
@@ -981,12 +981,12 @@ if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
     raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
 
 require("an encoder answers for the state it was handed",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "Metal3ExecutionState executionState() {",
     "return this.executionState;",
 ))
 require("the depth bridge asks the encoder, not the device",
-        "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3DepthMipmapBridge.java", (
     "Metal3ExecutionState metal3 = encoder.executionState();",
 ))
 import pathlib as _dp
@@ -1002,11 +1002,12 @@ def _code5(path):
     return _dr.sub(r'"(?:\\.|[^"\\])*"', '""', text)
 
 
-if "device.executionState()" in _code5("src/main/java/com/metallum/render/MetalDepthMipmapBridge.java"):
+if "device.executionState()" in _code5("src/main/java/com/metallum/render/metal3/Metal3DepthMipmapBridge.java"):
     raise SystemExit("the depth bridge still reaches the device for the execution state")
 
 # One caller cannot be rerouted and is allowed by name: compute bridge compile(Object backend, ...) holds the
 # device, not an encoder, so the device accessor stays until the bridge's body moves into render.metal3.
+# The accessor's one caller is the flat facade now: the implementation takes the state as a parameter.
 _compute = _code5("src/main/java/com/metallum/render/MetalComputeBridge.java")
 if _compute.count("device.executionState()") != 1:
     raise SystemExit("the compute bridge's use of the device accessor changed shape")
@@ -1043,7 +1044,7 @@ for _gone in ("synchronized MetalCompiledRenderPipeline getOrCompilePipeline(",
         raise SystemExit(f"a Metal 3 migration delegate is still on the device: {_gone}")
 
 # The factory is the only public construction seam, and its signatures are neutral.
-_factory = _code4("src/main/java/com/metallum/render/Metal3ExecutionFactory.java")
+_factory = _code4("src/main/java/com/metallum/render/metal3/Metal3ExecutionFactory.java")
 for _leak in ("Metal3ExecutionState createState", "MetalCommandEncoder createFrameEncoder",
               "Metal3CompilationContext create", "Metal3PipelineRetirement create"):
     if _leak in _factory:
@@ -1060,13 +1061,13 @@ if "MetalCommandEncoder" in _services:
     raise SystemExit("the execution services still name the Metal 3 frame encoder")
 
 require("the render pass compiles through the state it was given",
-        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+        "src/main/java/com/metallum/render/metal3/MetalRenderPass.java", (
     "this.executionState = executionState;",
     "this.defaultShaderSource = defaultShaderSource;",
     "this.executionState.getOrCompilePipeline(pipeline, this.defaultShaderSource);",
 ))
-for _bridge in ("src/main/java/com/metallum/render/MetalComputeBridge.java",
-                "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java"):
+for _bridge in ("src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java",
+                "src/main/java/com/metallum/render/metal3/Metal3DepthMipmapBridge.java"):
     _src = _code4(_bridge)
     for _gone in ("device.getOrCompileFunction", "device.depthStencilState"):
         if _gone in _src:
@@ -1102,14 +1103,14 @@ for _forbidden in ("Metal3", "Metal4", "MTL", "MemorySegment", "MetalCompiledRen
         raise SystemExit(f"the shared execution boundary names {_forbidden} in code")
 
 require("the Metal 3 aggregate implements the boundary without widening its internals",
-        "src/main/java/com/metallum/render/Metal3ExecutionState.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java", (
     "final class Metal3ExecutionState implements MetalExecutionState {",
     "public MetalCompiledRenderPipeline getOrCompilePipeline(",
     "public List<RenderPipeline> evictCachedPipelines(",
     "public void clearCachesAfterGpuCompletion() {",
     "public void close() {",
 ))
-_state_code = _code("src/main/java/com/metallum/render/Metal3ExecutionState.java")
+_state_code = _code("src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java")
 for _forbidden in ("public MemorySegment getOrCompileFunction", "public MemorySegment depthStencilState",
                    "public IntermediaryShaderModule getOrCompileShader"):
     if _forbidden in _state_code:
@@ -1117,17 +1118,17 @@ for _forbidden in ("public MemorySegment getOrCompileFunction", "public MemorySe
 
 # The shader module delegate is dead: the compiler asks the context directly, and nothing else asks anyone.
 for _path in ("src/main/java/com/metallum/render/MetalDevice.java",
-              "src/main/java/com/metallum/render/Metal3ExecutionState.java"):
+              "src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java"):
     if "getOrCompileShader(" in _code(_path):
         raise SystemExit(f"{_path} still carries the shader module delegate")
 require("shader module lookup happens where the modules are",
-        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3PipelineCompiler.java", (
     "compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX,",
     "compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT,",
 ))
 
 require("the Metal 3 execution aggregate owns the compilation state and the retirement queue",
-        "src/main/java/com/metallum/render/Metal3ExecutionState.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java", (
     "private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();",
     "private final Metal3CompilationContext compilation;",
     "this.compilation = new Metal3CompilationContext(device, this.retirement);",
@@ -1152,7 +1153,7 @@ if _sources.count("new Metal3CompilationContext(") != 1:
     raise SystemExit("Metal3CompilationContext is constructed somewhere other than the aggregate")
 
 require("the active pipeline cache belongs to the compilation context",
-        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java", (
     "private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();",
     "synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {",
     "synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {",
@@ -1166,13 +1167,13 @@ import pathlib as _pathlib
 
 _root = _pathlib.Path(__file__).resolve().parent.parent
 _dev = (_root / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8")
-_ctx = (_root / "src/main/java/com/metallum/render/Metal3CompilationContext.java").read_text(encoding="utf-8")
-_ret = (_root / "src/main/java/com/metallum/render/Metal3PipelineRetirement.java").read_text(encoding="utf-8")
+_ctx = (_root / "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java").read_text(encoding="utf-8")
+_ret = (_root / "src/main/java/com/metallum/render/metal3/Metal3PipelineRetirement.java").read_text(encoding="utf-8")
 
 if "compiledPipelines = new IdentityHashMap" in _dev:
     raise SystemExit("the active pipeline cache is declared on MetalDevice as well as on the context")
 
-_state = (_root / "src/main/java/com/metallum/render/Metal3ExecutionState.java").read_text(encoding="utf-8")
+_state = (_root / "src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java").read_text(encoding="utf-8")
 # The device waits, then hands over: the wait must come first, and the aggregate must not know how to wait.
 if _dev.index("this.waitForSubmittedGpuWork();") > _dev.index("this.executionState.clearCachesAfterGpuCompletion();"):
     raise SystemExit("clearPipelineCache releases the caches before the GPU wait")
@@ -1206,7 +1207,7 @@ require("the pipeline cache asks the artifact one question through a contract",
     "MetalPipelineKey pipelineKey();",
 ))
 require("the Metal 3 artifact answers it",
-        "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java", (
     "implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable {",
     "public MetalPipelineKey pipelineKey() {",
 ))
@@ -1235,7 +1236,7 @@ require("the frame's queue comes from the execution services",
 # type and its teardown live where the generation does, so the facade names no command-generation type for the
 # sake of one caller.
 require("the frame's queue belongs to the generation that encodes the frame",
-        "src/main/java/com/metallum/render/MetalCommandEncoder.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
     "private final com.metallum.mtl.metal3.MTLCommandQueue commandQueue;",
     "device.executionServices().commandQueue(device.metalDevice())",
     "return commandBuffer = this.commandQueue.makeCommandBuffer(",
@@ -1315,7 +1316,7 @@ require("a block can hand its argument to a Java method",
 # so that a Metal 3 artifact cannot be handed to a Metal 4 session, and every compiled pipeline carries its
 # own key so the step that moves the cache has something to move it to.
 require("a compiled pipeline carries what it is, not only the object it was asked for",
-        "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+        "src/main/java/com/metallum/render/metal3/MetalCompiledRenderPipeline.java", (
     "private final MetalPipelineKey pipelineKey;",
     "MetalPipelineKey pipelineKey() {",
     "this.pipelineKey = pipelineKey;",
@@ -1329,7 +1330,7 @@ require("the identity is read from the game's description plus the session's own
     "MetalPipelineKey of(final RenderPipeline pipeline, final String shaderProfile,",
 ))
 require("the key is built where the pipeline is compiled",
-        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+        "src/main/java/com/metallum/render/metal3/Metal3PipelineCompiler.java", (
     "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers())",
     "MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
 ))

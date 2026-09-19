@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import com.metallum.mtl.MTLDevice;
 import com.metallum.render.shared.MetalExecutionState;
@@ -6,6 +6,7 @@ import com.metallum.render.shared.MetalFrameEncoder;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import com.metallum.render.MetalDevice;
 
 /**
  * The one public Metal 3 construction seam: it makes the generation's execution state and its frame encoder, and

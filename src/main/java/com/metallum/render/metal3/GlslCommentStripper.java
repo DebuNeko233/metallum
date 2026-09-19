@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 /**
  * Removes GLSL comments without changing the source's line structure or joining tokens that were

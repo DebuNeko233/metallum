@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.metallum.render.shared.MetalCrossShaderTranslator;

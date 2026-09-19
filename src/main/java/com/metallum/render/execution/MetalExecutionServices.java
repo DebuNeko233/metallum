@@ -140,14 +140,14 @@ public interface MetalExecutionServices {
 
             @Override
             public MetalExecutionState createExecutionState(final MTLDevice device) {
-                return com.metallum.render.Metal3ExecutionFactory.createState(device);
+                return com.metallum.render.metal3.Metal3ExecutionFactory.createState(device);
             }
 
             @Override
             public MetalFrameEncoder createFrameEncoder(final com.metallum.render.MetalDevice device,
                                                         final MetalExecutionState executionState,
                                                         final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource) {
-                return com.metallum.render.Metal3ExecutionFactory.createFrameEncoder(device, executionState,
+                return com.metallum.render.metal3.Metal3ExecutionFactory.createFrameEncoder(device, executionState,
                         defaultShaderSource);
             }
 

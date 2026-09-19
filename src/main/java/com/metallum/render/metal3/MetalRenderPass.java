@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.metal3;
 
 import com.metallum.mtl.*;
 import com.metallum.objc.ObjC;
@@ -43,6 +43,8 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalResourceBinding;
+import com.metallum.render.MetalComputeBridge;
+import com.metallum.render.MetalDevice;
 
 @Environment(EnvType.CLIENT)
 final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter {
