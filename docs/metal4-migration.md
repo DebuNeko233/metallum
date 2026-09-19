@@ -305,6 +305,31 @@ for the device facts (done), and then the three files in one commit - not anothe
 
 Reverted again under the rule. `./gradlew build` clean, ledger unchanged at 15 couplings in 6 files.
 
+### The fourth attempt: the device owns caches the frame path calls directly
+
+With the artifact moved as part of the cluster (fourth attempt: encoder + render pass + artifact), the errors fell
+to 94 and are now two things: 80 `cannot find symbol` from the import fixer, and **four more of the device's
+package-private members**:
+
+    getOrCompileFunction(String, String) 4 · executionServices() 4 · getOrCompilePipeline(RenderPipeline) 2
+    depthStencilState(MTLCompareFunction, boolean) 2
+
+**`MetalDevice` is not only a facade: it owns the Metal 3 caches and the depth-stencil state factory that the
+frame path calls directly.** That is the deepest layer of the seam, and it is why every attempt has needed more
+widening: the cluster's real dependency is not a class or two but the device's *internals*.
+
+So the shape of the finished move is now known end to end, and it is not a `git mv`:
+
+1. the generation owns its caches - shaders, functions, compiled pipelines, depth-stencil states - and the device
+   keeps only what a facade must (the pipeline cache it reports through `precompilePipeline`, plus the guard);
+2. the device asks the generation through contracts (`MetalDeviceFacts` and `MetalCompiledArtifact` are the first
+   two, both in place);
+3. `executionServices()` becomes a public facade fact (it is one already: the services are the seam the whole
+   milestone is built on);
+4. and the import fixer must resolve nested and `mtl`/`objc` types, or the 80 symbol errors stay.
+
+Reverted under the rule again; `./gradlew build` clean; ledger unchanged at 15 couplings in 6 files.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
