@@ -220,6 +220,13 @@ renderscale=$renderscale
 shadowmapscale=$shadowmap_scale
 EOF
 
+# What this run asked for, fingerprinted, because the file is shared and two other things write it: the
+# settings screen picking a pack, and the video settings moving one of its three numbers - both through a
+# read-modify-write of the whole file. A session of the owner's own, or any reload that re-reads the file,
+# can therefore turn the pack off under a run that is already counting. Measured: the pack loads, the probe
+# arms, and the window counts the game's own frame, because the file said `enabled=false` by then.
+pack_fingerprint="$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)"
+
 # The measurement profile, written into the staged instance on every run, because a frame rate must not
 # be capped by a setting nobody remembered. `maxFps` is the game's own limiter - 120 here, which is
 # invisible until the engine gets fast and then reads exactly like a display cap, measured: the same run
@@ -463,7 +470,14 @@ for run in "${runs[@]}"; do
 		if [[ -n "$render_passes" && -n "$frame_count" && "$frame_count" -gt 0 \
 			&& $((render_passes / frame_count)) -lt 10 && "${copies:-0}" -eq 0 ]]; then
 			echo "Run '$name' counted $((render_passes / frame_count)) render passes a frame with no copy-backs: the window did not draw the pack, so its numbers are the game's own frame and are not a measurement" >&2
-			met_all=1
+			scene_bad=1
+		fi
+
+		# And the cause, where it can be named: the selection file is shared, and it is the one thing that
+		# decides whether the pack is drawn at all.
+		if [[ "$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)" != "$pack_fingerprint" ]]; then
+			echo "Run '$name' had its pack selection changed while it was counting (pack.txt was $([ "$enabled" == true ] && echo 'enabled for '"$pack_name" || echo 'disabled') when the run started): another writer owns that file, so this window measured whatever the change left behind" >&2
+			scene_bad=1
 		fi
 	fi
 
@@ -489,4 +503,9 @@ python3 "$repo_root/tools/vitrail-performance-compare.py" "$out_dir"
 if [[ "$met_all" == 1 ]]; then
 	echo "At least one run did not come up on Metal; the comparison above is about another engine." >&2
 	exit 3
+fi
+
+if [[ "${scene_bad:-0}" == 1 ]]; then
+	echo "At least one run's window did not draw the pack it asked for; the comparison above holds that window's numbers and they are not a measurement of the pack." >&2
+	exit 4
 fi
