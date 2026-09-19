@@ -29,6 +29,37 @@ The two things this document once listed as open are answered: the sampler ceili
 argument-buffer path binds as a buffer by address under Metal 4 - the same shape as a uniform, proven
 above. Nothing in the binding surface is now unknown, which is why the slices below can start.
 
+### The pipeline cache stays keyed by the game's own pipeline object
+
+The migration table's "shared logical pipeline + generation-specific compile artifacts" invites moving
+`MetalDevice`'s cache from `IdentityHashMap<RenderPipeline, ...>` onto a description key, so that two equal
+descriptions share one artifact. The key exists (`MetalPipelineKey`, in `render.shared`) and it is a
+sufficient identity: beyond the shaders it names the shader profile, the argument-buffer mode and one
+composed `renderingState` description holding the depth and stencil state (which carries the colour-target
+formats), the polygon mode, culling, the primitive topology and the vertex format bindings - every accessor
+`MetalCompiledRenderPipeline` reads while it builds.
+
+It was then measured instead of moved. The probe counts the distinct pipeline **identities** and the
+distinct **keys** the device was asked for from process start, and on the settled pack scene
+(`--settle 25`, camera pinned, Photon v1.3b at 55 per cent) the two read **345 and 345**:
+
+    ... compiles=0 compileMs=0.00 pipelineIdentities=345 pipelineKeys=345 ...
+    plain: 7.27 ms a frame, 137.6 frames a second, 7.28 ms of GPU time a frame over 600 answered frames
+
+Equal counts mean a keyed cache would hold exactly the entries the identity cache holds. The move therefore
+buys no compilations - the game builds each pipeline once and asks for it by that same object - while
+costing the eviction contract (`evictCachedPipelines` takes a `Predicate<RenderPipeline>` and answers with
+the pipelines it removed) and a hoist of the argument-buffer decision out of
+`MetalCrossShaderCompiler.compile`, where it is derived from the layout entries. **So the cache keeps its
+identity key, deliberately, and `MetalPipelineKey` keeps the job it was built for**: naming an artifact
+across the two generations and saying in a log which description a compile belonged to.
+
+The census stays on the probe rather than being removed after its one answer. It costs one identity-set
+insertion per pipeline request and hashes the key only when the identity is new, and it is the only thing
+that would report a future caller - a pack loader, or a Metal 4 table path - handing the device freshly
+built equal pipelines. That run read inside the configuration's settled band (7.25-7.28 ms), so the
+instrument did not move the number it measures.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
