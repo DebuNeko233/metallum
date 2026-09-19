@@ -166,6 +166,11 @@ public record MTLDevice(MemorySegment handle) {
             // Enabling it for the library is safe for ordinary shaders: the conservative contract
             // only applies to position outputs that were actually marked invariant.
             options.setPreserveInvariance(true);
+            // The profile the translator emitted, so the two halves of one decision cannot drift apart: a
+            // library compiled as 4.0 while the MSL was emitted for 3.2 is a pipeline that either fails or
+            // means something neither side asked for.
+            options.setLanguageVersion(
+                    com.metallum.render.execution.MetalShaderLanguageProfile.selected().metalLanguageVersion());
             MemorySegment errorOut = arena.allocate(ADDRESS);
             MemorySegment nsSource = ObjC.nsString(mslSource);
             MemorySegment library = NEW_LIBRARY_WITH_SOURCE.sendPtr(handle, nsSource, options.handle(), errorOut);
@@ -212,6 +217,11 @@ public record MTLDevice(MemorySegment handle) {
 
     static long minimumTextureBufferAlignment(final MemorySegment device, final long pixelFormat) {
         return MINIMUM_TEXTURE_BUFFER_ALIGNMENT.sendLong(device, pixelFormat);
+    }
+
+    /** The text of an NSError an out-parameter was given, for a caller that must say what failed. */
+    public static String errorText(final MemorySegment errorOut) {
+        return errorDescription(errorOut);
     }
 
     private static String errorDescription(final MemorySegment errorOut) {

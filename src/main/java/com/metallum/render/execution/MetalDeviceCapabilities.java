@@ -36,7 +36,9 @@ import java.lang.foreign.MemorySegment;
  * @param metal4Compiler          the device has the compiler factory
  * @param metalFxSpatial          the Metal 3 spatial scaler is available on this device
  * @param metal4FxSpatial         the Metal 4 spatial scaler exists and its factory answers
- * @param shaderLanguageProfile   the MSL profile the compiler is told to emit
+ * @param shaderLanguageProfile   the newest MSL profile this system's Metal 3 path accepts, probed
+ *                                by compiling; the session's profile is chosen with the generation and
+ *                                held on {@link MetalShaderLanguageProfile}
  */
 @Environment(EnvType.CLIENT)
 public record MetalDeviceCapabilities(
@@ -116,7 +118,7 @@ public record MetalDeviceCapabilities(
                 factory(device, "newCompilerWithDescriptor:error:"),
                 MetalFx.spatialSupported(device.handle()),
                 MetalFx.metal4SpatialSupported(device.handle()),
-                MetalShaderLanguageProfile.MSL_4_0
+                MetalShaderLanguageProbe.newestMetal3Profile(device)
         );
     }
 

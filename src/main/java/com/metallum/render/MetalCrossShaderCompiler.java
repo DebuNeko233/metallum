@@ -1,5 +1,6 @@
 package com.metallum.render;
 
+import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.BindGroupLayout.UniformDescription;
@@ -32,7 +33,6 @@ import java.util.regex.Pattern;
 @Environment(EnvType.CLIENT)
 final class MetalCrossShaderCompiler {
     private static final Set<String> BUILT_IN_UNIFORMS = Set.of("Projection", "Lighting", "Fog", "Globals");
-    private static final int MSL_VERSION_4_0 = 0x040000;
     private static final int DIRECT_SAMPLER_LIMIT = 16;
     private static final Pattern VERTEX_ENTRY_PATTERN = Pattern.compile("\\bvertex\\s+\\w+\\s+(\\w+)\\s*\\(");
     private static final Pattern FRAGMENT_ENTRY_PATTERN = Pattern.compile("\\bfragment\\s+\\w+\\s+(\\w+)\\s*\\(");
@@ -586,7 +586,8 @@ final class MetalCrossShaderCompiler {
                 long options = pOptions.get(0);
                 checkSpvc(Spvc.spvc_compiler_options_set_uint(options, Spvc.SPVC_COMPILER_OPTION_MSL_PLATFORM, Spvc.SPVC_MSL_PLATFORM_MACOS),
                         "spvc_compiler_options_set_uint(MSL_PLATFORM)");
-                checkSpvc(Spvc.spvc_compiler_options_set_uint(options, Spvc.SPVC_COMPILER_OPTION_MSL_VERSION, MSL_VERSION_4_0),
+                checkSpvc(Spvc.spvc_compiler_options_set_uint(options, Spvc.SPVC_COMPILER_OPTION_MSL_VERSION,
+                                MetalShaderLanguageProfile.selected().spirvCrossMslVersion()),
                         "spvc_compiler_options_set_uint(MSL_VERSION)");
                 checkSpvc(Spvc.spvc_compiler_options_set_bool(
                         options, Spvc.SPVC_COMPILER_OPTION_MSL_ENABLE_DECORATION_BINDING, !useArgumentBuffers),

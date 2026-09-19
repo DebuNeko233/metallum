@@ -1,5 +1,6 @@
 package com.metallum.render;
 
+import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.metallum.mtl.MTLComputeCommandEncoder;
 import com.metallum.objc.ObjC;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -40,7 +41,6 @@ import java.util.regex.Pattern;
  */
 @Environment(EnvType.CLIENT)
 public final class MetalComputeBridge {
-    private static final int MSL_VERSION_4_0 = 0x040000;
     private static final int MAX_BUFFER_ARGUMENTS = 31;
     private static final int MAX_TEXTURE_ARGUMENTS = 128;
     private static final int MAX_SAMPLER_ARGUMENTS = 16;
@@ -310,8 +310,7 @@ public final class MetalComputeBridge {
                 Spvc.spvc_compiler_options_set_uint(
                         options,
                         Spvc.SPVC_COMPILER_OPTION_MSL_VERSION,
-                        MSL_VERSION_4_0
-                ),
+                        MetalShaderLanguageProfile.selected().spirvCrossMslVersion()),
                 "spvc_compiler_options_set_uint(MSL_VERSION)"
         );
         checkSpvc(

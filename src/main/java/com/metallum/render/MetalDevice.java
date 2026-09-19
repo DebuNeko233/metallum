@@ -1,8 +1,11 @@
 package com.metallum.render;
 
+import com.metallum.render.execution.MetalApiGeneration;
 import com.metallum.render.execution.MetalDeviceCapabilities;
 import com.metallum.render.execution.MetalExecutionPreference;
 import com.metallum.render.execution.MetalExecutionSelector;
+import com.metallum.render.execution.MetalExecutionServices;
+import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.metallum.mtl.*;
 import com.metallum.objc.Cocoa;
 import com.metallum.objc.ObjC;
@@ -82,7 +85,23 @@ final class MetalDevice implements GpuDeviceBackend {
         MetalDeviceCapabilities capabilities =
                 MetalDeviceCapabilities.probe(this.metalDevice, deviceName);
         MetalExecutionSelector.say(capabilities);
-        MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);
+        MetalExecutionSelector.Decision decision =
+                MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);
+
+        // The shader profile follows what *executes*, not what was selected: a session that has chosen
+        // Metal 4 but still encodes its frame through Metal 3 needs MSL the Metal 3 path can compile, and
+        // the day the new path executes is the day this switches to 4.0. The Metal 3 ladder is walked by
+        // compiling a probe library, so "3.2" here means the system took it and not that the OS is new.
+        MetalApiGeneration executing = MetalExecutionServices.of(decision.selected()).executing();
+        if (executing == MetalApiGeneration.METAL3) {
+            MetalShaderLanguageProfile.select(capabilities.shaderLanguageProfile(),
+                    "Metal 3 executes the frame and " + capabilities.shaderLanguageProfile().token()
+                            + " is the newest profile it accepted");
+        } else {
+            MetalShaderLanguageProfile.select(MetalShaderLanguageProfile.MSL_4_0,
+                    "Metal 4 executes the frame and the 4.0 toolchain is the one the translator was written "
+                            + "against");
+        }
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
@@ -434,8 +453,13 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
+        // The profile is part of the identity even though the MSL text already differs between profiles:
+        // a cache whose key is the text is safe by accident, and one whose key names the profile is safe
+        // by construction - and the accident is exactly what a future translator that emits the same text
+        // for two profiles would remove.
         return this.functionCache.computeIfAbsent(
-                new MslFunctionKey(msl, entryPoint),
+                new MslFunctionKey(msl, entryPoint,
+                        com.metallum.render.execution.MetalShaderLanguageProfile.selected().token()),
                 key -> this.metalDevice.newFunction(key.msl(), key.entryPoint())
         );
     }
@@ -443,7 +467,7 @@ final class MetalDevice implements GpuDeviceBackend {
     private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines) {
     }
 
-    private record MslFunctionKey(String msl, String entryPoint) {
+    private record MslFunctionKey(String msl, String entryPoint, String profile) {
     }
 
     private DeviceInfo buildDeviceInfo(final String deviceName) {

@@ -810,6 +810,49 @@ require("the generations are the two API surfaces and nothing else",
 # The selector's rules, and the one input it may not use. A chip name is not a capability: Apple Silicon
 # reports the same families across its generations, so a decision keyed off "M4" or "M5" would be a table of
 # hardware rather than a question about the device - and it would be wrong on the first chip it had not seen.
+# ---------------------------------------------------------------------------
+# The shader profile is chosen with the generation, and the two halves of it agree
+#
+# A session whose translator emits MSL 4.0 while Metal is told to accept 3.2 has pipelines that do not
+# compile, or worse, compile into something neither side intended; and a Metal 3 session that emits 4.0
+# works on the systems this engine is developed on and fails on the older one the path exists for. So the
+# profile is one record with both numbers, it is probed rather than assumed, and it is named in the cache
+# identity rather than only implied by the text.
+# ---------------------------------------------------------------------------
+require("the MSL profile pairs the translator's version with the compiler's",
+        "src/main/java/com/metallum/render/execution/MetalShaderLanguageProfile.java", (
+    "public record MetalShaderLanguageProfile(int spirvCrossMslVersion, long metalLanguageVersion, String token) {",
+    'MSL_3_2 =\n            new MetalShaderLanguageProfile(0x030200, (3L << 16) + 2L, "msl3.2")',
+    'MSL_4_0 =\n            new MetalShaderLanguageProfile(0x040000, (4L << 16) + 0L, "msl4.0")',
+    "public static final List<MetalShaderLanguageProfile> METAL3_LADDER =",
+    "public static void select(final MetalShaderLanguageProfile profile, final String why) {",
+))
+require("the Metal 3 profile is probed by compiling, newest first",
+        "src/main/java/com/metallum/render/execution/MetalShaderLanguageProbe.java", (
+    "public static MetalShaderLanguageProfile newestMetal3Profile(final MTLDevice device) {",
+    "for (MetalShaderLanguageProfile candidate : MetalShaderLanguageProfile.METAL3_LADDER) {",
+    "options.setLanguageVersion(profile.metalLanguageVersion());",
+    "NEW_LIBRARY_WITH_SOURCE.sendPtr(device.handle(), source, options.handle(), errorOut)",
+))
+require("both translators read the session's profile",
+        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+    "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
+))
+require("the compute translator reads the same one",
+        "src/main/java/com/metallum/render/MetalComputeBridge.java", (
+    "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
+))
+require("the library is compiled for the profile the translator emitted",
+        "src/main/java/com/metallum/mtl/MTLDevice.java", (
+    "options.setLanguageVersion(",
+    "MetalShaderLanguageProfile.selected().metalLanguageVersion()",
+))
+require("a compiled function's identity names the profile",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "new MslFunctionKey(msl, entryPoint,",
+    "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
+    "MetalShaderLanguageProfile.selected().token()",
+))
 require("the selection is made from capability and said out loud",
         "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java", (
     "public static Decision decide(final MetalExecutionPreference preference,",
