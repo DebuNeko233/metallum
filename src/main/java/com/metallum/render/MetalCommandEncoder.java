@@ -114,7 +114,14 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     private MemorySegment renderDepthAttachment = MemorySegment.NULL;
     private final Long2ObjectOpenHashMap<ArrayDeque<MTLBuffer>> dynamicBackingPool = new Long2ObjectOpenHashMap<>();
 
-    MetalCommandEncoder(final MetalDevice device) {
+    /**
+     * The frame encoder for this device, made by the execution services rather than by the device.
+     * <p>
+     * Public because the services own construction and live one package away - it is the one member opened for
+     * this, and the alternative (a factory class beside the implementation) would have kept the naming of this
+     * class in the frame path's facade, which is the coupling the move is removing.
+     */
+    public MetalCommandEncoder(final MetalDevice device) {
         this.device = device;
         // The same destruction queue rather than the encoder: what the transient memory needs from its
         // host is that its retired blocks are released on the same rotation as the encoder's own, and

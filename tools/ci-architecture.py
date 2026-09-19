@@ -165,9 +165,13 @@ FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "MetalRenderPass",),
     "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
-    "com/metallum/render/MetalDevice.java": ("MTLCommandQueue", "Metal4Path", "MetalCommandEncoder",),
+    "com/metallum/render/MetalDevice.java": ("MTLCommandQueue", "Metal4Path",),
     "com/metallum/render/MetalRenderPass.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/Metal4PresentGate.java": ("Metal4Path",),
+    # The services construct the frame encoder: a generation's own factory belongs with the generation, and
+    # the facade asks for the contract. This line becomes an allowed delegation when the class and its
+    # factory move into render.metal3 together.
+    "com/metallum/render/execution/MetalExecutionServices.java": ("MetalCommandEncoder",),
 }
 _GENERATION_PACKAGES = (
     "com.metallum.render.metal3",

@@ -1,6 +1,7 @@
 package com.metallum.render.execution;
 
 import com.metallum.mtl.MTLDevice;
+import com.metallum.render.shared.MetalFrameEncoder;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 
@@ -71,6 +72,15 @@ public interface MetalExecutionServices {
      * say whether this road takes the picture. It is a contract rather than the present path itself, so the
      * generation that encodes the frame never names the generation that presents it.
      */
+    /**
+     * The frame's encoder, made here so that the device holds a contract rather than a generation's class.
+     * <p>
+     * The Metal 3 implementation is still the only one - the selected generation's own frame path is what M4
+     * builds - so this answers with the same generation {@link #executing()} names, and the day there is a
+     * second implementation is the day this method gains a second answer.
+     */
+    MetalFrameEncoder createFrameEncoder(com.metallum.render.MetalDevice device);
+
     default com.metallum.render.shared.MetalFramePresentGate presentGate() {
         return com.metallum.render.shared.MetalFramePresentGate.NONE;
     }
@@ -106,6 +116,11 @@ public interface MetalExecutionServices {
                 // asked as "is the selection not Metal 3", which gave the right answer for the wrong reason: the
                 // question is not what was selected but whether the selected generation is the one running.
                 return executing != selected;
+            }
+
+            @Override
+            public MetalFrameEncoder createFrameEncoder(final com.metallum.render.MetalDevice device) {
+                return new com.metallum.render.MetalCommandEncoder(device);
             }
 
             @Override

@@ -127,8 +127,9 @@ public final class MetalDevice implements GpuDeviceBackend {
         // nothing else prints: `selectedGeneration` in the frame probe comes from the telemetry, not from this
         // instance. Two of these lines - one from an AUTO launch, one from a forced Metal 3 launch - are what
         // says the services really carry the selection.
-        com.metallum.Metallum.LOGGER.info("Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={} framePathReady={}",
+        com.metallum.Metallum.LOGGER.info("Metal execution seam: selectedGeneration={} executingGeneration={} mode={} referenceShell={} framePathReady={}",
                 this.services.selected().token(), this.services.executing().token(),
+                this.services.framePathReady() ? "own-path" : "reference-shell",
                 this.services.isReferenceShell(), this.services.framePathReady());
 
         // The shader profile follows what *executes*, not what was selected: a session that has chosen
@@ -145,7 +146,7 @@ public final class MetalDevice implements GpuDeviceBackend {
                     "Metal 4 executes the frame and the 4.0 toolchain is the one the translator was written "
                             + "against");
         }
-        this.commandEncoder = new MetalCommandEncoder(this);
+        this.commandEncoder = this.services.createFrameEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
 

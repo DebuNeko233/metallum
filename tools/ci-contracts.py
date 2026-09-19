@@ -926,6 +926,7 @@ require("the frame's queue comes from the execution services",
     # pin used to name METAL3 because that was the constant; what it is really pinning is that the device has
     # no opinion of its own about which queue to make.
     "this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);",
+    "this.commandEncoder = this.services.createFrameEncoder(this);",
     "if (!this.services.framePathReady()) {",
     "this.commandQueue = new MTLCommandQueue(",
     "this.services.commandQueue(this.metalDevice)",
@@ -936,8 +937,9 @@ require("the frame's queue comes from the execution services",
 # thing at this seam. Pinned because a log line nobody guards is a log line somebody deletes.
 require("the seam prints the generation the services themselves carry",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    '"Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={} framePathReady={}"',
+    '"Metal execution seam: selectedGeneration={} executingGeneration={} mode={} referenceShell={} framePathReady={}"',
     "this.services.selected().token(), this.services.executing().token(),",
+    "this.services.framePathReady() ? \"own-path\" : \"reference-shell\",",
     "this.services.isReferenceShell(), this.services.framePathReady());",
 ))
 require("the services own the queue factory without naming a generation type",
