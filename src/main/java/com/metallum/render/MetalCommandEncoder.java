@@ -4,7 +4,7 @@ import com.metallum.Metallum;
 import com.metallum.mtl.*;
 import com.metallum.objc.ObjC;
 import com.metallum.objc.ObjCBlock;
-import com.metallum.render.MetalFrameProbe.EncoderEnd;
+import com.metallum.render.shared.MetalFrameProbe.EncoderEnd;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.GpuFence;
@@ -30,9 +30,18 @@ import com.metallum.mtl.metal3.MTLCommandEncoder;
 import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 import com.metallum.mtl.metal3.MTLComputeCommandEncoder;
 import com.metallum.mtl.metal3.MTLBlitCommandEncoder;
+import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalTransientMemory;
+import com.metallum.render.shared.MetalDestructionQueue;
+import com.metallum.render.shared.MetalGpuQueryPool;
+import com.metallum.render.shared.MetalPipelineSupport;
+import com.metallum.render.shared.MetalFrameProbe;
+import com.metallum.render.shared.AttachmentContents;
 
 @Environment(EnvType.CLIENT)
-final class MetalCommandEncoder implements CommandEncoderBackend {
+public final class MetalCommandEncoder implements CommandEncoderBackend {
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
@@ -901,7 +910,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         return new MetalFence(this, currentSubmitIndex);
     }
 
-    void queueForDestroy(final Runnable destroyAction) {
+    public void queueForDestroy(final Runnable destroyAction) {
         destroyQueue.add(destroyAction);
     }
 

@@ -57,7 +57,7 @@ encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
 pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
 render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
 compiler = read("src/main/java/com/metallum/render/MetalCrossShaderCompiler.java")
-texture = read("src/main/java/com/metallum/render/MetalGpuTexture.java")
+texture = read("src/main/java/com/metallum/render/shared/MetalGpuTexture.java")
 formats = read("src/main/java/com/metallum/mtl/MTLPixelFormat.java")
 compare = read("src/main/java/com/metallum/mtl/MTLCompareFunction.java")
 mtl_device = read("src/main/java/com/metallum/mtl/MTLDevice.java")
@@ -83,7 +83,7 @@ for mapping in (
 if "case LESS_THAN_OR_EQUAL -> LessEqual;" not in compare:
     raise SystemExit("Missing forward-depth compare mapping")
 
-require("Metal texture allocation", "src/main/java/com/metallum/render/MetalGpuTexture.java", (
+require("Metal texture allocation", "src/main/java/com/metallum/render/shared/MetalGpuTexture.java", (
     "this.mtlPixelFormat = MTLPixelFormat.from(format);",
     "descriptor.pixelFormat(this.mtlPixelFormat);",
     "if ((usage & GpuTexture.USAGE_RENDER_ATTACHMENT) != 0)",

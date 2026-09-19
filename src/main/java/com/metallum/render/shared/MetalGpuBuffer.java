@@ -1,4 +1,6 @@
-package com.metallum.render;
+package com.metallum.render.shared;
+
+import com.metallum.render.MetalDevice;
 
 import com.metallum.mtl.MTLBuffer;
 import com.metallum.mtl.MTLHazardTrackingMode;
@@ -17,7 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 @Environment(EnvType.CLIENT)
-class MetalGpuBuffer extends GpuBuffer {
+public class MetalGpuBuffer extends GpuBuffer {
     private final MetalDevice device;
     private final boolean cpuAccessible;
     private final boolean dynamic;
@@ -29,7 +31,7 @@ class MetalGpuBuffer extends GpuBuffer {
     private ByteBuffer storage;
     private boolean closed;
 
-    MetalGpuBuffer(final MetalDevice device, @GpuBuffer.Usage final int usage, final long size) {
+    public MetalGpuBuffer(final MetalDevice device, @GpuBuffer.Usage final int usage, final long size) {
         super(usage, size);
         this.device = device;
 
@@ -53,7 +55,7 @@ class MetalGpuBuffer extends GpuBuffer {
         }
     }
 
-    MetalGpuBuffer(final MetalDevice device, @GpuBuffer.Usage final int usage, final long size, final @Nullable MTLBuffer wrappedBuffer) {
+    public MetalGpuBuffer(final MetalDevice device, @GpuBuffer.Usage final int usage, final long size, final @Nullable MTLBuffer wrappedBuffer) {
         super(usage, size);
         this.device = device;
         this.cpuAccessible = false;
@@ -76,26 +78,26 @@ class MetalGpuBuffer extends GpuBuffer {
                 .order(this.storage.order());
     }
 
-    MTLBuffer metalBuffer() {
+    public     MTLBuffer metalBuffer() {
         if (this.nativeBuffer == null) {
             throw new IllegalStateException("Native Metal buffer is closed");
         }
         return this.nativeBuffer;
     }
 
-    MemorySegment nativeHandle() {
+    public     MemorySegment nativeHandle() {
         return metalBuffer().handle();
     }
 
-    boolean isDynamic() {
+    public boolean isDynamic() {
         return this.dynamic;
     }
 
-    boolean isCpuAccessible() {
+    public boolean isCpuAccessible() {
         return this.cpuAccessible;
     }
 
-    void writeDirect(final long offset, final ByteBuffer data) {
+    public     void writeDirect(final long offset, final ByteBuffer data) {
         this.sliceStorage(offset, data.remaining()).put(data.duplicate());
     }
 
@@ -106,7 +108,7 @@ class MetalGpuBuffer extends GpuBuffer {
      * allocation without staging another buffer of the same size. The resource is new and has not
      * been submitted to the GPU yet when this is called, so no encoder transition is required.
      */
-    void zeroContents() {
+    public     void zeroContents() {
         if (this.storage == null) {
             throw new IllegalStateException("Buffer is not CPU-accessible");
         }
@@ -117,22 +119,22 @@ class MetalGpuBuffer extends GpuBuffer {
         contents.reinterpret(this.allocationSize).fill((byte) 0);
     }
 
-    long allocationSize() {
+    public     long allocationSize() {
         return this.allocationSize;
     }
 
-    long resourceOptions() {
+    public     long resourceOptions() {
         return this.resourceOptions;
     }
 
-    ByteBuffer currentStorage() {
+    public     ByteBuffer currentStorage() {
         if (this.storage == null) {
             throw new IllegalStateException("Buffer is not CPU-accessible");
         }
         return this.storage.duplicate().order(this.storage.order());
     }
 
-    void swapBacking(final MTLBuffer buffer, final ByteBuffer storage) {
+    public     void swapBacking(final MTLBuffer buffer, final ByteBuffer storage) {
         this.nativeBuffer = buffer;
         this.storage = storage;
     }

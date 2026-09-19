@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESCRIPTOR = ROOT / "src/main/java/com/metallum/mtl/MTLSamplerDescriptor.java"
-SAMPLER = ROOT / "src/main/java/com/metallum/render/MetalGpuSampler.java"
+SAMPLER = ROOT / "src/main/java/com/metallum/render/shared/MetalGpuSampler.java"
 COMPILER = ROOT / "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java"
 
 

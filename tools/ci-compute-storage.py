@@ -64,7 +64,7 @@ require("Generic compute/render/blit fence lifecycle", "src/main/java/com/metall
     "currentEncoder.endEncoding();",
 ))
 
-require("Shader-readable/writable storage texture", "src/main/java/com/metallum/render/MetalGpuTexture.java", (
+require("Shader-readable/writable storage texture", "src/main/java/com/metallum/render/shared/MetalGpuTexture.java", (
     "descriptor.hazardTrackingMode(MTLHazardTrackingMode.Untracked);",
     "if (shaderWrite) {",
     "result |= MTLTextureUsage.ShaderRead.value;",
@@ -83,7 +83,7 @@ require("Storage buffer allocation", "src/main/java/com/metallum/render/MetalDev
     "public Object createStorageBufferResource(final long size)",
     "buffer.zeroContents();",
 ))
-require("Untracked storage buffer hazards", "src/main/java/com/metallum/render/MetalGpuBuffer.java", (
+require("Untracked storage buffer hazards", "src/main/java/com/metallum/render/shared/MetalGpuBuffer.java", (
     "MTLHazardTrackingMode.Untracked",
     "void zeroContents()",
 ))

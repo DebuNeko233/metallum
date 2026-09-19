@@ -3,6 +3,7 @@ package com.metallum.render;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
+import com.metallum.render.shared.AttachmentContents;
 
 /**
  * The public door to the encoder's attachment-contents capability.

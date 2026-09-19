@@ -4,6 +4,7 @@ import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.textures.GpuTexture;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import com.metallum.render.shared.MetalGpuTexture;
 
 /**
  * Optional-backend bridge for ordinary Minecraft textures that also need shader-write access.

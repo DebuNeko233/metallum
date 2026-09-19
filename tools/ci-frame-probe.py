@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-PROBE_PATH = "src/main/java/com/metallum/render/MetalFrameProbe.java"
+PROBE_PATH = "src/main/java/com/metallum/render/shared/MetalFrameProbe.java"
 
 
 def read(rel: str) -> str:
@@ -55,7 +55,7 @@ pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.j
 # never be the reason a session does not start.
 # ---------------------------------------------------------------------------
 require("frame-probe arming", probe, (
-    "package com.metallum.render;",
+    "package com.metallum.render.shared;",
     "public final class MetalFrameProbe {",
     "private MetalFrameProbe() {",
     'Boolean.getBoolean("metallum.probeFrames")',
@@ -496,7 +496,7 @@ if "MetalGpuTexture" in command_buffer:
 # image that reads as a shader-pack defect, so every answer nobody gave - no array, a short array, a
 # null slot - has to come back as the one that changes nothing.
 # ---------------------------------------------------------------------------
-contents_record = read("src/main/java/com/metallum/render/AttachmentContents.java")
+contents_record = read("src/main/java/com/metallum/render/shared/AttachmentContents.java")
 require("attachment contents", command_buffer, (
     "AttachmentContents[] stated = AttachmentContents.resolve(attachmentContents, colorTextures.length);",
     "AttachmentContents contents = stated[index];",
@@ -554,7 +554,7 @@ require("binding counters", render_pass, (
     "MetalFrameProbe.scissorSet();",
 ))
 require("viewport counter", render_encoder, (
-    "import com.metallum.render.MetalFrameProbe;",
+    "import com.metallum.render.shared.MetalFrameProbe;",
     "MetalFrameProbe.viewportSet();",
 ))
 if render_pass.index("MetalFrameProbe.pipelineBound();") > render_pass.index("enc.setRenderPipelineState(pipelineHandle);"):

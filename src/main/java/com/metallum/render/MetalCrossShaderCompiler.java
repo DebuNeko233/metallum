@@ -29,6 +29,7 @@ import java.nio.IntBuffer;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.metallum.render.shared.MetalPipelineSupport;
 
 @Environment(EnvType.CLIENT)
 final class MetalCrossShaderCompiler {

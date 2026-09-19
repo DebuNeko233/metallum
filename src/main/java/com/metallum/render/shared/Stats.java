@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import com.metallum.Metallum;
 import com.mojang.blaze3d.buffers.GpuBuffer;

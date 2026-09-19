@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import com.metallum.Metallum;
 import net.fabricmc.api.EnvType;
@@ -8,26 +8,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Environment(EnvType.CLIENT)
-final class MetalDestructionQueue {
+public final class MetalDestructionQueue {
     private final List<Runnable>[] queues;
     private int currentQueueIndex;
 
     @SuppressWarnings("unchecked")
-    MetalDestructionQueue(final int queueCount) {
+    public     MetalDestructionQueue(final int queueCount) {
         this.queues = (List<Runnable>[]) new List<?>[queueCount];
         for (int i = 0; i < queueCount; i++) {
             this.queues[i] = new ArrayList<>();
         }
     }
 
-    void add(final Runnable destroyAction) {
+    public     void add(final Runnable destroyAction) {
         if (destroyAction == null) {
             return;
         }
         this.queues[this.currentQueueIndex].add(destroyAction);
     }
 
-    void rotate() {
+    public     void rotate() {
         this.currentQueueIndex = (this.currentQueueIndex + 1) % this.queues.length;
         List<Runnable> toDestroy = this.queues[this.currentQueueIndex];
         this.queues[this.currentQueueIndex] = new ArrayList<>();
@@ -40,7 +40,7 @@ final class MetalDestructionQueue {
         }
     }
 
-    void close() {
+    public     void close() {
         for (int i = 0; i < this.queues.length; i++) {
             this.rotate();
         }

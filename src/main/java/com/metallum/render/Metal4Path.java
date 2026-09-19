@@ -22,6 +22,7 @@ import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import com.metallum.render.shared.MetalFrameProbe;
 
 /**
  * The Metal 4 command structure presenting the frame, one command buffer and one commit a frame.

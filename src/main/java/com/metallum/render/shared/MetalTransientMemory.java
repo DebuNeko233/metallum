@@ -1,4 +1,8 @@
-package com.metallum.render;
+package com.metallum.render.shared;
+
+import com.metallum.render.MetalCommandEncoder;
+
+import com.metallum.render.MetalDevice;
 
 import com.metallum.mtl.MTLBuffer;
 import com.mojang.blaze3d.buffers.GpuBuffer;
@@ -21,7 +25,7 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 @Environment(EnvType.CLIENT)
-final class MetalTransientMemory implements TransientMemory {
+public final class MetalTransientMemory implements TransientMemory {
     private static final long BLOCK_SIZE = 524288L;
     private static final long MAX_CPU_ALIGNMENT = 16L;
     private static final long MAX_GPU_ALIGNMENT = Long.highestOneBit(Long.MAX_VALUE);
@@ -35,7 +39,7 @@ final class MetalTransientMemory implements TransientMemory {
     private final TransientBlockAllocator<MetalGpuBuffer> gpuBlockAllocator;
     private long submitIndex = 0L;
 
-    MetalTransientMemory(final MetalDevice device, final MetalCommandEncoder encoder) {
+    public     MetalTransientMemory(final MetalDevice device, final MetalCommandEncoder encoder) {
         this.device = device;
         this.encoder = encoder;
         this.gpuBlockAllocator = new TransientBlockAllocator<>(
@@ -43,13 +47,13 @@ final class MetalTransientMemory implements TransientMemory {
         );
     }
 
-    void rotate() {
+    public     void rotate() {
         cpuBlockAllocator.rotate().run();
         encoder.queueForDestroy(gpuBlockAllocator.rotate());
         submitIndex++;
     }
 
-    void close() {
+    public     void close() {
         cpuBlockAllocator.close();
         gpuBlockAllocator.close();
     }

@@ -24,7 +24,7 @@ import com.metallum.mtl.MTLDevice;
 
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
-import com.metallum.render.MetalFrameProbe;
+import com.metallum.render.shared.MetalFrameProbe;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;

@@ -1,4 +1,6 @@
-package com.metallum.render;
+package com.metallum.render.shared;
+
+import com.metallum.render.MetalDevice;
 
 import com.metallum.mtl.*;
 import com.metallum.objc.Msg;
@@ -13,7 +15,7 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 
 @Environment(EnvType.CLIENT)
-final class MetalGpuTexture extends GpuTexture {
+public final class MetalGpuTexture extends GpuTexture {
     private static final Msg SET_LABEL = Msg.ofVoid("setLabel:", java.lang.foreign.ValueLayout.ADDRESS);
 
     private final MetalDevice device;
@@ -27,7 +29,7 @@ final class MetalGpuTexture extends GpuTexture {
     @Nullable
     private MemorySegment nativeHandle;
 
-    MetalGpuTexture(
+    public MetalGpuTexture(
             final MetalDevice device,
             @GpuTexture.Usage final int usage,
             final String label,
@@ -40,7 +42,7 @@ final class MetalGpuTexture extends GpuTexture {
         this(device, usage, label, format, width, height, depthOrLayers, mipLevels, null, false);
     }
 
-    MetalGpuTexture(
+    public MetalGpuTexture(
             final MetalDevice device,
             @GpuTexture.Usage final int usage,
             final String label,
@@ -91,11 +93,11 @@ final class MetalGpuTexture extends GpuTexture {
         }
     }
 
-    int pixelSize() {
+    public     int pixelSize() {
         return this.getFormat().blockSize();
     }
 
-    void recordMaterializedClear(@Nullable final Vector4fc color, @Nullable final Double depth) {
+    public     void recordMaterializedClear(@Nullable final Vector4fc color, @Nullable final Double depth) {
         if (color != null) {
             this.materializedColorClear = color;
         }
@@ -104,21 +106,21 @@ final class MetalGpuTexture extends GpuTexture {
         }
     }
 
-    boolean clearIsRedundant(@Nullable final Vector4fc color, @Nullable final Double depth) {
+    public     boolean clearIsRedundant(@Nullable final Vector4fc color, @Nullable final Double depth) {
         return (color == null || color.equals(this.materializedColorClear))
                 && (depth == null || depth.equals(this.materializedDepthClear));
     }
 
-    void markContentsDirty() {
+    public     void markContentsDirty() {
         this.materializedColorClear = null;
         this.materializedDepthClear = null;
     }
 
-    MetalDevice device() {
+    public MetalDevice device() {
         return this.device;
     }
 
-    MemorySegment nativeHandle() {
+    public     MemorySegment nativeHandle() {
         if (this.nativeHandle == null) {
             throw new IllegalStateException("Native Metal texture is closed");
         }
@@ -145,11 +147,11 @@ final class MetalGpuTexture extends GpuTexture {
         }
     }
 
-    MTLPixelFormat mtlPixelFormat() {
+    public     MTLPixelFormat mtlPixelFormat() {
         return this.mtlPixelFormat;
     }
 
-    MTLPixelFormat mtlStencilPixelFormat() {
+    public     MTLPixelFormat mtlStencilPixelFormat() {
         return this.mtlPixelFormat.hasStencil() ? this.mtlPixelFormat : MTLPixelFormat.Invalid;
     }
 

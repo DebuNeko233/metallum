@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.textures.GpuSampler;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import com.metallum.render.shared.MetalGpuSampler;
 
 /**
  * Optional-backend seam for sampler comparison state that Minecraft 26.2's public

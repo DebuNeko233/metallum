@@ -24,6 +24,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalGpuSampler;
 
 /**
  * Optional-backend bridge for shader-pack compute work.

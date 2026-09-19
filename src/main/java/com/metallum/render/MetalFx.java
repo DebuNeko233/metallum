@@ -17,6 +17,7 @@ import java.util.Map;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import com.metallum.render.shared.MetalGpuTexture;
 
 /**
  * MetalFX spatial scaling: whether this system and this device can do it, and the one scaler per

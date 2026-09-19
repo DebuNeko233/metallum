@@ -1,4 +1,6 @@
-package com.metallum.render;
+package com.metallum.render.shared;
+
+import com.metallum.render.MetalDevice;
 
 import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLSamplerAddressMode;
@@ -18,7 +20,7 @@ import java.util.EnumMap;
 import java.util.OptionalDouble;
 
 @Environment(EnvType.CLIENT)
-final class MetalGpuSampler extends GpuSampler {
+public final class MetalGpuSampler extends GpuSampler {
     private final MetalDevice device;
     private final MemorySegment nativeHandle;
     private final AddressMode addressModeU;
@@ -30,7 +32,7 @@ final class MetalGpuSampler extends GpuSampler {
     private final EnumMap<CompareOp, MetalGpuSampler> comparisonVariants = new EnumMap<>(CompareOp.class);
     private boolean closed;
 
-    MetalGpuSampler(
+    public MetalGpuSampler(
             final MetalDevice device,
             final AddressMode addressModeU,
             final AddressMode addressModeV,
@@ -81,7 +83,7 @@ final class MetalGpuSampler extends GpuSampler {
         this.maxLod = maxLod;
     }
 
-    MetalGpuSampler comparisonVariant(final CompareOp compareOp) {
+    public MetalGpuSampler comparisonVariant(final CompareOp compareOp) {
         if (this.closed) {
             throw new IllegalStateException("Cannot create a Metal comparison sampler from a closed sampler");
         }
@@ -97,7 +99,7 @@ final class MetalGpuSampler extends GpuSampler {
         ));
     }
 
-    MetalDevice device() {
+    public MetalDevice device() {
         return this.device;
     }
 
@@ -144,11 +146,11 @@ final class MetalGpuSampler extends GpuSampler {
         this.device.queueResourceRelease(this.nativeHandle);
     }
 
-    boolean isClosed() {
+    public boolean isClosed() {
         return this.closed;
     }
 
-    MemorySegment nativeHandle() {
+    public     MemorySegment nativeHandle() {
         return this.nativeHandle;
     }
 

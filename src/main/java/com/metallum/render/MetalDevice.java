@@ -36,9 +36,14 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import com.metallum.mtl.metal3.MTLCommandQueue;
+import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalGpuSampler;
+import com.metallum.render.shared.MetalGpuQueryPool;
 
 @Environment(EnvType.CLIENT)
-final class MetalDevice implements GpuDeviceBackend {
+public final class MetalDevice implements GpuDeviceBackend {
     private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final MemorySegment metalDeviceHandle;
     private final MTLDevice metalDevice;
@@ -365,7 +370,7 @@ final class MetalDevice implements GpuDeviceBackend {
         return this.metalDeviceHandle;
     }
 
-    MTLDevice metalDevice() {
+    public     MTLDevice metalDevice() {
         return this.metalDevice;
     }
 
@@ -388,7 +393,7 @@ final class MetalDevice implements GpuDeviceBackend {
         this.commandEncoder.waitForSubmittedGpuWork();
     }
 
-    void queueResourceRelease(final MemorySegment handle) {
+    public     void queueResourceRelease(final MemorySegment handle) {
         this.commandEncoder.queueForDestroy(() -> ObjC.release(handle));
     }
 

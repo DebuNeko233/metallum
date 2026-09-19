@@ -1,4 +1,4 @@
-package com.metallum.render;
+package com.metallum.render.shared;
 
 import com.metallum.mtl.MTLTexture;
 import com.metallum.objc.ObjC;
@@ -11,17 +11,17 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 
 @Environment(EnvType.CLIENT)
-final class MetalGpuTextureView extends GpuTextureView {
+public final class MetalGpuTextureView extends GpuTextureView {
     private boolean closed;
     @Nullable
     private MemorySegment nativeHandle;
 
-    MetalGpuTextureView(final GpuTexture texture, final int baseMipLevel, final int mipLevels) {
+    public     MetalGpuTextureView(final GpuTexture texture, final int baseMipLevel, final int mipLevels) {
         super(texture, baseMipLevel, mipLevels);
         ((MetalGpuTexture) texture).addView();
     }
 
-    MemorySegment nativeHandle() {
+    public     MemorySegment nativeHandle() {
         if (this.nativeHandle == null) {
             MetalGpuTexture texture = (MetalGpuTexture) this.texture();
             if (this.baseMipLevel() == 0 && this.mipLevels() >= texture.getMipLevels()) {

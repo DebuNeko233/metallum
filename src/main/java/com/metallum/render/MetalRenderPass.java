@@ -33,6 +33,13 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.function.Supplier;
 import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
+import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalGpuSampler;
+import com.metallum.render.shared.MetalGpuQueryPool;
+import com.metallum.render.shared.MetalFrameProbe;
+import com.metallum.render.shared.AttachmentContents;
 
 @Environment(EnvType.CLIENT)
 final class MetalRenderPass implements RenderPassBackend {

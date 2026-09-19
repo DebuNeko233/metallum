@@ -1,4 +1,6 @@
-package com.metallum.render;
+package com.metallum.render.shared;
+
+import com.metallum.render.MetalExecutionTelemetry;
 
 import com.metallum.Metallum;
 import com.metallum.mtl.MTLTexture;
