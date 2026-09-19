@@ -268,4 +268,20 @@ for needle, why in (
 if "tools/ci-vitrail-performance.py" not in CI.read_text(encoding="utf-8"):
     raise SystemExit("this contract is not named by ci.yml, so nothing runs it")
 
+# And the comparison refuses an arm that is not the same scene, because a drifted scene reads exactly like a
+# win: one arm drew the pack at 27 000 passes a frame with 511 217 loadedMiB against the baseline's 93 943,
+# and every other check the harness had accepted it.
+comparison = (ROOT / "tools/vitrail-performance-compare.py").read_text(encoding="utf-8")
+for needle, why in (
+    ("SCENE_TOLERANCE = 2.0",
+     "the comparison has no tolerance for the counters that say two arms are the same scene"),
+    ('for counter in ("renderPasses", "loadedMiB"):',
+     "the comparison does not judge the scene counters that a switch cannot move"),
+    ("scene drift: ",
+     "the comparison does not name the drift it found"),
+    ("return 3", "a drifted arm does not end the comparison non-zero, so it reads as a result"),
+):
+    if needle not in comparison:
+        raise SystemExit(why)
+
 print("Vitrail performance harness contract: PASS")

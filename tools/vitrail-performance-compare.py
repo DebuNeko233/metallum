@@ -23,6 +23,10 @@ from pathlib import Path
 
 # The probe's own words, in the order it prints them. A counter added there and not here is still
 # printed raw below the table rather than dropped.
+# Two arms of one configuration differ by well under a per cent on the scene counters - the settled pack
+# fixture read 0.2 per cent - so this is generous and still refuses another scene.
+SCENE_TOLERANCE = 2.0
+
 COUNTERS = (
     "windowFrames",
     "windowMs",
@@ -207,6 +211,30 @@ def main() -> int:
             row += f"  {', '.join(changes):>22}"
         print(row)
 
+    # The arms of an A/B have to be the same scene, and the counters that say so are not the ones under
+    # test: how many passes the frame opened and how many bytes it loaded are properties of the world, the
+    # pack and the camera, not of the switch. Two arms of one configuration differ by well under a per cent
+    # on them; an arm that differs by more is another scene, and its time column is not comparable with the
+    # first arm's. Said as a refusal rather than as a footnote, because a drifted scene reads exactly like a
+    # win - measured: an arm that drew the pack at 27 000 passes a frame with 511 217 loadedMiB against the
+    # baseline's 93 943, which every other check here accepted.
+    drift: list[str] = []
+    for counter in ("renderPasses", "loadedMiB"):
+        baseline = measured[runs[0].name].get(counter)
+        if not baseline:
+            continue
+        for run in runs[1:]:
+            value = measured[run.name].get(counter)
+            if value is None:
+                continue
+            change = 100 * (value - baseline) / baseline
+            if abs(change) > SCENE_TOLERANCE:
+                drift.append(f"{counter} of {run.name} is {change:+.1f}% against {runs[0].name}")
+    if drift:
+        print()
+        print("scene drift: " + "; ".join(drift) + f" (tolerance {SCENE_TOLERANCE:.1f}%)", file=sys.stderr)
+
+
     # The rate is the two numbers the probe printed divided by each other and not a second opinion:
     # bytes are the cost a change moves, and this is what the frame paid for them. A change that
     # lowers the bytes and leaves this where it was is a change to a counter and not to a frame.
@@ -247,6 +275,11 @@ def main() -> int:
         for run in runs[1:]:
             print(f"picture, {first.name} against {run.name}: "
                   f"{compare_pictures(first / 'screen.png', run / 'screen.png')}")
+
+    if drift:
+        # A drifted arm's time column is not comparable with the first arm's, and a refusal is the only
+        # reading of that which cannot be mistaken for a result.
+        return 3
 
     return 0
 
