@@ -40,6 +40,7 @@ height=900
 timeout_seconds=900
 runs=()
 keep=false
+met_all=0
 fresh_world=true
 no_pack=false
 fullscreen=false
@@ -202,8 +203,12 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true" else "false"
+# The graphics API is written too, and for a reason that has cost this harness several runs: Vitrail puts
+# the API back to Vulkan by design when a session ends badly, so a run that follows a failed one comes up on
+# MoltenVK - a different engine - and every number it produces is about that engine. Written before every run,
+# and checked after it below.
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
-           "renderClouds": '"false"'}
+           "renderClouds": '"false"', "preferredGraphicsBackend": '"metal"'}
 lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
 written = set()
 for index, line in enumerate(lines):
@@ -380,6 +385,16 @@ for run in "${runs[@]}"; do
 		echo "No screenshot for run '$name'; the display may be locked." >&2
 
 	cp -f "$game_dir/logs/latest.log" "$run_dir/latest.log" 2>/dev/null || true
+	# A run that came up on another backend is not this engine's frame, and Vitrail's own rescue is what puts
+	# it there: after a session that ended badly it writes the API back to Vulkan, so the next launch is
+	# MoltenVK with no Metal device and no pack. Said out loud here rather than left for a reader to notice
+	# from a missing probe line.
+	if ! grep -q "Using graphics backend Metal" "$run_dir/latest.log"; then
+		backend="$(grep -o "Using graphics backend [A-Za-z]*" "$run_dir/latest.log" | head -1)"
+		echo "Run '$name' did not come up on Metal (${backend:-no backend line at all}): a session that ended badly makes Vitrail put the graphics API back, and this run measured another engine" >&2
+		met_all=1
+	fi
+
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
 	grep -F "$arm_pattern" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
 
@@ -401,3 +416,8 @@ if [[ "$keep" == false ]]; then
 fi
 
 python3 "$repo_root/tools/vitrail-performance-compare.py" "$out_dir"
+
+if [[ "$met_all" == 1 ]]; then
+	echo "At least one run did not come up on Metal; the comparison above is about another engine." >&2
+	exit 3
+fi

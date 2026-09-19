@@ -66,6 +66,15 @@ if 'rm -f "$marker"\nfi' not in launcher:
 # option to its parser. The harness waited out its whole timeout for a client that was already gone,
 # which is the same bug in a second costume - so both halves are pinned here.
 # ---------------------------------------------------------------------------
+# Vitrail puts the graphics API back to Vulkan by design after a session that ended badly, so a run that
+# follows a failed one comes up on MoltenVK and every number it produces is about another engine. The
+# harness writes the API before the run and refuses to call a run on anything else a measurement.
+if 'grep -q "Using graphics backend Metal"' not in launcher:
+    raise SystemExit(
+        "the harness does not check which backend a run came up on, so a rescued session measures MoltenVK "
+        "and reports it as this engine"
+    )
+
 if '"--args=--quickPlaySingleplayer' not in launcher:
     raise SystemExit("the game's arguments are not passed with --args=, so Gradle reads them as options")
 if 'wait_for_log "$arm_pattern" "$deadline" "$launcher"' not in launcher:
@@ -178,7 +187,8 @@ if 'fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true
         "windowed one cannot be told apart by what they set"
     )
 
-for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": fullscreen,'):
+for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": fullscreen,',
+                '"preferredGraphicsBackend": \'"metal"\''):
     if setting not in launcher:
         raise SystemExit(
             "the harness does not write the measurement profile it compares under, so a run can be "
