@@ -164,7 +164,7 @@ final class Metal3CompilationContext {
         }
 
         return this.compiledPipelines.computeIfAbsent(
-                pipeline, p -> MetalCrossShaderCompiler.compile(this, p, source));
+                pipeline, p -> Metal3PipelineCompiler.compile(this, p, source));
     }
 
     /** The compiled artifact for this pipeline. The frame probe is told once, here. */

@@ -31,6 +31,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalResourceBinding;
+import com.metallum.render.shared.MetalShaderStages;
 import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
@@ -51,35 +52,6 @@ final class MetalCrossShaderCompiler {
     private MetalCrossShaderCompiler() {
     }
 
-    static MetalCompiledRenderPipeline compile(final Metal3CompilationContext compilation, final RenderPipeline pipeline, final ShaderSource shaderSource) {
-        try {
-            IntermediaryShaderModule vertexSpirv = compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX, pipeline.getShaderDefines(), shaderSource);
-            IntermediaryShaderModule fragmentSpirv = compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT, pipeline.getShaderDefines(), shaderSource);
-            if (vertexSpirv == IntermediaryShaderModule.INVALID || fragmentSpirv == IntermediaryShaderModule.INVALID) {
-                throw new IllegalStateException("Couldn't compile shader for pipeline " + pipeline.getLocation());
-            }
-
-            boolean argumentBuffersTier2 = compilation.device().supportsArgumentBuffersTier2();
-            TranslatedRenderPipeline translated = translate(vertexSpirv, fragmentSpirv, pipeline, argumentBuffersTier2);
-
-            return new MetalCompiledRenderPipeline(
-                    MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers()),
-                    compilation,
-                    pipeline,
-                    translated.vertexMsl(),
-                    translated.fragmentMsl(),
-                    translated.vertexEntryPoint(),
-                    translated.fragmentEntryPoint(),
-                    translated.resources(),
-                    translated.usesArgumentBuffers(),
-                    translated.vertexArgumentBufferSets(),
-                    translated.fragmentArgumentBufferSets()
-            );
-        } catch (ShaderCompileException e) {
-            throw new IllegalStateException("Failed to compile Metal cross shader for pipeline " + pipeline.getLocation(), e);
-        }
-    }
-
     /**
      * Turns the two stages' SPIR-V into MSL and the resource metadata that goes with it.
      * <p>
@@ -92,6 +64,7 @@ final class MetalCrossShaderCompiler {
             final IntermediaryShaderModule vertexSpirv,
             final IntermediaryShaderModule fragmentSpirv,
             final RenderPipeline pipeline,
+            final TranslationLayout layout,
             final boolean argumentBuffersTier2Available) throws ShaderCompileException {
             Set<String> storageBuffers = new LinkedHashSet<>();
             storageBuffers.addAll(resourceNames(vertexSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER));
@@ -114,7 +87,7 @@ final class MetalCrossShaderCompiler {
                 );
             }
             int pushConstantBinding = useArgumentBuffers
-                    ? MetalCompiledRenderPipeline.PUSH_CONSTANT_BUFFER_SLOT
+                    ? layout.pushConstantSlot()
                     : layoutEntries.size();
 
             vertexSpirv.rebind(tolerateUnprovidedInputs(MetalPipelineSupport.vertexAttributeNames(pipeline), vertexSpirv.inputs()), layoutEntries);
@@ -129,7 +102,8 @@ final class MetalCrossShaderCompiler {
                     true,
                     Spv.SpvExecutionModelVertex,
                     useArgumentBuffers,
-                    layoutEntries
+                    layoutEntries,
+                    layout
             );
 
             boolean enableFragDepth = pipeline.getDepthStencilState() != null;
@@ -145,7 +119,8 @@ final class MetalCrossShaderCompiler {
                     enableFragDepth,
                     Spv.SpvExecutionModelFragment,
                     useArgumentBuffers,
-                    layoutEntries
+                    layoutEntries,
+                    layout
             );
 
             String vertexEntryPoint = extractEntryPoint(vertexMsl.source(), VERTEX_ENTRY_PATTERN, "main0");
@@ -157,7 +132,8 @@ final class MetalCrossShaderCompiler {
                     vertexMsl,
                     fragmentMsl,
                     useArgumentBuffers,
-                    pushConstantBinding
+                    pushConstantBinding,
+                    layout
             );
             return new TranslatedRenderPipeline(
                     vertexMsl.source(),
@@ -459,7 +435,8 @@ final class MetalCrossShaderCompiler {
             final MslShader vertexMsl,
             final MslShader fragmentMsl,
             final boolean useArgumentBuffers,
-            final int pushConstantBinding
+            final int pushConstantBinding,
+            final TranslationLayout layout
     ) {
         List<MetalResourceBinding> resources = new ArrayList<>(entries.size() + 1);
         for (int index = 0; index < entries.size(); index++) {
@@ -489,8 +466,8 @@ final class MetalCrossShaderCompiler {
             ));
         }
 
-        int pushConstantStageMask = (vertexMsl.hasPushConstants() ? MetalCompiledRenderPipeline.STAGE_VERTEX : 0)
-                | (fragmentMsl.hasPushConstants() ? MetalCompiledRenderPipeline.STAGE_FRAGMENT : 0);
+        int pushConstantStageMask = (vertexMsl.hasPushConstants() ? MetalShaderStages.VERTEX : 0)
+                | (fragmentMsl.hasPushConstants() ? MetalShaderStages.FRAGMENT : 0);
         if (pushConstantStageMask != 0) {
             resources.add(new MetalResourceBinding(
                     MetalResourceBinding.ResourceKind.UNIFORM_BUFFER,
@@ -522,12 +499,12 @@ final class MetalCrossShaderCompiler {
     private static int stageMask(final String name, final MslShader vertexMsl, final MslShader fragmentMsl) {
         int mask = 0;
         if (vertexMsl.activeResources().contains(name)) {
-            mask |= MetalCompiledRenderPipeline.STAGE_VERTEX;
+            mask |= MetalShaderStages.VERTEX;
         }
         if (fragmentMsl.activeResources().contains(name)) {
-            mask |= MetalCompiledRenderPipeline.STAGE_FRAGMENT;
+            mask |= MetalShaderStages.FRAGMENT;
         }
-        return mask == 0 ? MetalCompiledRenderPipeline.STAGE_ALL : mask;
+        return mask == 0 ? MetalShaderStages.ALL : mask;
     }
 
     private static Map<String, GpuFormat> vertexAttributeFormats(final RenderPipeline pipeline) {
@@ -597,7 +574,8 @@ final class MetalCrossShaderCompiler {
             final boolean enableFragDepth,
             final int executionModel,
             final boolean useArgumentBuffers,
-            final List<VulkanBindGroupLayout.Entry> layoutEntries
+            final List<VulkanBindGroupLayout.Entry> layoutEntries,
+            final TranslationLayout layout
     ) throws ShaderCompileException {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer spirvWords = spirvBytes.asIntBuffer();
@@ -654,7 +632,7 @@ final class MetalCrossShaderCompiler {
                 Set<String> activeResources = collectActiveResourceNames(stack, compiler, activeSet);
 
                 Map<String, Integer> descriptorSets = useArgumentBuffers
-                        ? registerArgumentBufferBindings(stack, compiler, executionModel, layoutEntries)
+                        ? registerArgumentBufferBindings(stack, compiler, executionModel, layoutEntries, layout)
                         : Map.of();
                 Set<Integer> argumentBufferSets = new TreeSet<>();
                 if (useArgumentBuffers) {
@@ -710,7 +688,8 @@ final class MetalCrossShaderCompiler {
             final MemoryStack stack,
             final long compiler,
             final int executionModel,
-            final List<VulkanBindGroupLayout.Entry> layoutEntries
+            final List<VulkanBindGroupLayout.Entry> layoutEntries,
+            final TranslationLayout layout
     ) throws ShaderCompileException {
         Map<String, Integer> logicalBindings = new HashMap<>();
         for (int i = 0; i < layoutEntries.size(); i++) {
@@ -742,10 +721,10 @@ final class MetalCrossShaderCompiler {
                 }
                 int descriptorSet = Spvc.spvc_compiler_get_decoration(compiler, resource.id(), Spv.SpvDecorationDescriptorSet);
                 int descriptorBinding = Spvc.spvc_compiler_get_decoration(compiler, resource.id(), Spv.SpvDecorationBinding);
-                if (descriptorSet < 0 || descriptorSet >= MetalCompiledRenderPipeline.ARGUMENT_BUFFER_SLOT_COUNT) {
+                if (descriptorSet < 0 || descriptorSet >= layout.argumentBufferSlotCount()) {
                     throw new ShaderCompileException(
                             "Metal argument-buffer descriptor set " + descriptorSet + " for " + name + " is outside supported 0.."
-                                    + (MetalCompiledRenderPipeline.ARGUMENT_BUFFER_SLOT_COUNT - 1)
+                                    + (layout.argumentBufferSlotCount() - 1)
                     );
                 }
                 Integer previous = descriptorSets.putIfAbsent(name, descriptorSet);

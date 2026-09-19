@@ -272,9 +272,16 @@ forbid("Dimension routing semantics in Metallum", dimension_sources, (
 require("Wide resource compiler", "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
     "DIRECT_SAMPLER_LIMIT = 16",
     "lastSamplerSlot >= DIRECT_SAMPLER_LIMIT",
-    "supportsArgumentBuffersTier2()",
+    "requires wide Metal resources, but Argument Buffer Tier 2 is unavailable",
     "SpvcMslResourceBinding",
     "SPVC_MSL_ARGUMENT_BUFFER_BINDING",
+))
+# The capability question belongs to the Metal 3 compiler now: the translator is handed the answer, which is
+# what keeps MTLDevice out of it. Pinned separately so the split cannot quietly put the query back.
+require("the argument-buffer capability is asked by the Metal 3 compiler",
+        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+    "compilation.device().supportsArgumentBuffersTier2()",
+    "boolean argumentBuffersTier2 = ",
 ))
 require("Wide resource pipeline", "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
     "private final BitSet allResources;",
@@ -923,6 +930,56 @@ require("a translated shader module is keyed by its MSL profile",
 ))
 # M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
 # access, which is why moving it needed widening; the contract says what it may ask instead.
+require("the translator knows no generation type",
+        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+    "static TranslatedRenderPipeline translate(",
+    "TranslatedRenderPipeline(",
+    "MetalShaderStages.VERTEX",
+    "layout.pushConstantSlot()",
+    "layout.argumentBufferSlotCount()",
+))
+import pathlib as _p
+
+_root = _p.Path(__file__).resolve().parent.parent
+_translator = (_root / "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java").read_text(encoding="utf-8")
+for _forbidden in ("Metal3CompilationContext", "MetalCompiledRenderPipeline", "MetalDevice",
+                   "MetalCommandEncoder", "com.metallum.mtl.metal3", "MTLCommand"):
+    if _forbidden in _translator:
+        raise SystemExit(f"the translator still names {_forbidden}")
+
+require("the Metal 3 compiler owns lookup, translation, key and artifact",
+        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+    "compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX,",
+    "compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT,",
+    "compilation.device().supportsArgumentBuffersTier2()",
+    "MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
+    "new TranslationLayout(PUSH_CONSTANT_SLOT, ARGUMENT_BUFFER_SLOT_COUNT)",
+    "new MetalCompiledRenderPipeline(",
+))
+require("the cache miss path asks the Metal 3 compiler",
+        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+    "pipeline, p -> Metal3PipelineCompiler.compile(this, p, source));",
+))
+require("the translation result carries every field a pipeline needs",
+        "src/main/java/com/metallum/render/TranslatedRenderPipeline.java", (
+    "String vertexMsl,", "String fragmentMsl,", "String vertexEntryPoint,", "String fragmentEntryPoint,",
+    "List<MetalResourceBinding> resources,", "boolean usesArgumentBuffers,",
+    "Set<Integer> vertexArgumentBufferSets,", "Set<Integer> fragmentArgumentBufferSets",
+))
+# stage masks are shared vocabulary; the two binding slots are Metal 3 layout policy and live with the compiler.
+require("the stage masks are shared vocabulary",
+        "src/main/java/com/metallum/render/shared/MetalShaderStages.java", (
+    "public static final int VERTEX = 1;", "public static final int FRAGMENT = 2;",
+    "public static final int ALL = VERTEX | FRAGMENT;",
+))
+_m3c = (_root / "src/main/java/com/metallum/render/Metal3PipelineCompiler.java").read_text(encoding="utf-8")
+_art = (_root / "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java").read_text(encoding="utf-8")
+for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
+    if _const not in _m3c:
+        raise SystemExit(f"the Metal 3 layout policy {_const} is not the compiler's")
+if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
+    raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
+
 require("the active pipeline cache belongs to the compilation context",
         "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
     "private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();",
@@ -1091,8 +1148,10 @@ require("the identity is read from the game's description plus the session's own
     "MetalPipelineKey of(final RenderPipeline pipeline, final String shaderProfile,",
 ))
 require("the key is built where the pipeline is compiled",
-        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
-    "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers()),",
+        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+    "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers())",
+    "MetalCrossShaderCompiler.translate(vertexSpirv, fragmentSpirv, pipeline, layout, argumentBuffersTier2)",
+)),",
     "TranslatedRenderPipeline translated = translate(vertexSpirv, fragmentSpirv, pipeline, argumentBuffersTier2);",
 ))
 require("the Metal 4 binding shapes are proven, not assumed",

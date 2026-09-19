@@ -1,6 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.render.shared.MetalCompiledArtifact;
+import com.metallum.render.shared.MetalShaderStages;
 
 import com.metallum.Metallum;
 import com.metallum.mtl.*;
@@ -33,13 +34,11 @@ import com.metallum.render.shared.MetalPipelineKey;
 @Environment(EnvType.CLIENT)
 public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable {
     private static final int MAX_COLOR_ATTACHMENTS = 8;
-    static final int ARGUMENT_BUFFER_SLOT_COUNT = 8;
-    static final int PUSH_CONSTANT_BUFFER_SLOT = 8;
     private static final int WIDE_VERTEX_BUFFER_BASE = 9;
 
-    public static final int STAGE_VERTEX = 1;
-    public static final int STAGE_FRAGMENT = 2;
-    public static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
+    public static final int STAGE_VERTEX = MetalShaderStages.VERTEX;
+    public static final int STAGE_FRAGMENT = MetalShaderStages.FRAGMENT;
+    public static final int STAGE_ALL = MetalShaderStages.ALL;
 
     /**
      * One argument buffer this pipeline declares: where it lands, which the shared layer records, and the
