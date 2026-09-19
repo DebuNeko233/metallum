@@ -76,8 +76,15 @@ The contract that pinned this seam pinned the constant (`this.services = MetalEx
 and failed the moment the constant was gone, which is what a pin should do: what it is really about is that
 **the device has no opinion of its own about which queue to make**, so it now pins the selection instead.
 
-Verified on the no-pack scene: 1.79 ms, `selectedGeneration=metal4`, counters identical to the run before it
-(2505 encoders, 100 identities against 100 keys).
+The claim is now observed rather than inferred, because a value nothing printed cannot be checked: the device
+logs the services' own answer at construction, and two arms in one session say the seam follows the selection -
+
+    auto                                servicesSelected=metal4 servicesExecuting=metal3 referenceShell=true
+    -Dmetallum.execution=metal3         servicesSelected=metal3 servicesExecuting=metal3 referenceShell=false
+
+- while both execute Metal 3 (`1.78` and `1.78` ms wallP50, `-0.1 per cent`, and a picture difference of 0.03,
+which is the no-pack bed's own repeat). The AUTO line is the one that matters: before this change that arm's
+services would have answered `metal3` while the selection next to it said `metal4`.
 
 ## The API mapping
 

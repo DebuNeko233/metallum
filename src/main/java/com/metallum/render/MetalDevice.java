@@ -109,6 +109,13 @@ public final class MetalDevice implements GpuDeviceBackend {
         this.services = MetalExecutionServices.of(decision.selected());
         this.commandQueue = new MTLCommandQueue(
                 MemorySegment.ofAddress(this.services.commandQueue(this.metalDevice)));
+        // Said out loud, because "the seams ask the selection and not a constant" is a claim about a value
+        // nothing else prints: `selectedGeneration` in the frame probe comes from the telemetry, not from this
+        // instance. Two of these lines - one from an AUTO launch, one from a forced Metal 3 launch - are what
+        // says the services really carry the selection.
+        com.metallum.Metallum.LOGGER.info("Metal execution seam: servicesSelected={} servicesExecuting={} referenceShell={}",
+                this.services.selected().token(), this.services.executing().token(),
+                this.services.isReferenceShell());
 
         // The shader profile follows what *executes*, not what was selected: a session that has chosen
         // Metal 4 but still encodes its frame through Metal 3 needs MSL the Metal 3 path can compile, and
