@@ -675,4 +675,26 @@ require("a capability nobody has asked about is false", "src/main/java/com/metal
     "return Boolean.TRUE.equals(available);",
 ))
 
+# ---------------------------------------------------------------------------
+# Every Metal 4 selector is asked for before it is sent
+#
+# Learned the hard way, and it cost a session: the device supports the Metal 4 family and answers to
+# `newMTL4CommandQueue`, and it does **not** implement `newCommandAllocatorWithDescriptor:` even though
+# this machine's SDK declares it. Sending it raised NSInvalidArgumentException and the process died with
+# SIGABRT. A device implements a subset of the factory surface its header describes, so the rule the
+# scaler already lived under extends to every selector of the new path - and to the buffer's own
+# protocol, which is as much a subset as the device's is.
+# ---------------------------------------------------------------------------
+require("the Metal 4 factories are asked for before they are sent",
+        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+    'device.respondsTo("newMTL4CommandQueue")',
+    'device.respondsTo("newCommandAllocator")',
+    'device.respondsTo("newCommandAllocatorWithDescriptor:")',
+    'device.respondsTo("newCommandBuffer")',
+    'responds(buffer, "beginCommandBufferWithAllocator:")',
+    'responds(buffer, "endCommandBuffer")',
+    'Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS)',
+    "public static boolean canMakeObjects(final MTLDevice device) {",
+))
+
 print("Metal and engine contracts: PASS")
