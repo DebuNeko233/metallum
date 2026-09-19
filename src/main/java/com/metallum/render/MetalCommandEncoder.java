@@ -341,6 +341,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // commits nothing, and carrying a second submission there would double what this path costs for
             // a frame it is not shaped like. What it touches is its own 64x64 target, so no order between
             // the two queues is needed.
+            Metal4Path.frameSignal(commandBuffer.handle());
             Metal4Path.frame();
 
             lastCommittedSubmitIndex = currentSubmitIndex;
@@ -603,7 +604,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         // reason because the boundary is the frame's, not the call's.
         endEncoder(MetalFrameProbe.EncoderEnd.SUBMITTED);
         MTLCommandBuffer commandBuffer = commandBuffer();
-        commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
+        if (!Metal4Path.present(layer, source.nativeHandle())) {
+            commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
+        }
         // And the new command structure is given the same picture to draw with, off the presented path.
         Metal4Path.source(source.nativeHandle());
     }

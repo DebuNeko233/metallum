@@ -67,7 +67,7 @@ public final class CAMetalLayer {
     }
 
     @Nullable
-    CAMetalDrawable nextDrawable() {
+    public CAMetalDrawable nextDrawable() {
         MemorySegment drawable = NEXT_DRAWABLE.sendPtr(this.handle);
         return ObjC.isNil(drawable) ? null : new CAMetalDrawable(drawable);
     }

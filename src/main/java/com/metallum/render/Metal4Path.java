@@ -1,6 +1,8 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
+import com.metallum.mtl.CAMetalDrawable;
+import com.metallum.mtl.CAMetalLayer;
 import com.metallum.mtl.MTL4ArgumentTable;
 import com.metallum.mtl.MTL4Probe;
 import com.metallum.mtl.MTLDevice;
@@ -67,6 +69,11 @@ public final class Metal4Path {
     private static final Msg WAIT_UNTIL_SIGNALED =
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESET = Msg.ofVoid("reset");
+    private static final Msg ENCODE_SIGNAL_EVENT = Msg.ofVoid("encodeSignalEvent:value:", ADDRESS, JAVA_LONG);
+    private static final Msg COMPUTE_ENCODER = Msg.of("computeCommandEncoder", ADDRESS);
+    private static final Msg COPY_TEXTURE = Msg.ofVoid("copyFromTexture:toTexture:", ADDRESS, ADDRESS);
+    private static final Msg WAIT_FOR_EVENT = Msg.ofVoid("waitForEvent:value:", ADDRESS, JAVA_LONG);
+    private static final Msg SIGNAL_DRAWABLE = Msg.ofVoid("signalDrawable:", ADDRESS);
     private static final Msg RENDER_ENCODER = Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg END_ENCODING = Msg.ofVoid("endEncoding");
     private static final Msg NEW = Msg.of("new", ADDRESS);
@@ -97,6 +104,11 @@ public final class Metal4Path {
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
     private static final long[] awaited = new long[FRAMES_IN_FLIGHT];
     private static long signalled;
+
+    /** The other direction: the event the frame's own command buffer signals, and the value it last signalled. */
+    @Nullable
+    private static MemorySegment frameEvent;
+    private static long frameValue;
     private static int slot;
     private static boolean carrying;
 
@@ -162,6 +174,14 @@ public final class Metal4Path {
                 stop(madeQueue, madeBuffer, madeEvent);
                 return refuse("the pass or its target could not be made: " + refused.getMessage());
             }
+
+            MemorySegment madeFrameEvent = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(madeFrameEvent) || !responds(madeFrameEvent, "waitUntilSignaledValue:timeoutMS:")) {
+                ObjC.release(madeFrameEvent);
+                stop(madeQueue, madeBuffer, madeEvent);
+                return refuse("the device would not make the event the frame signals on");
+            }
+            frameEvent = madeFrameEvent;
 
             queue = madeQueue;
             commandBuffer = madeBuffer;
@@ -249,6 +269,114 @@ public final class Metal4Path {
         sourceWidth = MTLTexture.width(textureHandle);
     }
 
+    /**
+     * Makes the frame's own command buffer signal this path's event when the GPU has finished with it.
+     * <p>
+     * The one thing that has to cross the two queues: the picture this path copies is written by the frame's
+     * command buffer, so the copy must wait for it - and a fence does not cross queues, a shared event does.
+     */
+    public static void frameSignal(final MemorySegment commandBuffer) {
+        if (!carrying || ObjC.isNil(frameEvent) || ObjC.isNil(commandBuffer)) {
+            return;
+        }
+
+        frameValue++;
+        ENCODE_SIGNAL_EVENT.send(commandBuffer, frameEvent, frameValue);
+    }
+
+    /**
+     * Presents the frame through the new command structure, and answers whether it took it.
+     * <p>
+     * This is the part of the picture the new path can carry on this machine without a single binding: a
+     * Metal 4 compute encoder's whole-texture copy needs no argument table, so the frame's finished picture is
+     * copied into the drawable by the new queue and the drawable is told to present once that work is done.
+     * The frame's command buffer signals first (see {@link #frameSignal}) and the copy waits on that value, so
+     * the two queues are ordered by the event rather than by luck.
+     * <p>
+     * False leaves the caller on the road it had. Everything is checked before the drawable is taken, and a
+     * drawable that has been taken is always presented by whoever took it.
+     * <p>
+     * <strong>Off by default, and it does not work yet.</strong> Turned on it carries the picture for a while
+     * and then the ring gives up - measured, the GPU stops signalling a slot of the submission ring within a
+     * second, which means the ordering or the lifetime of the second submission per frame is wrong somewhere
+     * in here. Until that is found this stays behind {@code -Dmetallum.metal4Present=true}, because a path
+     * that takes the picture and then stalls is worse than one that never takes it.
+     */
+    public static boolean present(final CAMetalLayer layer, final MemorySegment sourceTexture) {
+        if (!Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"))) {
+            return false;
+        }
+
+        if (!carrying || queue == null || commandBuffer == null || frameEvent == null || frameValue == 0L) {
+            return false;
+        }
+
+        if (!responds(queue, "waitForEvent:value:") || !responds(queue, "signalDrawable:")
+                || !responds(commandBuffer, "computeCommandEncoder")) {
+            return false;
+        }
+
+        try (AutoreleasePool _ = AutoreleasePool.push()) {
+            CAMetalDrawable drawable = layer.nextDrawable();
+            if (drawable == null) {
+                return false;
+            }
+
+            MemorySegment drawableTexture = drawable.texture();
+            if (ObjC.isNil(drawableTexture)) {
+                return false;
+            }
+
+            long sourceWidth = MTLTexture.width(sourceTexture);
+            long sourceHeight = MTLTexture.height(sourceTexture);
+            if (MTLTexture.width(drawableTexture) == sourceWidth
+                    && MTLTexture.height(drawableTexture) == sourceHeight
+                    && encodeCopyPresent(drawable, drawableTexture, sourceTexture)) {
+                return true;
+            }
+
+            // The copy is whole-texture and exact, and this path has the drawable in hand: it presents the
+            // frame's own picture through the new queue rather than handing the drawable back unpresented.
+            SIGNAL_DRAWABLE.send(queue, drawable.handle());
+            drawable.present();
+            return true;
+        }
+    }
+
+    private static boolean encodeCopyPresent(final CAMetalDrawable drawable, final MemorySegment drawableTexture,
+                                             final MemorySegment sourceTexture) {
+        int nextSlot = (slot + 1) % FRAMES_IN_FLIGHT;
+        if (awaited[nextSlot] != 0L
+                && WAIT_UNTIL_SIGNALED.sendLong(event, awaited[nextSlot], WAIT_MILLIS) == 0L) {
+            return false;
+        }
+
+        WAIT_FOR_EVENT.send(queue, frameEvent, frameValue);
+
+        slot = nextSlot;
+        RESET.send(allocators[slot]);
+        BEGIN.send(commandBuffer, allocators[slot]);
+        MemorySegment compute = COMPUTE_ENCODER.sendPtr(commandBuffer);
+        if (ObjC.isNil(compute)) {
+            return false;
+        }
+        COPY_TEXTURE.send(compute, sourceTexture, drawableTexture);
+        END_ENCODING.send(compute);
+        END.send(commandBuffer);
+
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment buffers = arena.allocate(ADDRESS, 1);
+            buffers.set(ADDRESS, 0L, commandBuffer);
+            COMMIT.send(queue, buffers, 1L);
+        }
+
+        awaited[slot] = ++signalled;
+        SIGNAL_EVENT.send(queue, event, awaited[slot]);
+        SIGNAL_DRAWABLE.send(queue, drawable.handle());
+        drawable.present();
+        return true;
+    }
+
     /** Releases everything this path made. */
     public static void close() {
         if (queue != null) {
@@ -295,6 +423,9 @@ public final class Metal4Path {
             allocators[index] = MemorySegment.NULL;
             awaited[index] = 0L;
         }
+        releaseIfPresent(frameEvent);
+        frameEvent = null;
+        frameValue = 0L;
         releaseIfPresent(madeEvent);
         releaseIfPresent(madeBuffer);
         releaseIfPresent(madeQueue);

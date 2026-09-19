@@ -28,6 +28,7 @@ public final class MTLCommandBuffer {
     private static final Msg PRESENT_DRAWABLE = Msg.ofVoid("presentDrawable:", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit");
     private static final Msg ADD_COMPLETED_HANDLER = Msg.ofVoid("addCompletedHandler:", ADDRESS);
+    private static final Msg ENCODE_SIGNAL_EVENT = Msg.ofVoid("encodeSignalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg ERROR = Msg.of("error", ADDRESS);
     private static final Msg LOCALIZED_DESCRIPTION = Msg.of("localizedDescription", ADDRESS);
     private static final Msg STATUS = Msg.of("status", JAVA_LONG);
@@ -253,6 +254,16 @@ public final class MTLCommandBuffer {
 
     void presentDrawable(final CAMetalDrawable drawable) {
         PRESENT_DRAWABLE.send(handle(), drawable.handle());
+    }
+
+    /**
+     * Makes this command buffer signal a shared event once the GPU has finished its work.
+     * <p>
+     * How one queue tells another that the resources it wrote are ready: the event crosses the two queues,
+     * where a fence does not.
+     */
+    public void encodeSignalEvent(final MemorySegment event, final long value) {
+        ENCODE_SIGNAL_EVENT.send(handle(), event, value);
     }
 
     public void commit() {
