@@ -1,6 +1,6 @@
 package com.metallum.render.execution;
 
-import com.metallum.mtl.MTL4Probe;
+import com.metallum.mtl.metal4.MTL4Probe;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.objc.ObjC;
 import com.metallum.render.Metal4;

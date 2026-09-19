@@ -8,6 +8,7 @@ import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import com.metallum.mtl.metal4.MTL4Probe;
 
 @Environment(EnvType.CLIENT)
 public final class MTLBuffer {

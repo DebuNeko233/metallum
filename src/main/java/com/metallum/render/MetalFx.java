@@ -1,7 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
-import com.metallum.mtl.MTL4Probe;
+import com.metallum.mtl.metal4.MTL4Probe;
 import com.metallum.mtl.MTLFXSpatialScaler;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 import com.metallum.mtl.MTLPixelFormat;

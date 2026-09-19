@@ -1,4 +1,22 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal4;
+
+import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
+
+import com.metallum.mtl.MTLTexture;
+
+import com.metallum.mtl.MTLStorageMode;
+
+import com.metallum.mtl.MTLPixelFormat;
+
+import com.metallum.mtl.MTLDevice;
+
+import com.metallum.mtl.MTLTextureDescriptor;
+
+import com.metallum.mtl.MTLBuffer;
+
+import com.metallum.mtl.MTLPrimitiveType;
+
+import com.metallum.mtl.MTLBuiltinPipelines;
 
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;

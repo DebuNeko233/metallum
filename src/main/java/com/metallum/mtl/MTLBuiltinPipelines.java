@@ -383,13 +383,13 @@ public final class MTLBuiltinPipelines {
     }
 
     /** A pipeline from the probe's own MSL, so a capability can be checked against the built-in path. */
-    static MemorySegment buildPipelineForProbe(final String mslSource, final String vertexEntry,
+    public static MemorySegment buildPipelineForProbe(final String mslSource, final String vertexEntry,
                                                final String fragmentEntry, final long colorFormat) {
         return buildPipeline(mslSource, vertexEntry, fragmentEntry, colorFormat,
                 MTLPixelFormat.Invalid.value, MTLColorWriteMask.All.value);
     }
 
-    static MemorySegment ensureClearPipeline(final long colorFormat, final long depthFormat, final boolean writeColor) {
+    public static MemorySegment ensureClearPipeline(final long colorFormat, final long depthFormat, final boolean writeColor) {
         long key = (colorFormat << 32) | (depthFormat << 1) | (writeColor ? 1L : 0L);
         MemorySegment cached = clearPipelines.get(key);
         if (cached != null) {

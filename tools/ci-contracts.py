@@ -686,7 +686,7 @@ require("a capability nobody has asked about is false", "src/main/java/com/metal
 # protocol, which is as much a subset as the device's is.
 # ---------------------------------------------------------------------------
 require("the Metal 4 factories are asked for before they are sent",
-        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
     'device.respondsTo("newMTL4CommandQueue")',
     'device.respondsTo("newCommandAllocator")',
     'device.respondsTo("newCommandAllocatorWithDescriptor:")',
@@ -698,7 +698,7 @@ require("the Metal 4 factories are asked for before they are sent",
 ))
 
 require("the Metal 4 submission is proven by the queue's own signal",
-        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
     'Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG)',
     'Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG)',
     'Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG)',
@@ -910,7 +910,7 @@ require("a Metal 4 commit carries the options its feedback arrives through",
     "COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, commitOptions.handle());",
 ))
 require("the feedback object is the only place a Metal 4 submission's timing is read",
-        "src/main/java/com/metallum/mtl/MTL4CommitOptions.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4CommitOptions.java", (
     'Msg.ofVoid("addFeedbackHandler:", ADDRESS)',
     'Msg.of("GPUStartTime", JAVA_DOUBLE)',
     'Msg.of("GPUEndTime", JAVA_DOUBLE)',
@@ -922,7 +922,7 @@ require("a block can hand its argument to a Java method",
     "private static void invokeConsumer(final Consumer<MemorySegment> action, final MemorySegment block,",
 ))
 require("the Metal 4 binding shapes are proven, not assumed",
-        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
     "public static boolean canBindAndDraw(final MTLDevice device) {",
     "uniformBuffer.gpuAddress() == 0L",
     "table.address(uniformBuffer.gpuAddress(), 1L)",
@@ -934,7 +934,7 @@ require("the Metal 4 binding shapes are proven, not assumed",
 # assumed from the header, because the header's "maximum 16 sampler slots" is not what the runtime
 # enforces and the compiler's own limit is what a shader has to live inside.
 require("the sampler ceiling is asked of the compiler",
-        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
     "public static String samplerCeiling(final MTLDevice device) {",
     "seventeenSamplersMsl()",
     'device.newFunction(ID_SAMPLER_MSL, "probe_id_sampler")',
@@ -945,7 +945,7 @@ require("a buffer's Metal 4 address is asked for rather than assumed",
     'MTL4Probe.respondsTo(handle, "gpuAddress")',
 ))
 require("the argument table is asked for by the selector its header declares",
-        "src/main/java/com/metallum/mtl/MTL4ArgumentTable.java", (
+        "src/main/java/com/metallum/mtl/metal4/MTL4ArgumentTable.java", (
     'device.respondsTo("newArgumentTableWithDescriptor:error:")',
     "NEW_TABLE_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)",
     "SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);",

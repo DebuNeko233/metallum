@@ -1,7 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.Metallum;
-import com.metallum.mtl.MTL4Probe;
+import com.metallum.mtl.metal4.MTL4Probe;
 import com.metallum.mtl.MTLDevice;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;

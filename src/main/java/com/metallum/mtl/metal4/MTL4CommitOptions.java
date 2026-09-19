@@ -1,4 +1,4 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal4;
 
 import com.metallum.Metallum;
 import com.metallum.objc.AutoreleasePool;
