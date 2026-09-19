@@ -372,6 +372,38 @@ device - stopped on a declaration whose annotations (`public synchronized @NonNu
 match, before it wrote anything. The tree was left untouched and verified clean; the next attempt should move
 one cache at a time by hand with the compiler as the oracle, which is how the depth-stencil cache was done.
 
+
+**Method note for the shader-module migration: hand-edit, do not script it.** Four attempts to move
+`shaderCache` + `getOrCompileShader` + `ShaderCompilationKey` into `Metal3CompilationContext` failed on *assembly*,
+never on ownership: (A) the extracted members and the delegate compiled, and the only error was a malformed header
+(`Metal3CompilationContext.java:3 需要<标识符>`, 1 error); (B) rebuilding that header dropped the imports the file
+already had (46 errors); (C) appending only the missing import lines landed them in the broken region (20 errors);
+(D) hand-writing the context file and patching the device by regex made the record-removal consume neighbouring
+code (64 errors). Every attempt was reverted with build, contracts and guard verified clean.
+
+What this means for the next attempt, exactly:
+
+1. read `MetalDevice.java` and `Metal3CompilationContext.java` in full first, and edit by hand - no regex
+   extraction, no generated headers;
+2. add these imports **below** the existing block in the context and leave `MTLDevice`,
+   `MTLDepthStencilDescriptor`, `MTLCompareFunction` untouched where they are: `GlslCompiler`,
+   `IntermediaryShaderModule`, `Identifier`, `ShaderType`, `ShaderDefines`, `ShaderSource`,
+   `ShaderCompileException`, `MetalShaderLanguageProfile`;
+3. insert, in this order, building after the two riskiest edits: the `shaderCache` field; the record
+   `ShaderCompilationKey(Identifier, ShaderType, ShaderDefines, String shaderProfile)`; `getOrCompileShader`
+   verbatim with its two helper calls prefixed `MetalDevice.` (the helpers stay on the device as package-private
+   pure string functions for this step, and move with the class later); the `close()` release loop;
+4. in the device: delete the field, replace the method body with the migration-only delegate, delete the record,
+   relax the two helpers from `private static` to `static`;
+5. split the contract pin into two - `ShaderCompilationKey` against the context, `MslFunctionKey` still against
+   the device - by matched parentheses, not by cutting at the first `))` (that produced a Python `SyntaxError`
+   in an earlier attempt), then mutation-test the moved half;
+6. then the pack smoke, and stop: no `functionCache`, no `compiledPipelines`, no `MTLCommandBuffer`-style frame
+   work, no compiler split, no frame move.
+
+Until that lands, `MetalDevice` still owns the shader module cache: `shaderCache` and `getOrCompileShader` are
+the implementation there, not delegates, and `Metal3CompilationContext` owns only the depth-stencil cache.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
