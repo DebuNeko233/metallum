@@ -14,7 +14,10 @@ This rewrites the world's `level.dat` so that the scene stops moving by itself:
     boundaries vanilla changes what it draws at;
   - the game rules that make a world change on its own are set: the daylight and weather cycles off,
     mob spawning and its patrols and traders off, random ticks off and fire spread off - and under
-    `--still-life`, the entities the world already holds are taken out of it.
+    `--still-life`, the entities the world already holds are taken out of it;
+  - under `--spectator`, the player is put into spectator mode, which is the last thing that moves: a
+    player draws their own entity and their hand, and the packs draw both, so two runs of one
+    configuration still differ in what is inside the frame's passes even when the pass set repeats.
 
 The rules are written under both `GameRules` and `game_rules`, because the schema this save was written
 with is mixed and a run is what says which spelling the game keeps: the client's own save has been read
@@ -27,7 +30,7 @@ The file is gzipped NBT, and it is rewritten **losslessly**: every tag round-tri
 `--self-test` proves on a document carrying every tag type before anything touches a real world. Only the
 values this tool means to change are changed.
 
-Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--self-test]
+Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--spectator] [--self-test]
 """
 from __future__ import annotations
 
@@ -205,6 +208,10 @@ GAME_RULES = {
 # per cent in pipelines. Four thousand ticks leaves a whole minute of world time on either side of any
 # day-phase boundary a run could cross.
 FROZEN_TIME = 4000
+
+# Spectator, which is what a player who is only watching a scene should be: no hand, no body, and
+# therefore nothing drawn inside a frame that varies between two launches of one configuration.
+SPECTATOR = 3
 NOON = FROZEN_TIME
 
 
@@ -261,6 +268,53 @@ def still_life(save: Path, dry_run: bool = False) -> list:
         if not dry_run:
             shutil.rmtree(store)
     return removed
+
+
+def player_files(save: Path) -> list:
+    """The player records of a save, which is where a player's own game type is written."""
+    players = save / "players" / "data"
+    if not players.is_dir():
+        return []
+    return sorted(players.glob("*.dat"))
+
+
+def spectate_world(root: Compound) -> bool:
+    """Sets the world's default game type, answering whether there was a world to set."""
+    data_tag, data = entry(root, "Data")
+    if data_tag != TAG_COMPOUND:
+        return False
+
+    set_entry(data, "GameType", TAG_INT, SPECTATOR)
+    return True
+
+
+def spectate_player(root: Compound) -> None:
+    """Sets one player record's own game type, which is the one that decides what they are."""
+    set_entry(root, "playerGameType", TAG_INT, SPECTATOR)
+
+
+def spectator(save: Path) -> int:
+    """Puts the world and every player of it into spectator mode, and answers how many it changed.
+
+    A player's game type is stored twice: once as the world's default and once in the player's own
+    record, and it is the second that decides what a player is when a world is opened. Both are written,
+    because a world set to spectator that hands back a creative player is a hand in every frame.
+    """
+    changed = 0
+    level = save / "level.dat"
+    if level.is_file():
+        root = load_level_dat(level)
+        if spectate_world(root):
+            save_level_dat(level, root)
+            changed += 1
+
+    for record in player_files(save):
+        root = load_level_dat(record)
+        spectate_player(root)
+        save_level_dat(record, root)
+        changed += 1
+
+    return changed
 
 
 def self_test() -> None:
@@ -321,6 +375,25 @@ def self_test() -> None:
             if rules_by_name.get(name) != value:
                 raise SystemExit(f"self-test: {name} was not set in {key}")
 
+    # Spectator mode is written in two places, and a world set without its player set is a hand in every
+    # frame: the check is that both moved and that nothing else did.
+    world_with_type: Compound = [("Data", TAG_COMPOUND, [("LevelName", TAG_STRING, "a world")])]
+    if not spectate_world(world_with_type):
+        raise SystemExit("self-test: a world with no data compound was reported as set")
+    _, data = entry(world_with_type, "Data")
+    if entry(data, "GameType") != (TAG_INT, SPECTATOR):
+        raise SystemExit("self-test: the world's own game type was not set")
+    if entry(data, "LevelName") != (TAG_STRING, "a world"):
+        raise SystemExit("self-test: setting the world's game type disturbed the rest of it")
+
+    player: Compound = [("playerGameType", TAG_INT, 1), ("Health", TAG_FLOAT, 20.0),
+                        ("abilities", TAG_COMPOUND, [("flying", TAG_BYTE, 1)])]
+    spectate_player(player)
+    if entry(player, "playerGameType") != (TAG_INT, SPECTATOR):
+        raise SystemExit("self-test: a player's game type was not set")
+    if entry(player, "Health") != (TAG_FLOAT, 20.0) or entry(player, "abilities") is None:
+        raise SystemExit("self-test: setting a game type disturbed the rest of the player record")
+
     # The still-life step removes directories, so what it would remove is computed and checked rather
     # than trusted: a path outside the save it was handed is refused, and the shape it looks for is the
     # one this version of the game writes.
@@ -358,6 +431,7 @@ def main() -> int:
     if "--time" in args:
         time = int(args[args.index("--time") + 1])
     still = "--still-life" in args
+    spectate = "--spectator" in args
 
     level = save / "level.dat"
     if not level.is_file():
@@ -377,6 +451,9 @@ def main() -> int:
         removed = still_life(save)
         print(f"Took the entities out of {save}: {len(removed)} store(s)"
               + (f" - {', '.join(removed)}" if removed else ""))
+
+    if spectate:
+        print(f"Put {spectator(save)} record(s) of {save} into spectator mode")
 
     return 0
 

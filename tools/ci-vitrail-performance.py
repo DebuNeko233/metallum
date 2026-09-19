@@ -94,10 +94,10 @@ if "run/" not in GITIGNORE.read_text(encoding="utf-8"):
 # A comparison is two launches of one world, and a live world does not draw the same frame twice: the
 # sun moves, mobs spawn and weather comes and goes. The staged world is frozen before the client starts,
 # and the tool that does it proves its own round-trip before it is trusted with a real save.
-if 'tools/freeze-world.py" "$saves_dir/$world_name" --still-life' not in launcher:
+if 'tools/freeze-world.py" "$saves_dir/$world_name" --still-life --spectator' not in launcher:
     raise SystemExit(
-        "the harness does not freeze the world it stages, or leaves its entities in it, so two launches "
-        "draw two scenes"
+        "the harness does not freeze the world it stages, or leaves its entities or the player's own "
+        "body in it, so two launches draw two scenes"
     )
 subprocess.run(["python3", str(ROOT / "tools/freeze-world.py"), "--self-test"], check=True)
 if "--continue-world" not in launcher or 'rm -rf "$saves_dir/$world_name"' not in launcher:
