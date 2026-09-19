@@ -257,8 +257,13 @@ Both scenes, 1920x1200 fullscreen, 600 frames, Metal backend, `maxFps` at the sl
 
 | Scene | plain (Metal 3 present) | present (Metal 4 present) | Verdict |
 | --- | --- | --- | --- |
-| no pack, no MetalFX | 1.77 ms / 563.5 fps | 1.79 ms / 559.0 fps | not slower (inside 1.4 per cent) |
-| Photon at 55 per cent, MetalFX on | 7.19 ms / 139.0 fps | 6.99 ms / 143.1 fps | not slower; the 2.8 per cent needs a repeat before it is a gain |
+| no pack, no MetalFX | 1.78 ms / 560.6 fps | 1.78 ms / 562.1 fps | not slower (inside 1.4 per cent) |
+| Photon at 55 per cent, MetalFX on | 7.23 ms / 138.4 fps | 6.95 ms / 143.8 fps | not slower; two pairs read 0 and 3.8 per cent, so the gain needs the reversed pair before it is a gain |
+
+The Metal 4 arm reads `metal4Frames=600 metal4Us=26.6 metal4Draws=600 metal4Presents=600` without a
+pack and `metal4Us=52.9` with one: that is the CPU cost of carrying the frame's whole presentation
+through the new queue, one command buffer and one commit a frame. The plain arm reads `metal4Frames=0`,
+which is what "the other road presented it" looks like in the probe.
 
 In both, `submit`, `blits`, `blittedMiB`, `depthAttachments` and `storedMiB` were equal between the
 arms and only `viewport` fell (the Metal 3 present's viewport is gone), which is what says the two
