@@ -194,6 +194,8 @@ Derived numbers, which are the ones to quote:
 | `windowMs / windowFrames` | wall clock a frame | the frame rate; **the headline** |
 | `gpuMs / gpuFrames` | the driver's own `GPUStartTime` to `GPUEndTime` | whether the frame waits on the GPU or on the CPU |
 | `windowMs` against `gpuMs` | within 0.3 per cent means GPU-bound | where the next phase can win anything |
+| `wallP50`/`wallP95`/`wallP99`/`wallMax` | the window's frame times as a distribution, in milliseconds | what a player feels: the mean hides the frame that took four times the others |
+| `gpuP50`/`gpuP95`/`gpuP99`/`gpuMax` | the driver's own GPU time, the same way | read the two together: a wall tail with no GPU tail is CPU or presentation, and a tail in both is work |
 | `encoders` | ends that were given a reason | *not* how many encoders were opened - see below |
 
 Counters, and what a change in each means:
@@ -231,6 +233,20 @@ Two instrument gaps to know before quoting a GPU number:
     present: 6.99 ms a frame, 143.1 frames a second, -2.8% against plain, ...
     picture, plain against present: mean channel difference 4.00, 94.59% of pixels differ at all,
         8.95% differ by more than 8, 49.91% by more than 2, worst 216 at 1075,311
+
+The distribution is what the phases about low frames are judged on, and it separates two shapes that a
+mean reports identically:
+
+    no pack:   wall p50 1.76  p99 2.67  max 2.80 (at frame 510)   gpu p50 1.43  p99 2.36  max 2.50
+    Photon 55: wall p50 7.06  p99 8.40  max 9.30                  gpu p50 6.98  p99 7.79  max 8.77
+
+Both scenes are GPU-bound at every percentile: wall and gpu ride together, the no-pack p99 is 1.5 times
+its median and the pack's 1.19, and the pack's worst frame is 1.3 times its median. What the distribution
+is for is a frame like the one an earlier run of the same no-pack configuration reported - **a 5.60 ms
+worst frame while the GPU's worst was 2.41**, three milliseconds the card did not spend. The run after it
+reported 2.80 as its worst, so one outlier is not a stall until it repeats; `wallMaxAt` is there to say
+whether the frame in question is the window's first, which is the delta across the moment the probe was
+armed and therefore the one sample an instrument cannot yet take cleanly.
 
 Read it in this order:
 

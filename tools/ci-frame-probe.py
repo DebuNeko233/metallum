@@ -196,10 +196,29 @@ require("frame-probe budget", probe, (
 require("frame-probe window time", probe, (
     "windowMs={}",
     "if (windowFrames == 1) {",
-    "windowStartedAt = System.nanoTime();",
+    "windowStartedAt = now;",
     "long windowNanos = System.nanoTime() - windowStartedAt;",
     "windowStartedAt = 0L;",
 ))
+# And the distribution the mean hides, taken from the same frames: a window is now reported as its own
+# percentiles as well, because the frame that stutters is what a player feels and a mean cannot show it.
+require("frame-probe pacing", probe, (
+    "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
+    "wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;",
+    "worstWallFrame = wallSamples;",
+    "gpuTimes[gpuSamples++] = milliseconds;",
+    "private static String percentile(final double[] times, final int count, final double fraction) {",
+    "java.util.Arrays.sort(sorted);",
+    "int rank = (int) Math.ceil(fraction * count) - 1;",
+))
+# The distribution's arguments belong at the end of the report's argument list: put anywhere else they
+# shift every counter that follows into another counter's name, which is exactly what one run printed -
+# `encoders=1.75` where a count belongs and `wallP50=7627` where a binding count does.
+if probe.index("percentile(wallTimes, wallSamples, 0.50)") < probe.index("millis(compileNanos)"):
+    raise SystemExit(
+        "frame probe: the pacing arguments are not the last of the report's arguments, so every counter "
+        "printed after them is another counter's value"
+    )
 if probe.index("long windowNanos = System.nanoTime() - windowStartedAt;") > probe.index("reset();"):
     raise SystemExit("frame probe: the window's time is read after the window's counters are cleared")
 

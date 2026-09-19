@@ -96,6 +96,19 @@ public final class MetalFrameProbe {
     private static long windowStartedAt;
 
     /**
+     * Every frame's own wall time and GPU time, so a window can be read as a distribution and not only
+     * as a mean. A mean hides exactly what a player feels: the frame that took four times the others is
+     * four hundred frames of average away and one visible stutter. Sized by the budget because a window
+     * is bounded by it, and a frame past the cap is dropped rather than resizing an array in a frame path.
+     */
+    private static final double[] wallTimes = new double[BUDGET + 1];
+    private static final double[] gpuTimes = new double[BUDGET + 1];
+    private static int wallSamples;
+    private static int gpuSamples;
+    private static long lastFrameAt;
+    private static int worstWallFrame;
+
+    /**
      * What the driver said the GPU spent on the frames of this window, summed, and how many frames it
      * answered for. The window's wall-clock says how fast frames arrive; this says how much of that the
      * GPU was running, and the difference between the two is what the CPU and the presentation cost.
@@ -232,9 +245,17 @@ public final class MetalFrameProbe {
 
         frames++;
         windowFrames++;
+        long now = System.nanoTime();
         if (windowFrames == 1) {
-            windowStartedAt = System.nanoTime();
+            windowStartedAt = now;
+        } else if (wallSamples < wallTimes.length) {
+            wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;
+            if (wallSamples == 0 || wallTimes[wallSamples] >= wallTimes[worstWallFrame]) {
+                worstWallFrame = wallSamples;
+            }
+            wallSamples++;
         }
+        lastFrameAt = now;
         if (frames % REPORT_FRAMES == 0 || frames >= BUDGET) {
             report();
         }
@@ -283,6 +304,9 @@ public final class MetalFrameProbe {
 
         gpuFrames++;
         gpuMillis += milliseconds;
+        if (gpuSamples < gpuTimes.length) {
+            gpuTimes[gpuSamples++] = milliseconds;
+        }
     }
 
     /**
@@ -475,7 +499,8 @@ public final class MetalFrameProbe {
         Metallum.LOGGER.info(
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
-                        + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
+                        + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
+                        + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
                 frames,
                 BUDGET,
                 windowFrames,
@@ -499,7 +524,16 @@ public final class MetalFrameProbe {
                 viewports,
                 scissors,
                 compiles,
-                millis(compileNanos)
+                millis(compileNanos),
+                percentile(wallTimes, wallSamples, 0.50),
+                percentile(wallTimes, wallSamples, 0.95),
+                percentile(wallTimes, wallSamples, 0.99),
+                percentile(wallTimes, wallSamples, 1.00),
+                worstWallFrame + 1,
+                percentile(gpuTimes, gpuSamples, 0.50),
+                percentile(gpuTimes, gpuSamples, 0.95),
+                percentile(gpuTimes, gpuSamples, 0.99),
+                percentile(gpuTimes, gpuSamples, 1.00)
         );
         reset();
 
@@ -514,6 +548,10 @@ public final class MetalFrameProbe {
     private static void reset() {
         windowFrames = 0;
         windowStartedAt = 0L;
+        lastFrameAt = 0L;
+        wallSamples = 0;
+        worstWallFrame = 0;
+        gpuSamples = 0;
         gpuFrames = 0;
         gpuMillis = 0.0;
         encoders = 0;
@@ -599,6 +637,30 @@ public final class MetalFrameProbe {
 
     private static String mebibytes(final long bytes) {
         return String.format(Locale.ROOT, "%.1f", bytes / (1024.0 * 1024.0));
+    }
+
+    /**
+     * One percentile of a window's samples, as a formatted number of milliseconds.
+     * <p>
+     * Sorted on a copy so the samples stay in arrival order for whatever reads them next, and taken by
+     * nearest rank rather than by interpolation: a percentile of a frame-time distribution is one of the
+     * frames that happened, and an interpolated number between two of them is a frame that did not.
+     */
+    private static String percentile(final double[] times, final int count, final double fraction) {
+        if (count <= 0) {
+            return String.format(Locale.ROOT, "%.2f", 0.0);
+        }
+
+        double[] sorted = java.util.Arrays.copyOf(times, count);
+        java.util.Arrays.sort(sorted);
+        int rank = (int) Math.ceil(fraction * count) - 1;
+        if (rank < 0) {
+            rank = 0;
+        }
+        if (rank >= count) {
+            rank = count - 1;
+        }
+        return String.format(Locale.ROOT, "%.2f", sorted[rank]);
     }
 
     private static String millis(final long nanos) {
