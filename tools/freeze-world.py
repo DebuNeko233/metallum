@@ -10,15 +10,24 @@ rather than the switch under test.
 
 This rewrites the world's `level.dat` so that the scene stops moving by itself:
 
-  - `Time` is pinned, so the sun stands where it was put and a frame is lit the same way in every run;
+  - `Time` is pinned, so every run starts from the same point of the day, and pinned away from the
+    boundaries vanilla changes what it draws at;
   - the game rules that make a world change on its own are set: the daylight and weather cycles off,
-    mob spawning and its patrols and traders off, random ticks off and fire spread off.
+    mob spawning and its patrols and traders off, random ticks off and fire spread off - and under
+    `--still-life`, the entities the world already holds are taken out of it.
+
+The rules are written under both `GameRules` and `game_rules`, because the schema this save was written
+with is mixed and a run is what says which spelling the game keeps: the client's own save has been read
+back and the survey is recorded in the performance plan. The entity store is the part a rule cannot
+reach - `doMobSpawning` stops new mobs and does nothing about the ones standing there, and a single extra
+entity draws a family's pass (measured: `cutout_cull entity` drawn in one run of one configuration and
+not the other, which moves the depth attachments by a tenth and the counted bytes by six per cent).
 
 The file is gzipped NBT, and it is rewritten **losslessly**: every tag round-trips byte for byte, which
 `--self-test` proves on a document carrying every tag type before anything touches a real world. Only the
 values this tool means to change are changed.
 
-Usage: freeze-world.py SAVE_DIR [--time TICKS] [--self-test]
+Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--self-test]
 """
 from __future__ import annotations
 
@@ -189,8 +198,14 @@ GAME_RULES = {
     "randomTickSpeed": "0",
 }
 
-# Noon, which is the time of day a screenshot is easiest to read and the one the sun stands still at.
-NOON = 6000
+# Mid-morning, and deliberately not noon. The world's clock still advances while the run is being armed -
+# the rule that stops it is not being found in this save's schema yet - and noon is exactly the boundary
+# vanilla switches the sunrise band off and the sunset band on at. A comparison whose two runs straddled
+# that boundary drew a different number of sky passes, measured: 21 passes against 20, and eleven
+# per cent in pipelines. Four thousand ticks leaves a whole minute of world time on either side of any
+# day-phase boundary a run could cross.
+FROZEN_TIME = 4000
+NOON = FROZEN_TIME
 
 
 def freeze(root: Compound, time: int) -> Compound:
@@ -200,14 +215,52 @@ def freeze(root: Compound, time: int) -> Compound:
 
     set_entry(data, "Time", TAG_LONG, time)
 
-    rules_tag, rules = entry(data, "GameRules")
-    if rules_tag != TAG_COMPOUND:
-        rules = []
-        set_entry(data, "GameRules", TAG_COMPOUND, rules)
-    for name, value in GAME_RULES.items():
-        set_entry(rules, name, TAG_STRING, value)
+    # Under both spellings. The schema this save was written with is mixed - `difficulty_settings` is
+    # snake_case where most of the compound is not - and a run of this tool checks which key the game
+    # keeps by reading the save the client leaves behind. Writing a compound the game ignores costs
+    # nothing; writing only the wrong one costs the whole fixture.
+    for key in ("GameRules", "game_rules"):
+        rules_tag, rules = entry(data, key)
+        if rules_tag != TAG_COMPOUND:
+            rules = []
+            set_entry(data, key, TAG_COMPOUND, rules)
+        for name, value in GAME_RULES.items():
+            set_entry(rules, name, TAG_STRING, value)
 
     return root
+
+
+def entity_stores(save: Path) -> list:
+    """The entity region directories of every dimension under a save, which is where the mobs live.
+
+    The player is not among them: a player's data is `players/`, beside the dimensions rather than inside
+    one, which is why taking these out leaves a world that can still be joined and played in.
+    """
+    dimensions = save / "dimensions"
+    if not dimensions.is_dir():
+        return []
+    return sorted(path for path in dimensions.glob("*/*/entities") if path.is_dir())
+
+
+def still_life(save: Path, dry_run: bool = False) -> list:
+    """Take the world's entities out of the copy, so that a run has nothing that moves on its own.
+
+    Refuses any path that is not inside the save it was handed, which is the one thing this must never
+    get wrong: it deletes directories, and the save is a copy the harness made for a measurement. What
+    it returns is the stores' paths relative to the save, so that a caller can print them and a test can
+    compare them without either having to know how a temporary directory is spelled on this platform.
+    """
+    import shutil
+
+    inside = save.resolve()
+    removed = []
+    for store in entity_stores(save):
+        if inside not in store.resolve().parents:
+            raise SystemExit(f"refusing to remove {store}: it is not inside {save}")
+        removed.append(str(store.relative_to(save)))
+        if not dry_run:
+            shutil.rmtree(store)
+    return removed
 
 
 def self_test() -> None:
@@ -251,16 +304,42 @@ def self_test() -> None:
     _, frozen_data = entry(frozen_world, "Data")
     if entry(frozen_data, "Time") != (TAG_LONG, NOON):
         raise SystemExit("self-test: the world's time was not pinned")
-    kept = [(name, tag, value) for name, tag, value in frozen_data if name != "GameRules"]
+    kept = [(name, tag, value) for name, tag, value in frozen_data
+            if name not in ("GameRules", "game_rules")]
     if kept != [("Time", TAG_LONG, NOON), ("LevelName", TAG_STRING, "a world")]:
         raise SystemExit("self-test: an unrelated entry was disturbed")
-    _, rules = entry(frozen_data, "GameRules")
-    rules_by_name = dict((name, value) for name, _, value in rules)
-    if rules_by_name.get("keepThis") != "true":
-        raise SystemExit("self-test: a game rule that was already set was dropped")
-    for name, value in GAME_RULES.items():
-        if rules_by_name.get(name) != value:
-            raise SystemExit(f"self-test: {name} was not set")
+    for key in ("GameRules", "game_rules"):
+        tag, rules = entry(frozen_data, key)
+        if tag != TAG_COMPOUND:
+            raise SystemExit(f"self-test: {key} was not written")
+        rules_by_name = dict((name, value) for name, _, value in rules)
+        # The document the tool was handed had one rule under GameRules and nothing under game_rules,
+        # and neither may lose what was there.
+        if key == "GameRules" and rules_by_name.get("keepThis") != "true":
+            raise SystemExit("self-test: a game rule that was already set was dropped")
+        for name, value in GAME_RULES.items():
+            if rules_by_name.get(name) != value:
+                raise SystemExit(f"self-test: {name} was not set in {key}")
+
+    # The still-life step removes directories, so what it would remove is computed and checked rather
+    # than trusted: a path outside the save it was handed is refused, and the shape it looks for is the
+    # one this version of the game writes.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        save = Path(scratch) / "a world"
+        (save / "dimensions/minecraft/overworld/entities").mkdir(parents=True)
+        (save / "dimensions/minecraft/the_nether/entities").mkdir(parents=True)
+        (save / "players/data").mkdir(parents=True)
+        (save / "level.dat").write_bytes(b"not a real save")
+        found = [str(path.relative_to(save)) for path in entity_stores(save)]
+        if found != ["dimensions/minecraft/overworld/entities",
+                     "dimensions/minecraft/the_nether/entities"]:
+            raise SystemExit(f"self-test: the entity stores are not found where they live: {found}")
+        if still_life(save, dry_run=True) != found:
+            raise SystemExit(f"self-test: the dry run does not name the stores it would remove: {found}")
+        if not (save / "players/data").is_dir():
+            raise SystemExit("self-test: the player's own data was taken for an entity store")
 
     print("freeze-world self-test: PASS")
 
@@ -278,6 +357,7 @@ def main() -> int:
     time = NOON
     if "--time" in args:
         time = int(args[args.index("--time") + 1])
+    still = "--still-life" in args
 
     level = save / "level.dat"
     if not level.is_file():
@@ -292,6 +372,12 @@ def main() -> int:
         print(f"{save} was already frozen", file=sys.stderr)
     else:
         print(f"Froze {save}: time pinned to {time}, {len(GAME_RULES)} game rules set")
+
+    if still:
+        removed = still_life(save)
+        print(f"Took the entities out of {save}: {len(removed)} store(s)"
+              + (f" - {', '.join(removed)}" if removed else ""))
+
     return 0
 
 

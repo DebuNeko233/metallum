@@ -243,8 +243,11 @@ for run in "${runs[@]}"; do
 	# it therefore draw two different frames - measured at eleven per cent in pipelines and nineteen in
 	# depth attachments between the arms of one comparison, which is a different scene rather than a
 	# switch. It is frozen before the client starts, and the time it is frozen at is the same one every
-	# run, so the two arms of a comparison are the same frame.
-	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name"
+	# run, so the two arms of a comparison are the same frame. The freeze also takes the world's entities
+	# out: a rule can stop new mobs and cannot remove the ones already standing there, and one extra
+	# entity draws a family's pass - measured as `cutout_cull entity` in one run of one configuration and
+	# not in the other, which moves the depth attachments by a tenth.
+	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --still-life
 
 	# The marker is removed before the launch and created only once the pack has drawn a full frame.
 	# That order is the whole of what makes a window worth counting: armed at launch it counts the
