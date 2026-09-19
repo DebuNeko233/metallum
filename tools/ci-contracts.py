@@ -943,6 +943,29 @@ require("a block can hand its argument to a Java method",
     "public static MemorySegment withConsumer(final Consumer<MemorySegment> action) {",
     "private static void invokeConsumer(final Consumer<MemorySegment> action, final MemorySegment block,",
 ))
+# The compiled pipeline's identity, introduced beside the cache and not yet used by it: the cache is keyed
+# by the game's pipeline object, which answers "have I compiled this object" and not "is this the same work",
+# and a cache that spans two generations needs the second question answered. The profile is part of the key
+# so that a Metal 3 artifact cannot be handed to a Metal 4 session, and every compiled pipeline carries its
+# own key so the step that moves the cache has something to move it to.
+require("a compiled pipeline carries what it is, not only the object it was asked for",
+        "src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java", (
+    "private final MetalPipelineKey pipelineKey;",
+    "MetalPipelineKey pipelineKey() {",
+    "this.pipelineKey = pipelineKey;",
+))
+require("the identity is read from the game's description plus the session's own two facts",
+        "src/main/java/com/metallum/render/shared/MetalPipelineKey.java", (
+    "pipeline.getLocation().toString()",
+    "pipeline.getVertexShader().toString()",
+    "pipeline.getFragmentShader().toString()",
+    "pipeline.getShaderDefines().asSourceDirectives()",
+    "MetalPipelineKey of(final RenderPipeline pipeline, final String shaderProfile,",
+))
+require("the key is built where the pipeline is compiled",
+        "src/main/java/com/metallum/render/MetalCrossShaderCompiler.java", (
+    "MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), useArgumentBuffers)",
+))
 require("the Metal 4 binding shapes are proven, not assumed",
         "src/main/java/com/metallum/mtl/metal4/MTL4Probe.java", (
     "public static boolean canBindAndDraw(final MTLDevice device) {",

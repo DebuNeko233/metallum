@@ -31,6 +31,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalResourceBinding;
+import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
 final class MetalCrossShaderCompiler {
@@ -125,6 +126,7 @@ final class MetalCrossShaderCompiler {
                     pushConstantBinding
             );
             return new MetalCompiledRenderPipeline(
+                    MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), useArgumentBuffers),
                     device,
                     pipeline,
                     vertexMsl.source(),

@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.render.shared.MetalArgumentBufferLayout;
+import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
 final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
@@ -61,6 +62,12 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         }
     }
 
+    /**
+     * What this compiled pipeline is, kept with it rather than only implied by the cache's key: the cache
+     * still looks pipelines up by the game's object, and this is the identity the next step moves it to.
+     */
+    private final MetalPipelineKey pipelineKey;
+
     private final List<MetalResourceBinding> resources;
     private final Map<String, MetalResourceBinding> resourcesByName;
     private final BitSet allResources;
@@ -79,6 +86,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     private final MemorySegment withoutDepthPipeline;
 
     MetalCompiledRenderPipeline(
+            final MetalPipelineKey pipelineKey,
             final MetalDevice device,
             final RenderPipeline info,
             final String vertexMsl,
@@ -90,6 +98,7 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
             final Set<Integer> vertexArgumentBufferSets,
             final Set<Integer> fragmentArgumentBufferSets
     ) {
+        this.pipelineKey = pipelineKey;
         this.resources = List.copyOf(resources);
         this.resourcesByName = resources.stream().collect(Collectors.toUnmodifiableMap(MetalResourceBinding::name, binding -> binding));
         this.usesArgumentBuffers = usesArgumentBuffers;
@@ -260,6 +269,11 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     @Override
     public boolean isValid() {
         return !ObjC.isNil(this.withDepthPipeline);
+    }
+
+    /** What this pipeline is, as the cache identity the next step will use. */
+    MetalPipelineKey pipelineKey() {
+        return this.pipelineKey;
     }
 
     List<MetalResourceBinding> resources() {
