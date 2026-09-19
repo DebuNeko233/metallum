@@ -46,6 +46,9 @@ PACKAGE_PREFIX = "com.metallum"
 # The layers, and what each of them may not reach. Written as package prefixes because that is what the
 # import lines carry: the rule is between packages, not between files.
 LAYERS: dict[str, tuple[str, ...]] = {
+    # The neutral layer is the newest and the strictest: it is what both generations speak in, so it may not
+    # name either generation's command path - not the engine's, not the bindings'. It was added to this table
+    # the moment it existed, because a shared layer that quietly imports one generation is the split undone.
     "com.metallum.render.shared": (
         "com.metallum.render.metal3",
         "com.metallum.render.metal4",
