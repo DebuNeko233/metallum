@@ -226,6 +226,27 @@ on the earlier five-second protocol and is not reproduced by a settled two-arm r
 explained - a different scale filter, the V-flip, the drawable's own contents, or the frame itself differing -
 the Metal 4 present road is verified as *running*, not as *equivalent*.
 
+**The difference has since been classified by re-reading the two screenshots** (the same PNG reader the
+compare tool uses, so no second decoder was introduced), and two of the three candidate causes are now ruled
+out:
+
+- **Not a flip and not a shift.** Mean channel difference by alignment: identity **2.447**, vertical flip
+  50.910, row shift -4 8.629, -2 6.843, -1 4.976, +1 4.472, +2 6.324, +4 8.358. Identity is the minimum by a
+  wide margin, so the picture is the right way up and in the right place - the V-flip the present pipeline
+  does is correct, and the frame is not offset by a row or more.
+- **Concentrated at edges, with a small floor everywhere.** Splitting the pixels by the plain arm's own local
+  gradient: flat pixels (624 098 of them) mean max-channel difference **1.652**; edge pixels (304 461) mean
+  **8.027**; worst single pixel 174. A global tone or gamma shift would put the same offset everywhere; an
+  edge-weighted error five times the flat one is the signature of **filtering** - the Metal 4 present draws the
+  picture through a pipeline with `presentSampler(scaling)`, where the Metal 3 road `blit`s it, so the two
+  roads resample and round differently even at one to one.
+
+That leaves the actionable item, and it is a present-path item rather than a frame-path one: at a scale of one
+to one the Metal 4 present should reproduce a copy rather than a resample (nearest sampling, or a blit
+equivalent), and the two-arm pair above is the test that says when it does. It is **not** a blocker for M4 -
+the frame's own encoding is untouched by it - but it is why the row in the table above says running and not
+equivalent.
+
 ### The present decision is two decisions, and only one of them can move
 
 Moving "who presents" to the execution services looked like one edit and is not, and reading the condition
