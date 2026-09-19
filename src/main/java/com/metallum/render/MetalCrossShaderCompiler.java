@@ -59,6 +59,40 @@ final class MetalCrossShaderCompiler {
                 throw new IllegalStateException("Couldn't compile shader for pipeline " + pipeline.getLocation());
             }
 
+            boolean argumentBuffersTier2 = compilation.device().supportsArgumentBuffersTier2();
+            TranslatedRenderPipeline translated = translate(vertexSpirv, fragmentSpirv, pipeline, argumentBuffersTier2);
+
+            return new MetalCompiledRenderPipeline(
+                    MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), translated.usesArgumentBuffers()),
+                    compilation,
+                    pipeline,
+                    translated.vertexMsl(),
+                    translated.fragmentMsl(),
+                    translated.vertexEntryPoint(),
+                    translated.fragmentEntryPoint(),
+                    translated.resources(),
+                    translated.usesArgumentBuffers(),
+                    translated.vertexArgumentBufferSets(),
+                    translated.fragmentArgumentBufferSets()
+            );
+        } catch (ShaderCompileException e) {
+            throw new IllegalStateException("Failed to compile Metal cross shader for pipeline " + pipeline.getLocation(), e);
+        }
+    }
+
+    /**
+     * Turns the two stages' SPIR-V into MSL and the resource metadata that goes with it.
+     * <p>
+     * This is the translation half of what used to be one method: it reflects, rebinds and translates, and it
+     * hands back everything a Metal 3 pipeline needs to be built - which is why the result is a record and not a
+     * bag of locals. The stage mask constants and the binding slots it still reads are Metal 3's layout policy
+     * and move out of it in the next step.
+     */
+    static TranslatedRenderPipeline translate(
+            final IntermediaryShaderModule vertexSpirv,
+            final IntermediaryShaderModule fragmentSpirv,
+            final RenderPipeline pipeline,
+            final boolean argumentBuffersTier2Available) throws ShaderCompileException {
             Set<String> storageBuffers = new LinkedHashSet<>();
             storageBuffers.addAll(resourceNames(vertexSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER));
             storageBuffers.addAll(resourceNames(fragmentSpirv.spirv(), Spvc.SPVC_RESOURCE_TYPE_STORAGE_BUFFER));
@@ -74,7 +108,7 @@ final class MetalCrossShaderCompiler {
             List<String> vertexOutputs = extractVariableNames(vertexSpirv.outputs());
 
             boolean useArgumentBuffers = needsArgumentBuffers(layoutEntries, pipeline);
-            if (useArgumentBuffers && !compilation.device().supportsArgumentBuffersTier2()) {
+            if (useArgumentBuffers && !argumentBuffersTier2Available) {
                 throw new IllegalStateException(
                         "Pipeline " + pipeline.getLocation() + " requires wide Metal resources, but Argument Buffer Tier 2 is unavailable"
                 );
@@ -125,10 +159,7 @@ final class MetalCrossShaderCompiler {
                     useArgumentBuffers,
                     pushConstantBinding
             );
-            return new MetalCompiledRenderPipeline(
-                    MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), useArgumentBuffers),
-                    compilation,
-                    pipeline,
+            return new TranslatedRenderPipeline(
                     vertexMsl.source(),
                     fragmentMsl.source(),
                     vertexEntryPoint,
@@ -138,9 +169,6 @@ final class MetalCrossShaderCompiler {
                     vertexMsl.argumentBufferSets(),
                     fragmentMsl.argumentBufferSets()
             );
-        } catch (ShaderCompileException e) {
-            throw new IllegalStateException("Failed to compile Metal cross shader for pipeline " + pipeline.getLocation(), e);
-        }
     }
 
     private static boolean needsArgumentBuffers(
