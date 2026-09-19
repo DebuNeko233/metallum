@@ -43,15 +43,18 @@ loom {
 				property("vitrail.experimentalMetal", "true")
 			}
 
-			// macOS's own Metal Performance HUD, on for every dev client run, so the frame can be
-			// watched while it is being drawn instead of inferred from a log afterwards: it reads
-			// frames a second, the GPU time of the frame the card really ran, the device, and the
-			// scaler's own metrics when MetalFX is on. It costs a little of what it reads, and both
-			// arms of a comparison carry the same overlay, so a number read under it is a number
-			// about the same frame either way. The ambient value wins where there is one, which is
-			// the way to take a reading with the overlay out of the frame entirely:
-			// MTL_HUD_ENABLED=0 ./gradlew runClient.
-			environmentVariable("MTL_HUD_ENABLED", System.getenv("MTL_HUD_ENABLED") ?: "1")
+			// macOS's own Metal Performance HUD, on for a hand-run dev client, so the frame can be watched
+			// while it is being drawn instead of inferred from a log afterwards: it reads frames a second,
+			// the GPU time of the frame the card really ran, the device, and the scaler's own metrics when
+			// MetalFX is on. Off for a measured one - `-PvitrailHud=0`, which is what the performance
+			// harness passes - because the picture a measurement compares is a screenshot, and an overlay
+			// whose numbers and graph change every frame is most of what differs between two arms: measured,
+			// 3.39 per cent of pixels above eight levels between two runs that were otherwise identical.
+			// The ambient `MTL_HUD_ENABLED` wins where there is one; the environment the Gradle daemon was
+			// started with is not the one the game runs in, so that is for a hand run rather than a harness.
+			def metalHud = providers.gradleProperty("vitrailHud")
+					.getOrElse(System.getenv("MTL_HUD_ENABLED") ?: "1")
+			environmentVariable("MTL_HUD_ENABLED", metalHud)
 
 			if (vitrailPerfVmArgs.isPresent()) {
 				vitrailPerfVmArgs.get().split("\\s+").each { argument ->

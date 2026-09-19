@@ -204,6 +204,14 @@ if "would delete it before copying it" not in launcher:
         "so the run deletes the scene it was asked to measure"
     )
 
+# The picture a comparison reads is a screenshot, so the Metal HUD's changing numbers and graph are most
+# of what would differ between two arms of a scene that was drawn twice. Off for a measured run.
+if "-PvitrailHud=0" not in launcher:
+    raise SystemExit(
+        "the harness leaves the Metal HUD in the frame it photographs, so a picture comparison reads the "
+        "overlay's own numbers rather than the scene"
+    )
+
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
     raise SystemExit("the harness collects runs and never compares them")
 

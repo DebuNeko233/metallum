@@ -246,7 +246,7 @@ for name, value in profile.items():
         lines.append(f"{name}:{value}")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 OPTIONS
-echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds off" >&2
+echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds off, Metal HUD off" >&2
 
 # The Metal path is the one being measured, and a run that came up on another backend would measure
 # nothing at all.
@@ -361,12 +361,17 @@ for run in "${runs[@]}"; do
 	# different lengths are not two windows of one thing. The probe's own default is the same 600, so
 	# the flag only matters when it is asked for.
 	#
+	# The Metal HUD is taken out of this run's frame, and that is not tidiness: the picture a comparison
+	# reads is `screencapture`, so an overlay whose numbers and graph change every frame lands in it -
+	# measured, 3.39 per cent of pixels above eight levels between two arms that drew the same scene. A
+	# hand run keeps the overlay, which is what it is for.
 	# The game's arguments go in through `--args=`, and not through `--args` and a separate word: a
 	# word that begins with two dashes is read as the next option rather than as the option's
 	# argument, which is how the first launch of this harness failed to start a client at all.
 	(
 		cd "$repo_root"
 		./gradlew runClient -PvitrailSmokeJar="$jar" \
+			-PvitrailHud=0 \
 			-PvitrailPerfVmArgs="-Dmetallum.frameProbeBudget=$frames${vmargs:+ $vmargs}" \
 			--console=plain \
 			"--args=--quickPlaySingleplayer $world_name --width $width --height $height"
