@@ -62,7 +62,6 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     private final MetalExecutionServices services;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
     private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
-    private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
     /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
     private final Metal3CompilationContext compilation;
     private final ShaderSource defaultShaderSource;
@@ -356,12 +355,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
         this.compiledPipelines.clear();
         this.compilation.clearShaderCache();
-        for (MemorySegment function : this.functionCache.values()) {
-            if (!ObjC.isNil(function)) {
-                ObjC.release(function);
-            }
-        }
-        this.functionCache.clear();
+        this.compilation.clearFunctionCache();
     }
 
     @Override
@@ -482,21 +476,14 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
 
 
 
+    /**
+     * Migration-only delegate: the function cache and its factory live in {@link Metal3CompilationContext};
+     * it goes when the bridges and the compiled artifact hold the context.
+     */
     synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
-        // The profile is part of the identity even though the MSL text already differs between profiles:
-        // a cache whose key is the text is safe by accident, and one whose key names the profile is safe
-        // by construction - and the accident is exactly what a future translator that emits the same text
-        // for two profiles would remove.
-        return this.functionCache.computeIfAbsent(
-                new MslFunctionKey(msl, entryPoint,
-                        com.metallum.render.execution.MetalShaderLanguageProfile.selected().token()),
-                key -> this.metalDevice.newFunction(key.msl(), key.entryPoint())
-        );
+        return this.compilation.getOrCompileFunction(msl, entryPoint);
     }
 
-
-    private record MslFunctionKey(String msl, String entryPoint, String profile) {
-    }
 
     private DeviceInfo buildDeviceInfo(final String deviceName) {
         DeviceType type = DeviceType.INTEGRATED;

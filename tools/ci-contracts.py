@@ -848,7 +848,7 @@ require("the library is compiled for the profile the translator emitted",
     "MetalShaderLanguageProfile.selected().metalLanguageVersion()",
 ))
 require("a compiled function's identity names the profile",
-        "src/main/java/com/metallum/render/MetalDevice.java", (
+        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
     "new MslFunctionKey(msl, entryPoint,",
     "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
     "MetalShaderLanguageProfile.selected().token()",

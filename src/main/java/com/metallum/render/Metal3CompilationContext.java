@@ -43,6 +43,7 @@ final class Metal3CompilationContext {
     private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
+    private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
 
     Metal3CompilationContext(final MTLDevice device) {
         this.device = device;
@@ -115,6 +116,24 @@ final class Metal3CompilationContext {
     private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,
                                         String shaderProfile) {
     }
+    /**
+     * A compiled function for the entry point, keyed by the MSL text, the entry point and the profile.
+     * <p>
+     * The profile is part of the identity even though the MSL text already differs between profiles: a cache
+     * whose key is the text is safe by accident, and one whose key names the profile is safe by construction -
+     * and the accident is exactly what a future translator that emits the same text for two profiles would
+     * remove. Key, profile token, factory and locking model are unchanged by this move.
+     */
+    synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
+        return this.functionCache.computeIfAbsent(
+                new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token()),
+                key -> this.device.newFunction(key.msl(), key.entryPoint())
+        );
+    }
+
+    private record MslFunctionKey(String msl, String entryPoint, String profile) {
+    }
+
     /** A depth-stencil state for the comparison and write flags, made once and kept. */
     synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
@@ -133,6 +152,17 @@ final class Metal3CompilationContext {
     }
 
     /** Releases every state this context made. Called once, by the device that opened it. */
+    /** Releases and forgets every compiled function, on the same terms the device released them. */
+    synchronized void clearFunctionCache() {
+        for (MemorySegment function : this.functionCache.values()) {
+            if (!ObjC.isNil(function)) {
+                ObjC.release(function);
+            }
+        }
+
+        this.functionCache.clear();
+    }
+
     /** Closes and forgets every translated module. Called when the device clears its caches. */
     synchronized void clearShaderCache() {
         this.shaderCache.values().forEach(IntermediaryShaderModule::close);
@@ -141,6 +171,7 @@ final class Metal3CompilationContext {
 
     synchronized void close() {
         clearShaderCache();
+        clearFunctionCache();
         for (MemorySegment state : this.depthStencilStates.values()) {
             com.metallum.objc.ObjC.release(state);
         }
