@@ -37,6 +37,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import com.metallum.mtl.metal3.MTLStorageTexturePipelines;
 import com.metallum.render.shared.MetalDeviceFacts;
+import com.metallum.render.shared.MetalExecutionState;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalGpuBuffer;
@@ -61,11 +62,11 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     /** What executes, and the queue it submits on; the selection replaces this in M4. */
     private final MetalExecutionServices services;
     /**
-     * The Metal 3 session's own state - its compilation caches and its retired pipelines - behind one field, so
-     * the device holds a single generation-owned object and the class inside can stay package-private when the
-     * frame path moves to its own package.
+     * The executing generation's own state, held as the shared contract: the device asks it for a compiled
+     * artifact, for eviction and for the cache release that follows GPU completion, and it can no longer see
+     * which generation that is. This is what lets the implementation move to its own package unchanged.
      */
-    private final Metal3ExecutionState metal3;
+    private final MetalExecutionState executionState;
     private final ShaderSource defaultShaderSource;
 
     MetalDevice(
@@ -143,8 +144,8 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                     "Metal 4 executes the frame and the 4.0 toolchain is the one the translator was written "
                             + "against");
         }
-        this.commandEncoder = this.services.createFrameEncoder(this);
-        this.metal3 = new Metal3ExecutionState(this.metalDevice);
+        this.executionState = this.services.createExecutionState(this.metalDevice);
+        this.commandEncoder = this.services.createFrameEncoder(this, this.executionState, this.defaultShaderSource);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
 
@@ -319,7 +320,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     @Override
     public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
-        return this.metal3.getOrCompilePipeline(pipeline, effectiveSource);
+        return this.executionState.getOrCompilePipeline(pipeline, effectiveSource);
     }
 
     /**
@@ -330,13 +331,13 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * that path has waited for submitted GPU work to complete.
      */
     public synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
-        return this.metal3.evictCachedPipelines(predicate);
+        return this.executionState.evictCachedPipelines(predicate);
     }
 
     @Override
     public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
-        this.metal3.clearCachesAfterGpuCompletion();
+        this.executionState.clearCachesAfterGpuCompletion();
     }
 
     @Override
@@ -357,7 +358,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // released. The call used to appear twice: once inside the surface teardown above, where a throw from
         // the layer release would have skipped it, and once here. The unconditional site is the one that stays.
         this.services.closePresentPath();
-        this.metal3.close();
+        this.executionState.close();
         ObjC.release(this.metalDeviceHandle);
     }
 
@@ -382,12 +383,13 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         return this.metalDeviceHandle;
     }
 
-    public     MTLDevice metalDevice() {
-        return this.metalDevice;
+    /** The executing generation's state, for the flat-package bridges that still need its internals. */
+    MetalExecutionState executionState() {
+        return this.executionState;
     }
 
-    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
-        return this.metal3.depthStencilState(compareFunction, writeDepth);
+    public     MTLDevice metalDevice() {
+        return this.metalDevice;
     }
 
     void waitForSubmittedGpuWork() {
@@ -428,21 +430,8 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * device's capabilities, both of which are constant for the life of this cache. The profile is the one input
      * that is a property of the <em>session</em>, so it is the one that is checked.
      */
-    /** Migration-only delegate: the active cache and its profile guard live in the compilation context. */
-    synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-        return this.metal3.getOrCompilePipeline(pipeline, this.defaultShaderSource);
-    }
 
 
-
-
-    /**
-     * Migration-only delegate: the function cache and its factory live in {@link Metal3CompilationContext};
-     * it goes when the bridges and the compiled artifact hold the context.
-     */
-    synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
-        return this.metal3.getOrCompileFunction(msl, entryPoint);
-    }
 
 
     private DeviceInfo buildDeviceInfo(final String deviceName) {

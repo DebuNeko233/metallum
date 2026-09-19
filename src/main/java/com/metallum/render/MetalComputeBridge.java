@@ -69,7 +69,11 @@ public final class MetalComputeBridge {
 
         try {
             Reflected reflected = reflectAndCompile(spirv);
-            MemorySegment function = device.getOrCompileFunction(reflected.msl(), reflected.entryPoint());
+            if (!(device.executionState() instanceof Metal3ExecutionState metal3)) {
+                throw new IllegalStateException("Metal compute bridge requires Metal 3 execution state");
+            }
+
+            MemorySegment function = metal3.getOrCompileFunction(reflected.msl(), reflected.entryPoint());
             if (ObjC.isNil(function)) {
                 throw new IllegalStateException("Failed to compile Metal compute function for " + label);
             }

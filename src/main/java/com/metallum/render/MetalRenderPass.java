@@ -7,6 +7,7 @@ import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassBackend;
@@ -50,6 +51,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
 
     private final MetalDevice device;
     private final MetalCommandEncoder commandEncoder;
+    /** The generation state the compiled artifact comes from, and the source it is compiled against. */
+    private final Metal3ExecutionState executionState;
+    private final ShaderSource defaultShaderSource;
     @Nullable
     private final String label;
     private final GpuTextureView[] colorTextures;
@@ -95,6 +99,8 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     MetalRenderPass(
             final MetalDevice device,
             final MetalCommandEncoder encoder,
+            final Metal3ExecutionState executionState,
+            final ShaderSource defaultShaderSource,
             final Supplier<String> label,
             final GpuTextureView[] colorTextures,
             @Nullable final GpuTextureView depthTexture,
@@ -110,6 +116,8 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         }
         this.device = device;
         this.commandEncoder = encoder;
+        this.executionState = executionState;
+        this.defaultShaderSource = defaultShaderSource;
         this.label = device.useLabels() ? label.get() : null;
         this.colorTextures = colorTextures.clone();
         this.depthTexture = depthTexture;
@@ -188,7 +196,8 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
 
     @Override
     public void setPipeline(final @NonNull RenderPipeline pipeline) {
-        MetalCompiledRenderPipeline compiled = device.getOrCompilePipeline(pipeline);
+        MetalCompiledRenderPipeline compiled =
+                this.executionState.getOrCompilePipeline(pipeline, this.defaultShaderSource);
         if (this.compiledPipeline != compiled) {
             this.compiledPipeline = compiled;
             this.argumentBufferStates.clear();

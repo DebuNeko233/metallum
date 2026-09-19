@@ -1,6 +1,7 @@
 package com.metallum.render.execution;
 
 import com.metallum.mtl.MTLDevice;
+import com.metallum.render.shared.MetalExecutionState;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFramePresentGate;
 import net.fabricmc.api.EnvType;
@@ -80,7 +81,13 @@ public interface MetalExecutionServices {
      * builds - so this answers with the same generation {@link #executing()} names, and the day there is a
      * second implementation is the day this method gains a second answer.
      */
-    MetalFrameEncoder createFrameEncoder(com.metallum.render.MetalDevice device);
+    /** The generation's own session state, as the narrow contract the device may hold. */
+    MetalExecutionState createExecutionState(MTLDevice device);
+
+    /** The generation's frame encoder, made from the state the device already holds. */
+    MetalFrameEncoder createFrameEncoder(com.metallum.render.MetalDevice device,
+                                         MetalExecutionState executionState,
+                                         com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource);
 
     /**
      * Starts whatever presenting needs and returns the gate the frame's encoder will ask. Neutral: the device
@@ -132,8 +139,16 @@ public interface MetalExecutionServices {
             }
 
             @Override
-            public MetalFrameEncoder createFrameEncoder(final com.metallum.render.MetalDevice device) {
-                return new com.metallum.render.MetalCommandEncoder(device);
+            public MetalExecutionState createExecutionState(final MTLDevice device) {
+                return com.metallum.render.Metal3ExecutionFactory.createState(device);
+            }
+
+            @Override
+            public MetalFrameEncoder createFrameEncoder(final com.metallum.render.MetalDevice device,
+                                                        final MetalExecutionState executionState,
+                                                        final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource) {
+                return com.metallum.render.Metal3ExecutionFactory.createFrameEncoder(device, executionState,
+                        defaultShaderSource);
             }
 
             private com.metallum.render.shared.MetalFramePresentGate presentGate =

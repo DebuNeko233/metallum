@@ -160,6 +160,10 @@ def violations(root: Path) -> list[str]:
 # A file in a generation package (`render.metal3`, `render.metal4`, `mtl.metal3`, `mtl.metal4`) is where these
 # names belong and is not listed. Everything else is.
 FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
+    # The generation factory constructs the Metal 3 frame encoder, which the services used to do. It is debt
+    # rather than a delegation because it still lives in the flat package; it moves with the cluster, and this
+    # line goes with it.
+    "com/metallum/render/Metal3ExecutionFactory.java": ("MetalCommandEncoder",),
     # Still called from `render` rather than from a generation package, so it is debt today and becomes one of
     # the delegations above on the day the encoder moves - and this ledger is where that shows up.
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLCommandQueue", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "MetalRenderPass",),
@@ -167,10 +171,6 @@ FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalRenderPass.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/Metal4PresentGate.java": ("Metal4Path",),
-    # The services construct the frame encoder: a generation's own factory belongs with the generation, and
-    # the facade asks for the contract. This line becomes an allowed delegation when the class and its
-    # factory move into render.metal3 together.
-    "com/metallum/render/execution/MetalExecutionServices.java": ("MetalCommandEncoder",),
 }
 _GENERATION_PACKAGES = (
     "com.metallum.render.metal3",

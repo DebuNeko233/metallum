@@ -218,7 +218,7 @@ require("Generic D32 mip bridge", "src/main/java/com/metallum/render/MetalDepthM
     "descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);",
     "descriptor.mipFilter(MTLSamplerMipFilter.NotMipmapped);",
     "descriptor.setDepthStencilFormats(MTLPixelFormat.Depth32Float, MTLPixelFormat.Invalid);",
-    "device.depthStencilState(MTLCompareFunction.Always, true)",
+    "metal3.depthStencilState(MTLCompareFunction.Always, true)",
     "new MetalGpuTextureView(texture, level - 1, 1)",
     "new MetalGpuTextureView(texture, level, 1)",
     "render.setFragmentTexture(source.nativeHandle(), 0L);",
@@ -980,6 +980,67 @@ for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
 if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
     raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
 
+require("the device holds the generation state as the shared contract",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "private final MetalExecutionState executionState;",
+    "MetalExecutionState executionState() {",
+    "this.executionState = this.services.createExecutionState(this.metalDevice);",
+    "this.commandEncoder = this.services.createFrameEncoder(this, this.executionState, this.defaultShaderSource);",
+    "this.executionState.clearCachesAfterGpuCompletion();",
+))
+import pathlib as _wp
+import re as _wr
+
+_root4 = _wp.Path(__file__).resolve().parent.parent
+
+
+def _code4(path):
+    text = (_root4 / path).read_text(encoding="utf-8")
+    text = _wr.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = _wr.sub(r"//[^\n]*", "", text)
+    return _wr.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
+_dev4 = _code4("src/main/java/com/metallum/render/MetalDevice.java")
+for _forbidden in ("Metal3ExecutionState", "Metal3CompilationContext", "Metal3PipelineRetirement",
+                   "MetalCompiledRenderPipeline", "new MetalCommandEncoder("):
+    if _forbidden in _dev4:
+        raise SystemExit(f"the device still names {_forbidden}")
+for _gone in ("synchronized MetalCompiledRenderPipeline getOrCompilePipeline(",
+              "synchronized MemorySegment getOrCompileFunction(", "synchronized MemorySegment depthStencilState("):
+    if _gone in _dev4:
+        raise SystemExit(f"a Metal 3 migration delegate is still on the device: {_gone}")
+
+# The factory is the only public construction seam, and its signatures are neutral.
+_factory = _code4("src/main/java/com/metallum/render/Metal3ExecutionFactory.java")
+for _leak in ("Metal3ExecutionState createState", "MetalCommandEncoder createFrameEncoder",
+              "Metal3CompilationContext create", "Metal3PipelineRetirement create"):
+    if _leak in _factory:
+        raise SystemExit(f"the generation factory hands out an implementation type: {_leak}")
+for _needed in ("MetalExecutionState createState(final MTLDevice device)",
+                "MetalFrameEncoder createFrameEncoder(final MetalDevice device,",
+                "final MetalExecutionState executionState,"):
+    if _needed not in _factory:
+        raise SystemExit(f"the generation factory signature changed shape: {_needed}")
+
+# The services select a generation factory; they no longer construct the frame implementation.
+_services = _code4("src/main/java/com/metallum/render/execution/MetalExecutionServices.java")
+if "MetalCommandEncoder" in _services:
+    raise SystemExit("the execution services still name the Metal 3 frame encoder")
+
+require("the render pass compiles through the state it was given",
+        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+    "this.executionState = executionState;",
+    "this.defaultShaderSource = defaultShaderSource;",
+    "this.executionState.getOrCompilePipeline(pipeline, this.defaultShaderSource);",
+))
+for _bridge in ("src/main/java/com/metallum/render/MetalComputeBridge.java",
+                "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java"):
+    _src = _code4(_bridge)
+    for _gone in ("device.getOrCompileFunction", "device.depthStencilState"):
+        if _gone in _src:
+            raise SystemExit(f"{_bridge} still reaches the device for {_gone}")
+
 require("the shared execution boundary has four operations",
         "src/main/java/com/metallum/render/shared/MetalExecutionState.java", (
     "public interface MetalExecutionState extends AutoCloseable {",
@@ -1082,7 +1143,7 @@ if "compiledPipelines = new IdentityHashMap" in _dev:
 
 _state = (_root / "src/main/java/com/metallum/render/Metal3ExecutionState.java").read_text(encoding="utf-8")
 # The device waits, then hands over: the wait must come first, and the aggregate must not know how to wait.
-if _dev.index("this.waitForSubmittedGpuWork();") > _dev.index("this.metal3.clearCachesAfterGpuCompletion();"):
+if _dev.index("this.waitForSubmittedGpuWork();") > _dev.index("this.executionState.clearCachesAfterGpuCompletion();"):
     raise SystemExit("clearPipelineCache releases the caches before the GPU wait")
 
 _order = (
@@ -1136,7 +1197,7 @@ require("the device answers that contract",
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);",
-    "this.commandEncoder = this.services.createFrameEncoder(this);",
+    "this.commandEncoder = this.services.createFrameEncoder(this, this.executionState, this.defaultShaderSource);",
     "this.presentGate = this.services.startPresentPath(this.metalDevice);",
 ))
 # The queue itself is the Metal 3 implementation's object: the address still comes from the services, but the

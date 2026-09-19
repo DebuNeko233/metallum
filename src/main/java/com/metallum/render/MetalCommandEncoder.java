@@ -44,6 +44,7 @@ import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.metal3.MetalFence;
+import com.mojang.blaze3d.shaders.ShaderSource;
 
 @Environment(EnvType.CLIENT)
 public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation {
@@ -51,6 +52,10 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
     private final MetalDevice device;
+    /** The generation state this encoder compiles through, handed in by the factory rather than looked up. */
+    private final Metal3ExecutionState executionState;
+    /** The session's shader source, handed in for the same reason. */
+    private final ShaderSource defaultShaderSource;
     private long currentSubmitIndex = MAX_SUBMITS_IN_FLIGHT;
     private final InFlight[] inFlight = new InFlight[MAX_SUBMITS_IN_FLIGHT];
     private final Semaphore[] submitSemaphores = new Semaphore[MAX_SUBMITS_IN_FLIGHT];
@@ -127,8 +132,11 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * this, and the alternative (a factory class beside the implementation) would have kept the naming of this
      * class in the frame path's facade, which is the coupling the move is removing.
      */
-    public MetalCommandEncoder(final MetalDevice device) {
+    MetalCommandEncoder(final MetalDevice device, final Metal3ExecutionState executionState,
+                        final ShaderSource defaultShaderSource) {
         this.device = device;
+        this.executionState = executionState;
+        this.defaultShaderSource = defaultShaderSource;
         // The same destruction queue rather than the encoder: what the transient memory needs from its
         // host is that its retired blocks are released on the same rotation as the encoder's own, and
         // naming the queue says exactly that - where naming the encoder made a shared-layer file reach
@@ -615,6 +623,8 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         MetalRenderPass renderPass = new MetalRenderPass(
                 device,
                 this,
+                executionState,
+                defaultShaderSource,
                 descriptor.label(),
                 colorTextures,
                 depthTexture,

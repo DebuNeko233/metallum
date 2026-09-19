@@ -98,8 +98,12 @@ public final class MetalDepthMipmapBridge {
         encoder.flushPendingClear(metalTexture);
 
         MetalDevice device = metalTexture.device();
-        MemorySegment vertexFunction = device.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_vs");
-        MemorySegment fragmentFunction = device.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_fs");
+        if (!(device.executionState() instanceof Metal3ExecutionState metal3)) {
+            return false;
+        }
+
+        MemorySegment vertexFunction = metal3.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_vs");
+        MemorySegment fragmentFunction = metal3.getOrCompileFunction(DEPTH_MIP_MSL, "metallum_depth_mip_fs");
         if (ObjC.isNil(vertexFunction) || ObjC.isNil(fragmentFunction)) {
             return false;
         }
@@ -131,7 +135,7 @@ public final class MetalDepthMipmapBridge {
             return false;
         }
 
-        MemorySegment depthState = device.depthStencilState(MTLCompareFunction.Always, true);
+        MemorySegment depthState = metal3.depthStencilState(MTLCompareFunction.Always, true);
         try {
             for (int level = 1; level < texture.getMipLevels(); level++) {
                 MetalGpuTextureView source = new MetalGpuTextureView(texture, level - 1, 1);
