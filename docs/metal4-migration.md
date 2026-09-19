@@ -179,6 +179,35 @@ the experiment the tally actually calls for. Two flips in fourteen arms is a **h
 and nothing more**; it is not a root cause, and no document here should say otherwise until a run has been
 captured with its stage named.
 
+### Registered: the intermittent argument-table probe failure
+
+    Blocks:              Metal4 AUTO production enable
+    Does not block:      M1 / M2 / M3 / Metal4 implementation work
+
+The probe's verdict feeds `MetalDeviceCapabilities.argumentTable`/`render`, hence `selected()` under AUTO, and
+nothing else: no behaviour gates on `selected()` today (a search finds only log lines reading
+`referenceShell`/`framePathReady`), the frame executes Metal 3 with `executing` passed explicitly, and
+`-Dmetallum.execution=metal3|metal4` pins the selection deterministically in the meantime. So the issue is
+**out of the main line** and is not to be chased with further hot-arm runs or more diagnostic code until the
+cross-process harness exists (below).
+
+**Wording correction, because the earlier sentence claimed more than the reading supports.** "26 calls in one
+process, all true" shows only that **no in-process high-frequency or deterministic repeat failure was
+observed**. It does **not** show that a failure must come from cold/first use. The open possibilities still
+include a **low-frequency race**, an **object-lifetime** problem (a released table, buffer or event still
+referenced), and **driver/GPU state** that a warm process happens not to be in. Two observations in fourteen
+arms, both on a session's first arm, is a hypothesis about cold first use and nothing more.
+
+What remains to do about it, and only this:
+
+1. build the cross-process cold-probe harness - `new process → create MTLDevice → probe once → report → exit` -
+   before Metal 4 is enabled by default under AUTO;
+2. count cold-first and warm/repeated separately;
+3. if it fails again, read the existing stage/reason instrumentation and locate it from that;
+4. do not write "first use of the argument table is the root cause" without that evidence;
+5. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
+   inert unless the property is set, and nothing in the frame path reads it).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
