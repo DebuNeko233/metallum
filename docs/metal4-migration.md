@@ -241,11 +241,28 @@ out:
   picture through a pipeline with `presentSampler(scaling)`, where the Metal 3 road `blit`s it, so the two
   roads resample and round differently even at one to one.
 
-That leaves the actionable item, and it is a present-path item rather than a frame-path one: at a scale of one
-to one the Metal 4 present should reproduce a copy rather than a resample (nearest sampling, or a blit
-equivalent), and the two-arm pair above is the test that says when it does. It is **not** a blocker for M4 -
-the frame's own encoding is untouched by it - but it is why the row in the table above says running and not
-equivalent.
+**And reading the two present implementations then ruled the filtering story out as well.** They are the same
+present: the same `presentPipeline` built from the same `PRESENT_MSL`, the same three-vertex triangle, and the
+same sampler rule read from the same predicate - Metal 3's `requiresScaling = width(source) != drawableWidth ||
+height(source) != drawableHeight` against Metal 4's `scaling = width(drawable) != width(source) ||
+height(drawable) != height(source)`. Metal 3 binds the sampler directly and Metal 4 through an argument table;
+everything that decides a pixel is shared. So "the roads filter differently" is not available as an
+explanation, and the edge-weighted shape has to come from somewhere else.
+
+The remaining candidate that fits the shape is **the frame's own content, through MetalFX's temporal work**:
+the m4 arm does not only present differently, it changes what happens *before* the frame's commit - the Metal 4
+present waits for the drawable and the frame's commit signals the event that wait is on, so the frame is
+synchronised differently and a temporal upscaler accumulating over those frames can settle on a slightly
+different image. Edges are where a temporal scaler differs most and flat areas where it differs least, which is
+the split that was measured (1.652 against 8.027). One counter difference points the same way: the m4 arm sets
+600 fewer viewports and binds 4200 more buffers, because the present draw brings its own binding work.
+
+**The test that separates road from frame is a same-road repeat**, and it has not been run: `m4present` against
+`m4present` in one session. If that pair repeats tightly (the 0.14-0.41 per cent one configuration shows), the
+difference is road-specific and the frame's synchronisation is the next thing to vary deliberately; if it does
+not repeat tightly, the road is simply less stable frame to frame and the two-arm difference is mostly that.
+Until the pair is run, the row above stays "running"; **what changed in this reading is that the present is no
+longer the suspect** - its two implementations share every decision that makes a pixel.
 
 ### The present decision is two decisions, and only one of them can move
 
