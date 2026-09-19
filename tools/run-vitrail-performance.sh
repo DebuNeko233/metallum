@@ -451,6 +451,22 @@ for run in "${runs[@]}"; do
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
 	grep -F "$arm_pattern" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
 
+	# A pack run whose window drew almost nothing is not a measurement of the pack, and it does not look
+	# like a failure: the probe answers, the counters are self-consistent, and the numbers are the game's own
+	# frame or a menu's. Three arms were lost to this before it was noticed, so it is refused here, by the
+	# shape the fault actually has - a pack frame opens tens of passes a frame and copies its targets back,
+	# and a frame with three passes and no copies at all is neither.
+	if [[ "$no_pack" == false ]]; then
+		render_passes="$(grep -o 'renderPasses=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
+		frame_count="$(grep -o 'windowFrames=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
+		copies="$(grep -o 'blits=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
+		if [[ -n "$render_passes" && -n "$frame_count" && "$frame_count" -gt 0 \
+			&& $((render_passes / frame_count)) -lt 10 && "${copies:-0}" -eq 0 ]]; then
+			echo "Run '$name' counted $((render_passes / frame_count)) render passes a frame with no copy-backs: the window did not draw the pack, so its numbers are the game's own frame and are not a measurement" >&2
+			met_all=1
+		fi
+	fi
+
 	stop_run
 	# Gradle's own run task waits on the client, so a stopped client ends it; the wait is bounded so
 	# that a client which refused to stop cannot hold the harness for the rest of the day.
