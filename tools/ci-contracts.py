@@ -905,7 +905,7 @@ require("the device hands out the frame encoder as that contract",
     "public @NonNull MetalFrameEncoder createCommandEncoder() {",
 ))
 require("a compiled pipeline is recompiled when its profile is not the session's",
-        "src/main/java/com/metallum/render/MetalDevice.java", (
+        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
     "private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {",
     "held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())",
     "this.compiledPipelines.remove(pipeline);",
@@ -923,6 +923,45 @@ require("a translated shader module is keyed by its MSL profile",
 ))
 # M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
 # access, which is why moving it needed widening; the contract says what it may ask instead.
+require("the active pipeline cache belongs to the compilation context",
+        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+    "private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();",
+    "synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {",
+    "synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {",
+    "synchronized void clearActivePipelines() {",
+    "this.retirement.retire(entry.getValue());",
+))
+# The ownership is a negative fact as much as a positive one: the device must not keep the active cache, and the
+# teardown order is control flow, not the presence of three lines - a frame-probe contract already showed that
+# presence is not order.
+import pathlib as _pathlib
+
+_root = _pathlib.Path(__file__).resolve().parent.parent
+_dev = (_root / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8")
+_ctx = (_root / "src/main/java/com/metallum/render/Metal3CompilationContext.java").read_text(encoding="utf-8")
+_ret = (_root / "src/main/java/com/metallum/render/Metal3PipelineRetirement.java").read_text(encoding="utf-8")
+
+if "compiledPipelines = new IdentityHashMap" in _dev:
+    raise SystemExit("the active pipeline cache is declared on MetalDevice as well as on the context")
+
+_order = (
+    "this.waitForSubmittedGpuWork();",
+    "this.retirement.releaseRetired();",
+    "this.compilation.clearActivePipelines();",
+    "this.compilation.clearShaderCache();",
+    "this.compilation.clearFunctionCache();",
+)
+_positions = [_dev.index(_line) for _line in _order]
+if _positions != sorted(_positions):
+    raise SystemExit(
+        "clearPipelineCache no longer releases in the order GPU wait, retired, active, shaders, functions: "
+        + str(list(zip(_order, _positions)))
+    )
+
+for _forbidden in ("waitForSubmittedGpuWork", "MetalCommandEncoder", "MetalFrameEncoder", "MetalDevice"):
+    if _forbidden in _ret:
+        raise SystemExit(f"the retirement owner must not know about {_forbidden}")
+
 require("the pipeline cache asks the artifact one question through a contract",
         "src/main/java/com/metallum/render/shared/MetalCompiledArtifact.java", (
     "public interface MetalCompiledArtifact {",

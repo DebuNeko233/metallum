@@ -60,7 +60,6 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
 
     /** What executes, and the queue it submits on; the selection replaces this in M4. */
     private final MetalExecutionServices services;
-    private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
     /** The pipelines a Metal 3 session retired: the cache no longer names them, the GPU may still use them. */
     private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();
     /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
@@ -143,7 +142,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                             + "against");
         }
         this.commandEncoder = this.services.createFrameEncoder(this);
-        this.compilation = new Metal3CompilationContext(this.metalDevice);
+        this.compilation = new Metal3CompilationContext(this.metalDevice, this.retirement);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }
 
@@ -318,9 +317,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     @Override
     public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
-        MetalCompiledRenderPipeline compiled = compiledFor(pipeline, effectiveSource);
-        MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
-        return compiled;
+        return this.compilation.getOrCompilePipeline(pipeline, effectiveSource);
     }
 
     /**
@@ -331,29 +328,16 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * that path has waited for submitted GPU work to complete.
      */
     public synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
-        Objects.requireNonNull(predicate, "predicate");
-
-        List<RenderPipeline> evicted = new ArrayList<>();
-        Iterator<Map.Entry<RenderPipeline, MetalCompiledRenderPipeline>> entries = this.compiledPipelines.entrySet().iterator();
-        while (entries.hasNext()) {
-            Map.Entry<RenderPipeline, MetalCompiledRenderPipeline> entry = entries.next();
-            if (!predicate.test(entry.getKey())) {
-                continue;
-            }
-
-            evicted.add(entry.getKey());
-            this.retirement.retire(entry.getValue());
-            entries.remove();
-        }
-        return List.copyOf(evicted);
+        return this.compilation.evictCachedPipelines(predicate);
     }
 
     @Override
     public synchronized void clearPipelineCache() {
         this.waitForSubmittedGpuWork();
+
         this.retirement.releaseRetired();
-        this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
-        this.compiledPipelines.clear();
+        this.compilation.clearActivePipelines();
+
         this.compilation.clearShaderCache();
         this.compilation.clearFunctionCache();
     }
@@ -447,23 +431,9 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
      * device's capabilities, both of which are constant for the life of this cache. The profile is the one input
      * that is a property of the <em>session</em>, so it is the one that is checked.
      */
-    private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {
-        MetalCompiledRenderPipeline held = this.compiledPipelines.get(pipeline);
-        if (held != null && !held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())) {
-            // Released on the same deferred path an eviction uses: already-recorded GPU work may still be
-            // referencing the artifact, so the native objects outlive the map entry by design.
-            this.compiledPipelines.remove(pipeline);
-            this.retirement.retire(held);
-        }
-
-        return this.compiledPipelines.computeIfAbsent(
-                pipeline, p -> MetalCrossShaderCompiler.compile(this.compilation, p, source));
-    }
-
+    /** Migration-only delegate: the active cache and its profile guard live in the compilation context. */
     synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-        MetalCompiledRenderPipeline compiled = compiledFor(pipeline, this.defaultShaderSource);
-        MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
-        return compiled;
+        return this.compilation.getOrCompilePipeline(pipeline, this.defaultShaderSource);
     }
 
     /**

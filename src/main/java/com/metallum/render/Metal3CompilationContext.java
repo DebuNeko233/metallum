@@ -21,6 +21,14 @@ import com.mojang.blaze3d.vulkan.glsl.ShaderCompileException;
 import com.mojang.blaze3d.preprocessor.GlslPreprocessor;
 import com.metallum.objc.ObjC;
 import java.util.Locale;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Predicate;
+import com.metallum.render.shared.MetalFrameProbe;
 
 /**
  * The compilation state the Metal 3 frame path owns: what it has already made, and how to make more.
@@ -40,13 +48,16 @@ import java.util.Locale;
 final class Metal3CompilationContext {
 
     private final MTLDevice device;
+    private final Metal3PipelineRetirement retirement;
     private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
+    private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
 
-    Metal3CompilationContext(final MTLDevice device) {
+    Metal3CompilationContext(final MTLDevice device, final Metal3PipelineRetirement retirement) {
         this.device = device;
+        this.retirement = retirement;
     }
 
     synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
@@ -137,6 +148,56 @@ final class Metal3CompilationContext {
     /** The native device this context compiles against. Package-private: it is not integration API. */
     MTLDevice device() {
         return this.device;
+    }
+
+    /**
+     * The compiled artifact for this pipeline, recompiling it if the one held was translated for another MSL
+     * profile. The identity key is the game's own pipeline object, deliberately, and the profile is the one
+     * session-scoped input the key cannot name - so it is checked on every hit, and a mismatched artifact goes
+     * to retirement rather than being closed: work already recorded against it may still be in flight.
+     */
+    private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {
+        MetalCompiledRenderPipeline held = this.compiledPipelines.get(pipeline);
+        if (held != null && !held.pipelineKey().shaderProfile().equals(MetalShaderLanguageProfile.selected().token())) {
+            this.compiledPipelines.remove(pipeline);
+            this.retirement.retire(held);
+        }
+
+        return this.compiledPipelines.computeIfAbsent(
+                pipeline, p -> MetalCrossShaderCompiler.compile(this, p, source));
+    }
+
+    /** The compiled artifact for this pipeline. The frame probe is told once, here. */
+    synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {
+        MetalCompiledRenderPipeline compiled = compiledFor(pipeline, source);
+        MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
+        return compiled;
+    }
+
+    /** Removes the pipelines a predicate selects, handing each to retirement, and answers what it removed. */
+    synchronized List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
+        Objects.requireNonNull(predicate, "predicate");
+
+        List<RenderPipeline> evicted = new ArrayList<>();
+        Iterator<Map.Entry<RenderPipeline, MetalCompiledRenderPipeline>> entries =
+                this.compiledPipelines.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry<RenderPipeline, MetalCompiledRenderPipeline> entry = entries.next();
+            if (!predicate.test(entry.getKey())) {
+                continue;
+            }
+
+            evicted.add(entry.getKey());
+            this.retirement.retire(entry.getValue());
+            entries.remove();
+        }
+        return List.copyOf(evicted);
+    }
+
+    /** Releases the pipelines still in the active cache. Never waits: GPU completion is the caller's business. */
+    synchronized void clearActivePipelines() {
+        this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
+        this.compiledPipelines.clear();
     }
 
     /** A depth-stencil state for the comparison and write flags, made once and kept. */
