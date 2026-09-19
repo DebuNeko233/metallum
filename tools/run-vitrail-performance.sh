@@ -469,6 +469,25 @@ for run in "${runs[@]}"; do
 	# shape the fault actually has - a pack frame opens tens of passes a frame and copies its targets back,
 	# and a frame with three passes and no copies at all is neither.
 	if [[ "$no_pack" == false ]]; then
+		# Named evidence first, in the shape the smoke scripts use: the run must prove it was the run asked
+		# for, and the pack's own name has to be in the line that proves it, so a window that quietly drew
+		# something else cannot pass. `No pack asked for` is the engine saying the selection was off, and
+		# `Left the world` is the session ending under the window.
+		if grep -qF "No pack asked for" "$run_dir/latest.log"; then
+			echo "Run '$name' has 'No pack asked for' in its log: the pack selection said nothing, so this window drew the game's own frame" >&2
+			scene_bad=1
+		fi
+		if ! grep -qF "of $pack_name at render stage" "$run_dir/latest.log" && ! grep -qF "$pack_name" "$run_dir/latest.log"; then
+			echo "Run '$name' never names the pack it asked for ($pack_name) in its log, so it did not draw it" >&2
+			scene_bad=1
+		fi
+		if ! grep -qF "Stopping!" "$run_dir/latest.log"; then
+			echo "Run '$name' did not reach a clean client shutdown (Stopping!), so its window ended for another reason" >&2
+			scene_bad=1
+		fi
+
+		# And the shape, as the second net rather than the argument: a pack frame opens tens of passes a
+		# frame and copies its targets back, whatever the log says.
 		render_passes="$(grep -o 'renderPasses=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
 		frame_count="$(grep -o 'windowFrames=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
 		copies="$(grep -o 'blits=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
@@ -483,6 +502,10 @@ for run in "${runs[@]}"; do
 		if [[ "$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)" != "$pack_fingerprint" ]]; then
 			echo "Run '$name' had its pack selection changed while it was counting (pack.txt was $([ "$enabled" == true ] && echo 'enabled for '"$pack_name" || echo 'disabled') when the run started): another writer owns that file, so this window measured whatever the change left behind" >&2
 			scene_bad=1
+		fi
+
+		if [[ "${scene_bad:-0}" == 0 ]]; then
+			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs)"
 		fi
 	fi
 
