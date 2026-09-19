@@ -166,7 +166,6 @@ FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDevice.java": ("MTLCommandQueue", "Metal4Path", "MetalCommandEncoder",),
-    "com/metallum/render/MetalDrawContext.java": ("MetalRenderPass",),
     "com/metallum/render/MetalRenderPass.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalSurface.java": ("MetalCommandEncoder",),
 }

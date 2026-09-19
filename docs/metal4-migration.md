@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 21 couplings in 9 files)
+    still owes 20 couplings in 8 files)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -161,9 +161,18 @@ generation's encoder from the neutral layer - the layer rule fails exactly that,
 are Metal 3's own code, so they move to `render.metal3` with the encoder and get a Metal 4 sibling, and
 `instanceof` stays their seam. An interface there would be the split undone in the name of the split.
 
-The ledger reads 21 couplings in 9 files. Verified on the settled pack scene after the change: `wallP50`
-7.24 ms, `gpuM3Ms=4365.29`, with the structural counters equal to the preceding runs (21440 encoders, 6600
-blits, 345 identities against 345 keys).
+The next caller was the same shape: `MetalDrawContext`, the sodium draw path, reached its pass through the
+game's own `RenderPass` and named `MetalRenderPass` to write push constants. What it uses is two members, so
+those two became `render/shared/MetalPassUniformWriter` - a mapped slice of transient memory, and a way to
+bind it - and the draw path now asks for that contract, with an `IllegalArgumentException` naming the class
+it actually got instead of an unchecked cast. One member had to be opened by it: `allocateTransient` was
+package-private and is now public, **because the interface is what needs it** - which is the difference
+between opening a member by contract and the hand-opening that produced a hundred "not public" errors in the
+moves that failed.
+
+The ledger reads 20 couplings in 8 files. Verified on the settled pack scene: 7.26 ms with `gpuM3Ms=4364.86`
+(`wallP50` 7.23), counters within the range runs of this configuration show (21435 encoders, 6600 blits, 345
+identities against 345 keys).
 
 ## Risks
 

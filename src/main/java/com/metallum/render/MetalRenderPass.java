@@ -34,6 +34,7 @@ import java.util.HashMap;
 import java.util.function.Supplier;
 import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalPassUniformWriter;
 import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalGpuTextureView;
 import com.metallum.render.shared.MetalGpuSampler;
@@ -43,7 +44,7 @@ import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalResourceBinding;
 
 @Environment(EnvType.CLIENT)
-final class MetalRenderPass implements RenderPassBackend {
+final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter {
     static final boolean VALIDATION = SharedConstants.IS_RUNNING_IN_IDE;
     static final int MAX_VERTEX_BUFFERS = RenderPass.MAX_VERTEX_BUFFERS;
 
@@ -463,7 +464,8 @@ final class MetalRenderPass implements RenderPassBackend {
         vertexBuffersDirty = true;
     }
 
-    GpuBufferSlice.MappedView allocateTransient(final long size, final long alignment, @GpuBuffer.Usage final int usage) {
+    @Override
+    public GpuBufferSlice.MappedView allocateTransient(final long size, final long alignment, @GpuBuffer.Usage final int usage) {
         return commandEncoder.transientMemory().allocateGpuMapped(size, alignment, usage);
     }
 

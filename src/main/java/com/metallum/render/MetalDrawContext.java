@@ -4,6 +4,7 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderPass;
+import com.metallum.render.shared.MetalPassUniformWriter;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.VKIndirectContext;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
@@ -11,12 +12,21 @@ import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import java.nio.ByteBuffer;
 
 public final class MetalDrawContext extends VKIndirectContext {
-    private MetalRenderPass metalPass;
+    private MetalPassUniformWriter metalPass;
 
     @Override
     public void setContext(RenderPass pass, RenderPipeline pipeline) {
         this.pass = pass;
-        this.metalPass = (MetalRenderPass) ((net.caffeinemc.mods.sodium.mixin.core.RenderPassAccessor) pass).getBackend();
+        Object backend = ((net.caffeinemc.mods.sodium.mixin.core.RenderPassAccessor) pass).getBackend();
+        if (!(backend instanceof MetalPassUniformWriter writer)) {
+            throw new IllegalArgumentException(
+                    "the sodium draw path was handed a " + backend.getClass().getName()
+                            + ", which cannot take push constants; it asks the pass for "
+                            + MetalPassUniformWriter.class.getSimpleName() + " rather than for a class"
+            );
+        }
+
+        this.metalPass = writer;
     }
 
     @Override
