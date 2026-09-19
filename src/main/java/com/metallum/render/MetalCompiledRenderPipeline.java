@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalResourceBinding;
+import com.metallum.render.shared.MetalArgumentBufferLayout;
 
 @Environment(EnvType.CLIENT)
 final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
@@ -37,13 +38,27 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
     static final int STAGE_FRAGMENT = 2;
     static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
 
-    record ArgumentBufferLayout(
-            int stageMask,
-            int descriptorSet,
-            int bufferIndex,
-            MTLArgumentEncoder encoder,
-            long encodedLength
-    ) {
+    /**
+     * One argument buffer this pipeline declares: where it lands, which the shared layer records, and the
+     * encoder that fills it, which is Metal 3's own mechanism and stays here.
+     */
+    record ArgumentBufferLayout(MetalArgumentBufferLayout layout, MTLArgumentEncoder encoder) {
+
+        int stageMask() {
+            return this.layout.stageMask();
+        }
+
+        int descriptorSet() {
+            return this.layout.descriptorSet();
+        }
+
+        int bufferIndex() {
+            return this.layout.bufferIndex();
+        }
+
+        long encodedLength() {
+            return this.layout.encodedLength();
+        }
     }
 
     private final List<MetalResourceBinding> resources;
@@ -171,13 +186,15 @@ final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoC
         if (!ObjC.isNil(vertexFunction)) {
             for (int set : vertexSets) {
                 MTLArgumentEncoder encoder = MTLArgumentEncoder.forFunction(vertexFunction, set);
-                layouts.add(new ArgumentBufferLayout(STAGE_VERTEX, set, set, encoder, encoder.encodedLength()));
+                layouts.add(new ArgumentBufferLayout(
+                        new MetalArgumentBufferLayout(STAGE_VERTEX, set, set, encoder.encodedLength()), encoder));
             }
         }
         if (!ObjC.isNil(fragmentFunction)) {
             for (int set : fragmentSets) {
                 MTLArgumentEncoder encoder = MTLArgumentEncoder.forFunction(fragmentFunction, set);
-                layouts.add(new ArgumentBufferLayout(STAGE_FRAGMENT, set, set, encoder, encoder.encodedLength()));
+                layouts.add(new ArgumentBufferLayout(
+                        new MetalArgumentBufferLayout(STAGE_FRAGMENT, set, set, encoder.encodedLength()), encoder));
             }
         }
         return List.copyOf(layouts);
