@@ -120,8 +120,9 @@ require("Native render-pass store/clear", "src/main/java/com/metallum/mtl/MTLCom
 require("Metal draw and direct sampling", "src/main/java/com/metallum/render/MetalRenderPass.java", (
     "enc.setRenderPipelineState(pipelineHandle);",
     "enc.drawPrimitives(primitiveType, firstVertex, vertexCount, instanceCount, firstInstance);",
-    "samplers.put(name, new TextureViewAndSampler(textureView, sampler));",
+    "TextureViewAndSampler requested = new TextureViewAndSampler(textureView, sampler);",
     "commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());",
+    "if (!sameBinding(samplers.put(name, requested), requested)) {",
     "markDescriptorDirty(name);",
     "if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.SAMPLED_IMAGE) {",
     "bindTextureAndSampler(enc, textureView.nativeHandle(), sampler.nativeHandle(), binding.bindingIndex(), binding.stageMask());",
@@ -165,7 +166,8 @@ require("Generic vertex/resource binding", "src/main/java/com/metallum/render/Me
     "public void bindTexture(final @NonNull String name",
     "bindTexture(enc, textureView.nativeHandle(), binding.bindingIndex(), binding.stageMask());",
     "public void setUniform(final @NonNull String name, final GpuBuffer value)",
-    "uniforms.put(name, value);",
+    "setUniform(name, value.slice());",
+    "if (!sameSlice(uniforms.put(name, value), value)) {",
     "if (binding.kind() == MetalCompiledRenderPipeline.ResourceKind.TEXEL_BUFFER)",
     "pushDirectTexelBufferDescriptor(enc, binding);",
     "private MemorySegment createTexelBufferTexture(",
@@ -607,5 +609,32 @@ require("the device releases the layer it was given",
         "src/main/java/com/metallum/render/MetalDevice.java", ("this.metalLayer.close();",))
 require("a failed device creation releases the layer",
         "src/main/java/com/metallum/render/MetalBackend.java", ("metalLayer.close();",))
+
+# ---------------------------------------------------------------------------
+# P2: a descriptor already holding a value is not set to it again
+#
+# The vertex and index paths compared their values from the start; the texture and uniform paths marked
+# the descriptor dirty on every call, which is a GPU-facing call for a value that has not moved. The
+# comparison is deliberately conservative - a buffer slice by its buffer, offset and length, a texture
+# view by its texture and mip range, a sampler by identity - because a comparison that is too keen skips
+# a call that was needed and the picture changes, while one that is too dull only sets a descriptor
+# again. Measured on the pack in the plan, this removes almost nothing (each image is bound about once a
+# pass) and it is kept for the surface P5 binds through, not for a number it produced.
+# ---------------------------------------------------------------------------
+require("a texture binding is compared before the descriptor is marked",
+        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+    "private static boolean sameBinding(@Nullable final TextureViewAndSampler left,",
+    "leftView.texture() == rightView.texture()",
+    "leftView.baseMipLevel() == rightView.baseMipLevel()",
+    "if (!sameBinding(samplers.put(name, requested), requested)) {",
+))
+require("a uniform is compared before the descriptor is marked",
+        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+    "if (!sameSlice(uniforms.put(name, value), value)) {",
+))
+require("an absent sampler is not marked dirty again",
+        "src/main/java/com/metallum/render/MetalRenderPass.java", (
+    "if (samplers.remove(name) != null) {",
+))
 
 print("Metal and engine contracts: PASS")

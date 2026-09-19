@@ -190,12 +190,21 @@ final class MetalRenderPass implements RenderPassBackend {
     @Override
     public void bindTexture(final @NonNull String name, @Nullable final GpuTextureView textureView, @Nullable final GpuSampler sampler) {
         if (textureView != null && sampler != null) {
-            samplers.put(name, new TextureViewAndSampler(textureView, sampler));
+            TextureViewAndSampler requested = new TextureViewAndSampler(textureView, sampler);
+            // The pending clear is materialised whether or not the binding moves: what it does is make
+            // the texture's contents real before anything samples it, and a draw that samples the same
+            // texture as the last one still has to see the clear it was promised.
             commandEncoder.flushPendingClear((MetalGpuTexture) textureView.texture());
-            markDescriptorDirty(name);
+            // A descriptor that is already set to this value is not set again. The comparison is the
+            // record's, which is the same kind of comparison the vertex and index paths already make,
+            // and it can only remove a call: what a name holds afterwards is the same either way.
+            if (!sameBinding(samplers.put(name, requested), requested)) {
+                markDescriptorDirty(name);
+            }
         } else if (textureView == null && sampler == null) {
-            samplers.remove(name);
-            markDescriptorDirty(name);
+            if (samplers.remove(name) != null) {
+                markDescriptorDirty(name);
+            }
         } else {
             throw new IllegalArgumentException();
         }
@@ -208,8 +217,10 @@ final class MetalRenderPass implements RenderPassBackend {
 
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice value) {
-        uniforms.put(name, value);
-        markDescriptorDirty(name);
+        // Same value, same descriptor, no call - by the same comparison the vertex path uses.
+        if (!sameSlice(uniforms.put(name, value), value)) {
+            markDescriptorDirty(name);
+        }
     }
 
     @Override
@@ -961,6 +972,32 @@ final class MetalRenderPass implements RenderPassBackend {
     }
 
     record TextureViewAndSampler(GpuTextureView textureView, GpuSampler sampler) {
+    }
+
+    /**
+     * Whether two texture bindings name the same native resources.
+     * <p>
+     * By the texture and the view's own parameters rather than by the wrappers: the engine hands a fresh
+     * {@link GpuTextureView} for the same texture on the next draw, so a wrapper comparison sees a change
+     * every time and binds again - which also re-derives the view's native handle, since a view builds
+     * that once and keeps it. Two views of one texture are only interchangeable when their mip range
+     * matches, which is why the range is part of the comparison and not just the texture.
+     * <p>
+     * The sampler is compared by identity, which can only ever miss a match and never invent one: two
+     * sampler states are two objects, and a fresh wrapper for the same state merely means the binding is
+     * set again.
+     */
+    private static boolean sameBinding(@Nullable final TextureViewAndSampler left,
+                                       @Nullable final TextureViewAndSampler right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        GpuTextureView leftView = left.textureView();
+        GpuTextureView rightView = right.textureView();
+        return leftView.texture() == rightView.texture()
+                && leftView.baseMipLevel() == rightView.baseMipLevel()
+                && leftView.mipLevels() == rightView.mipLevels()
+                && left.sampler() == right.sampler();
     }
 
     private static boolean sameSlice(@Nullable final GpuBufferSlice left, @Nullable final GpuBufferSlice right) {
