@@ -196,6 +196,14 @@ for setting in ('"maxFps": "260"', '"enableVsync": "false"', '"fullscreen": full
             f"the clean-start flag (missing {setting})"
         )
 
+# The world is copied in under its own name, so a world that already is the copy is deleted by the copy's
+# own first step. Measured: `--world run/saves/PerfWorld` removed the staged world and left an empty run.
+if "would delete it before copying it" not in launcher:
+    raise SystemExit(
+        "the harness copies the world into the instance without refusing a world that is already there, "
+        "so the run deletes the scene it was asked to measure"
+    )
+
 if 'python3 "$repo_root/tools/vitrail-performance-compare.py"' not in launcher:
     raise SystemExit("the harness collects runs and never compares them")
 

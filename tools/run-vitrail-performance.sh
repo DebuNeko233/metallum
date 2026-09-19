@@ -146,6 +146,16 @@ pack_dir="$game_dir/shaderpacks"
 pack_name="$(basename "$pack_path")"
 world_name="$(basename "$world_path")"
 
+# A world is copied *into* the instance under its own name, so one that already is the copy is deleted by
+# the copy's own first step: `--world run/saves/PerfWorld` removes run/saves/PerfWorld and then has nothing
+# to copy, which is measured - it took the staged world with it and the run collected an empty directory.
+# Refused here rather than trusted. The world to measure is the staged one outside the instance.
+if [[ "$(cd "$world_path" && pwd -P)" == "$saves_dir/"* ]]; then
+	echo "The world asked for is already inside the instance: $world_path" >&2
+	echo "This harness would delete it before copying it. Point --world at a staged copy outside $saves_dir." >&2
+	exit 2
+fi
+
 echo "Preparing the dev instance at $game_dir"
 mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" \
 	"$game_dir/logs" "$out_dir"
