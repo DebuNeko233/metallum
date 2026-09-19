@@ -912,12 +912,14 @@ require("a compiled pipeline is recompiled when its profile is not the session's
     "this.deferredPipelineReleases.add(held);",
 ))
 require("a translated shader module is keyed by its MSL profile",
-        "src/main/java/com/metallum/render/MetalDevice.java", (
+        "src/main/java/com/metallum/render/Metal3CompilationContext.java", (
+    "private static final Pattern GLSL_ERROR_LINE",
     "private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,",
     "String shaderProfile) {",
     "new ShaderCompilationKey(id, type, defines,",
     "MetalShaderLanguageProfile.selected().token());",
-    "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
+    "synchronized void clearShaderCache() {",
+    "this.shaderCache.values().forEach(IntermediaryShaderModule::close);",
 ))
 # M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
 # access, which is why moving it needed widening; the contract says what it may ask instead.

@@ -9,6 +9,18 @@ import net.fabricmc.api.Environment;
 import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
+import com.mojang.blaze3d.vulkan.glsl.IntermediaryShaderModule;
+import net.minecraft.resources.Identifier;
+import com.mojang.blaze3d.shaders.ShaderType;
+import net.minecraft.client.renderer.ShaderDefines;
+import com.mojang.blaze3d.shaders.ShaderSource;
+import com.metallum.render.execution.MetalShaderLanguageProfile;
+import com.mojang.blaze3d.vulkan.glsl.GlslCompiler;
+import com.mojang.blaze3d.vulkan.glsl.ShaderCompileException;
+import com.mojang.blaze3d.preprocessor.GlslPreprocessor;
+import com.metallum.objc.ObjC;
+import java.util.Locale;
 
 /**
  * The compilation state the Metal 3 frame path owns: what it has already made, and how to make more.
@@ -28,12 +40,81 @@ import java.util.Map;
 final class Metal3CompilationContext {
 
     private final MTLDevice device;
+    private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
+    private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
 
     Metal3CompilationContext(final MTLDevice device) {
         this.device = device;
     }
 
+    synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
+        // The profile is part of the identity, not a detail of the compile: a module translated for Metal 3.2
+        // is not the module a Metal 4 session needs, and the function cache below has always named it
+        // (`MslFunctionKey`) while this one did not. It is one token and the profile is fixed per process, so
+        // this changes no cache behaviour today - it is what makes the reuse impossible rather than unlikely.
+        ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines,
+                MetalShaderLanguageProfile.selected().token());
+        return this.shaderCache.computeIfAbsent(key, k -> {
+            String source = shaderSource.get(k.id(), k.type());
+            if (source == null) {
+                return IntermediaryShaderModule.INVALID;
+            }
+            String sourceWithDefines = prepareShaderSource(source, k.defines());
+            try (GlslCompiler glslCompiler = new GlslCompiler()) {
+                return glslCompiler.createIntermediary(k.id().toDebugFileName(), sourceWithDefines, k.type());
+            } catch (ShaderCompileException e) {
+                throw new IllegalStateException(shaderCompileFailure(k.id(), sourceWithDefines, e), e);
+            }
+        });
+    }
+    private static String prepareShaderSource(final String source, final ShaderDefines defines) {
+        String stripped = GlslCommentStripper.strip(source).stripLeading();
+        return GlslPreprocessor.injectDefines(stripped, defines);
+    }
+    private static String shaderCompileFailure(final Identifier id, final String source, final ShaderCompileException error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return "Failed to compile shader " + id;
+        }
+        var lineMatch = GLSL_ERROR_LINE.matcher(message);
+        if (!lineMatch.find()) {
+            return "Failed to compile shader " + id;
+        }
+
+        int line;
+        try {
+            line = Integer.parseInt(lineMatch.group(1));
+        } catch (NumberFormatException ignored) {
+            return "Failed to compile shader " + id;
+        }
+        return "Failed to compile shader " + id + "\n" + shaderSourceContext(source, line, 4);
+    }
+    private static String shaderSourceContext(final String source, final int failingLine, final int radius) {
+        String[] lines = source.split("\\R", -1);
+        if (failingLine < 1 || failingLine > lines.length) {
+            return "GLSL source line " + failingLine + " is outside the prepared source (" + lines.length + " lines)";
+        }
+
+        int first = Math.max(1, failingLine - radius);
+        int last = Math.min(lines.length, failingLine + radius);
+        StringBuilder context = new StringBuilder("GLSL source around line ").append(failingLine).append(':');
+        for (int line = first; line <= last; line++) {
+            context.append('\n')
+                    .append(line == failingLine ? ">> " : "   ")
+                    .append(String.format(Locale.ROOT, "%5d | %s", line, lines[line - 1]));
+        }
+        return context.toString();
+    }
+    /**
+     * What a translated module is keyed by: the shader, the stage, the defines it was compiled with **and the
+     * MSL profile it was translated for**. The profile is here because a module is not a stage-independent
+     * artifact: it carries the MSL the translator produced and the language version Metal accepted it under,
+     * so a session that changed profile must not be handed a module from the other one.
+     */
+    private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,
+                                        String shaderProfile) {
+    }
     /** A depth-stencil state for the comparison and write flags, made once and kept. */
     synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
@@ -52,7 +133,14 @@ final class Metal3CompilationContext {
     }
 
     /** Releases every state this context made. Called once, by the device that opened it. */
+    /** Closes and forgets every translated module. Called when the device clears its caches. */
+    synchronized void clearShaderCache() {
+        this.shaderCache.values().forEach(IntermediaryShaderModule::close);
+        this.shaderCache.clear();
+    }
+
     synchronized void close() {
+        clearShaderCache();
         for (MemorySegment state : this.depthStencilStates.values()) {
             com.metallum.objc.ObjC.release(state);
         }

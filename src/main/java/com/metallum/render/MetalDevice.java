@@ -47,7 +47,6 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 
 @Environment(EnvType.CLIENT)
 public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
-    private static final Pattern GLSL_ERROR_LINE = Pattern.compile("\\b\\d+:(\\d+):");
     private final MemorySegment metalDeviceHandle;
     private final MTLDevice metalDevice;
     private final CAMetalLayer metalLayer;
@@ -63,7 +62,6 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     private final MetalExecutionServices services;
     private final Map<RenderPipeline, MetalCompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
     private final List<MetalCompiledRenderPipeline> deferredPipelineReleases = new ArrayList<>();
-    private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
     /** The Metal 3 compilation state this device opened; it owns the caches, the device delegates. */
     private final Metal3CompilationContext compilation;
@@ -357,8 +355,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         this.deferredPipelineReleases.clear();
         this.compiledPipelines.values().forEach(MetalCompiledRenderPipeline::close);
         this.compiledPipelines.clear();
-        this.shaderCache.values().forEach(IntermediaryShaderModule::close);
-        this.shaderCache.clear();
+        this.compilation.clearShaderCache();
         for (MemorySegment function : this.functionCache.values()) {
             if (!ObjC.isNil(function)) {
                 ObjC.release(function);
@@ -474,67 +471,16 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         return compiled;
     }
 
+    /**
+     * Migration-only delegate: the module cache, its key and its factory live in
+     * {@link Metal3CompilationContext}; it goes when {@code MetalCrossShaderCompiler} holds the context.
+     */
     synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
-        // The profile is part of the identity, not a detail of the compile: a module translated for Metal 3.2
-        // is not the module a Metal 4 session needs, and the function cache below has always named it
-        // (`MslFunctionKey`) while this one did not. It is one token and the profile is fixed per process, so
-        // this changes no cache behaviour today - it is what makes the reuse impossible rather than unlikely.
-        ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines,
-                MetalShaderLanguageProfile.selected().token());
-        return this.shaderCache.computeIfAbsent(key, k -> {
-            String source = shaderSource.get(k.id(), k.type());
-            if (source == null) {
-                return IntermediaryShaderModule.INVALID;
-            }
-            String sourceWithDefines = prepareShaderSource(source, k.defines());
-            try (GlslCompiler glslCompiler = new GlslCompiler()) {
-                return glslCompiler.createIntermediary(k.id().toDebugFileName(), sourceWithDefines, k.type());
-            } catch (ShaderCompileException e) {
-                throw new IllegalStateException(shaderCompileFailure(k.id(), sourceWithDefines, e), e);
-            }
-        });
+        return this.compilation.getOrCompileShader(id, type, defines, shaderSource);
     }
 
-    private static String prepareShaderSource(final String source, final ShaderDefines defines) {
-        String stripped = GlslCommentStripper.strip(source).stripLeading();
-        return GlslPreprocessor.injectDefines(stripped, defines);
-    }
 
-    private static String shaderCompileFailure(final Identifier id, final String source, final ShaderCompileException error) {
-        String message = error.getMessage();
-        if (message == null) {
-            return "Failed to compile shader " + id;
-        }
-        var lineMatch = GLSL_ERROR_LINE.matcher(message);
-        if (!lineMatch.find()) {
-            return "Failed to compile shader " + id;
-        }
 
-        int line;
-        try {
-            line = Integer.parseInt(lineMatch.group(1));
-        } catch (NumberFormatException ignored) {
-            return "Failed to compile shader " + id;
-        }
-        return "Failed to compile shader " + id + "\n" + shaderSourceContext(source, line, 4);
-    }
-
-    private static String shaderSourceContext(final String source, final int failingLine, final int radius) {
-        String[] lines = source.split("\\R", -1);
-        if (failingLine < 1 || failingLine > lines.length) {
-            return "GLSL source line " + failingLine + " is outside the prepared source (" + lines.length + " lines)";
-        }
-
-        int first = Math.max(1, failingLine - radius);
-        int last = Math.min(lines.length, failingLine + radius);
-        StringBuilder context = new StringBuilder("GLSL source around line ").append(failingLine).append(':');
-        for (int line = first; line <= last; line++) {
-            context.append('\n')
-                    .append(line == failingLine ? ">> " : "   ")
-                    .append(String.format(Locale.ROOT, "%5d | %s", line, lines[line - 1]));
-        }
-        return context.toString();
-    }
 
     synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
         // The profile is part of the identity even though the MSL text already differs between profiles:
@@ -548,15 +494,6 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         );
     }
 
-    /**
-     * What a translated module is keyed by: the shader, the stage, the defines it was compiled with **and the
-     * MSL profile it was translated for**. The profile is here because a module is not a stage-independent
-     * artifact: it carries the MSL the translator produced and the language version Metal accepted it under,
-     * so a session that changed profile must not be handed a module from the other one.
-     */
-    private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines,
-                                        String shaderProfile) {
-    }
 
     private record MslFunctionKey(String msl, String entryPoint, String profile) {
     }
