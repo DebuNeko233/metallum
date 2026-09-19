@@ -39,12 +39,13 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.metal3.MetalFence;
 
 @Environment(EnvType.CLIENT)
-public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFrameExtras, MetalFramePresentation {
+public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation {
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
@@ -924,6 +925,7 @@ public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFr
         return new MetalFence(this, currentSubmitIndex);
     }
 
+    @Override
     public void queueForDestroy(final Runnable destroyAction) {
         destroyQueue.add(destroyAction);
     }
@@ -952,7 +954,8 @@ public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFr
         return true;
     }
 
-    void close() {
+    @Override
+    public void close() {
         submitRenderPass();
         endEncoder();
         for (int slot = 0; slot < inFlight.length; slot++) {
@@ -977,7 +980,8 @@ public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFr
         dynamicBackingPool.clear();
     }
 
-    void waitForSubmittedGpuWork() {
+    @Override
+    public void waitForSubmittedGpuWork() {
         if (commandBuffer != null || currentRenderPass != null || currentEncoder != null) {
             submit();
         } else {

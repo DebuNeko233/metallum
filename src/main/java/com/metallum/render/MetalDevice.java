@@ -36,6 +36,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import com.metallum.mtl.metal3.MTLCommandQueue;
+import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;
@@ -51,7 +52,9 @@ public final class MetalDevice implements GpuDeviceBackend {
     private final CAMetalLayer metalLayer;
     private final Cocoa cocoa;
     private final GpuDebugOptions debugOptions;
-    private final MetalCommandEncoder commandEncoder;
+    // The frame's encoder as a contract rather than as this generation's class: the device owns the frame's
+    // lifetime and calls four operations on it, and none of them needs to know which generation encodes it.
+    private final MetalFrameEncoder commandEncoder;
     private final DeviceInfo deviceInfo;
     public final MTLCommandQueue commandQueue;
 
@@ -151,7 +154,7 @@ public final class MetalDevice implements GpuDeviceBackend {
     }
 
     @Override
-    public @NonNull MetalCommandEncoder createCommandEncoder() {
+    public @NonNull MetalFrameEncoder createCommandEncoder() {
         return this.commandEncoder;
     }
 

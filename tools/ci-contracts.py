@@ -889,6 +889,21 @@ require("the capability record asks every clause of the minimum contract",
 # M2: no compilation artifact may be reused across MSL profiles. The module and function caches name the profile
 # in their keys; the pipeline cache cannot (its key is the game's pipeline identity, deliberately), so it is
 # guarded on every hit instead. Pinned because the guard is one comparison that no other test would notice losing.
+# M3 step B/C: the frame's encoder is known as a contract, and that contract carries no generation type. The
+# interface is pinned against the four members the device needs and against the game interface it extends, and the
+# device is pinned against naming the concrete class in its field and in the accessor it hands out.
+require("the frame's encoder is held as a neutral contract, not as a class",
+        "src/main/java/com/metallum/render/shared/MetalFrameEncoder.java", (
+    "public interface MetalFrameEncoder extends CommandEncoderBackend {",
+    "void writeToBuffer(final GpuBufferSlice destination, final ByteBuffer data);",
+    "void waitForSubmittedGpuWork();",
+    "void queueForDestroy(final Runnable destroyAction);",
+))
+require("the device hands out the frame encoder as that contract",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "private final MetalFrameEncoder commandEncoder;",
+    "public @NonNull MetalFrameEncoder createCommandEncoder() {",
+))
 require("a compiled pipeline is recompiled when its profile is not the session's",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "private MetalCompiledRenderPipeline compiledFor(final RenderPipeline pipeline, final ShaderSource source) {",
