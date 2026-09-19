@@ -919,6 +919,19 @@ require("a translated shader module is keyed by its MSL profile",
     "MetalShaderLanguageProfile.selected().token());",
     "private record MslFunctionKey(String msl, String entryPoint, String profile) {",
 ))
+# M3 seam: what a generation's encoder may ask the device. MetalCommandEncoder read these through package
+# access, which is why moving it needed widening; the contract says what it may ask instead.
+require("a generation's encoder asks the device through a contract",
+        "src/main/java/com/metallum/render/shared/MetalDeviceFacts.java", (
+    "public interface MetalDeviceFacts {",
+    "boolean useLabels();",
+    "MemorySegment metalDeviceHandle();",
+))
+require("the device answers that contract",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {",
+    "public boolean useLabels() {",
+))
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);",

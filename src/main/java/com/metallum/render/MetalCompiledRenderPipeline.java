@@ -29,21 +29,21 @@ import com.metallum.render.shared.MetalArgumentBufferLayout;
 import com.metallum.render.shared.MetalPipelineKey;
 
 @Environment(EnvType.CLIENT)
-final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
+public final class MetalCompiledRenderPipeline implements CompiledRenderPipeline, AutoCloseable {
     private static final int MAX_COLOR_ATTACHMENTS = 8;
     static final int ARGUMENT_BUFFER_SLOT_COUNT = 8;
     static final int PUSH_CONSTANT_BUFFER_SLOT = 8;
     private static final int WIDE_VERTEX_BUFFER_BASE = 9;
 
-    static final int STAGE_VERTEX = 1;
-    static final int STAGE_FRAGMENT = 2;
-    static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
+    public static final int STAGE_VERTEX = 1;
+    public static final int STAGE_FRAGMENT = 2;
+    public static final int STAGE_ALL = STAGE_VERTEX | STAGE_FRAGMENT;
 
     /**
      * One argument buffer this pipeline declares: where it lands, which the shared layer records, and the
      * encoder that fills it, which is Metal 3's own mechanism and stays here.
      */
-    record ArgumentBufferLayout(MetalArgumentBufferLayout layout, MTLArgumentEncoder encoder) {
+    public record ArgumentBufferLayout(MetalArgumentBufferLayout layout, MTLArgumentEncoder encoder) {
 
         int stageMask() {
             return this.layout.stageMask();
