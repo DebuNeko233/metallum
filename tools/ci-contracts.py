@@ -694,7 +694,17 @@ require("the Metal 4 factories are asked for before they are sent",
     'responds(buffer, "beginCommandBufferWithAllocator:")',
     'responds(buffer, "endCommandBuffer")',
     'Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS)',
-    "public static boolean canMakeObjects(final MTLDevice device) {",
+    "public static boolean canMakeAndSubmit(final MTLDevice device) {",
+))
+
+require("the Metal 4 submission is proven by the queue's own signal",
+        "src/main/java/com/metallum/mtl/MTL4Probe.java", (
+    'Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG)',
+    'Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG)',
+    'Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG)',
+    'responds(queue, "commit:count:")',
+    'responds(event, "waitUntilSignaledValue:timeoutMS:")',
+    "boolean ran = WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) != 0L;",
 ))
 
 print("Metal and engine contracts: PASS")

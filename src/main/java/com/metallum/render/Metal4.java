@@ -74,16 +74,16 @@ public final class Metal4 {
         // A device that answers yes can still refuse to make the objects, so one of each is made and let
         // go here - the queue, an allocator and a command buffer begun on it - which is what makes this a
         // skeleton rather than a support query. Nothing in a frame path creates one.
-        if (!MTL4Probe.canMakeObjects(device)) {
+        if (!MTL4Probe.canMakeAndSubmit(device)) {
             available = Boolean.FALSE;
-            reason = "the device has the family but would not make the new command objects";
+            reason = "the device has the family but would not make and take the new command objects";
             Metallum.LOGGER.warn("Metal 4 core API: unavailable, {}", reason);
             return false;
         }
 
         available = Boolean.TRUE;
         reason = "the device has the family, answers to " + QUEUE_SELECTOR
-                + ", and a queue, an allocator and a command buffer were made and released";
+                + ", and a queue, an allocator and a command buffer were made, submitted and released";
         Metallum.LOGGER.info("Metal 4 core API: available, {}", reason);
         return true;
     }
