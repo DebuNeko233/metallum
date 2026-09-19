@@ -1073,17 +1073,60 @@ for _bridge in ("src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.ja
         if _gone in _src:
             raise SystemExit(f"{_bridge} still reaches the device for {_gone}")
 
+require("the frame-resource capability is generation-neutral vocabulary",
+        "src/main/java/com/metallum/render/shared/MetalFrameResourceCommands.java", (
+    "public interface MetalFrameResourceCommands {",
+    "boolean generateMipmaps(GpuTexture texture);",
+    "boolean clearStorageTexture(GpuTexture texture, int dimensions);",
+    "boolean copyStorageTextureRegion(",
+))
+require("the flat frame bridge reaches implementations only through capabilities",
+        "src/main/java/com/metallum/render/MetalFrameBridge.java", (
+    "public static boolean supports(final @Nullable Object encoder) {",
+    "return encoder instanceof MetalFrameResourceCommands;",
+    "return encoder instanceof MetalFrameResourceCommands commands && commands.generateMipmaps(texture);",
+    "commands.copyStorageTextureRegion(source, destination, sourceX, sourceY, sourceZ,",
+))
+import pathlib as _fp2
+import re as _fr2
+
+_root7 = _fp2.Path(__file__).resolve().parent.parent
+
+
+def _code7(path):
+    text = (_root7 / path).read_text(encoding="utf-8")
+    text = _fr2.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = _fr2.sub(r"//[^\n]*", "", text)
+    return _fr2.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
+for _facade in ("MetalFrameBridge", "MetalAttachmentBridge", "MetalComputeBridge", "MetalDepthMipmapBridge"):
+    _src = _code7(f"src/main/java/com/metallum/render/{_facade}.java")
+    for _forbidden in ("render.metal3", "render.metal4", "mtl.metal3", "mtl.metal4"):
+        if _forbidden in _src:
+            raise SystemExit(f"the flat {_facade} names {_forbidden}")
+
+require("the Metal 3 encoder answers the resource capabilities it owns",
+        "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java", (
+    "MetalFrameResourceCommands, MetalFrameDepthMipmaps, MetalFrameComputeCommands {",
+    "public boolean generateDepthMipmaps(final GpuTexture texture) {",
+    "public boolean dispatchCompute(final Object pipeline,",
+    "Metal3ComputeBridge.dispatch(this, pipeline, buffers, textures, samplers,",
+))
+
 require("the flat compute facade is neutral and forwards",
         "src/main/java/com/metallum/render/MetalComputeBridge.java", (
     "public static Object compile(final Object backend, final String label, final ByteBuffer spirv) {",
-    "return Metal3ComputeBridge.compile(device, device.executionState(), label, spirv);",
-    "return Metal3ComputeBridge.dispatch(encoderBackend, pipelineResource, buffers, textures, samplers,",
-    "Metal3ComputeBridge.close(pipelineResource);",
+    "if (!(device.executionState() instanceof MetalComputeCompiler compiler)) {",
+    "return compiler.compileCompute(device, label, spirv);",
+    "return encoderBackend instanceof MetalFrameComputeCommands commands",
+    "commands.dispatchCompute(pipelineResource, buffers, textures, samplers,",
+    "if (pipelineResource instanceof MetalComputePipelineResource resource) {",
 ))
 require("the flat depth-mipmap facade is neutral and forwards",
         "src/main/java/com/metallum/render/MetalDepthMipmapBridge.java", (
     "public static boolean generate(final Object encoderBackend, final GpuTexture texture) {",
-    "return Metal3DepthMipmapBridge.generate(encoderBackend, texture);",
+    "return encoderBackend instanceof MetalFrameDepthMipmaps depth && depth.generateDepthMipmaps(texture);",
 ))
 import pathlib as _fp
 import re as _fr
@@ -1153,7 +1196,7 @@ for _forbidden in ("Metal3", "Metal4", "MTL", "MemorySegment", "MetalCompiledRen
 
 require("the Metal 3 aggregate implements the boundary without widening its internals",
         "src/main/java/com/metallum/render/metal3/Metal3ExecutionState.java", (
-    "final class Metal3ExecutionState implements MetalExecutionState {",
+    "final class Metal3ExecutionState implements MetalExecutionState, MetalComputeCompiler {",
     "public MetalCompiledRenderPipeline getOrCompilePipeline(",
     "public List<RenderPipeline> evictCachedPipelines(",
     "public void clearCachesAfterGpuCompletion() {",

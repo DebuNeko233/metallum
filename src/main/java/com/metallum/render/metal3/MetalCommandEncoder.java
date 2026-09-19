@@ -40,6 +40,9 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalFrameComputeCommands;
+import com.metallum.render.shared.MetalFrameDepthMipmaps;
+import com.metallum.render.shared.MetalFrameResourceCommands;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFramePresentation;
@@ -50,7 +53,8 @@ import com.metallum.render.MetalDevice;
 import com.metallum.render.MetalFx;
 
 @Environment(EnvType.CLIENT)
-public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation {
+public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation,
+        MetalFrameResourceCommands, MetalFrameDepthMipmaps, MetalFrameComputeCommands {
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
@@ -222,6 +226,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * @return true when the native mipmap command was encoded, false when this texture or encoder
      *         state cannot use Metal's native mipmap path
      */
+    @Override
     public boolean generateMipmaps(final GpuTexture texture) {
         if (currentRenderPass != null
                 || !(texture instanceof MetalGpuTexture metalTexture)
@@ -263,6 +268,25 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * The dimensionality is supplied by the optional backend caller because Minecraft's public
      * {@link GpuTexture} facade stores true 3D depth in the same integer used for array layers.
      */
+    /** The D32 progressive fallback, when the generic mipmap path will not take a depth texture. */
+    @Override
+    public boolean generateDepthMipmaps(final GpuTexture texture) {
+        return Metal3DepthMipmapBridge.generate(this, texture);
+    }
+
+    /** Dispatch through the generation's compute implementation, which owns the binding rules. */
+    @Override
+    public boolean dispatchCompute(final Object pipeline,
+                                   final java.util.Map<String, com.mojang.blaze3d.buffers.GpuBufferSlice> buffers,
+                                   final java.util.Map<String, com.mojang.blaze3d.textures.GpuTextureView> textures,
+                                   final java.util.Map<String, com.mojang.blaze3d.textures.GpuSampler> samplers,
+                                   final int groupsX, final int groupsY, final int groupsZ,
+                                   final int localX, final int localY, final int localZ) {
+        return Metal3ComputeBridge.dispatch(this, pipeline, buffers, textures, samplers,
+                groupsX, groupsY, groupsZ, localX, localY, localZ);
+    }
+
+    @Override
     public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {
         if (currentRenderPass != null
                 || !(texture instanceof MetalGpuTexture metalTexture)
@@ -302,6 +326,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * Overlap is intentionally not solved here: callers that shift a texture in place must supply
      * a separate scratch texture and perform two non-overlapping copies.
      */
+    @Override
     public boolean copyStorageTextureRegion(
             final GpuTexture source,
             final GpuTexture destination,

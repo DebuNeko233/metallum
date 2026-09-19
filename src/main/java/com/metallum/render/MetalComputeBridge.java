@@ -1,6 +1,8 @@
 package com.metallum.render;
 
-import com.metallum.render.metal3.Metal3ComputeBridge;
+import com.metallum.render.shared.MetalComputeCompiler;
+import com.metallum.render.shared.MetalComputePipelineResource;
+import com.metallum.render.shared.MetalFrameComputeCommands;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
@@ -31,7 +33,11 @@ public final class MetalComputeBridge {
             throw new IllegalArgumentException("Not a Metallum MetalDevice backend: " + backend);
         }
 
-        return Metal3ComputeBridge.compile(device, device.executionState(), label, spirv);
+        if (!(device.executionState() instanceof MetalComputeCompiler compiler)) {
+            throw new IllegalStateException("Active Metal execution state does not support compute");
+        }
+
+        return compiler.compileCompute(device, label, spirv);
     }
 
     /** Dispatches workgroups, answering whether the dispatch was encoded. */
@@ -48,12 +54,15 @@ public final class MetalComputeBridge {
             final int localY,
             final int localZ
     ) {
-        return Metal3ComputeBridge.dispatch(encoderBackend, pipelineResource, buffers, textures, samplers,
-                groupsX, groupsY, groupsZ, localX, localY, localZ);
+        return encoderBackend instanceof MetalFrameComputeCommands commands
+                && commands.dispatchCompute(pipelineResource, buffers, textures, samplers,
+                        groupsX, groupsY, groupsZ, localX, localY, localZ);
     }
 
     /** Releases an opaque pipeline returned by {@link #compile(Object, String, ByteBuffer)}. */
     public static void close(final Object pipelineResource) {
-        Metal3ComputeBridge.close(pipelineResource);
+        if (pipelineResource instanceof MetalComputePipelineResource resource) {
+            resource.close();
+        }
     }
 }

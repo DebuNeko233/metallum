@@ -29,6 +29,7 @@ import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalGpuTextureView;
 import com.metallum.render.shared.MetalGpuSampler;
 import com.metallum.render.MetalDevice;
+import com.metallum.render.shared.MetalComputePipelineResource;
 import com.metallum.render.shared.MetalExecutionState;
 
 /**
@@ -515,7 +516,7 @@ public final class Metal3ComputeBridge {
     private record Reflected(String msl, String entryPoint, Map<String, Binding> bindings) {
     }
 
-    private static final class ComputePipeline implements AutoCloseable {
+    private static final class ComputePipeline implements MetalComputePipelineResource {
         private final MetalDevice device;
         private final String label;
         private final MemorySegment pipelineState;

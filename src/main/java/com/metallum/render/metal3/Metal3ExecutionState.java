@@ -2,6 +2,8 @@ package com.metallum.render.metal3;
 
 import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.render.MetalDevice;
+import com.metallum.render.shared.MetalComputeCompiler;
 import com.metallum.render.shared.MetalExecutionState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.shaders.ShaderSource;
@@ -26,7 +28,7 @@ import java.util.function.Predicate;
  * compilation and lifetime ownership.
  */
 @Environment(EnvType.CLIENT)
-final class Metal3ExecutionState implements MetalExecutionState {
+final class Metal3ExecutionState implements MetalExecutionState, MetalComputeCompiler {
 
     private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();
     private final Metal3CompilationContext compilation;
@@ -71,6 +73,12 @@ final class Metal3ExecutionState implements MetalExecutionState {
         this.compilation.clearActivePipelines();
         this.compilation.clearShaderCache();
         this.compilation.clearFunctionCache();
+    }
+
+    /** Compiling a compute pipeline is the execution state's answer, not a class a caller names. */
+    @Override
+    public Object compileCompute(final MetalDevice device, final String label, final java.nio.ByteBuffer spirv) {
+        return Metal3ComputeBridge.compile(device, this, label, spirv);
     }
 
     /** Releases the compilation state itself. The cache paths have already done their part. */

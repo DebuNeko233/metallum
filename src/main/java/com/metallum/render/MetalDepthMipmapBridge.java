@@ -1,6 +1,6 @@
 package com.metallum.render;
 
-import com.metallum.render.metal3.Metal3DepthMipmapBridge;
+import com.metallum.render.shared.MetalFrameDepthMipmaps;
 import com.mojang.blaze3d.textures.GpuTexture;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -19,6 +19,6 @@ public final class MetalDepthMipmapBridge {
 
     /** Builds the depth mip chain for a D32 texture, answering whether it was encoded. */
     public static boolean generate(final Object encoderBackend, final GpuTexture texture) {
-        return Metal3DepthMipmapBridge.generate(encoderBackend, texture);
+        return encoderBackend instanceof MetalFrameDepthMipmaps depth && depth.generateDepthMipmaps(texture);
     }
 }
