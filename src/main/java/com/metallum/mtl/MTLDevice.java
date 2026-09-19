@@ -15,7 +15,6 @@ import java.lang.invoke.MethodHandle;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
-import com.metallum.mtl.metal3.MTLCommandQueue;
 
 @Environment(EnvType.CLIENT)
 public record MTLDevice(MemorySegment handle) {
@@ -23,7 +22,6 @@ public record MTLDevice(MemorySegment handle) {
             ObjC.METAL.findOrThrow("MTLCreateSystemDefaultDevice"), FunctionDescriptor.of(ADDRESS));
 
     private static final Msg NEW_BUFFER = Msg.of("newBufferWithLength:options:", ADDRESS, JAVA_LONG, JAVA_LONG);
-    private static final Msg NEW_COMMAND_QUEUE = Msg.of("newCommandQueue", ADDRESS);
     private static final Msg SUPPORTS_FAMILY = Msg.of("supportsFamily:", JAVA_LONG, JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
     private static final Msg NEW_TEXTURE = Msg.of("newTextureWithDescriptor:", ADDRESS, ADDRESS);
@@ -115,14 +113,6 @@ public record MTLDevice(MemorySegment handle) {
      */
     public boolean respondsTo(final String name) {
         return RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector(name)) != 0L;
-    }
-
-    public MTLCommandQueue newCommandQueue() {
-        MemorySegment queue = NEW_COMMAND_QUEUE.sendPtr(handle);
-        if (ObjC.isNil(queue)) {
-            throw new IllegalStateException("newCommandQueue returned nil");
-        }
-        return new MTLCommandQueue(queue);
     }
 
     public MemorySegment newTexture(final MTLTextureDescriptor descriptor) {

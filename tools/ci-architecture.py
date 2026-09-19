@@ -161,7 +161,6 @@ def violations(root: Path) -> list[str]:
 # names belong and is not listed. Everything else is.
 FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     "com/metallum/mtl/MTLBuiltinPipelines.java": ("MTLCommandBuffer", "MTLRenderCommandEncoder",),
-    "com/metallum/mtl/MTLDevice.java": ("MTLCommandQueue",),
     "com/metallum/mtl/MTLStorageTexturePipelines.java": ("MTLComputeCommandEncoder",),
     "com/metallum/render/MetalAttachmentBridge.java": ("MetalCommandEncoder",),
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "Metal4Path", "MetalRenderPass",),

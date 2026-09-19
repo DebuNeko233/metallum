@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 24 couplings in 12 files)
+    still owes 23 couplings in 11 files)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -142,6 +142,13 @@ retired blocks are released on the encoder's rotation, as before - while the sha
 frame path's concrete class, which the layer rule would have failed the day the encoder moved to
 `render.metal3`. Verified on the settled pack scene: 7.31 ms with `gpuM3Ms=4391.78` against the immediately
 preceding run's 7.31 ms and `gpuM3Ms=4392.35`, every counter equal.
+
+The second line to go needed no abstraction at all: `mtl/MTLDevice.java` named `MTLCommandQueue` only in
+`newCommandQueue()`, a queue factory **nothing called** - the services build the queue from the device's
+handle directly. A generation name carried by dead code is the cheapest line in the ledger to remove: the
+method, its `Msg` and its import are gone, and the removal cannot change behaviour because there was no
+caller to change it for (a repo-wide search for the call, not the name, is what says so). The ledger reads
+23 couplings in 11 files.
 
 ## Risks
 
