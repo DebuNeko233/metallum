@@ -70,9 +70,8 @@ public final class Metal4Path {
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESET = Msg.ofVoid("reset");
     private static final Msg ENCODE_SIGNAL_EVENT = Msg.ofVoid("encodeSignalEvent:value:", ADDRESS, JAVA_LONG);
-    private static final Msg COMPUTE_ENCODER = Msg.of("computeCommandEncoder", ADDRESS);
-    private static final Msg COPY_TEXTURE = Msg.ofVoid("copyFromTexture:toTexture:", ADDRESS, ADDRESS);
     private static final Msg WAIT_FOR_EVENT = Msg.ofVoid("waitForEvent:value:", ADDRESS, JAVA_LONG);
+    private static final Msg WAIT_DRAWABLE = Msg.ofVoid("waitForDrawable:", ADDRESS);
     private static final Msg SIGNAL_DRAWABLE = Msg.ofVoid("signalDrawable:", ADDRESS);
     private static final Msg RENDER_ENCODER = Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg END_ENCODING = Msg.ofVoid("endEncoding");
@@ -104,6 +103,7 @@ public final class Metal4Path {
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
     private static final long[] awaited = new long[FRAMES_IN_FLIGHT];
     private static long signalled;
+    private static boolean presentWarned;
 
     /** The other direction: the event the frame's own command buffer signals, and the value it last signalled. */
     @Nullable
@@ -308,11 +308,13 @@ public final class Metal4Path {
      * False leaves the caller on the road it had. Everything is checked before the drawable is taken, and a
      * drawable that has been taken is always presented by whoever took it.
      * <p>
-     * <strong>Off by default, and it does not work yet.</strong> Turned on it carries the picture for a while
-     * and then the ring gives up - measured, the GPU stops signalling a slot of the submission ring within a
-     * second, which means the ordering or the lifetime of the second submission per frame is wrong somewhere
-     * in here. Until that is found this stays behind {@code -Dmetallum.metal4Present=true}, because a path
-     * that takes the picture and then stalls is worse than one that never takes it.
+     * <strong>Off by default, and the first thing it did was end the process.</strong> Turned on it died a
+     * second into the session with
+     * {@code -[AGXG17XFamilyRenderContext_mtlnext signalOnCommandQueue:]: unrecognized selector}, which is the
+     * framework telling a drawable to register itself on this queue - the half of Apple's order that says which
+     * drawable the queue is about to wait for, before any command buffer targeting it is committed. The wait
+     * half is here now; whether that is the whole of what the signal half needs is what the next run answers,
+     * and until it does this stays behind {@code -Dmetallum.metal4Present=true}.
      */
     public static boolean present(final CAMetalLayer layer, final MemorySegment sourceTexture) {
         if (!Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"))) {
@@ -323,8 +325,9 @@ public final class Metal4Path {
             return false;
         }
 
-        if (!responds(queue, "waitForEvent:value:") || !responds(queue, "signalDrawable:")
-                || !responds(commandBuffer, "computeCommandEncoder")) {
+        if (!responds(queue, "waitForDrawable:") || !responds(queue, "waitForEvent:value:")
+                || !responds(queue, "signalDrawable:")
+                || !responds(commandBuffer, "renderCommandEncoderWithDescriptor:")) {
             return false;
         }
 
@@ -334,28 +337,47 @@ public final class Metal4Path {
                 return false;
             }
 
+            // Apple's order has this half before anything is committed against the drawable and the signal
+            // half after, and this path was missing the first one: `signalDrawable:` alone ended the process
+            // with `-[AGXG17XFamilyRenderContext_mtlnext signalOnCommandQueue:]: unrecognized selector`,
+            // which is the framework asking a drawable that was never registered with this queue to register
+            // itself on it. Asked for a drawable, so the queue is told which one it is about to wait for
+            // before the command buffer that targets it is committed.
+            WAIT_DRAWABLE.send(queue, drawable.handle());
+
             MemorySegment drawableTexture = drawable.texture();
             if (ObjC.isNil(drawableTexture)) {
                 return false;
             }
 
-            long sourceWidth = MTLTexture.width(sourceTexture);
-            long sourceHeight = MTLTexture.height(sourceTexture);
-            if (MTLTexture.width(drawableTexture) == sourceWidth
-                    && MTLTexture.height(drawableTexture) == sourceHeight
-                    && encodeCopyPresent(drawable, drawableTexture, sourceTexture)) {
-                return true;
+            // Drawn and not copied. A whole-texture copy is exact and needs no bindings, which is what made
+            // it the first thing this path could carry - and it presents the picture upside down, because the
+            // engine's own present triangle flips V and a copy has no coordinates to flip: measured, the
+            // loading screen arrived 180 degrees over. The present pipeline and the sampler already handle the
+            // convention, and the argument table is what the triangle is given its source through.
+            boolean drawn = table != null && encodeDrawPresent(drawableTexture, sourceTexture);
+            if (!drawn) {
+                warnOnce("Metal 4 present: nothing could be drawn into the drawable, so the frame is presented "
+                        + "by the new queue with nothing of the picture in it");
             }
 
-            // The copy is whole-texture and exact, and this path has the drawable in hand: it presents the
-            // frame's own picture through the new queue rather than handing the drawable back unpresented.
+            // Taken, so presented: the drawable cannot be handed back to the other road, which takes one of
+            // its own from the same layer and would leave this one in the pool for ever.
             SIGNAL_DRAWABLE.send(queue, drawable.handle());
             drawable.present();
             return true;
         }
     }
 
-    private static boolean encodeCopyPresent(final CAMetalDrawable drawable, final MemorySegment drawableTexture,
+    /** Says one thing once for the life of the path, because a frame path may not log one line a frame. */
+    private static void warnOnce(final String words) {
+        if (!presentWarned) {
+            presentWarned = true;
+            Metallum.LOGGER.warn(words);
+        }
+    }
+
+    private static boolean encodeDrawPresent(final MemorySegment drawableTexture,
                                              final MemorySegment sourceTexture) {
         int nextSlot = (slot + 1) % FRAMES_IN_FLIGHT;
         if (awaited[nextSlot] != 0L
@@ -368,15 +390,26 @@ public final class Metal4Path {
         slot = nextSlot;
         RESET.send(allocators[slot]);
         BEGIN.send(commandBuffer, allocators[slot]);
-        MemorySegment compute = COMPUTE_ENCODER.sendPtr(commandBuffer);
-        if (ObjC.isNil(compute)) {
+
+        MemorySegment pass = newDrawablePass(drawableTexture);
+        if (ObjC.isNil(pass)) {
             // Ended rather than abandoned: a command buffer left open cannot be begun again, and this path
             // has to be able to try again next frame.
             END.send(commandBuffer);
             return false;
         }
-        COPY_TEXTURE.send(compute, sourceTexture, drawableTexture);
-        END_ENCODING.send(compute);
+
+        boolean drawn = false;
+        try {
+            MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
+            if (!ObjC.isNil(encoder)) {
+                boolean scaling = MTLTexture.width(drawableTexture) != MTLTexture.width(sourceTexture);
+                drawn = MTLBuiltinPipelines.drawPresentWithTable(encoder, table.handle(), scaling);
+                END_ENCODING.send(encoder);
+            }
+        } finally {
+            ObjC.release(pass);
+        }
         END.send(commandBuffer);
 
         try (Arena arena = Arena.ofConfined()) {
@@ -387,9 +420,35 @@ public final class Metal4Path {
 
         awaited[slot] = ++signalled;
         SIGNAL_EVENT.send(queue, event, awaited[slot]);
-        SIGNAL_DRAWABLE.send(queue, drawable.handle());
-        drawable.present();
-        return true;
+        return drawn;
+    }
+
+    /**
+     * A pass over the drawable's own texture, at the drawable's size, for the present triangle.
+     * <p>
+     * Made per present rather than kept: the layer hands out a different texture every frame and the size
+     * belongs to the drawable, not to this path. Not a clear - the triangle covers every pixel of it - so the
+     * load action is dontCare and the store action is store.
+     */
+    private static MemorySegment newDrawablePass(final MemorySegment drawableTexture) {
+        MemorySegment descriptor = NEW.sendPtr(ObjC.clazz("MTL4RenderPassDescriptor"));
+        if (ObjC.isNil(descriptor)) {
+            return MemorySegment.NULL;
+        }
+
+        SET_TARGET_WIDTH.send(descriptor, MTLTexture.width(drawableTexture));
+        SET_TARGET_HEIGHT.send(descriptor, MTLTexture.height(drawableTexture));
+        MemorySegment attachments = COLOR_ATTACHMENTS.sendPtr(descriptor);
+        MemorySegment attachment = ObjC.isNil(attachments) ? MemorySegment.NULL : ATTACHMENT_AT.sendPtr(attachments, 0L);
+        if (ObjC.isNil(attachment)) {
+            ObjC.release(descriptor);
+            return MemorySegment.NULL;
+        }
+
+        SET_TEXTURE.send(attachment, drawableTexture);
+        SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
+        SET_STORE_ACTION.send(attachment, STORE_STORE);
+        return descriptor;
     }
 
     /** Releases everything this path made. */
