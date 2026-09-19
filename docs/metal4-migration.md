@@ -17,6 +17,7 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | --- | --- | --- |
 | Is the Metal 4 core API there? | yes | `Metal 4 core API: available` ... |
 | Is the selection deterministic between two runs? | **no, measured** | two identical no-pack arms in one session reported `selectedGeneration=metal3` and `selectedGeneration=metal4` |
+| Why not? | a **functional** probe flipped, not a selector | the two arms' capability lines differ in exactly two fields - arm `a` `argumentTable=false render=false`, arm `b` `argumentTable=true render=true`, 40 s apart on one device - and those two fields are the only ones read through `Metal4.canBindAndDraw()` |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
 | Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **its picture-equivalence to the Metal 3 road is unmeasured, because a single screenshot pair cannot resolve less than this scene's own picture noise; see below** |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
@@ -290,6 +291,31 @@ temporal upscaler accumulating differently over the two runs, exactly as the sam
 means the **no-pack scene is where picture equivalence can be measured** - which is the scene a frame-path
 change should be judged in first anyway, by this document's own rule. The Metal 4 present has not yet been
 compared there; that is the next experiment, and it is a valid one now.
+
+### The flipping selection is a functional probe, and its first answer in a session is wrong
+
+The two arms' capability lines differ in **exactly two fields**, and that is the whole diagnosis:
+
+    arm a  19:49:45  ... argumentTable=false render=false compute=true ...
+    arm b  19:50:25  ... argumentTable=true  render=true  compute=true ...
+
+Everything else is identical, including `buffer=true`, `msl=msl3.2` and the MetalFX answers. Reading
+`MetalDeviceCapabilities` says which two fields those are and why they can disagree: `argumentTable` is
+`respondsTo(device, "newArgumentTableWithDescriptor:error:") || respondsTo(..., ":")` **AND**
+`Metal4.canBindAndDraw()`, and `render` is `renderEncoder && Metal4.canBindAndDraw()`. A selector question
+cannot change its answer between two processes, so the part that flipped is the **functional** half - a probe
+that actually makes an argument table, binds through it and draws. **On the first run in a session it said no;
+forty seconds later it said yes, on the same device and the same build.**
+
+So AUTO's verdict currently depends on whether a functional Metal 4 probe succeeded, and its first answer in a
+session is a false negative. Two things follow, and both are small:
+
+- the probe should not turn a transient failure into a capability verdict - a retry (or a warm-up before the
+  verdict is read) is the difference between "this device cannot" and "this attempt did not";
+- a false negative has to be **distinguishable from an absence**, which means the probe's failure has to say
+  what failed rather than collapsing into `false`. This project already holds that rule for its own guards
+  ("a guard that cannot fail is a guard that is not there"); a capability probe deserves it more, because the
+  whole AUTO rule - capability, never a chip name - is only as good as the honesty of this one answer.
 
 **The same run turned up something else, and it is not about pictures.** The two arms of that pair reported
 different selections: arm `a` `selectedGeneration=metal3`, arm `b` `selectedGeneration=metal4`, in one session,
