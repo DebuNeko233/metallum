@@ -1,5 +1,6 @@
 package com.metallum.render;
 
+import com.metallum.render.shared.MetalFrameExtras;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -20,12 +21,12 @@ public final class MetalScaleBridge {
     private MetalScaleBridge() {
     }
 
-    /** @see MetalCommandEncoder#metalFxAvailable() */
+    /** @see MetalFrameExtras#metalFxAvailable() */
     public static boolean available(final Object encoder) {
-        return encoder instanceof MetalCommandEncoder commandEncoder && commandEncoder.metalFxAvailable();
+        return encoder instanceof MetalFrameExtras frameEncoder && frameEncoder.metalFxAvailable();
     }
 
-    /** @see MetalCommandEncoder#scaleWithMetalFx(GpuTextureView, GpuTextureView, int, int) */
+    /** @see MetalFrameExtras#scaleWithMetalFx(GpuTextureView, GpuTextureView, int, int) */
     public static boolean scale(
             final Object encoder,
             final GpuTextureView from,
@@ -33,7 +34,7 @@ public final class MetalScaleBridge {
             final int contentWidth,
             final int contentHeight
     ) {
-        return encoder instanceof MetalCommandEncoder commandEncoder
-                && commandEncoder.scaleWithMetalFx(from, to, contentWidth, contentHeight);
+        return encoder instanceof MetalFrameExtras frameEncoder
+                && frameEncoder.scaleWithMetalFx(from, to, contentWidth, contentHeight);
     }
 }

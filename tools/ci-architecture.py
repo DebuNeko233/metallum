@@ -162,14 +162,12 @@ def violations(root: Path) -> list[str]:
 FRAME_PATH_DEBT: dict[str, tuple[str, ...]] = {
     "com/metallum/mtl/MTLBuiltinPipelines.java": ("MTLCommandBuffer", "MTLRenderCommandEncoder",),
     "com/metallum/mtl/MTLStorageTexturePipelines.java": ("MTLComputeCommandEncoder",),
-    "com/metallum/render/MetalAttachmentBridge.java": ("MetalCommandEncoder",),
     "com/metallum/render/MetalCommandEncoder.java": ("MTLBlitCommandEncoder", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLRenderCommandEncoder", "Metal4Path", "MetalRenderPass",),
     "com/metallum/render/MetalComputeBridge.java": ("MTLComputeCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDepthMipmapBridge.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
     "com/metallum/render/MetalDevice.java": ("MTLCommandQueue", "Metal4Path", "MetalCommandEncoder",),
     "com/metallum/render/MetalDrawContext.java": ("MetalRenderPass",),
     "com/metallum/render/MetalRenderPass.java": ("MTLRenderCommandEncoder", "MetalCommandEncoder",),
-    "com/metallum/render/MetalScaleBridge.java": ("MetalCommandEncoder",),
     "com/metallum/render/MetalSurface.java": ("MetalCommandEncoder",),
 }
 _GENERATION_PACKAGES = (

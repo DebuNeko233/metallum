@@ -1,5 +1,6 @@
 package com.metallum.render;
 
+import com.metallum.render.shared.MetalFrameExtras;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
@@ -20,17 +21,17 @@ public final class MetalAttachmentBridge {
     private MetalAttachmentBridge() {
     }
 
-    /** @see MetalCommandEncoder#setNextPassContents(AttachmentContents[]) */
+    /** @see MetalFrameExtras#setNextPassContents(AttachmentContents[]) */
     public static void setNextPassContents(final Object encoder, final @Nullable AttachmentContents[] contents) {
-        if (encoder instanceof MetalCommandEncoder commandEncoder) {
-            commandEncoder.setNextPassContents(contents);
+        if (encoder instanceof MetalFrameExtras frameEncoder) {
+            frameEncoder.setNextPassContents(contents);
         }
     }
 
-    /** @see MetalCommandEncoder#setNextPassReadsStorageImage(boolean) */
+    /** @see MetalFrameExtras#setNextPassReadsStorageImage(boolean) */
     public static void setNextPassReadsStorageImage(final Object encoder, final boolean reads) {
-        if (encoder instanceof MetalCommandEncoder commandEncoder) {
-            commandEncoder.setNextPassReadsStorageImage(reads);
+        if (encoder instanceof MetalFrameExtras frameEncoder) {
+            frameEncoder.setNextPassReadsStorageImage(reads);
         }
     }
 }

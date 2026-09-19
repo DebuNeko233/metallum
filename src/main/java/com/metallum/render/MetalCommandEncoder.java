@@ -39,10 +39,11 @@ import com.metallum.render.shared.MetalGpuQueryPool;
 import com.metallum.render.shared.MetalPipelineSupport;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.metal3.MetalFence;
 
 @Environment(EnvType.CLIENT)
-public final class MetalCommandEncoder implements CommandEncoderBackend {
+public final class MetalCommandEncoder implements CommandEncoderBackend, MetalFrameExtras {
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
@@ -489,6 +490,7 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
      * @param contents one entry per colour attachment slot, or null to say nothing. A shorter array,
      *                 or a null slot in it, says nothing about the slots it does not reach
      */
+    @Override
     public void setNextPassContents(@Nullable final AttachmentContents[] contents) {
         this.nextPassContents = contents;
     }
@@ -503,6 +505,7 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
      *
      * @param reads true where the pass reads one, or where that is not known
      */
+    @Override
     public void setNextPassReadsStorageImage(final boolean reads) {
         this.nextPassReadsStorageImage = reads;
     }
@@ -985,6 +988,7 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
      * Asked by the pack-facing side through its own capability, and answered from the device the way
      * {@link MetalFx} answers everything: Apple's own support question, asked once, never a version.
      */
+    @Override
     public boolean metalFxAvailable() {
         return MetalFx.spatialSupported(device.metalDeviceHandle());
     }
@@ -1002,8 +1006,9 @@ public final class MetalCommandEncoder implements CommandEncoderBackend {
      * @param contentHeight the same, in rows
      * @return whether the encode happened; false leaves the caller on whatever it does without this
      */
+    @Override
     public boolean scaleWithMetalFx(
-            final @NonNull GpuTextureView from,
+            final @Nullable GpuTextureView from,
             final @NonNull GpuTextureView to,
             final int contentWidth,
             final int contentHeight

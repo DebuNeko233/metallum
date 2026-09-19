@@ -126,7 +126,7 @@ commit, because a ledger nobody prunes reports work that is already done. The gu
 run, so the milestone's cost is a number that can only go down:
 
     architecture guard: PASS (110 sources, 5 package rules, one mixing rule; the frame path's isolation
-    still owes 23 couplings in 11 files)
+    still owes 21 couplings in 9 files)
 
 Reading that ledger is what says where the facade move actually is. It is not ten members in one file:
 `render/shared/MetalTransientMemory.java` names `MetalCommandEncoder` - a shared-layer file reaching into
@@ -147,8 +147,23 @@ The second line to go needed no abstraction at all: `mtl/MTLDevice.java` named `
 `newCommandQueue()`, a queue factory **nothing called** - the services build the queue from the device's
 handle directly. A generation name carried by dead code is the cheapest line in the ledger to remove: the
 method, its `Msg` and its import are gone, and the removal cannot change behaviour because there was no
-caller to change it for (a repo-wide search for the call, not the name, is what says so). The ledger reads
-23 couplings in 11 files.
+caller to change it for (a repo-wide search for the call, not the name, is what says so).
+
+The third and fourth are where the plan this document was carrying turned out to be wrong, and the code
+said so. Two of the four bridges - `MetalAttachmentBridge` and `MetalScaleBridge` - only *ask* the encoder
+things (hand the next pass its answers, ask whether the scaler is available, ask it to scale), so those
+questions became a contract: `render/shared/MetalFrameExtras`, four methods on shared and game types only,
+with `MetalCommandEncoder` implementing it and the two bridges dispatching on the interface instead of on
+the class. **The other two bridges cannot be abstracted at all.** `MetalComputeBridge` and
+`MetalDepthMipmapBridge` do not ask, they encode: their bodies drive `MTLComputeCommandEncoder` and
+`MTLRenderCommandEncoder` directly, and any interface that could express them would have to hand out a
+generation's encoder from the neutral layer - the layer rule fails exactly that, and it is right to. They
+are Metal 3's own code, so they move to `render.metal3` with the encoder and get a Metal 4 sibling, and
+`instanceof` stays their seam. An interface there would be the split undone in the name of the split.
+
+The ledger reads 21 couplings in 9 files. Verified on the settled pack scene after the change: `wallP50`
+7.24 ms, `gpuM3Ms=4365.29`, with the structural counters equal to the preceding runs (21440 encoders, 6600
+blits, 345 identities against 345 keys).
 
 ## Risks
 
