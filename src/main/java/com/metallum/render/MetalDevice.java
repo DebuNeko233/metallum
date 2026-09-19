@@ -70,7 +70,15 @@ final class MetalDevice implements GpuDeviceBackend {
         // scaler. Said out loud either way, so that a session's log names which of the two it was.
         MetalFx.spatialSupported(metalDeviceHandle);
         Metal4.available(this.metalDevice);
-        Metal4Path.start(this.metalDevice);
+        boolean newPath = Metal4Path.start(this.metalDevice);
+        // Which generation executes, said once and in one deterministic line. The frame is Metal 3's until
+        // the runtime selector says otherwise; what the new path carries today is the present, and the probe
+        // counts that separately (`metal4Frames`, `metal4Presents`) rather than calling the session Metal 4.
+        MetalExecutionTelemetry.selected(MetalExecutionGeneration.METAL_3, newPath
+                ? "the frame is encoded through Metal 3's command buffer, and the new path is built and "
+                        + "carries the present only when it is asked to; the runtime selector owns this choice"
+                : "the frame is encoded through Metal 3's command buffer and the new path is not built; "
+                        + "the runtime selector owns this choice");
         this.commandEncoder = new MetalCommandEncoder(this);
         this.deviceInfo = buildDeviceInfo(deviceName);
     }

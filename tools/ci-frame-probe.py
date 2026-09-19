@@ -202,6 +202,23 @@ require("frame-probe window time", probe, (
 ))
 # And the distribution the mean hides, taken from the same frames: a window is now reported as its own
 # percentiles as well, because the frame that stutters is what a player feels and a mean cannot show it.
+# The two generations' GPU time, and the sum, because a Metal 4 submission is invisible to the Metal 3
+# reading: the present moving to the new queue made `gpuMs` fall by a quarter while the wall clock did not
+# move, which is a measurement that flatters the change it is supposed to judge.
+require("frame-probe generation GPU time", probe, (
+    "gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={}",
+    "selectedGeneration={}",
+    "public static void gpuFrameMetal4(final double milliseconds) {",
+    "metal4FeedbacksTotal.incrementAndGet();",
+    "metal4Feedbacks.incrementAndGet();",
+    "metal4GpuFrames.incrementAndGet();",
+    "metal4GpuNanos.addAndGet((long) (milliseconds * 1_000_000.0));",
+    # The arguments and the placeholders have to agree, and their order is pinned because a value added to
+    # one and not the other prints every counter after it under another counter's name - which happened
+    # twice while this line was being built.
+    "gpuFrames,\n                metal4Feedbacks.get(),\n                metal4FeedbacksTotal.get(),\n                metal4GpuFrames.get(),",
+    "MetalExecutionTelemetry.token(),",
+))
 require("frame-probe pacing", probe, (
     "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
     "wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;",
@@ -311,7 +328,7 @@ order(
     "the GPU time is read after the command buffer is released",
 )
 require("frame-probe gpu window", probe, (
-    "gpuFrames={} gpuMs={}",
+    "gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={}",
     "public static void gpuFrame(final double milliseconds) {",
     "gpuFrames++;",
     "gpuMillis += milliseconds;",
@@ -359,18 +376,25 @@ for index, line in enumerate(lines):
     if "boolean armed(" in declaration:
         continue
     first = lines[end + 1].strip()
-    if first != "if (!armed()) {":
+    # One entry point counts whether or not a window is open, on purpose, and this is where that is allowed
+    # rather than overlooked: a Metal 4 commit feedback that arrives after the report is a feedback no
+    # window can count, and "the queue never called back" and "it called back too late" are different
+    # repairs. It is one atomic increment per commit and only while the new path is presenting, which is
+    # not the per-encoder frame work this rule exists to keep free.
+    counts_unarmed = "gpuFrameMetal4" in declaration
+    if first != "if (!armed()) {" and not (counts_unarmed
+                                           and first == "metal4FeedbacksTotal.incrementAndGet();"):
         raise SystemExit(
             f"frame probe: {declaration} does not open with the armed() guard, so an unarmed call "
             "is no longer a single field read"
         )
     guarded.append(declaration)
 
-if len(guarded) != 16:
+if len(guarded) != 17:
     raise SystemExit(
-        "frame probe: expected 16 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
-        "frame, Metal 4 present, colour attachment, depth attachment, blit, six binding kinds and pipeline "
-        "creation), found "
+        "frame probe: expected 17 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
+        "kinds and pipeline creation), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

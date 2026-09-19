@@ -215,11 +215,21 @@ Counters, and what a change in each means:
 A present carried by the Metal 4 queue is the whole of that path's frame work, so `metal4Frames` and
 `metal4Presents` should agree; when they do not, a frame was presented by the engine's own road.
 
-Two instrument gaps to know before quoting a GPU number:
+`gpuM3Ms` and `gpuM4Ms` are each generation's own GPU time and `gpuMs` is their sum, which is the frame's
+whole GPU time. That split is what closed the largest instrument gap this file used to carry: `gpuMs` was
+the Metal 3 road alone, so a frame whose present moved to the new queue *lost* GPU time from the report
+and read as if it had got cheaper - measured, 26.6 per cent lower while the wall clock did not move. A
+Metal 4 submission is timed from its commit feedback (`MTL4CommitOptions`, `addFeedbackHandler:`), because
+a Metal 4 queue returns nothing to its caller; `gpuM4Feedbacks` counts the feedback a window saw and
+`gpuM4FeedbacksTotal` counts the session's, so "the queue never called back" and "it called back too late"
+are different readings rather than the same silence.
 
-- **`gpuMs` does not include the Metal 4 queue's submissions.** It reads the Metal 3 command buffers
-  the probe holds; when the present moved to the new queue, `gpuMs` fell 26.6 per cent while the wall
-  clock did not move at all.
+One instrument fact worth knowing before trusting that count: **the commit feedback handler is consumed
+by one commit.** Registered once, Metal called it once - for the first commit of the session - and never
+again over the next 600; the path registers it again before every commit for that reason, which is why
+`gpuM4FeedbacksTotal` is the session's commit count (4137 over one run) rather than 1 or 600.
+
+The other gap is unchanged:
 - **The per-pass table is the host clock, not the card's.** `-Dvitrail.passTimings=N` prints ranked
   rows that are the CPU cost of *encoding* a pass, because `MetalDevice.getTimestampNow()` is
   `System.nanoTime()`. Read it as encoder cost, never as GPU time.

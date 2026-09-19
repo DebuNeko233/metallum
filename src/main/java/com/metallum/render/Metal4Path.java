@@ -5,11 +5,13 @@ import com.metallum.mtl.CAMetalDrawable;
 import com.metallum.mtl.CAMetalLayer;
 import com.metallum.mtl.MTL4ArgumentTable;
 import com.metallum.mtl.MTL4Probe;
+import com.metallum.mtl.MTL4CommitOptions;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLTexture;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
+import com.metallum.objc.ObjCBlock;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -60,6 +62,7 @@ public final class Metal4Path {
     private static final Msg BEGIN = Msg.ofVoid("beginCommandBufferWithAllocator:", ADDRESS);
     private static final Msg END = Msg.ofVoid("endCommandBuffer");
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
+    private static final Msg COMMIT_WITH_OPTIONS = Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG, ADDRESS);
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg WAIT_UNTIL_SIGNALED =
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
@@ -87,6 +90,18 @@ public final class Metal4Path {
     private static MemorySegment event;
     @Nullable
     private static MTL4ArgumentTable table;
+
+    /**
+     * The commit options this path's submissions carry, and the block Metal calls with their feedback.
+     * <p>
+     * A Metal 4 queue returns nothing to its caller, so this is the only way a submission's GPU time is ever
+     * known - and without it a Metal 4 frame is invisible to the probe while the Metal 3 road's frames are
+     * counted, which is the difference between a comparable measurement and a flattering one.
+     */
+    @Nullable
+    private static MTL4CommitOptions commitOptions;
+    private static MemorySegment feedbackBlock = MemorySegment.NULL;
+    private static volatile boolean feedbackSeen;
 
     /**
      * The frame's present, recorded where the surface says what it is presenting and carried out after the
@@ -171,6 +186,27 @@ public final class Metal4Path {
                 return refuse("the device would not make the event the frame signals on");
             }
             frameEvent = madeFrameEvent;
+
+            // The feedback handler is what gives this path's submissions a GPU time. Asked for, like every
+            // other selector of the new path: an object that does not implement the commit-with-options form
+            // is an object whose submissions cannot be timed, and that is worth a line rather than a guess.
+            if (responds(madeQueue, "commit:count:options:")) {
+                commitOptions = MTL4CommitOptions.create();
+                if (commitOptions != null) {
+                    feedbackBlock = ObjCBlock.withConsumer(Metal4Path::reportCommitFeedback);
+                    if (!commitOptions.feedbackHandler(feedbackBlock)) {
+                        commitOptions.close();
+                        commitOptions = null;
+                    }
+                }
+            }
+            if (commitOptions == null) {
+                Metallum.LOGGER.warn("Metal 4 path: carrying frames with no commit feedback, so this path's "
+                        + "GPU time will not be counted by the frame probe");
+            } else {
+                Metallum.LOGGER.info("Metal 4 path: commit feedback registered, so this path's GPU time is "
+                        + "counted by the frame probe");
+            }
 
             queue = madeQueue;
             commandBuffer = madeBuffer;
@@ -305,6 +341,23 @@ public final class Metal4Path {
         }
     }
 
+    /**
+     * One commit's feedback, on the dispatch queue Metal owns, reported to the frame probe.
+     * <p>
+     * Read here and not kept: the feedback object is the framework's and lives for the call. A reading with
+     * no times is dropped by the probe rather than counted as a frame that took nothing, so a handler that
+     * is never called and a submission that cost no time stay two different things.
+     */
+    private static void reportCommitFeedback(final MemorySegment feedback) {
+        double millis = MTL4CommitOptions.gpuMillis(feedback);
+        if (!feedbackSeen) {
+            feedbackSeen = true;
+            Metallum.LOGGER.info("Metal 4 path: first commit feedback, {}{} ms of GPU time", millis <= 0.0
+                    ? "no reading yet: " : "", String.format(java.util.Locale.ROOT, "%.3f", millis));
+        }
+        MetalFrameProbe.gpuFrameMetal4(millis);
+    }
+
     /** Says one thing once for the life of the path, because a frame path may not log one line a frame. */
     private static void warnOnce(final String words) {
         if (!presentWarned) {
@@ -360,7 +413,20 @@ public final class Metal4Path {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment buffers = arena.allocate(ADDRESS, 1);
             buffers.set(ADDRESS, 0L, commandBuffer);
-            COMMIT.send(queue, buffers, 1L);
+            // With the options where a feedback handler is installed, and without them where the queue has
+            // no such form: a submission that carries no options is a submission whose GPU time this engine
+            // never learns, which is the difference between a comparable measurement and a flattering one.
+            if (commitOptions != null) {
+                // Registered again for every commit, because the handler is taken once: measured over 600
+                // commits that each carried the options, Metal called the handler once - for the first
+                // commit of the session - and never again. Re-registering is one message a frame and is
+                // what makes the count track the commits; the block itself is a global that is never freed,
+                // so repeating the registration cannot grow anything.
+                commitOptions.feedbackHandler(feedbackBlock);
+                COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, commitOptions.handle());
+            } else {
+                COMMIT.send(queue, buffers, 1L);
+            }
         }
 
         awaited[slot] = ++signalled;
@@ -431,6 +497,11 @@ public final class Metal4Path {
             table.close();
             table = null;
         }
+        if (commitOptions != null) {
+            commitOptions.close();
+            commitOptions = null;
+        }
+        feedbackBlock = MemorySegment.NULL;
         for (int index = 0; index < FRAMES_IN_FLIGHT; index++) {
             releaseIfPresent(allocators[index]);
             allocators[index] = MemorySegment.NULL;

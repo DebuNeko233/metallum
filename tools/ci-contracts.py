@@ -789,6 +789,51 @@ require("the present is carried where a frame is committed",
 # pipelines and a pixel read back: a uniform by GPU address, and a vertex buffer by address and stride.
 # Without the second one the terrain and entity draws have no way to reach an encoder of the new kind,
 # and without the readback a table that was accepted would read the same as a table that was used.
+# ---------------------------------------------------------------------------
+# Which generation executes, said once, and the feedback a Metal 4 commit is timed by
+#
+# A run whose log does not name the generation that produced it cannot be compared with another; and a
+# Metal 4 queue returns nothing to its caller, so a submission's GPU time exists only in the commit
+# feedback - without it, moving work to the new queue makes the frame probe read *faster*.
+# ---------------------------------------------------------------------------
+require("the executing generation is recorded and said in one line",
+        "src/main/java/com/metallum/render/MetalExecutionTelemetry.java", (
+    '"Metal execution: {} selected ({})"',
+    "public static void selected(final MetalExecutionGeneration selected, final String why) {",
+    "public static String token() {",
+))
+require("the generation has exactly two tokens",
+        "src/main/java/com/metallum/render/MetalExecutionGeneration.java", (
+    'METAL_3("metal3")',
+    'METAL_4("metal4")',
+))
+require("the device says which generation it came up on",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "MetalExecutionTelemetry.selected(MetalExecutionGeneration.METAL_3",
+))
+require("a Metal 4 commit carries the options its feedback arrives through",
+        "src/main/java/com/metallum/render/Metal4Path.java", (
+    'Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG, ADDRESS)',
+    "commitOptions = MTL4CommitOptions.create();",
+    "feedbackBlock = ObjCBlock.withConsumer(Metal4Path::reportCommitFeedback);",
+    "double millis = MTL4CommitOptions.gpuMillis(feedback);",
+    "MetalFrameProbe.gpuFrameMetal4(millis);",
+    "if (commitOptions != null) {",
+    "commitOptions.feedbackHandler(feedbackBlock);",
+    "COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, commitOptions.handle());",
+))
+require("the feedback object is the only place a Metal 4 submission's timing is read",
+        "src/main/java/com/metallum/mtl/MTL4CommitOptions.java", (
+    'Msg.ofVoid("addFeedbackHandler:", ADDRESS)',
+    'Msg.of("GPUStartTime", JAVA_DOUBLE)',
+    'Msg.of("GPUEndTime", JAVA_DOUBLE)',
+    "return (ended - started) * 1000.0;",
+))
+require("a block can hand its argument to a Java method",
+        "src/main/java/com/metallum/objc/ObjCBlock.java", (
+    "public static MemorySegment withConsumer(final Consumer<MemorySegment> action) {",
+    "private static void invokeConsumer(final Consumer<MemorySegment> action, final MemorySegment block,",
+))
 require("the Metal 4 binding shapes are proven, not assumed",
         "src/main/java/com/metallum/mtl/MTL4Probe.java", (
     "public static boolean canBindAndDraw(final MTLDevice device) {",

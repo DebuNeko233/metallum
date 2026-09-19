@@ -127,6 +127,22 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * An array, its count and one more object - the shape `commit:count:options:` takes.
+     * <p>
+     * The third overload this class has had to grow for a call that was already written and would not
+     * compile without it, which is the honest argument for keeping one send per shape the engine uses
+     * instead of a general one: a missing shape is a compile error here, and a shape that widens is a
+     * runtime failure at whichever frame reaches it first.
+     */
+    public void send(MemorySegment self, MemorySegment a, long b, MemorySegment c) {
+        try {
+            handle.invokeExact(self, sel, a, b, c);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, MemorySegment a, long b, long c) {
         try {
             handle.invokeExact(self, sel, a, b, c);

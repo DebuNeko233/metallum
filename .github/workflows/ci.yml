@@ -78,6 +78,8 @@ jobs:
           python3 tools/ci-shader-diagnostics.py
           python3 tools/ci-vitrail-performance.py
           python3 tools/ci-metalfx.py
+          python3 tools/ci-architecture.py --self-test
+          python3 tools/ci-architecture.py
 
       - name: build
         run: ./gradlew build

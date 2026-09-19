@@ -117,6 +117,37 @@ public final class MetalFrameProbe {
      */
     private static int gpuFrames;
     private static double gpuMillis;
+
+    /**
+     * The same two numbers for the Metal 4 queue, which reports them differently and on another thread.
+     * <p>
+     * A Metal 3 command buffer answers {@code GPUStartTime}/{@code GPUEndTime} when its completion block
+     * runs; a Metal 4 queue reports a submission through commit feedback, which arrives on a dispatch queue
+     * Metal owns. So this half is written from a thread that is not the render thread, and it is counted in
+     * atomics for that reason - a race here would be a window whose GPU time is quietly short.
+     * <p>
+     * The two halves are what makes a Metal 4 submission visible at all: {@code gpuMillis} used to be the
+     * Metal 3 road alone, so a frame whose present moved to the new queue *lost* GPU time from the report
+     * and read as if it had got cheaper. Summing them is the frame's whole GPU time, and each is reported
+     * separately so the two paths can still be compared with each other.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger metal4Feedbacks =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * Every commit feedback this session has had, whether or not a window was open.
+     * <p>
+     * The window's own count answers "how much of this window's GPU time do I know"; this one answers
+     * "does the queue call back at all", and the two being different is a fact about delivery rather than
+     * about the path: a feedback that arrives after the report is a feedback no window can count, and a
+     * number that never rises is a handler Metal never accepted.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger metal4FeedbacksTotal =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger metal4GpuFrames =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong metal4GpuNanos =
+            new java.util.concurrent.atomic.AtomicLong();
     private static int encoders;
     private static int passChanged;
     private static int submitEnds;
@@ -310,6 +341,31 @@ public final class MetalFrameProbe {
     }
 
     /**
+     * One commit's own GPU time from the Metal 4 queue's commit feedback, in milliseconds.
+     * <p>
+     * The reading is of a completed submission and not a shape: a feedback with no times - both are zero
+     * until the GPU has finished - is dropped rather than counted as a fast frame, which is what makes a
+     * handler that is never called look different from a frame that took no time.
+     */
+    public static void gpuFrameMetal4(final double milliseconds) {
+        metal4FeedbacksTotal.incrementAndGet();
+        if (!armed()) {
+            return;
+        }
+
+        // Two counts and not one, because "the queue called back and the times were zero" and "the queue
+        // never called back" are different repairs behind the same silent window: the first is a reading
+        // taken too early, the second is a handler that was never installed or never accepted.
+        metal4Feedbacks.incrementAndGet();
+        if (milliseconds <= 0.0) {
+            return;
+        }
+
+        metal4GpuFrames.incrementAndGet();
+        metal4GpuNanos.addAndGet((long) (milliseconds * 1_000_000.0));
+    }
+
+    /**
      * A blit moved a rectangle of one texture into another, as its pixel size. The caller hands the
      * size over rather than the texture so that an unarmed session pays the guard and nothing else -
      * the size is a number the caller already has, not a question asked of Metal.
@@ -497,7 +553,8 @@ public final class MetalFrameProbe {
                 metal4Presents
         );
         Metallum.LOGGER.info(
-                "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
+                "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={} "
+                        + "selectedGeneration={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
@@ -506,7 +563,13 @@ public final class MetalFrameProbe {
                 windowFrames,
                 millis(windowNanos),
                 gpuFrames,
+                metal4Feedbacks.get(),
+                metal4FeedbacksTotal.get(),
+                metal4GpuFrames.get(),
                 String.format(Locale.ROOT, "%.2f", gpuMillis),
+                String.format(Locale.ROOT, "%.2f", metal4GpuNanos.get() / 1_000_000.0),
+                String.format(Locale.ROOT, "%.2f", gpuMillis + metal4GpuNanos.get() / 1_000_000.0),
+                MetalExecutionTelemetry.token(),
                 encoders,
                 passChanged,
                 submitEnds,
@@ -553,6 +616,9 @@ public final class MetalFrameProbe {
         worstWallFrame = 0;
         gpuSamples = 0;
         gpuFrames = 0;
+        metal4Feedbacks.set(0);
+        metal4GpuFrames.set(0);
+        metal4GpuNanos.set(0L);
         gpuMillis = 0.0;
         encoders = 0;
         passChanged = 0;
