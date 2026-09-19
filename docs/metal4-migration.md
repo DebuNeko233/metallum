@@ -233,6 +233,31 @@ the better long-term shape is for the cache **identity itself** to contain the g
 especially ahead of concurrent pre-compilation, `MTL4Compiler` and a binary archive. It is not in this phase's
 scope and nothing depends on it now.
 
+### The move was attempted and stopped, and the seam it found is one class
+
+Steps 5 and 6 were attempted as the audit said they had to be - a whole-cluster move, not a piecemeal one - and
+they were stopped under the rule that a package move which produces dozens of visibility errors means the order
+is still wrong. The attempt: `git mv` of `MetalCommandEncoder` and `MetalRenderPass` into
+`render/metal3`, package lines updated, and imports generated for every same-package type they referenced.
+
+**82 compile errors. 26 of them one symbol: `MetalCompiledRenderPipeline在com.metallum.render中不是公共的`** -
+the compiled pipeline record the encoder and the render pass both hold, which is package-private in `render` and
+is not part of the cluster that was moved. The other ~56 are same-package type references the import generator
+did not map (nested types such as `MetalCompiledRenderPipeline.ArgumentBufferLayout`, and `mtl`/`objc` types).
+The move was reverted, `./gradlew build` is clean again and the ledger reads the same 15 couplings in 6 files.
+
+Two things this settles. **The frame path's cluster is bigger than its two biggest files**: it is at least
+`MetalCommandEncoder`, `MetalRenderPass`, `MetalCompiledRenderPipeline` (and its nested layout record), and the
+bridges that encode through the first of them - moving two of them leaves the rest behind and that is what the
+26 errors are. And **a mechanical move needs a same-package reference fixer that understands nested and
+`mtl`/`objc` types**, not a regex over top-level names; doing it by hand is what produced the earlier attempts'
+100/118/144 errors, and doing it with this generator produced 82.
+
+So the next attempt is not another move: it is deciding the cluster's membership first (does
+`MetalCompiledRenderPipeline` become a contract in `render.shared`, or does it move with the frame path?), and
+fixing the imports with something that resolves nested types. That is the architecture seam §6 asked to find,
+and it is written down here rather than discovered again.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
