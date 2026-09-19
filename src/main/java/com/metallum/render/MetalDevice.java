@@ -433,14 +433,6 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         return this.metal3.getOrCompilePipeline(pipeline, this.defaultShaderSource);
     }
 
-    /**
-     * Migration-only delegate: the module cache, its key and its factory live in
-     * {@link Metal3CompilationContext}; it goes when {@code MetalCrossShaderTranslator} holds the context.
-     */
-    synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
-        return this.metal3.getOrCompileShader(id, type, defines, shaderSource);
-    }
-
 
 
 

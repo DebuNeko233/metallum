@@ -2,14 +2,11 @@ package com.metallum.render;
 
 import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.render.shared.MetalExecutionState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.ShaderType;
-import com.mojang.blaze3d.vulkan.glsl.IntermediaryShaderModule;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.client.renderer.ShaderDefines;
-import net.minecraft.resources.Identifier;
 
 import java.lang.foreign.MemorySegment;
 import java.util.List;
@@ -29,7 +26,7 @@ import java.util.function.Predicate;
  * compilation and lifetime ownership.
  */
 @Environment(EnvType.CLIENT)
-final class Metal3ExecutionState {
+final class Metal3ExecutionState implements MetalExecutionState {
 
     private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();
     private final Metal3CompilationContext compilation;
@@ -39,14 +36,9 @@ final class Metal3ExecutionState {
     }
 
     /** The compiled artifact for this pipeline, compiling it if the cache does not hold it. */
-    MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {
+    @Override
+    public MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {
         return this.compilation.getOrCompilePipeline(pipeline, source);
-    }
-
-    /** The translated shader module for this stage. */
-    IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type,
-                                                final ShaderDefines defines, final ShaderSource shaderSource) {
-        return this.compilation.getOrCompileShader(id, type, defines, shaderSource);
     }
 
     /** The compiled function for this MSL and entry point. */
@@ -60,7 +52,8 @@ final class Metal3ExecutionState {
     }
 
     /** Removes the pipelines a predicate selects and answers what it removed. */
-    List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
+    @Override
+    public List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
         return this.compilation.evictCachedPipelines(predicate);
     }
 
@@ -72,7 +65,8 @@ final class Metal3ExecutionState {
      * artifacts depend on - retired pipelines first, then the active ones, then the modules and functions they
      * were built from.
      */
-    void clearCachesAfterGpuCompletion() {
+    @Override
+    public void clearCachesAfterGpuCompletion() {
         this.retirement.releaseRetired();
         this.compilation.clearActivePipelines();
         this.compilation.clearShaderCache();
@@ -80,7 +74,8 @@ final class Metal3ExecutionState {
     }
 
     /** Releases the compilation state itself. The cache paths have already done their part. */
-    void close() {
+    @Override
+    public void close() {
         this.compilation.close();
     }
 }

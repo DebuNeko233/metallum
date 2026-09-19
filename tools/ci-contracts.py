@@ -980,6 +980,60 @@ for _const in ("PUSH_CONSTANT_SLOT", "ARGUMENT_BUFFER_SLOT_COUNT"):
 if "ARGUMENT_BUFFER_SLOT_COUNT" in _art or "PUSH_CONSTANT_BUFFER_SLOT" in _art:
     raise SystemExit("a Metal 3 binding slot is still declared on the compiled artifact")
 
+require("the shared execution boundary has four operations",
+        "src/main/java/com/metallum/render/shared/MetalExecutionState.java", (
+    "public interface MetalExecutionState extends AutoCloseable {",
+    "CompiledRenderPipeline getOrCompilePipeline(RenderPipeline pipeline, ShaderSource source);",
+    "List<RenderPipeline> evictCachedPipelines(Predicate<RenderPipeline> predicate);",
+    "void clearCachesAfterGpuCompletion();",
+    "void close();",
+))
+import pathlib as _bp
+import re as _re
+
+_root3 = _bp.Path(__file__).resolve().parent.parent
+
+
+def _code(path):
+    """The file's code with comments and strings removed: a leak in prose is not a leak."""
+    text = (_root3 / path).read_text(encoding="utf-8")
+    text = _re.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = _re.sub(r"//[^\n]*", "", text)
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
+_boundary = _code("src/main/java/com/metallum/render/shared/MetalExecutionState.java")
+for _forbidden in ("Metal3", "Metal4", "MTL", "MemorySegment", "MetalCompiledRenderPipeline",
+                   "Metal3CompilationContext", "Metal3PipelineRetirement", "MetalCommandEncoder",
+                   "MetalRenderPass"):
+    if _forbidden in _boundary:
+        raise SystemExit(f"the shared execution boundary names {_forbidden} in code")
+
+require("the Metal 3 aggregate implements the boundary without widening its internals",
+        "src/main/java/com/metallum/render/Metal3ExecutionState.java", (
+    "final class Metal3ExecutionState implements MetalExecutionState {",
+    "public MetalCompiledRenderPipeline getOrCompilePipeline(",
+    "public List<RenderPipeline> evictCachedPipelines(",
+    "public void clearCachesAfterGpuCompletion() {",
+    "public void close() {",
+))
+_state_code = _code("src/main/java/com/metallum/render/Metal3ExecutionState.java")
+for _forbidden in ("public MemorySegment getOrCompileFunction", "public MemorySegment depthStencilState",
+                   "public IntermediaryShaderModule getOrCompileShader"):
+    if _forbidden in _state_code:
+        raise SystemExit(f"the boundary widened an implementation internal: {_forbidden}")
+
+# The shader module delegate is dead: the compiler asks the context directly, and nothing else asks anyone.
+for _path in ("src/main/java/com/metallum/render/MetalDevice.java",
+              "src/main/java/com/metallum/render/Metal3ExecutionState.java"):
+    if "getOrCompileShader(" in _code(_path):
+        raise SystemExit(f"{_path} still carries the shader module delegate")
+require("shader module lookup happens where the modules are",
+        "src/main/java/com/metallum/render/Metal3PipelineCompiler.java", (
+    "compilation.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX,",
+    "compilation.getOrCompileShader(pipeline.getFragmentShader(), ShaderType.FRAGMENT,",
+))
+
 require("the Metal 3 execution aggregate owns the compilation state and the retirement queue",
         "src/main/java/com/metallum/render/Metal3ExecutionState.java", (
     "private final Metal3PipelineRetirement retirement = new Metal3PipelineRetirement();",
