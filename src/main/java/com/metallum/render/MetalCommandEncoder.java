@@ -913,6 +913,45 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
     }
 
+    /**
+     * Whether this device can bring a scaled picture back with MetalFX.
+     * <p>
+     * Asked by the pack-facing side through its own capability, and answered from the device the way
+     * {@link MetalFx} answers everything: Apple's own support question, asked once, never a version.
+     */
+    public boolean metalFxAvailable() {
+        return MetalFx.spatialSupported(device.metalDeviceHandle());
+    }
+
+    /**
+     * Encodes one MetalFX spatial upscale of a smaller picture into a larger one.
+     * <p>
+     * The scaler's encode is a command of its own rather than a render pass, so nothing of this engine's
+     * may still be open when it goes in - an encoder left open would order the upscale before work it has
+     * to follow - and the scaler itself is kept by {@link MetalFx} for the configuration it was made for.
+     *
+     * @param from          the texture drawn at the scaled size
+     * @param to            the texture the picture is brought back into
+     * @param contentWidth  how much of {@code from} really holds this frame
+     * @param contentHeight the same, in rows
+     * @return whether the encode happened; false leaves the caller on whatever it does without this
+     */
+    public boolean scaleWithMetalFx(
+            final @NonNull GpuTextureView from,
+            final @NonNull GpuTextureView to,
+            final int contentWidth,
+            final int contentHeight
+    ) {
+        if (!(from.texture() instanceof MetalGpuTexture color)
+                || !(to.texture() instanceof MetalGpuTexture output)) {
+            return false;
+        }
+
+        endEncoder();
+        return MetalFx.scale(device.metalDeviceHandle(), commandBuffer().handle(), color, output,
+                contentWidth, contentHeight);
+    }
+
     @Override
     public void writeTimestamp(final @NonNull GpuQueryPool pool, final int index) {
         if (pool instanceof MetalGpuQueryPool metalPool && index >= 0 && index < pool.size()) {

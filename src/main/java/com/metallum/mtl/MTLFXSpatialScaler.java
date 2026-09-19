@@ -35,6 +35,7 @@ public final class MTLFXSpatialScaler implements AutoCloseable {
     private static final Msg SET_INPUT_CONTENT_ORIGIN_X = Msg.ofVoid("setInputContentOriginX:", JAVA_LONG);
     private static final Msg SET_INPUT_CONTENT_ORIGIN_Y = Msg.ofVoid("setInputContentOriginY:", JAVA_LONG);
     private static final Msg ENCODE = Msg.ofVoid("encodeToCommandBuffer:", ADDRESS);
+    private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
 
     private final MemorySegment handle;
 
@@ -62,8 +63,16 @@ public final class MTLFXSpatialScaler implements AutoCloseable {
         SET_OUTPUT_TEXTURE.send(handle, outputTexture);
         SET_INPUT_CONTENT_WIDTH.send(handle, contentWidth);
         SET_INPUT_CONTENT_HEIGHT.send(handle, contentHeight);
-        SET_INPUT_CONTENT_ORIGIN_X.send(handle, 0L);
-        SET_INPUT_CONTENT_ORIGIN_Y.send(handle, 0L);
+
+        // Asked for and not assumed, because sending a selector an object does not answer to is not a
+        // wrong number - it is an Objective-C exception, and one of those ends the process. This scaler
+        // answers to no origin: the documentation lists that pair on the other MetalFX effects, and
+        // sending it here killed a session before a frame was drawn rather than doing nothing.
+        if (RESPONDS_TO_SELECTOR.sendLong(handle, ObjC.selector("setInputContentOriginX:")) != 0L) {
+            SET_INPUT_CONTENT_ORIGIN_X.send(handle, 0L);
+            SET_INPUT_CONTENT_ORIGIN_Y.send(handle, 0L);
+        }
+
         ENCODE.send(handle, commandBuffer);
     }
 
