@@ -95,6 +95,14 @@ public final class Metal4Path {
     @Nullable
     private static MTL4ArgumentTable table;
 
+    /**
+     * The frame's present, recorded where the surface says what it is presenting and carried out after the
+     * frame's own commit: the layer the drawable comes from, and the picture to draw into it.
+     */
+    @Nullable
+    private static CAMetalLayer pendingLayer;
+    private static MemorySegment pendingPicture = MemorySegment.NULL;
+
     @Nullable
     private static MemorySegment target;
     private static final MemorySegment[] allocators = new MemorySegment[FRAMES_IN_FLIGHT];
@@ -272,7 +280,7 @@ public final class Metal4Path {
     }
 
     /**
-     * Presents the frame through the new command structure, and answers whether it took it.
+     * Whether this frame's present goes through the new command structure, and the picture it will draw.
      * <p>
      * This is the part of the picture the new path can carry on this machine without a single binding: a
      * Metal 4 compute encoder's whole-texture copy needs no argument table, so the frame's finished picture is
@@ -291,12 +299,13 @@ public final class Metal4Path {
      * half is here now; whether that is the whole of what the signal half needs is what the next run answers,
      * and until it does this stays behind {@code -Dmetallum.metal4Present=true}.
      */
-    public static boolean present(final CAMetalLayer layer, final MemorySegment sourceTexture) {
+    public static boolean presenting(final CAMetalLayer layer, final MemorySegment picture) {
         if (!Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"))) {
             return false;
         }
 
-        if (!carrying || queue == null || commandBuffer == null || frameEvent == null || frameValue == 0L) {
+        if (!carrying || queue == null || commandBuffer == null || frameEvent == null || frameValue == 0L
+                || table == null || layer == null || ObjC.isNil(picture)) {
             return false;
         }
 
@@ -306,10 +315,34 @@ public final class Metal4Path {
             return false;
         }
 
+        pendingLayer = layer;
+        pendingPicture = picture;
+        return true;
+    }
+
+    /**
+     * Presents the frame {@link #presenting} recorded, which is called after the frame's own command buffer has
+     * been committed and has signalled this path's event.
+     * <p>
+     * <strong>The order is the whole of it.</strong> The surface says what it is presenting *before* the
+     * frame's command buffer is committed, so a present encoded there samples a picture the frame that writes
+     * it has not drawn yet - a frame old, or torn, or part of both - and no event value the frame has not
+     * signalled can order it. Recorded here and presented after the commit, the wait below is on the frame
+     * that produced the picture, which is what makes this the frame the player sees.
+     */
+    public static void presentFrame() {
+        CAMetalLayer layer = pendingLayer;
+        MemorySegment picture = pendingPicture;
+        pendingLayer = null;
+        pendingPicture = MemorySegment.NULL;
+        if (layer == null || ObjC.isNil(picture)) {
+            return;
+        }
+
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             CAMetalDrawable drawable = layer.nextDrawable();
             if (drawable == null) {
-                return false;
+                return;
             }
 
             // Apple's order has this half before anything is committed against the drawable and the signal
@@ -321,16 +354,13 @@ public final class Metal4Path {
             WAIT_DRAWABLE.send(queue, drawable.handle());
 
             MemorySegment drawableTexture = drawable.texture();
-            if (ObjC.isNil(drawableTexture)) {
-                return false;
-            }
 
             // Drawn and not copied. A whole-texture copy is exact and needs no bindings, which is what made
             // it the first thing this path could carry - and it presents the picture upside down, because the
             // engine's own present triangle flips V and a copy has no coordinates to flip: measured, the
             // loading screen arrived 180 degrees over. The present pipeline and the sampler already handle the
             // convention, and the argument table is what the triangle is given its source through.
-            boolean drawn = table != null && encodeDrawPresent(drawableTexture, sourceTexture);
+            boolean drawn = !ObjC.isNil(drawableTexture) && encodeDrawPresent(drawableTexture, picture);
             MetalFrameProbe.metal4Present(drawn);
             if (!drawn) {
                 warnOnce("Metal 4 present: nothing could be drawn into the drawable, so the frame is presented "
@@ -341,7 +371,8 @@ public final class Metal4Path {
             // its own from the same layer and would leave this one in the pool for ever.
             SIGNAL_DRAWABLE.send(queue, drawable.handle());
             drawable.present();
-            return true;
+        } catch (RuntimeException failed) {
+            giveUp(describe(failed));
         }
     }
 

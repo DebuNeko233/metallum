@@ -330,9 +330,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             int slot = (int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT);
             submitSemaphores[slot].drainPermits();
 
-            // Before the commit, because an encoding made after one is ignored: the new path's copy waits on
-            // this signal, so a signal that never runs is a copy that never completes and a slot of its ring
-            // that never comes back - measured as "the GPU did not signal slot 2 within 1000 ms".
+            // Before the commit, because an encoding made after one is ignored: the new path's present waits
+            // on this signal, so a signal that never runs is a present that never completes and a slot of its
+            // ring that never comes back - measured as "the GPU did not signal slot 2 within 1000 ms".
             Metal4Path.frameSignal(commandBuffer.handle());
             commandBuffer.commitWithCompletionBlock(submitSignalBlocks[slot]);
 
@@ -347,6 +347,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // a frame it is not shaped like. What it touches is its own 64x64 target, so no order between
             // the two queues is needed.
             Metal4Path.frame();
+
+            // The frame has been committed and its event signalled, so the new path can be told to present
+            // the picture that commit drew. Here rather than where the surface asked, because the wait it
+            // does is on the event value this commit signals.
+            Metal4Path.presentFrame();
 
             lastCommittedSubmitIndex = currentSubmitIndex;
             toClose = inFlight[slot];
@@ -608,7 +613,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         // reason because the boundary is the frame's, not the call's.
         endEncoder(MetalFrameProbe.EncoderEnd.SUBMITTED);
         MTLCommandBuffer commandBuffer = commandBuffer();
-        if (!Metal4Path.present(layer, source.nativeHandle())) {
+        // Asked, not done: the surface says what it presents before this frame's command buffer is
+        // committed, and the picture is only the frame's once that commit has happened. `Metal4Path` presents
+        // it from `submit()`, on the frame's own event value.
+        if (!Metal4Path.presenting(layer, source.nativeHandle())) {
             commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
         }
     }
