@@ -46,6 +46,8 @@ COUNTERS = (
     "scissor",
     "compiles",
     "compileMs",
+    "pipelineIdentities",
+    "pipelineKeys",
 )
 
 FIELD = re.compile(r"(\w+)=([0-9.]+)")

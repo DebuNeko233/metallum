@@ -36,6 +36,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import com.metallum.mtl.metal3.MTLCommandQueue;
+import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalGpuTextureView;
@@ -290,7 +291,9 @@ public final class MetalDevice implements GpuDeviceBackend {
     @Override
     public synchronized @NonNull CompiledRenderPipeline precompilePipeline(final @NonNull RenderPipeline pipeline, @Nullable final ShaderSource shaderSource) {
         ShaderSource effectiveSource = shaderSource == null ? this.defaultShaderSource : shaderSource;
-        return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
+        MetalCompiledRenderPipeline compiled = this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, effectiveSource));
+        MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
+        return compiled;
     }
 
     /**
@@ -406,7 +409,9 @@ public final class MetalDevice implements GpuDeviceBackend {
     }
 
     synchronized MetalCompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-        return this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, this.defaultShaderSource));
+        MetalCompiledRenderPipeline compiled = this.compiledPipelines.computeIfAbsent(pipeline, p -> MetalCrossShaderCompiler.compile(this, p, this.defaultShaderSource));
+        MetalFrameProbe.pipelineRequested(pipeline, compiled.pipelineKey());
+        return compiled;
     }
 
     synchronized IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {

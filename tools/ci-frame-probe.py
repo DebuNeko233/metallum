@@ -219,6 +219,21 @@ require("frame-probe generation GPU time", probe, (
     "gpuFrames,\n                metal4Feedbacks.get(),\n                metal4FeedbacksTotal.get(),\n                metal4GpuFrames.get(),",
     "MetalExecutionTelemetry.token(),",
 ))
+require("frame-probe pipeline census", probe, (
+    "pipelineIdentities={} pipelineKeys={}",
+    "public static void pipelineRequested(final RenderPipeline pipeline, final MetalPipelineKey key) {",
+    "if (!pipelineIdentities.add(pipeline)) {",
+    "if (pipelineKeys.add(key)) {",
+    "Collections.newSetFromMap(new IdentityHashMap<>())",
+))
+# The census counts belong with the counters and ahead of the pacing values: a number inserted between the
+# percentiles would print every distribution value under another name, and one inserted before compileMs
+# would report the census as a compile.
+if probe.index("keyCount,") > probe.index("percentile(wallTimes, wallSamples, 0.50)"):
+    raise SystemExit("frame probe: the pipeline census arguments are behind the pacing values")
+if probe.index("identityCount,") < probe.index("millis(compileNanos),"):
+    raise SystemExit("frame probe: the pipeline census arguments are ahead of the compile counters")
+
 require("frame-probe pacing", probe, (
     "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
     "wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;",
@@ -382,19 +397,26 @@ for index, line in enumerate(lines):
     # repairs. It is one atomic increment per commit and only while the new path is presenting, which is
     # not the per-encoder frame work this rule exists to keep free.
     counts_unarmed = "gpuFrameMetal4" in declaration
-    if first != "if (!armed()) {" and not (counts_unarmed
-                                           and first == "metal4FeedbacksTotal.incrementAndGet();"):
+    # The second door, opened here rather than left ajar: the pipeline census has to count whether or not a
+    # window is open, because pipelines are compiled while the game starts and a census that began at the
+    # marker would report almost nothing. It is one identity-set insertion per pipeline request - the same
+    # hash the cache lookup beside it just did - and the key, which reads seven strings, is hashed only when
+    # the identity is new.
+    census_unarmed = "pipelineRequested" in declaration
+    if first != "if (!armed()) {" and not (
+            (counts_unarmed and first == "metal4FeedbacksTotal.incrementAndGet();")
+            or (census_unarmed and first == "if (!pipelineIdentities.add(pipeline)) {")):
         raise SystemExit(
             f"frame probe: {declaration} does not open with the armed() guard, so an unarmed call "
             "is no longer a single field read"
         )
     guarded.append(declaration)
 
-if len(guarded) != 17:
+if len(guarded) != 18:
     raise SystemExit(
-        "frame probe: expected 17 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame probe: expected 18 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
-        "kinds and pipeline creation), found "
+        "kinds, pipeline creation and the pipeline census), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

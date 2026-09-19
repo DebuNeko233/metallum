@@ -3,6 +3,7 @@ package com.metallum.render.shared;
 import com.metallum.render.MetalExecutionTelemetry;
 
 import com.metallum.Metallum;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.metallum.mtl.MTLTexture;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -12,7 +13,10 @@ import org.jspecify.annotations.Nullable;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * One line every six hundred frames about what a frame asked Metal to encode, for as long as it is
@@ -203,6 +207,11 @@ public final class MetalFrameProbe {
     /** Session totals: pipeline creation is not a per-frame event, so it is read as a session cost. */
     private static int compiles;
     private static long compileNanos;
+    /** Pipeline identities and descriptions seen since process start, for the cache question. */
+    private static final Set<RenderPipeline> pipelineIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+    private static final Set<MetalPipelineKey> pipelineKeys = new java.util.HashSet<>();
+    private static int identityCount;
+    private static int keyCount;
 
     private MetalFrameProbe() {
     }
@@ -525,6 +534,33 @@ public final class MetalFrameProbe {
      *
      * @param nanos how long the Metal call took
      */
+    /**
+     * Counts the pipeline identities and the pipeline descriptions the device has been asked for, from
+     * process start rather than from arming: pipelines are compiled while the game starts, so a census
+     * that began when the marker appeared would report almost nothing.
+     * <p>
+     * It exists to answer one question with a number instead of an opinion - whether the identity cache
+     * and a cache keyed by description would hold the same number of entries. If they hold the same
+     * number, moving the cache onto the key buys nothing and costs the eviction contract; if the key
+     * count is lower, the difference is the pipeline compilations the move would save.
+     * <p>
+     * The identity test comes first and the key is only hashed when the identity is new, because this is
+     * reached wherever a pipeline is asked for and the key's hash reads seven strings. That is still the
+     * whole question: a second identity carrying a key already seen is exactly the deduplication the move
+     * would buy, and it is counted when that second identity appears.
+     */
+    public static void pipelineRequested(final RenderPipeline pipeline, final MetalPipelineKey key) {
+        if (!pipelineIdentities.add(pipeline)) {
+            return;
+        }
+
+        identityCount++;
+
+        if (pipelineKeys.add(key)) {
+            keyCount++;
+        }
+    }
+
     public static void pipelineCompiled(final long nanos) {
         if (!armed()) {
             return;
@@ -559,6 +595,7 @@ public final class MetalFrameProbe {
                         + "selectedGeneration={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
+                        + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
                 frames,
                 BUDGET,
@@ -590,6 +627,8 @@ public final class MetalFrameProbe {
                 scissors,
                 compiles,
                 millis(compileNanos),
+                identityCount,
+                keyCount,
                 percentile(wallTimes, wallSamples, 0.50),
                 percentile(wallTimes, wallSamples, 0.95),
                 percentile(wallTimes, wallSamples, 0.99),
