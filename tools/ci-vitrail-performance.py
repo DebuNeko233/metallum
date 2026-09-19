@@ -91,6 +91,10 @@ if "run/" not in GITIGNORE.read_text(encoding="utf-8"):
 # Both files are what the game reads at startup, which is what lets a run come up on the pack and on
 # the Metal path without anybody clicking.
 # ---------------------------------------------------------------------------
+if "--renderscale)" not in launcher or "renderscale=$renderscale" not in launcher:
+    raise SystemExit(
+        "the render scale is not an argument of the harness, so the seat the upscaling phase replaces cannot be measured"
+    )
 for needle, why in (
     ('pack=$pack_name', "the pack selection is not written before the launch"),
     ("enabled=true", "the written pack selection does not switch shaders on"),

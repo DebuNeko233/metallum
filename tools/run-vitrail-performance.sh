@@ -32,6 +32,7 @@ pack_path=""
 world_path=""
 out_dir="$repo_root/run/performance"
 frames=600
+renderscale=100
 width=1600
 height=900
 timeout_seconds=900
@@ -52,6 +53,9 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          --run plain --run 'elide=-Dvitrail.elideTargetTraffic=true'
   --vitrail DIR          the Vitrail checkout (default: a sibling of this repository).
   --frames N             frames each window counts (default 600, the probe's own default).
+  --renderscale N        the render scale written into the pack selection (default 100). Below
+                         100 the frame draws smaller and pays an upscale at the window's own
+                         size, which is the setting the upscaling phase has to replace.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --out DIR              where the collected logs and pictures go.
@@ -72,6 +76,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--vitrail) vitrail_root="$2"; shift 2 ;;
 		--frames) frames="$2"; shift 2 ;;
+		--renderscale) renderscale="$2"; shift 2 ;;
 		--width) width="$2"; shift 2 ;;
 		--height) height="$2"; shift 2 ;;
 		--timeout) timeout_seconds="$2"; shift 2 ;;
@@ -135,7 +140,7 @@ cat > "$game_dir/vitrail/pack.txt" <<EOF
 pack=$pack_name
 enabled=true
 shadowdistance=32
-renderscale=100
+renderscale=$renderscale
 shadowmapscale=100
 EOF
 
