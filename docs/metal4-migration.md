@@ -19,7 +19,7 @@ Everything below was answered on the M5 Pro / macOS 27.0 by a probe that runs on
 | Is the selection deterministic between two runs? | **it flipped once and did not again** | one session's two identical no-pack arms reported `metal3` then `metal4`; a later session's **three** identical arms all reported `metal4`, all three capability lines identical (`argumentTable=true render=true`) and all three probes saying they "drew what they were told to" |
 | Why? | a **functional** probe, and probably a cold one | in the flipping session the capability lines differed in exactly two fields (`argumentTable=false render=false` against `true/true`), which are the only fields read through `Metal4.canBindAndDraw()`; the session that did not flip ran minutes after several runs that had each presented 600 frames through Metal 4 argument tables |
 | Can an argument table be made? | yes, by `newArgumentTableWithDescriptor:error:` | the header's out-parameter is part of the selector; the one-argument name is a method no object has |
-| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames - **its picture-equivalence to the Metal 3 road is unmeasured, because a single screenshot pair cannot resolve less than this scene's own picture noise; see below** |
+| Can a texture and a sampler be bound through one? | yes | the present draws the picture through it, 600 of 600 frames, and the picture **is** the Metal 3 road's picture - measured in the no-pack scene, where this test is sharp (mean channel difference 0.04, 0.08% of pixels differ at all, against a same-configuration repeat of 0.04-0.05); in the pack scene it is not resolvable, see below |
 | Can a **uniform buffer** be bound, by GPU address? | yes, and the pass *used* it | the engine's clear pipeline drew `(0.25, 0.5, 0.75, 1)` with its uniform in slot 1 of a table; the pixel was read back |
 | Can a **vertex buffer** be bound, by address and stride? | yes, and the pass read it | a pipeline taking `const device float4* [[buffer(0)]]` drew a colour it could only get from that buffer, with `attributeStride` 16, read back as `(0.25, 0.5, 0.5, 1)` |
 | Do Metal 3 pipeline states work on Metal 4 encoders? | yes | the present pipeline, the clear pipeline and a probe pipeline all draw on `MTL4RenderCommandEncoder` |
@@ -280,7 +280,23 @@ matches the Metal 3 road" is neither confirmed nor contradicted by any of it** -
 pair cannot resolve a difference smaller than the scene's own run-to-run picture noise. The row above stays
 "running", and the honest statement is that this document has no valid picture-equivalence measurement yet.
 
-**What a valid one needs is now known, because the no-pack scene was measured the same way** - the same
+**And in that sharp scene the equivalence holds.** No-pack, camera pinned, 600 frames each, `plain` against
+`-Dmetallum.metal4Present=true`:
+
+    picture, plain against m4: mean channel difference 0.04, 0.08% of pixels differ at all, 0.07% by more
+    than 8, worst 219 at (1627, 334)
+    plain  wallP50 1.75 ms  gpuM3Ms 826.93  metal4Presents 0    viewport 2526
+    m4     wallP50 1.75 ms  gpuM3Ms 691.99  metal4Presents 600  viewport 1926  gpuM4Ms 47.03  metal4Us 13.3
+
+**0.04 is the same number two runs of one configuration show in this scene**, so the Metal 4 present's picture
+is the Metal 3 road's picture to the limit this test can resolve - the claim this document has been carrying
+since the present first drew, and which three turns of measurement could not confirm in the pack scene, is now
+confirmed where the test is sharp. The two arms also agree on `wallP50` exactly (1.75 ms), and the counters
+differ only where the presentation differs by construction: the m4 arm sets 600 fewer viewports (the Metal 3
+present sets one per frame; the Metal 4 present leaves the encoder's default) and its present's GPU time is
+accounted on the other queue (`gpuM4Ms` 47.03), which is what makes its `gpuM3Ms` read lower.
+
+**What a valid one needs was measured the same way** - the same
 configuration twice, camera pinned, 600 frames each, no shader pack:
 
     picture, a against b: mean channel difference 0.05, 1.61% of pixels differ at all, 0.09% by more than 8
