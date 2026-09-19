@@ -199,6 +199,33 @@ talks to a contract, which is where that decision can move to the execution serv
 `Metal4Path` entries stay. Verified on the settled pack scene: 7.25 ms, `gpuM3Ms=4359.03`, `submit=600`, with
 the counters this configuration repeats (21435 encoders, 6600 blits, 345 identities against 345 keys).
 
+### The present decision is two decisions, and only one of them can move
+
+Moving "who presents" to the execution services looked like one edit and is not, and reading the condition
+is what says so. `Metal4Path.presenting(layer, picture)` conjoins two different things:
+
+- **policy** - whether the frame should present through Metal 4 at all: today
+  `Boolean.parseBoolean(System.getProperty("metallum.metal4Present", "false"))`, which is a system property
+  standing in for a question the selector is supposed to answer;
+- **readiness** - whether the Metal 4 present can actually run: `carrying`, a queue, a command buffer, a frame
+  event with a non-zero value, an argument table, four consulted selectors (`waitForDrawable:`,
+  `waitForEvent:value:`, `signalDrawable:`, `renderCommandEncoderWithDescriptor:`) and a non-nil layer and
+  picture.
+
+Policy belongs in `MetalExecutionServices` - it is a question about which generation executes. Readiness
+belongs where the Metal 4 objects are, because only the present path knows whether its queue and table exist.
+So the shape is a conjunction: the services answer the policy, the present path answers readiness, and the
+property is read in exactly one place (the services) with `Metal4Path` losing its own read.
+
+**Two things about that step are worth writing down before it is taken.** It does **not** shrink the ledger:
+the encoder still names the present path to ask whether it is ready, so the `Metal4Path` lines stay - what it
+buys is that *the selector rather than a system property* decides the presentation road, which is the
+precondition for the Metal 4 frame path rather than a tidying. And it moves a safety interlock: the property
+is the gate on a path with a SIGABRT in its history (`signalOnCommandQueue:` was called before
+`waitForDrawable:`), so it wants a two-arm session on the settled scene - the property on and off, both
+against the same baseline - not a single run. Both arms are already routine here; the work is the pair, plus
+the picture check that says the presented image is the frame's either way.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
