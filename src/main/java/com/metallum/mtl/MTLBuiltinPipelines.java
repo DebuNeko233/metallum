@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
+import com.metallum.mtl.metal3.MTLCommandBuffer;
+import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 
 @Environment(EnvType.CLIENT)
 public final class MTLBuiltinPipelines {
@@ -140,7 +142,7 @@ public final class MTLBuiltinPipelines {
         device = null;
     }
 
-    static void clearDraw(
+    public static void clearDraw(
             final MTLRenderCommandEncoder encoder,
             final MemorySegment colorTexture,
             final MemorySegment depthTexture,
@@ -182,7 +184,7 @@ public final class MTLBuiltinPipelines {
         }
     }
 
-    static void clearColorDepthTexturesRegion(
+    public static void clearColorDepthTexturesRegion(
             final MTLCommandBuffer commandBuffer,
             final MemorySegment colorTexture,
             final Vector4fc clearColor,
@@ -296,7 +298,7 @@ public final class MTLBuiltinPipelines {
         return scaling ? presentLinearSampler : presentNearestSampler;
     }
 
-    static void encodePresentTextureToDrawable(
+    public static void encodePresentTextureToDrawable(
             final MTLCommandBuffer commandBuffer,
             final CAMetalLayer layer,
             final MemorySegment sourceTexture,

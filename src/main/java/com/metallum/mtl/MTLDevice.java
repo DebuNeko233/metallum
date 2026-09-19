@@ -15,6 +15,7 @@ import java.lang.invoke.MethodHandle;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import com.metallum.mtl.metal3.MTLCommandQueue;
 
 @Environment(EnvType.CLIENT)
 public record MTLDevice(MemorySegment handle) {

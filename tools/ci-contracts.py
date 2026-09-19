@@ -61,7 +61,7 @@ texture = read("src/main/java/com/metallum/render/MetalGpuTexture.java")
 formats = read("src/main/java/com/metallum/mtl/MTLPixelFormat.java")
 compare = read("src/main/java/com/metallum/mtl/MTLCompareFunction.java")
 mtl_device = read("src/main/java/com/metallum/mtl/MTLDevice.java")
-render_encoder = read("src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.java")
+render_encoder = read("src/main/java/com/metallum/mtl/metal3/MTLRenderCommandEncoder.java")
 backend = source_tree()
 all_java = source_tree("src/main/java")
 
@@ -112,7 +112,7 @@ require("Metal MRT encoder", "src/main/java/com/metallum/render/MetalCommandEnco
     "currentEncoder.endEncoding();",
     "encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);",
 ))
-require("Native render-pass store/clear", "src/main/java/com/metallum/mtl/MTLCommandBuffer.java", (
+require("Native render-pass store/clear", "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java", (
     "Vector4fc clearColor = clearColors == null ? null : clearColors[index];",
     "MTLRenderPassDescriptor.LOAD_ACTION_CLEAR",
     "MTLRenderPassDescriptor.STORE_ACTION_STORE",
@@ -239,7 +239,7 @@ require("Generic Final present entry", "src/main/java/com/metallum/render/MetalC
     "submitRenderPass();",
     "commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);",
 ))
-require("Generic command-buffer present", "src/main/java/com/metallum/mtl/MTLCommandBuffer.java", (
+require("Generic command-buffer present", "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java", (
     "private static final Msg PRESENT_DRAWABLE = Msg.ofVoid(\"presentDrawable:\", ADDRESS);",
     "public void encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture, final MTLFence globalFence)",
     "PRESENT_DRAWABLE.send(handle(), drawable.handle());",
@@ -261,7 +261,7 @@ forbid("Final semantics in Metallum", backend, ("final-direct-contract", "final-
 
 dimension_sources = "\n".join(read(path) for path in (
     "src/main/java/com/metallum/render/MetalCommandEncoder.java",
-    "src/main/java/com/metallum/mtl/MTLCommandBuffer.java",
+    "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java",
     "src/main/java/com/metallum/mtl/MTLBuiltinPipelines.java",
 ))
 forbid("Dimension routing semantics in Metallum", dimension_sources, (
@@ -592,7 +592,7 @@ forbid("the wait no longer derives its index from the submit counter",
        read("src/main/java/com/metallum/render/MetalCommandEncoder.java"),
        ("currentSubmitIndex - 1L",))
 
-require("a failed command buffer can be read", "src/main/java/com/metallum/mtl/MTLCommandBuffer.java", (
+require("a failed command buffer can be read", "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java", (
     'Msg.of("error", ADDRESS)',
     "public String errorDescription()",
 ))

@@ -13,7 +13,7 @@ public final class MTLScissorRect {
     private MTLScissorRect() {
     }
 
-    static MemorySegment on(final MemoryStack stack, final long x, final long y, final long width, final long height) {
+    public static MemorySegment on(final MemoryStack stack, final long x, final long y, final long width, final long height) {
         MemorySegment rect = MemorySegment.ofAddress(stack.nmalloc(8, 32)).reinterpret(32);
         rect.set(JAVA_LONG, 0, x);
         rect.set(JAVA_LONG, 8, y);

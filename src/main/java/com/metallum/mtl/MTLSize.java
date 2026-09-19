@@ -13,7 +13,7 @@ public final class MTLSize {
     private MTLSize() {
     }
 
-    static MemorySegment on(final MemoryStack stack, final long width, final long height, final long depth) {
+    public static MemorySegment on(final MemoryStack stack, final long width, final long height, final long depth) {
         MemorySegment size = MemorySegment.ofAddress(stack.nmalloc(8, 24)).reinterpret(24);
         size.set(JAVA_LONG, 0, width);
         size.set(JAVA_LONG, 8, height);

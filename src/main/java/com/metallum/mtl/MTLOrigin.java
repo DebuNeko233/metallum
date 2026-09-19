@@ -13,7 +13,7 @@ public final class MTLOrigin {
     private MTLOrigin() {
     }
 
-    static MemorySegment on(final MemoryStack stack, final long x, final long y, final long z) {
+    public static MemorySegment on(final MemoryStack stack, final long x, final long y, final long z) {
         MemorySegment origin = MemorySegment.ofAddress(stack.nmalloc(8, 24)).reinterpret(24);
         origin.set(JAVA_LONG, 0, x);
         origin.set(JAVA_LONG, 8, y);

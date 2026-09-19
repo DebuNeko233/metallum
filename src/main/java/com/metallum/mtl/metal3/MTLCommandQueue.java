@@ -1,4 +1,6 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal3;
+
+import com.metallum.mtl.MTLDevice;
 
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
@@ -20,7 +22,7 @@ public final class MTLCommandQueue {
 
     private MemorySegment handle;
 
-    MTLCommandQueue(final MemorySegment handle) {
+    public MTLCommandQueue(final MemorySegment handle) {
         this.handle = handle;
     }
 

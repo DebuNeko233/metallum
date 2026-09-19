@@ -3,7 +3,7 @@ package com.metallum.render;
 import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.mtl.MTLPixelFormat;
 import com.metallum.mtl.MTLPrimitiveType;
-import com.metallum.mtl.MTLRenderCommandEncoder;
+import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 import com.metallum.mtl.MTLRenderPipelineDescriptor;
 import com.metallum.mtl.MTLSamplerAddressMode;
 import com.metallum.mtl.MTLSamplerDescriptor;

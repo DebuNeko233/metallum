@@ -1,4 +1,6 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal3;
+
+import com.metallum.mtl.MTLDevice;
 
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;

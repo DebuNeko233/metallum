@@ -1,4 +1,26 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal3;
+
+import com.metallum.mtl.MTLWinding;
+
+import com.metallum.mtl.MTLTriangleFillMode;
+
+import com.metallum.mtl.MTLScissorRect;
+
+import com.metallum.mtl.MTLRenderStages;
+
+import com.metallum.mtl.MTLPrimitiveType;
+
+import com.metallum.mtl.MTLIndexType;
+
+import com.metallum.mtl.MTLFence;
+
+import com.metallum.mtl.MTLCullMode;
+
+import com.metallum.mtl.MTLBuiltinPipelines;
+
+import com.metallum.mtl.MTLBuffer;
+
+import com.metallum.mtl.MTLDevice;
 
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;

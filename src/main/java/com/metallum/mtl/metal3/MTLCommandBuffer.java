@@ -1,4 +1,20 @@
-package com.metallum.mtl;
+package com.metallum.mtl.metal3;
+
+import com.metallum.mtl.MTLTexture;
+
+import com.metallum.mtl.MTLRenderPassDescriptor;
+
+import com.metallum.mtl.MTLPixelFormat;
+
+import com.metallum.mtl.MTLFence;
+
+import com.metallum.mtl.MTLBuiltinPipelines;
+
+import com.metallum.mtl.CAMetalLayer;
+
+import com.metallum.mtl.CAMetalDrawable;
+
+import com.metallum.mtl.MTLDevice;
 
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
@@ -64,7 +80,7 @@ public final class MTLCommandBuffer {
         }
     }
 
-    MTLRenderCommandEncoder makeRenderCommandEncoder(final MTLRenderPassDescriptor descriptor) {
+    public MTLRenderCommandEncoder makeRenderCommandEncoder(final MTLRenderPassDescriptor descriptor) {
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             MemorySegment encoder = RENDER_COMMAND_ENCODER.sendPtr(handle(), descriptor.handle());
             if (ObjC.isNil(encoder)) {
@@ -252,7 +268,7 @@ public final class MTLCommandBuffer {
         MTLBuiltinPipelines.encodePresentTextureToDrawable(this, layer, sourceTexture, globalFence);
     }
 
-    void presentDrawable(final CAMetalDrawable drawable) {
+    public void presentDrawable(final CAMetalDrawable drawable) {
         PRESENT_DRAWABLE.send(handle(), drawable.handle());
     }
 

@@ -35,6 +35,7 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import com.metallum.mtl.metal3.MTLCommandQueue;
 
 @Environment(EnvType.CLIENT)
 final class MetalDevice implements GpuDeviceBackend {

@@ -1,7 +1,7 @@
 package com.metallum.render;
 
 import com.metallum.render.execution.MetalShaderLanguageProfile;
-import com.metallum.mtl.MTLComputeCommandEncoder;
+import com.metallum.mtl.metal3.MTLComputeCommandEncoder;
 import com.metallum.objc.ObjC;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.textures.GpuSampler;

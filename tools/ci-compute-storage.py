@@ -41,7 +41,7 @@ require("Metal compute pipeline", "src/main/java/com/metallum/render/MetalComput
     "commandEncoder.endEncoder();",
 ))
 
-require("Metal compute encoder wrapper", "src/main/java/com/metallum/mtl/MTLComputeCommandEncoder.java", (
+require("Metal compute encoder wrapper", "src/main/java/com/metallum/mtl/metal3/MTLComputeCommandEncoder.java", (
     "setComputePipelineState:",
     "setBuffer:offset:atIndex:",
     "setTexture:atIndex:",

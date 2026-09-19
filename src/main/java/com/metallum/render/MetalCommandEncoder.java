@@ -25,6 +25,11 @@ import java.nio.ByteOrder;
 import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import com.metallum.mtl.metal3.MTLCommandBuffer;
+import com.metallum.mtl.metal3.MTLCommandEncoder;
+import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
+import com.metallum.mtl.metal3.MTLComputeCommandEncoder;
+import com.metallum.mtl.metal3.MTLBlitCommandEncoder;
 
 @Environment(EnvType.CLIENT)
 final class MetalCommandEncoder implements CommandEncoderBackend {

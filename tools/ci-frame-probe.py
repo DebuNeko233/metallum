@@ -39,10 +39,10 @@ def order(text: str, first: str, second: str, why: str) -> None:
 
 probe = read(PROBE_PATH)
 encoder = read("src/main/java/com/metallum/render/MetalCommandEncoder.java")
-command_buffer = read("src/main/java/com/metallum/mtl/MTLCommandBuffer.java")
+command_buffer = read("src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java")
 render_pass = read("src/main/java/com/metallum/render/MetalRenderPass.java")
 device = read("src/main/java/com/metallum/render/MetalDevice.java")
-render_encoder = read("src/main/java/com/metallum/mtl/MTLRenderCommandEncoder.java")
+render_encoder = read("src/main/java/com/metallum/mtl/metal3/MTLRenderCommandEncoder.java")
 pipeline = read("src/main/java/com/metallum/render/MetalCompiledRenderPipeline.java")
 
 # ---------------------------------------------------------------------------

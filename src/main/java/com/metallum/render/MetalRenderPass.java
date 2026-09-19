@@ -32,6 +32,7 @@ import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.function.Supplier;
+import com.metallum.mtl.metal3.MTLRenderCommandEncoder;
 
 @Environment(EnvType.CLIENT)
 final class MetalRenderPass implements RenderPassBackend {
