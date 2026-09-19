@@ -23,6 +23,12 @@ import java.util.Locale;
  * what pipeline creation costs. A frame that is slow for one of those reasons cannot be told from a
  * frame that is slow for another without counting all four on the frames that are actually drawn.
  * <p>
+ * A window also carries the wall-clock it took, because a count of bytes is not a performance
+ * reading until something says what those bytes were worth: a fall in traffic that does not move the
+ * frame rate is a fall in a number and not in the cost of a frame. The time is taken from the
+ * frame boundary, which is where the command buffer is committed and the drawable presented, so it
+ * is the rate a player sees rather than a rate one stage of the pipeline ran at.
+ * <p>
  * <strong>Off unless asked for.</strong> {@code -Dmetallum.probeFrames=true} arms it, and a
  * {@code metallum/probe-frames} file in the game directory says the same thing, because a
  * launcher's arguments are a place a session cannot reach while a file in the game directory is one
@@ -80,6 +86,14 @@ public final class MetalFrameProbe {
      * describe.
      */
     private static int windowFrames;
+
+    /**
+     * When this window's first frame was submitted, so that a line can carry the wall-clock the
+     * window took. A window is the frames between two markers, so its length is read from its own
+     * first frame rather than from the last line, which would include whatever the session did
+     * between the two.
+     */
+    private static long windowStartedAt;
     private static int encoders;
     private static int passChanged;
     private static int submitEnds;
@@ -170,6 +184,9 @@ public final class MetalFrameProbe {
 
         frames++;
         windowFrames++;
+        if (windowFrames == 1) {
+            windowStartedAt = System.nanoTime();
+        }
         if (frames % REPORT_FRAMES == 0 || frames >= BUDGET) {
             report();
         }
@@ -275,12 +292,15 @@ public final class MetalFrameProbe {
      * comes back opens another window.
      */
     private static void report() {
+        // Read before reset(), which clears the window's first frame along with its counts.
+        long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
-                "frame-probe {}/{} windowFrames={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
+                "frame-probe {}/{} windowFrames={} windowMs={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={}",
                 frames,
                 BUDGET,
                 windowFrames,
+                millis(windowNanos),
                 encoders,
                 passChanged,
                 submitEnds,
@@ -307,6 +327,7 @@ public final class MetalFrameProbe {
 
     private static void reset() {
         windowFrames = 0;
+        windowStartedAt = 0L;
         encoders = 0;
         passChanged = 0;
         submitEnds = 0;

@@ -184,6 +184,25 @@ require("frame-probe budget", probe, (
 ))
 
 # ---------------------------------------------------------------------------
+# A window carries what it cost in time
+#
+# A count of bytes is not a performance reading until something says what the bytes were worth, and
+# that is the second thing every measurement in the companion backend was missing. The time is read
+# from the window's own first frame: measuring from the previous line would carry whatever the
+# session did between the two, which for the first window is the pack load the window exists to
+# exclude.
+# ---------------------------------------------------------------------------
+require("frame-probe window time", probe, (
+    "windowMs={}",
+    "if (windowFrames == 1) {",
+    "windowStartedAt = System.nanoTime();",
+    "long windowNanos = System.nanoTime() - windowStartedAt;",
+    "windowStartedAt = 0L;",
+))
+if probe.index("long windowNanos = System.nanoTime() - windowStartedAt;") > probe.index("reset();"):
+    raise SystemExit("frame probe: the window's time is read after the window's counters are cleared")
+
+# ---------------------------------------------------------------------------
 # The unarmed path is one field read
 #
 # Every public entry point opens with the armed() guard, so an unarmed launch pays a boolean field

@@ -25,6 +25,7 @@ from pathlib import Path
 # printed raw below the table rather than dropped.
 COUNTERS = (
     "windowFrames",
+    "windowMs",
     "encoders",
     "passChanged",
     "submit",
@@ -183,6 +184,26 @@ def main() -> int:
             ]
             row += f"  {', '.join(changes):>22}"
         print(row)
+
+    # The rate is the two numbers the probe printed divided by each other and not a second opinion:
+    # bytes are the cost a change moves, and this is what the frame paid for them. A change that
+    # lowers the bytes and leaves this where it was is a change to a counter and not to a frame.
+    print()
+    for run in runs:
+        counted = measured[run.name]
+        frames = counted.get("windowFrames")
+        millis = counted.get("windowMs")
+        if not frames or not millis:
+            print(f"{run.name}: no window time in the probe's line")
+            continue
+        rate = millis / frames
+        change = ""
+        baseline_ms = measured[first.name].get("windowMs")
+        baseline_frames = measured[first.name].get("windowFrames")
+        if len(runs) > 1 and run is not first and baseline_ms and baseline_frames:
+            baseline = baseline_ms / baseline_frames
+            change = f", {100 * (rate - baseline) / baseline:+.1f}% against {first.name}"
+        print(f"{run.name}: {rate:.2f} ms a frame, {1000 / rate:.1f} frames a second{change}")
 
     print()
     for run in runs:

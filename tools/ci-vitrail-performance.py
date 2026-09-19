@@ -129,9 +129,13 @@ if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
 # picture it cannot read rather than guessing at one: a comparison against a number this side decided
 # would agree with itself.
 # ---------------------------------------------------------------------------
-for counter in ("loadedMiB", "storedMiB", "encoders", "passChanged"):
+for counter in ("loadedMiB", "storedMiB", "encoders", "passChanged", "windowMs"):
     if f'"{counter}"' not in compare:
         raise SystemExit(f"the comparison does not read the probe's {counter}")
+if "ms a frame" not in compare:
+    raise SystemExit(
+        "the comparison does not turn the window's time into a frame rate, which is the reading any change is judged by"
+    )
 if "not a PNG" not in compare:
     raise SystemExit("the comparison no longer refuses a file that is not a picture")
 if "unsupported PNG" not in compare:
