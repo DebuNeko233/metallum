@@ -937,6 +937,10 @@ require("a generation's encoder asks the device through a contract",
     "boolean useLabels();",
     "MemorySegment metalDeviceHandle();",
 ))
+require("the execution services are a facade fact, not package access",
+        "src/main/java/com/metallum/render/MetalDevice.java", (
+    "public MetalExecutionServices executionServices() {",
+))
 require("the device answers that contract",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {",

@@ -433,8 +433,14 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         this.commandEncoder.waitForSubmittedGpuWork();
     }
 
-    /** The execution services this device was opened with, for the seams that ask which generation runs. */
-    MetalExecutionServices executionServices() {
+    /**
+     * The execution services this device was opened with, for the seams that ask which generation runs.
+     * <p>
+     * Public because it is the facade's own fact and the milestone's central seam - the queue factory, the frame
+     * encoder factory, the present gate and the readiness question all come through it - and because the frame
+     * path, once it lives in its own package, has to ask the same question the device does.
+     */
+    public MetalExecutionServices executionServices() {
         return this.services;
     }
 
