@@ -44,6 +44,7 @@ keep=false
 met_all=0
 fresh_world=true
 no_pack=false
+fixture_pack=false
 fullscreen=false
 
 usage() {
@@ -116,6 +117,7 @@ while [[ $# -gt 0 ]]; do
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
 		--fullscreen) fullscreen=true; shift ;;
 		--no-pack) no_pack=true; shift ;;
+		--fixture) fixture_pack=true; shift ;;
 		--at) aim_args+=(--at "$2"); shift 2 ;;
 		--yaw) aim_args+=(--yaw "$2"); shift 2 ;;
 		--pitch) aim_args+=(--pitch "$2"); shift 2 ;;
@@ -468,7 +470,9 @@ for run in "${runs[@]}"; do
 	# frame or a menu's. Three arms were lost to this before it was noticed, so it is refused here, by the
 	# shape the fault actually has - a pack frame opens tens of passes a frame and copies its targets back,
 	# and a frame with three passes and no copies at all is neither.
-	if [[ "$no_pack" == false ]]; then
+	# A fixture pack is a handful of full-screen passes and copies nothing, so the shape net below is about
+	# a real pack and not about it: what has to hold there is the named evidence, which is checked either way.
+	if [[ "$no_pack" == false && "$fixture_pack" == false ]]; then
 		# Named evidence first, in the shape the smoke scripts use: the run must prove it was the run asked
 		# for, and the pack's own name has to be in the line that proves it, so a window that quietly drew
 		# something else cannot pass. `No pack asked for` is the engine saying the selection was off, and

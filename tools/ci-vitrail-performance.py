@@ -275,8 +275,9 @@ comparison = (ROOT / "tools/vitrail-performance-compare.py").read_text(encoding=
 for needle, why in (
     ("SCENE_TOLERANCE = 2.0",
      "the comparison has no tolerance for the counters that say two arms are the same scene"),
-    ('for counter in ("renderPasses", "loadedMiB"):',
-     "the comparison does not judge the scene counters that a switch cannot move"),
+    ('for counter in ("renderPasses", "depthAttachments"):',
+     "the comparison does not judge the scene counters that a switch cannot move - and it must not judge "
+     "loadedMiB or blits, which are what the attachment and copy switches exist to move"),
     ("scene drift: ",
      "the comparison does not name the drift it found"),
     ("return 3", "a drifted arm does not end the comparison non-zero, so it reads as a result"),

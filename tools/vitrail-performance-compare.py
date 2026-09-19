@@ -219,7 +219,9 @@ def main() -> int:
     # win - measured: an arm that drew the pack at 27 000 passes a frame with 511 217 loadedMiB against the
     # baseline's 93 943, which every other check here accepted.
     drift: list[str] = []
-    for counter in ("renderPasses", "loadedMiB"):
+    # Only counters no switch can move: `loadedMiB`, `storedMiB` and `blits` are what the attachment-traffic
+    # and copy switches are *for*, so judging them here would refuse the very A/B they exist to decide.
+    for counter in ("renderPasses", "depthAttachments"):
         reference = measured[first.name].get(counter)
         if not reference:
             continue
