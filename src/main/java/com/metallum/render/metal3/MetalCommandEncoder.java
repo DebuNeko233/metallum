@@ -65,17 +65,19 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
      * 6.11 and 6.18 ms against a 7.26 ms frame, 3303 and 3343 ms over 1200 calls - and vanishes at five
      * (p95 0.00, 0.12 ms in total), while <strong>the frame's medians do not move</strong>: gpuMs 4368.27
      * and 4368.25 at three, 4376.60 at four, 4369.25 at five, and wallP50 7.26 / 7.27 / 7.28. The frame
-     * is GPU-bound and the frame is flat across all three depths, which is consistent with the wait being the
-     * render thread held to the submission rate of a saturated frame - an explanation the arms fit and do
-     * not prove, since "the CPU is paced by the GPU" and "this is where the frame's throttle appears" both
-     * predict a vanishing wait and a frame that does not move. The deeper windows are not free either: every
+     * is GPU-bound and the frame is flat across all three depths: consistent with the wait being the render
+     * thread held to the submission rate of a saturated frame, with the site the pacing moved to left
+     * unmeasured. The arms fit that explanation and do not prove it, since "the CPU is paced by the GPU" and
+     * "this is where the frame's throttle appears" both predict a vanishing wait and a frame that does not
+     * move. The deeper windows are not free either: every
      * slot holds a command buffer and its share of the transient allocator's blocks, and the render thread
      * runs about one to two and a half submissions further ahead of the picture the player sees, which is
      * latency and memory paid for a better tail and no better median.
      * <p>
-     * <strong>The depth counts submissions and not frames.</strong> This client submits twice a frame, so
-     * three is about a frame and a half of slack rather than three frames; a reading of "three frames"
-     * would overstate what the window holds by half.
+     * <strong>The depth is a submission-index window and not a count of frames in flight.</strong> The ring
+     * is indexed by {@code currentSubmitIndex}, which advances on every submission including an empty one.
+     * This client submits twice a frame, so three works out at about a frame and a half of slack and not
+     * three frames - a useful figure and not the definition.
      * <p>
      * <strong>Five is better on the tail and is still not the answer.</strong> `wallP99` reads 8.53 to 8.78
      * in all five depth-five samples against 8.69 to 9.58 at depth three - about 0.5 ms, 5.6 per cent, and

@@ -190,20 +190,25 @@ in total). **And the frame does not move**: `gpuMs` 4368.27 and 4368.25 at three
 at five, `wallP50` 7.26 / 7.27 / 7.28. Depth four does not even remove the wait, which is why the trial
 was worth running rather than reasoning about: 4 sits between the two and behaves like neither prediction.
 
-**What the depth counts, said precisely, because the obvious reading is wrong.** It is a depth in
-**submissions**, not in frames: this client submits twice a frame (1200 submit-window calls over 600
-frames), so three submissions is about one and a half frames of slack and five is about two and a half.
-A reading of "three frames" would overstate what the window holds by half and would make the tradeoff
-below sound larger than it is.
+**What the depth counts, said precisely, because the obvious reading is wrong.** It is a
+**submission-index window**, not a count of frames in flight: the ring is indexed by `currentSubmitIndex`,
+which advances on every submission **including an empty one**, so a depth of three is three submission
+indices and not three rendered frames. On this client, which submits twice a frame (1200 submit-window
+calls over 600 frames), that works out at about one and a half frames of slack at three and two and a
+half at five - a useful figure and not the definition. A reading of "three frames in flight" would
+overstate the window by half and would make the tradeoff below sound larger than it is.
 
 **Why three keeps, stated as an inference and not as a fact.** The measurement is that the wait moves and
 the frame does not: 3300 ms of waiting becomes 0.12 ms, and `gpuMs`, `wallP50` and `wallP95` are flat
 across all three depths. The explanation that fits is that the wait is the render thread being held to
 the submission rate of a frame the card is already saturated on, so running further ahead buys a queue
-rather than a frame - but **the arms establish the flatness and not the reason for it**. They cannot
-separate "the CPU is paced by the GPU" from "the throttle is what the frame costs and this is merely
-where it appears", because both predict a wait that vanishes when the ring is deep enough and a frame
-that does not move. What would separate them is a measurement this programme did not take: a frame whose
+rather than a frame - that is, **consistent with GPU pacing, and the replacement pacing site was not
+separately measured**. The arms establish the flatness and not the reason for it. They cannot separate
+"the CPU is paced by the GPU" from "the throttle is what the frame costs and this is merely where it
+appears", because both predict a wait that vanishes when the ring is deep enough and a frame that does
+not move; and nothing here shows *where* the pacing went instead - the wait may have moved into the
+drawable wait, into the submit itself, or nowhere at all, and the drawable wait was not read at five
+against three for this purpose. What would separate them is a measurement this programme did not take: a frame whose
 `gpuMs` is below its `wallP50`, where a deeper window would have slack to use.
 
 **Why three and not five, with the P99 result on the table.** Depth five is better on both things this
