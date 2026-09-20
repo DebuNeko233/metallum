@@ -365,3 +365,25 @@ the noise floor this scene has (the baseline's own two arms are 0.28 per cent ap
 under one per cent is noise without strong mechanism evidence). The mechanism here is CPU ObjC call count
 on a GPU-bound frame, so the measured result is the call count and nothing else.
 
+## Where the programme stands, and what the next round has to do first
+
+Answered and closed: argument-buffer allocation (REJECTED, 2 allocations a frame of 168 bytes),
+render-encoder churn (REJECTED, every recreation is a colour-attachment change), argument-encoder
+rebinding (KEPT, 14400 calls to 1200), per-pass allocation (REJECTED, `MetalRenderPass` is 0.34 per cent
+of allocation pressure), texel views (NOT APPLICABLE, nought a frame), fences (REJECTED, no evidence of
+significant cost). One candidate is measured and not yet decided: the submit window.
+
+**The next round's first action is to restore the render target.** The initial baseline was taken on the
+display's 1920x1200 mode (world 1056x660); the JFR crash left the display on a 3200x1800 mode (world
+1760x990), and a crashed fullscreen client does not put it back. `--expect-target 1056x660` now refuses a
+session that lands elsewhere, which turns a silent incomparability into a failed run - but it cannot
+restore the mode itself, so the display has to be put back before the Phase 8 A/B and the final baseline,
+or both have to be taken on one target together with a re-measured initial baseline on that same target.
+
+**Phase 8's shape is known before it is run.** `MAX_SUBMITS_IN_FLIGHT` sizes `inFlight[]`,
+`submitSemaphores[]` and `submitSignalBlocks[]` together, and section 64 requires
+`MetalDestructionQueue` and transient-resource lifetime to be rotated with it, so the trial is not one
+constant: it is a check that every ring believes the same depth. What the baseline says is that the
+window is neither idle nor obviously worth widening - `submitWindow` p50 0.00 ms, p95 5.82-5.92 ms
+against a 7.30 ms frame, total 3214 ms over 1200 calls - and that the frame is GPU-bound, so running the
+CPU further ahead cannot make the card faster.
