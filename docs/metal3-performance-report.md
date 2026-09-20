@@ -100,7 +100,7 @@ in Phase 8's own turn, not now.
 | --- | --- | --- | --- | --- |
 | Argument-buffer allocation | yes: 2 native buffers a frame, 0.192 MiB a frame | no | measured; too small to justify an arena | **REJECTED** |
 | Render encoder churn | yes: 20928 of 66318 attempts, 31.6 % | no | every recreation is a colour-attachment change | **REJECTED** |
-| Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | not yet | | pending |
+| Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | yes | calls 14400 to 1200 (-91.7 %), writes and bindings unchanged | **KEPT** (`e2a221d`) |
 | Per-pass allocations | not yet | no | | pending |
 | Render-pass descriptor | not yet | no | | pending |
 | Texel-buffer views | not yet | no | | pending |
