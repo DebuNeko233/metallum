@@ -81,10 +81,12 @@ public final class MetalCrossShaderTranslator {
             addStorageImagePlaceholders(layoutEntries, storageImages, pipeline);
             List<String> vertexOutputs = extractVariableNames(vertexSpirv.outputs());
 
-            boolean useArgumentBuffers = needsArgumentBuffers(layoutEntries, pipeline);
+            String wideReason = wideReason(layoutEntries, pipeline);
+            boolean useArgumentBuffers = wideReason != null;
             if (useArgumentBuffers && !argumentBuffersTier2Available) {
                 throw new IllegalStateException(
-                        "Pipeline " + pipeline.getLocation() + " requires wide Metal resources, but Argument Buffer Tier 2 is unavailable"
+                        "Pipeline " + pipeline.getLocation() + " requires wide Metal resources, but Argument Buffer Tier 2 is unavailable: "
+                                + wideReason
                 );
             }
             int pushConstantBinding = useArgumentBuffers
@@ -148,36 +150,79 @@ public final class MetalCrossShaderTranslator {
             );
     }
 
-    private static boolean needsArgumentBuffers(
+    /**
+     * Why this layout does not fit the direct slots, or null where it does.
+     * <p>
+     * <strong>The reason is a sentence rather than a boolean because the boolean was unreadable where it
+     * mattered.</strong> The refusal that reaches a pack's log has to say what the layout was - how many
+     * buffers, how many sampled images, which slot the last one asked for - or the only way to learn it is
+     * to add a print and run the pack again. The shape is what the decision is made of, so it is what the
+     * decision reports.
+     * <p>
+     * A sampled image's sampler slot is the entry's own position in this list and not a count of
+     * the sampled images before it. The uniform buffer sits at the front of every one of these
+     * layouts, so sixteen sampled images behind it end at position sixteen while Metal has sixteen
+     * sampler slots, nought to fifteen. Counting the images let that last one ask for a slot that
+     * does not exist, and the cost of that is not a pipeline that runs slowly but one that does not
+     * compile at all: photon's deferred4 at the pack's own defaults is exactly sixteen images
+     * behind one buffer, and every one of its draws failed at the sixteenth sampler.
+     */
+    @Nullable
+    private static String wideReason(
             final List<VulkanBindGroupLayout.Entry> entries,
             final RenderPipeline pipeline
     ) {
-        // A sampled image's sampler slot is the entry's own position in this list and not a count of
-        // the sampled images before it. The uniform buffer sits at the front of every one of these
-        // layouts, so sixteen sampled images behind it end at position sixteen while Metal has sixteen
-        // sampler slots, nought to fifteen. Counting the images let that last one ask for a slot that
-        // does not exist, and the cost of that is not a pipeline that runs slowly but one that does not
-        // compile at all: photon's deferred4 at the pack's own defaults is exactly sixteen images
-        // behind one buffer, and every one of its draws failed at the sixteenth sampler.
         int lastSamplerSlot = -1;
+        int buffers = 0;
+        int sampledImages = 0;
+        int texelBuffers = 0;
         for (int index = 0; index < entries.size(); index++) {
-            if (entries.get(index).type() == VulkanBindGroupEntryType.SAMPLED_IMAGE) {
-                lastSamplerSlot = index;
+            switch (entries.get(index).type()) {
+                case UNIFORM_BUFFER -> buffers++;
+                case SAMPLED_IMAGE -> {
+                    sampledImages++;
+                    lastSamplerSlot = index;
+                }
+                case TEXEL_BUFFER -> texelBuffers++;
             }
         }
-        int vertexBindingSpan = 0;
+        int vertexBindingSpan = vertexBindingSpan(pipeline);
+        boolean samplersOverflow = lastSamplerSlot >= DIRECT_SAMPLER_LIMIT;
+        boolean buffersOverflow = entries.size() + vertexBindingSpan >= 31;
+        if (!samplersOverflow && !buffersOverflow) {
+            return null;
+        }
+
+        StringBuilder reason = new StringBuilder();
+        reason.append(entries.size()).append(" entries (").append(buffers).append(" buffers, ")
+                .append(sampledImages).append(" sampled images, ").append(texelBuffers)
+                .append(" texel buffers) and ").append(vertexBindingSpan).append(" vertex layouts: ");
+        if (samplersOverflow) {
+            reason.append("the last sampled image sits at entry ").append(lastSamplerSlot)
+                    .append(" and a sampler index is capped at ").append(DIRECT_SAMPLER_LIMIT - 1);
+        } else {
+            reason.append("the highest buffer slot is ").append(entries.size() + vertexBindingSpan - 1)
+                    .append(" and a buffer index is capped at 30");
+        }
+        return reason.toString();
+    }
+
+    /**
+     * How many buffer slots this pipeline's vertex layouts occupy, which is the pipeline's own fact and not a
+     * layout decision: the shared translation numbers vertex buffers after the named buffers.
+     * <p>
+     * Minecraft 26.2 returns a fixed 16-slot array here. Null slots do not consume Metal vertex-buffer table
+     * entries, so counting the array length promotes ordinary fullscreen pipelines to Argument Buffers even
+     * when their live resources fit the direct tables.
+     */
+    private static int vertexBindingSpan(final RenderPipeline pipeline) {
         VertexFormat[] vertexBindings = pipeline.getVertexFormatBindings();
         for (int index = vertexBindings.length - 1; index >= 0; index--) {
             if (vertexBindings[index] != null) {
-                vertexBindingSpan = index + 1;
-                break;
+                return index + 1;
             }
         }
-        // Minecraft 26.2 returns a fixed 16-slot array here. Null slots do not consume Metal
-        // vertex-buffer table entries, so counting the array length promotes ordinary fullscreen
-        // pipelines to Argument Buffers even when their live resources fit the direct tables.
-        return lastSamplerSlot >= DIRECT_SAMPLER_LIMIT
-                || entries.size() + vertexBindingSpan >= 31;
+        return 0;
     }
 
     private static void addToBindGroup(

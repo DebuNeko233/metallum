@@ -61,16 +61,29 @@ for forbidden in ("Photon", "photon", "colorimg", "shadowtex", "gbuffers_"):
 # put a program with sixteen images behind one uniform buffer at sampler slot sixteen, which Metal does
 # not have: it is the difference between a pipeline that runs wide and one that never compiles, and it
 # was found by a run of the performance harness rather than by reading this file.
+#
+# The decision answers with the shape it refused rather than with a boolean, because the only reader of a
+# boolean is a throw whose message has to name what was too wide. The two live slots are pinned by name:
+# the sampler rule is the entry index of the last sampled image, and the buffer rule is the buffer span
+# against Metal's 31 buffer slots.
 # ---------------------------------------------------------------------------
 require("The direct-resource decision counts the last sampler slot", compiler, (
     "int lastSamplerSlot = -1;",
     "lastSamplerSlot = index;",
-    "return lastSamplerSlot >= DIRECT_SAMPLER_LIMIT",
-    "entries.get(index).type() == VulkanBindGroupEntryType.SAMPLED_IMAGE",
+    "boolean samplersOverflow = lastSamplerSlot >= DIRECT_SAMPLER_LIMIT;",
+    "case SAMPLED_IMAGE -> {",
+    "sampledImages++;",
+    "boolean buffersOverflow = entries.size() + vertexBindingSpan >= 31;",
+    "String wideReason = wideReason(layoutEntries, pipeline);",
+    "boolean useArgumentBuffers = wideReason != null;",
 ))
 if "sampledImages > DIRECT_SAMPLER_LIMIT" in compiler:
     raise SystemExit(
         "the direct-resource decision counts sampled images again, which is not the slot the last one lands in"
+    )
+if "private static boolean needsArgumentBuffers(" in compiler:
+    raise SystemExit(
+        "the direct-resource decision went back to a boolean, so a refusal cannot say what the layout was"
     )
 
 print("Metal argument-buffer sampler contract: PASS")
