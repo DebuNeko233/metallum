@@ -475,17 +475,36 @@ exercised on every attempt and has never failed at `commit`, `completion` or `en
 ## Lifecycle
 
 ```
-F3+T:       NOT STARTED
-pack switch: NOT STARTED
-world join: NOT STARTED
-dimension:  NOT STARTED
-resize:     NOT STARTED
-fullscreen: NOT STARTED
-shutdown:   NOT STARTED
+F3+T:       PASS - driven through the client's own reload entry point (`Minecraft.delayTextureReload`), which is
+            the path the key submits to, and its future completed: the compilation caches were cleared and the
+            pack was rebuilt through this path in the same session, with the chain drawn again afterwards and no
+            stop, no stale pipeline and no use-after-release. `tools/run-metal4-lifecycle-probe.sh`.
+pack switch: PARTIAL - the half a switch puts at risk is the retirement of the old compiled artifacts while a
+            frame still names them, and that is what the reload above exercises (5994 submissions across it).
+            Selecting a different pack in the pack screen needs the GUI and is NOT MEASURED.
+world leave: PASS - `Minecraft.clearClientLevel(new TitleScreen())`, the path Save-and-Quit takes. The frame
+            path survived it: the sessions that leave and then quit run to a clean `Stopping!`. One caveat of
+            the driver rather than of the frame path: a packet that arrives for the level just cleared makes
+            vanilla throw in `ClientPacketListener.handleSetEntityMotion` (`this.level` is null), which the real
+            UI path does not hit because the connection is closed first.
+world join:  PASS - every one of these sessions joins a world through `--quickPlaySingleplayer` and renders it.
+dimension:  NOT MEASURED - a dimension change needs a teleport command, which needs a keyboard this machine
+            refuses. The nearest reading is the reference arm's (`docs/metal3-performance-report.md`).
+resize:     PASS and measured in the frame path - `Window.setWindowed(1600, 900)` mid-session takes the
+            presented extent from 2560x1440 to 3200x1800 and back to 2560x1440 over 2375/1061/2555 readbacks,
+            with every render target, table and argument buffer that names one rebuilt across it and no fault.
+fullscreen: PASS - `Window.toggleFullScreen()` mid-session, same session as the resize, no fault; the presented
+            extent did not change on this display, so what is proven is that the transition is survived rather
+            than that a different mode was rendered.
+shutdown:   PASS, and it took the gate to find a fault - see blocker 7. The quit is the window's own close flag
+            rather than a signal, so the whole teardown runs: `Stopping!`, then the encoder's close, then the
+            cache release, then `BUILD SUCCESSFUL`.
 ```
 
-Every one of these is measured with the Metal 3 path today (`docs/metal3-performance-report.md`), and none has
-been run against a Metal 4 frame, because no Metal 4 frame exists yet.
+The first four rows were "NOT STARTED" for the honest reason that driving them needed input this machine will
+not synthesise, and the gate was therefore unrun rather than failed. `LifecycleProbeMixin` drives them from
+inside the client instead, on a schedule the launch line states, so the transitions are the client's own methods
+rather than a simulation of them - and what it found on its first real run was a teardown fault in this path.
 
 ## MetalFX Spatial
 
@@ -677,14 +696,20 @@ answered rather than only what is left.
    outcome* in the client: Vitrail's compute fixture dispatches two different kernels, so the shapes that lose
    a dispatch are not in its frame - a fixture that dispatches one kernel twice per frame is what would show
    it, and the reproducer is what shows it native.
-7. **The Metal 4 teardown has never run in a session.** Every measurement session so far has been *stopped*,
-   not quit: a forced Metal 4 session sent `SIGTERM` exited within thirty seconds with no teardown line in its
-   log and no driver fault, and the log's last line is an argument table made mid-frame. So the frame encoder's
-   `close()` - the ring's completion wait, the deferred releases, the transient arena, the storage pipelines,
-   the residency set and the queue - has no real-device evidence, and section 71's lifecycle gate lists shutdown
-   among the observations it wants. What it has is the ownership ledger
-   (`docs/metal4-resource-ownership.md`) and the pins over it; what it needs is a session that quits, which
-   needs input this machine's automation permission refuses. **Shutdown: NOT MEASURED.**
+7. ~~The Metal 4 teardown has never run in a session~~ - **run, and it held one fault.** Every session before
+   this one was *stopped* rather than quit: a forced Metal 4 session sent `SIGTERM` exited within thirty seconds
+   with no teardown line in its log, so the frame encoder's `close()` - the ring's completion wait, the deferred
+   releases, the transient arena, the storage pipelines, the residency set and the queue - had no real-device
+   evidence at all. `LifecycleProbeMixin` sets the window's close flag instead, which is the close button's own
+   path, and the teardown ran: `Stopping!`, the encoder's close, the cache release, `BUILD SUCCESSFUL`. The
+   fault it found was the wait that follows: `MetalDevice.close()` waited for submitted work, closed the frame
+   encoder - which releases the ring - and then cleared the pipeline cache, whose own wait landed on the
+   released ring and reported a completion that had arrived 0 ms earlier as a timeout that never would. Measured
+   with the ring's own state in the line (`submissions=3815 awaited=[3814, 3815, 3813]` complete, then
+   `awaited=[0, 0, 0]` not), fixed by deleting the redundant clear - `executionState.close()` clears the same
+   caches at the end, after the same wait - and re-measured on the exact build with `photon_v1.3b`: one clean
+   teardown, zero warnings, chain drawn twice. **Shutdown: PASS on the executing path.** The reference arm's
+   shutdown is unchanged and also clean.
 8. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,

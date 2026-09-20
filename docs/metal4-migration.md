@@ -3641,6 +3641,71 @@ What this is **not** is a proof that the wide shape generalises: it is one wide 
 this path, and the buffer writes are re-encoded per binding rather than deduplicated, which is section 50's
 correctness-first order and explicitly not the finished shape.
 
+### The lifecycle gate, which needed a driver rather than a keyboard
+
+Section 71 lists seven transitions and every one of them was pressed by a keyboard this machine's automation
+permission refuses (`osascript` is denied with -1743). That is a reason the gate had no reading, not a reason it
+could not have one: four of the seven are single method calls on the client, and the two that are not need a
+teleport and a GUI. So they are now driven from inside the client on a schedule the launch line states -
+`-Dmetallum.lifecycleProbe=resize@500,fullscreen@700,windowed@900,reload@1100,leave@1500,close@1700` - through
+the client's own entry points rather than a simulation of them: `Window.setWindowed` and `toggleFullScreen` for
+the window changes, `Minecraft.delayTextureReload` for F3+T's own path, `clearClientLevel` for leaving, and
+GLFW's window-close flag for a quit. The flag is the load-bearing one: it is what the close button sets, so the
+game loop leaves on its own terms and the whole shutdown path runs, where a signal skips it entirely.
+
+**What it found on the first real run was a teardown fault in this path, and the instrument that found it is now
+part of the code.** The frame encoder's close and the device's cache clear both wait for the ring's completion,
+and only the second reported anything - so a warning about submission 3813 arriving late was unattributable. Both
+waits now print what they waited for and what the ring looked like, and two consecutive lines name the mechanism:
+
+```text
+closing - waited 0 ms for 3815 submission(s); complete=true,  ring state: submissions=3815 awaited=[3814, 3815, 3813]
+waited  0 ms for 3815 submission(s); complete=false, ring state: submissions=3815 awaited=[0, 0, 0]
+```
+
+`awaited` at zeros while `signalled` did not move is `MTL4FrameRing.close()` - it clears the slots' recorded
+values and releases the event - so the second wait was on a ring the frame encoder had already released, and
+`waitUntilSignaledValue` against a released event returns immediately: the completion that had been proven 0 ms
+earlier was reported as a timeout that never arrived. A false alarm rather than a stall, and no destroy ran
+before its proof - but the wait proved nothing, which is the one thing a completion wait may not do. The fix is a
+deletion: `MetalDevice.close()` no longer clears the pipeline cache itself, because `executionState.close()` at
+the end of the same method clears the same caches after the same wait. Three mutations hold the order.
+
+**Measured on the exact build, one session, `photon_v1.3b` on this path**: the resized window takes the presented
+extent from 2560x1440 to 3200x1800 and back (2375 / 1061 / 2555 readbacks), the fullscreen change is survived,
+the resource reload completes with the pack rebuilt through this path - and the wide pipeline's line appears
+*twice*, once at load and once after the reload, so the argument encoders this generation asks of its own
+functions were re-asked across a cache clear that retired the artifact owning the first set - the leave is
+survived, and the quit runs `Stopping!` through to `BUILD SUCCESSFUL` with the chain drawn twice, no Vitrail
+stop, and **zero teardown warnings**. The reference arm on the same schedule is also clean, which is what makes
+the timeout Metal 4's own rather than a property of quitting.
+
+**Two things the gate still does not cover**, and they are registered rather than implied: a dimension change
+needs a teleport command, and an in-session shader-pack *switch* needs the pack screen - the reload covers the
+half of a switch that this path can get wrong, which is the retirement of the old artifacts. And one caveat
+belongs to the driver: `clearClientLevel` called directly lets a packet arrive for the level just cleared, and
+vanilla throws in `ClientPacketListener.handleSetEntityMotion`; the UI path closes the connection first and does
+not.
+
+### The mixin surface, which is two gates and not one
+
+The lifecycle driver is a mixin, and adding one turned up two rules that were not written anywhere and cost a
+round each. The first: `metallum.mixins.json` names the classes Mixin may transform, and
+`MetallumMixinConfigPlugin` is a *second* gate over them - a mixin the config names and the plugin does not admit
+is configured and never applied, silently. The session runs, the property has no effect, and the log carries no
+line to say why; the measurement is simply empty. The second: Mixin transforms **every** class in its configured
+package, so the small schedule type that the driver's record needed could not live beside it - the launch ended
+in `ExceptionInInitializerError: Mixin transformation of ... LifecycleSchedule failed` before the client loaded -
+and it could not live *inside* the mixin either, because a mixin's nested types are relocated into the target
+class: the record became `Minecraft$Action`, which `Minecraft` does not carry in its `InnerClasses` attribute, so
+every access threw `IncompatibleClassChangeError` and the schedule line printed as
+`[!!!net.minecraft.client.Minecraft$Action$75e25708...=>java.lang.IncompatibleClassChangeError...]`.
+
+Both rules are in `ci-contracts.py` now, with three mutations: every source file in the mixin package must be a
+mixin the config names, every mixin the config names must be admitted by the plugin - by name, or as the package
+group the sodium diagnostics are admitted as - and the schedule type lives in `render.shared`, which is where a
+type that is only *used* belongs.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

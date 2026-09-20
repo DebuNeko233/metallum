@@ -73,21 +73,40 @@ on still starts it exactly as before. Section 107 keeps the sidecar in place unt
 real-device proven, and this ledger is where its objects are listed so the cleanup commit can be checked against
 them rather than remembered.
 
-## What the ledger has not been able to check: the teardown has never run in a session
+## The teardown, which has now run - and what it found
 
-Every row above says where an object is released, and **no session so far has run any of those lines**. Measured
-rather than assumed: a forced Metal 4 session was launched, allowed to reach its first compute dispatches, and
-sent `SIGTERM`. It exited within thirty seconds - the shell reported status 143 - with **no teardown line in the
-log and no driver fault report**, and the log's last line is an argument table made mid-frame. So the client is
-stopped by a signal rather than quit, the game's own shutdown path does not run, and the frame encoder's
-`close()` - the ring's completion wait, the deferred releases, the transient arena, the storage pipelines, the
-residency set and now the queue - has no real-device evidence at all.
+Every row above says where an object is released, and for a long time **no session had run any of those lines**:
+a forced Metal 4 session sent `SIGTERM` exited within thirty seconds with **no teardown line in the log and no
+driver fault**, and the log's last line was an argument table made mid-frame - the client stopped by a signal
+rather than quit, so the game's own shutdown path never ran.
 
-That is a gap in the migration's own lifecycle gate (section 71 lists "shutdown" among the observations), and it
-is registered rather than papered over: what the teardown has is the ownership argument above and the pins that
-hold it, and what it needs is a session that quits. Quitting the client needs input this machine's automation
-permission refuses (`osascript` is denied with `-1743`), so the honest statement today is **shutdown: NOT
-MEASURED**, and the next session that can be quit by hand closes it.
+That is closed, and by the gate rather than by hand: `com.metallum.mixin.render.LifecycleProbeMixin` sets the
+window's **own close flag** (`GLFW.glfwSetWindowShouldClose`), which is what the close button sets, so the game
+loop leaves on its own terms and the whole shutdown path runs - `Stopping!`, then the frame encoder's close, then
+the cache release, then `BUILD SUCCESSFUL`. Driven by `tools/run-metal4-lifecycle-probe.sh`; **no input this
+machine refuses is needed**, which was the only thing standing in the way.
+
+**And the first run of it found a fault in the ledger's own subject.** The teardown waited for completion twice
+around a close, and the second wait was on a ring the frame encoder had already released:
+
+```text
+Metal 4 frame encoder: closing - waited 0 ms for 3815 submission(s); complete=true,  ring state: submissions=3815 awaited=[3814, 3815, 3813]
+Metal 4 frame encoder: waited  0 ms for 3815 submission(s); complete=false, ring state: submissions=3815 awaited=[0, 0, 0]
+```
+
+`awaited` at zeros with `signalled` unmoved is `MTL4FrameRing.close()`, which clears the slots' values and
+releases the event; `waitUntilSignaledValue` against a released event returns immediately, so a completion that
+had been proven 0 ms earlier was reported as a timeout that never arrived. It was a false alarm rather than a
+stall, and no row above was violated - the destroys ran after a wait that had genuinely succeeded - but the wait
+proved nothing, which is the thing this ledger exists to prevent. `MetalDevice.close()` no longer clears the
+pipeline cache itself: `executionState.close()` clears the same caches at the end of the same method, after the
+same wait. The order is pinned and mutation-proved in `ci-metal4-provider.py`, together with the ring's
+`describe()`, because a wait whose outcome is only printed on failure cannot say which of two waits on one ring
+timed out.
+
+What is still **NOT MEASURED** among the rows above is the *contended* case: every one of them ran with no work
+in flight or with work that had long completed. Nothing here has seen the ring's completion wait actually block,
+because a display-paced session has no backlog to wait on.
 
 ## What the ledger found
 
@@ -103,6 +122,10 @@ MEASURED**, and the next session that can be quit by hand closes it.
   the residency set, the storage pipelines and the compilation caches are all owned by the frame encoder or the
   execution state, so a second device in one process gets its own. The one static state left in the path is the
   probe's own (`MTL4Probe`, `MTLBuiltinPipelines`), which no session frame path uses.
+- **a teardown waited twice around a close, and the second wait was on a released ring** (fixed): see the
+  section above. It is a ledger finding and not only a bug - the second wait was inside a cache clear that
+  `executionState.close()` performs anyway, so the fix was a deletion, and the ownership question it raised ("who
+  proves completion before the caches are freed?") has one answer instead of two.
 - **the wide path splits one object's lifetime across two owners, deliberately** (added with the argument-buffer
   binding path): the `MTLArgumentEncoder` belongs to the artifact, because the encoded length is the shader's own
   layout and every pass that draws the pipeline needs it; the `MTLBuffer` it writes belongs to the pass, because
