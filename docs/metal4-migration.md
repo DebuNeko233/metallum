@@ -1652,13 +1652,16 @@ frame-probe 30/30 windowFrames=30 windowMs=240.65
 drawable wait** - the layer handing out a drawable at the display's rate - and **2.08 ms is the GPU's own time**
 from the queue's feedback. So this frame is paced by the display and not by the GPU or by the frame path's own
 work, which is the shape a first full-frame path should have and is worth knowing before anyone asks whether
-Metal 4 is faster. What is *not* claimed: a comparison. The Metal 3 arm has not been run on the same scene in the
-same session (the plan's section 114 asks for exactly that alternation), the picture has not been compared
-(section 37), and one difference is visible and unexplained: **9387.8 MiB loaded and stored over thirty frames**
-is about 313 MiB a frame, where the Metal 3 arm of the present sidecar reported 971.6 and 2659.1 MiB over thirty
-(32 and 88 a frame). This path marks every attachment `CARRIED` - load and store, every pass - because the
-per-attachment contents facts the Metal 3 pass carries do not reach it yet, and that is a *measured* difference
-to understand later rather than a number to explain away.
+Metal 4 is faster. What is *not* claimed here: a comparison. The Metal 3 arm had not yet been run on the same
+scene in the same session (the plan's section 114 asks for exactly that alternation) and the picture had not been
+compared (section 37) - both of which the comparison below then did, and did byte-for-byte.
+
+**The 9387.8 MiB that looked like an unexplained 313 MiB a frame was two things and neither of them was the
+contents facts.** One was the `CARRIED` claim written here first: this path did mark every attachment `CARRIED`,
+but so did Metal 3 on a no-pack frame, because those facts are the *pack side's* and no pack was loaded - so
+`CARRIED` could not have been the difference. The other was that the counter was reading only the game's passes:
+the clear encoders and the presents contributed nothing to it. What the numbers are, and what the traffic's real
+mechanism is, is in "The attachment facts reach the pass, and the counter stops leaving the clears out".
 
 ### The no-pack comparison: the same picture, the same pace, different mechanisms
 
@@ -1702,20 +1705,96 @@ logical facts to match and does not ask the native mechanisms to:
 | what | M3 | M4 | why they differ |
 | --- | --- | --- | --- |
 | pipeline identities | 100 | 100 | the same shader programs, which is the comparison's anchor |
-| render passes opened | 120 | 360 | a clear is a load action, so each clear is a pass of its own here |
-| clear encoders | 0 | 150 | the same fact, counted as the mechanism it is |
-| depth attachments | 90 | 330 | a clear's depth attachment plus the pass's |
-| attachment bytes loaded | 950.3 MiB | 9387.8 MiB | every attachment is `CARRIED` here (load and store) |
-| attachment bytes stored | 2637.8 MiB | 9387.8 MiB | the same, and the Metal 3 pass's contents facts (`contents=65` in its encoder-reuse line) are what let it discard loads |
+| render passes opened | 120 | 360 | **not the same unit**: Metal 3 counts the native encoders it *creates* and reuses one across consecutive passes (`reusePercent 93.9`), Metal 4 counts every logical pass, each of which opens its own |
+| clear encoders | 0 | 150 | a clear is a load action, so each clear is a pass of its own here; Metal 3 folds it into the pass that uses the attachment |
+| depth attachments | 90 | 330 | **incomplete before the correction below**: a clear's depth attachment plus the pass's, with the clear's half not counted at that time |
+| attachment bytes loaded | 950.3 MiB | 9387.8 MiB | **undercounted, and not because of `CARRIED`** - see the correction below |
+| attachment bytes stored | 2637.8 MiB | 9387.8 MiB | the same |
 | pipeline binds | 460 | 1920 | a table is filled where the pipeline changes, per pass |
 | scissor | 330 | 90 | counted where the render encoder is given one |
 | viewport | 150 | 0 | the game's render-pass interface has no viewport call at all; Metal 3 counts the encoder's own |
 
-The traffic row is the one real inefficiency this comparison names, and it is now measured on **both** sides
-rather than suspected: this path loads and stores every attachment on every pass because the per-attachment
-contents facts that Metal 3 carries (whether anything reads an attachment afterwards, and whether the pass
-overwrites all of it) do not reach it yet. That is the next thing to give it - section 62's over-synchronise and
-over-store first, measure, then narrow - and the number it would move is on the table above.
+The traffic row is the one real inefficiency this comparison names, and it is measured on **both** sides rather
+than suspected - but the two sentences this section first wrote about *why* it differs were wrong, and the round
+that gave this path the contents facts is what showed it. They are corrected in the next subsection, which also
+records what the counter had been leaving out.
+
+### The attachment facts reach the pass, and the counter stops leaving the clears out
+
+Two things were true and neither was the one the comparison above claimed.
+
+**The per-attachment contents facts did reach Metal 3 and not Metal 4, and now they reach both.** They arrive
+through `MetalFrameExtras`, which `MetalCommandEncoder` carries and `Metal4FrameEncoder` did not: the pack side
+states, before each pass, whether anything reads each colour attachment afterwards and whether this pass writes
+every pixel of it (`AttachmentContents`), and those two facts become the pass descriptor's store and load
+actions. The mapping itself - a clear beats the load question, an overwritten attachment is loaded `DontCare`, an
+attachment nothing reads is stored `DontCare` - was already in `mtl.metal4.MTL4RenderEncoder` and already
+measured on the device; what did not exist was the road from the pack side to it. Now:
+
+- `Metal4FrameEncoder implements … MetalFrameExtras`, keeps the statement, and **takes and clears it before the
+  pass is built**, exactly as the Metal 3 encoder does, so a pass nobody described cannot inherit the last
+  described pass's answers;
+- `Metal4RenderPass` resolves the statement per slot with `AttachmentContents.resolve` (no array, a short array
+  and a null slot all mean `CARRIED`, the answer that changes nothing), and opens the descriptor with it;
+- the other three members of that contract answer what is true of this generation rather than pretending: the
+  storage-image boundary it asks for is already encoded after every pass here (each logical pass is its own
+  native encoder and ends with `barrierAfterStages:beforeQueueStages:` over all stages), and `metalFxAvailable`
+  is false until the Metal 4 scaler exists - which is what this encoder answered before it carried the contract
+  at all, so a caller's fallback road is unchanged. `MetalFrameResourceCommands` stays absent on purpose.
+
+**The counter was reading only part of the frame.** `MetalFrameProbe.attachment` was called from the game's pass
+object alone, so the 150 clear encoders a frame opens here and the 30 presents contributed nothing to
+`loadedMiB`/`storedMiB` - and a frame that clears in five passes of its own read as cheaper than one that folds
+those clears into the passes that use the attachments, which is precisely the comparison those counters exist
+for. The counting is now a function of the attachment the descriptor is opened with
+(`MTL4RenderEncoder.countAttachment` / `countDepthAttachment`, beside the load/store mapping so the two cannot
+drift), and every pass this path opens goes through it: the game's passes, the clear passes and the present.
+
+The measurement, same scene and flags as the comparison above, one harness invocation per session, both arms in
+sequence:
+
+```text
+                            before the counter covered clears     after
+m3 loadedMiB / storedMiB          950.3 / 2637.8           950.3 / 2637.8
+m4 loadedMiB / storedMiB         9387.8 / 9387.8         9409.1 / 13206.0
+m4 depthAttachments                     330                     480
+m4 depthLoadedMiB / storedMiB   4640.6 / 4640.6         4640.6 / 6750.0
+m4 renderPasses / clearEncoders  360 / 150                366 / 150
+```
+
+- **The 150 clear encoders are visible now**, exactly: `depthAttachments` rises by 150, one per clear pass, and
+  `depthStoredMiB` rises by 2109.4 MiB while **`depthLoadedMiB` does not move at all** (4640.6). That is the
+  mapping showing up as a measurement - a clear is not a load.
+- **`storedMiB` rises 40.7%** (9387.8 → 13206.0) for the same picture: the frame was always storing what its
+  clear passes wrote; the counter was not counting it.
+- **`loadedMiB` moves +21.3 MiB (0.23%), and no clear can do that.** The six extra render passes this window
+  reported (`renderPasses 360 → 366`) are the explanation, and the arithmetic is close: six loaded 1280x720 BGRA
+  attachments are 21.1 MiB. This is churn in the scene's pass count between sessions, not an effect of the
+  coverage - and the depth half above is the control that says so.
+- **The picture did not move**: all four arms of the two sessions hash to
+  `e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`, and each session's own comparison reports
+  `0.00% of pixels differ`. Wiring the facts and counting the clears changed no pixel, which is what a
+  correctness-first step has to be able to say.
+- **The pace did not move either**: `8.04 / 8.06 ms` a frame for Metal 4 against `8.06 / 8.06 ms` for Metal 3, in
+  a scene where ~7.4 ms of each frame is the drawable wait.
+
+**What is now the real mechanism of the traffic gap, stated as measured facts.** Metal 3 creates 4 native render
+encoders a frame and reuses one across consecutive passes that agree on attachments and contents
+(`reusePercent 93.9`); Metal 4 opens one native encoder per logical pass. Metal 3 folds a clear into the pass
+that next uses the attachment, so the attachment is never loaded; Metal 4 clears in a pass of its own, so the
+pass that follows loads the attachment again. Both of those are the *design* the first version chose - section
+62's over-do-it-first, and the clear's own javadoc says the extra pass is what it costs - and neither is the
+per-attachment contents facts, which change nothing on a frame that states nothing. The contents road is what a
+*pack* will use; the clear-and-reuse mechanism is what this path pays for without one.
+
+**What is NOT proven yet, and has to be said plainly.** No pack has stated anything to this path on the device.
+With `--no-pack` nothing calls `MetalAttachmentBridge`, and the Metal 4 arm's numbers are unchanged to the
+probe's own precision by wiring the road (the `before` column above is this round's own re-run of the previous
+session's flags) - which is evidence that the road is inert until it is used, and *not* evidence that a stated
+`DontCare` reaches the descriptor on a device. That evidence is the smoke-pack staircase (plan section 66) and
+the MRT fixture, where a pack's `stillRead`/`writesEveryPixel` answers arrive; the structural half is pinned in
+`tools/ci-metal4-provider.py` and mutation-proved (18 mutations of the wiring, the per-slot default, the
+take-and-clear order, the clear/present coverage and the two scaler answers, every one of them caught).
 
 ## The API mapping
 

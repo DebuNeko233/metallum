@@ -266,10 +266,12 @@ presentation:        IMPLEMENTED by the frame encoder and OBSERVED ON SCREEN - M
                      MetalFramePresentation: the picture is drawn into the layer's next drawable by the engine's
                      present triangle, encoded into the frame's own command buffer before its one commit, with
                      waitForDrawable: before that commit and signalDrawable: + present after it. A forced Metal 4
-                     launch presented its loading screen for more than thirty frames. BLOCKED after that: the
-                     first frame of the loaded world hangs the GPU (kernel GPURestart, see Remaining blockers).
-                     The present-only sidecar (Metal4Path + Metal4PresentGate) stays in place, and is the control
-                     that shows the drawable road itself is sound on this machine
+                     launch presented its loading screen for more than thirty frames, and the no-pack world frame
+                     presents too - 30 presents a 30-frame window, with a picture byte-identical to Metal 3's.
+                     The world frame's first submission used to hang the GPU (kernel GPURestart); that was the
+                     argument table's uninitialised bindings and is fixed (Remaining blockers 0). The present-only
+                     sidecar (Metal4Path + Metal4PresentGate) stays in place, and is the control that shows the
+                     drawable road itself is sound on this machine
 ```
 
 ## Render
@@ -431,9 +433,39 @@ of each 8.06/8.08 ms frame is the drawable wait, so this scene is display-paced 
 that the timing kinds are not interchangeable until that is established. **The structural differences are the
 migration's own mechanisms** (render passes 120 → 360, clear encoders 0 → 150, pipeline binds 460 → 1920,
 attachment bytes loaded 950.3 MiB → 9387.8 MiB, stored 2637.8 → 9387.8) with the shader programs identical
-(`pipelineIdentities 100` both arms); the load traffic is the one real inefficiency the comparison names, because
-every attachment here is `CARRIED` (load and store) - the Metal 3 pass's per-attachment contents facts do not
-reach this path yet, and that is the next thing to give it.
+(`pipelineIdentities 100` both arms). **The two sentences this section first wrote about the traffic were wrong,
+and the round that wired the contents facts showed it** - see "The attachment facts reach the pass" in
+`docs/metal4-migration.md`, and the corrected numbers below.
+
+**The attachment traffic, corrected.** The road from the pack side's per-attachment facts to this path's pass
+descriptors did not exist and now does (`MetalFrameExtras` on the Metal 4 encoder, taken and cleared before each
+pass, resolved per slot, with three of its four members answering what is true of this generation rather than
+pretending). Wiring it changed **no number and no pixel** on a no-pack frame, which is the honest result: with no
+pack nothing states anything, and the Metal 4 arm's readings reproduced the previous session's to the probe's
+own precision. What the same round found is that the counter had been reading only part of the frame: the clear
+passes and the presents were not counted at all, so the comparison above understated this path's own traffic. With
+the counting a function of the attachment each descriptor is opened with, and every pass this path opens going
+through it:
+
+```text
+                            before the counter covered clears     after
+m4 loadedMiB / storedMiB         9387.8 / 9387.8         9409.1 / 13206.0
+m4 depthAttachments                     330                     480
+m4 depthLoadedMiB / storedMiB   4640.6 / 4640.6         4640.6 / 6750.0
+```
+
+`depthAttachments` rises by exactly the 150 clear encoders and `depthStoredMiB` by 2109.4 MiB while
+`depthLoadedMiB` does not move: a clear is not a load, which is the mapping showing up as a measurement. The
+`loadedMiB` movement of +21.3 MiB (0.23%) is the six extra render passes this window reported (360 → 366), not
+anything a clear can do. Both sessions' four arms still hash to
+`e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`.
+
+**The mechanism of the gap is pass structure, not the missing facts.** Metal 3 creates 4 native render encoders
+a frame and reuses one across consecutive passes (`reusePercent 93.9`) where this path opens one per logical
+pass, and Metal 3 folds a clear into the pass that next uses the attachment where this path clears in a pass of
+its own - so the following pass loads the attachment again. Both are the first version's deliberate choice
+(section 62: over-do it first, measure, then narrow), and neither is about contents facts, which change nothing
+on a frame that states nothing.
 
 The Metal 3 reference on the pinned scene is
 `wallP50 7.25-7.26 ms`, `gpuP50 7.28-7.29`, `gpuMs 4366.72 / 4368.05` over two arms of
@@ -443,39 +475,41 @@ The Metal 3 reference on the pinned scene is
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it
-(the cold-probe harness); `M4 real frame` means through a frame the client drew, which does not exist yet and is
-therefore `n/a` everywhere; `Real-device` means the same run was on this machine's Apple Silicon rather than in
-CI, which is where every smoke here was run.
+(the cold-probe harness); `M4 real frame` means through a frame the client drew and presented, which for the
+cells below is a forced `-Dmetallum.execution=metal4` no-pack launch collected by the harness (30-frame windows,
+both arms in one session), and `n/a` where the capability has no live-frame reading yet; `Real-device` means the
+same run was on this machine's Apple Silicon rather than in CI, which is where every smoke here was run.
 
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
-| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - the no-pack world frame renders (9,000+ frames, no fault, 300 fps, 15 passes and 34 draws a frame), measured by the path's own counters; the picture has not been compared with Metal 3's | yes |
-| MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a | yes |
-| clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | n/a | yes |
-| depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | n/a | yes |
-| sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | n/a | yes |
-| sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
-| uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | n/a | yes |
-| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index yes - see the indexed-draw row | n/a | yes |
-| argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
-| indexed draw    | yes         | yes - an index buffer as an address in the draw, six UInt16 indices, drawn at index 0 and at index 3 with each frame read back against its own triangle; the selector is the eight-argument one this SDK declares | n/a | yes |
-| indirect draw   | yes         | yes - the indirect indexed form, one command per draw with `MTLDrawIndexedPrimitivesIndirectArguments` (twenty bytes) in a buffer the GPU reads and the frame path declares resident; the arguments' own `indexStart` selects which of two triangles is drawn, so arguments that are ignored draw the first one twice (50 of 50) | n/a | yes |
+| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - the no-pack world frame renders and presents, 9,000+ frames with no fault, and the 30-frame picture is **byte-identical** to Metal 3's on the same world and size, at the same display-paced frame time | yes |
+| MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a - a no-pack frame needs one target | yes |
+| clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | yes - 150 clear encoders a window and 150 of its 480 depth attachments are the clear passes' own; a clear is never a load, which the counter now shows (`depthLoadedMiB` did not move when those 150 were counted) | yes |
+| depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | the window attaches depth 480 times and counts its clear passes' depth traffic; no depth draw and no depth sample yet | yes |
+| sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | yes in the reading the window takes: 775 texture binds a window and the picture is Metal 3's; the pixel-exact proof is the smoke's | yes |
+| sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | as the texture row, 775 sampler binds a window | yes |
+| uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | the window reports 2476 buffer binds, which are its uniforms, vertex and index buffers together; not separated | yes |
+| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index yes - see the indexed-draw row | as the uniform row: the geometry is drawn through table by address and the picture matches | yes |
+| argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | yes - the frame's bindings are made through a table per stage, built from the compiled layout | yes |
+| attachment contents | yes - per-slot `readAfterwards`/`overwritten` from the pack side, through `MetalFrameExtras` | not a smoke subject: the facts become the descriptor's load and store actions, which the attachment smoke exercises | **delivered, not yet exercised**: the frame encoder carries `MetalFrameExtras`, takes and clears each pass's statement before the pass is built, resolves it per slot and opens the descriptor with it - and on a no-pack frame nothing states anything, so no number moved; a pack's statement is what the smoke staircase will exercise | yes |
+| indexed draw    | yes         | yes - an index buffer as an address in the draw, six UInt16 indices, drawn at index 0 and at index 3 with each frame read back against its own triangle; the selector is the eight-argument one this SDK declares | not separated from the direct draws by the window's counters; `-Dmetallum.metal4Trace` and `-Dmetallum.metal4FrameStats` print the split | yes |
+| indirect draw   | yes         | yes - the indirect indexed form, one command per draw with `MTLDrawIndexedPrimitivesIndirectArguments` (twenty bytes) in a buffer the GPU reads and the frame path declares resident; the arguments' own `indexStart` selects which of two triangles is drawn, so arguments that are ignored draw the first one twice (50 of 50) | n/a - a no-pack frame draws directly | yes |
 | residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
-| blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a | yes |
+| blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a - a no-pack frame needs no copy, and the window reports `blits 0` | yes |
 | mipmap          | yes         | no                                | n/a           | no          |
 | compute         | yes         | no                                | n/a           | no          |
 | storage buffer  | yes         | no                                | n/a           | no          |
 | storage image   | yes         | no                                | n/a           | no          |
-| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | n/a | yes |
-| fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | n/a | yes |
-| presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | loading screen yes (30+ frames on screen); the world frame hangs the GPU | yes |
-| MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | n/a | no          |
-| counters        | whole frame | no                                | n/a           | no          |
+| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | yes for the frame's own boundaries: every logical pass is its own native encoder and ends with the all-stages producer barrier, which is why the storage-image boundary a pack states is already encoded unconditionally; the read/write matrix is still the plan's fixtures | yes |
+| fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
+| presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | yes - 30 presents a window and the picture hashes the same as Metal 3's | yes |
+| MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | no - `metalFxAvailable()` answers false, which is what this encoder answered before it carried the contract, so a caller keeps its own fallback road | no          |
+| counters        | whole frame | no - the Metal 3 frame's whole-frame driver time is its own | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; not comparable with Metal 3's `gpuMillis` until section 92 is established | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
-and its blanks are the work. Nothing in the `M4 real frame` column can be filled until a Metal 4 frame encoder
-exists, which is Phase 4; and nothing in it should be filled from a smoke, because a capability proven in a
-process with no window is not the same claim as a capability proven through the client's own frame.
+and its blanks are the work. A `yes` in `M4 real frame` means the harness collected it from a frame the client
+drew and presented; a capability with no live-frame reading is `n/a` rather than inferred from a smoke, because a
+capability proven in a process with no window is not the same claim.
 
 ## Remaining blockers
 
@@ -500,10 +534,15 @@ answered rather than only what is left.
    and the two GPU numbers are recorded but not compared because they come from different APIs
    (`MTLCommandBuffer.gpuMillis` against `MTL4CommitFeedback.GPUStartTime/GPUEndTime`) - section 92's timing
    kinds have not been shown to measure the same interval.
-3. **The attachment traffic is the one measured inefficiency** - this path loads 9387.8 MiB and stores 9387.8 MiB
-   over thirty frames where the Metal 3 arm loads 950.3 and stores 2637.8 on the same scene, because every
-   attachment here is `CARRIED` (load and store) and the per-attachment contents facts the Metal 3 pass carries
-   do not reach this path yet. Measured on both sides now, and the next thing to give this path.
+3. **The attachment traffic is the one measured inefficiency, and it is pass structure.** This path loads
+   9409.1 MiB and stores 13206.0 MiB over thirty frames where the Metal 3 arm loads 950.3 and stores 2637.8 on
+   the same scene - the corrections above replaced the first reading of 9387.8/9387.8, which was the game's
+   passes alone and left every clear pass and present out. The mechanism is this path's own design and not the
+   missing contents facts: one native encoder per logical pass where Metal 3 reuses one (`reusePercent 93.9`),
+   and a clear in a pass of its own where Metal 3 folds it into the pass that uses the attachment, so the
+   following pass loads the attachment again. The contents road now exists and is pinned, but **no pack has
+   stated anything to it on the device yet** - that is the smoke-pack staircase's evidence to produce, and until
+   it does, this path's contents facts are delivery-proven and not device-proven.
 4. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 5. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
@@ -514,20 +553,22 @@ answered rather than only what is left.
 
 ## Metal 4 full-frame implementation complete?
 
-**NO, but the first full-frame milestone is reached.** A forced Metal 4 launch loads a world and renders it -
-nine thousand frames, 300 fps, no fault, no restart, no refusal - which is what Phase 5 of the plan asks for;
-what is not yet true is everything that turns "it renders" into "it renders correctly and measurably": the
-picture has not been compared with Metal 3's, the harness cannot collect the run (the frame probe is not fed by
-this path), and MRT/depth/blend/scissor, blit/compute, the synchronization fixtures, the lifecycle checks and the
-real packs are all still open. Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
-bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
-frame encoder's lifetime - the ring - proven on the device, its copies wired, its clears implemented and
-measured, its fence answering the Metal 3 fence's three ways, its bindings recorded by name and resolved when
-the layout arrives, its indexed draw proven on the device, and **its own presentation** - a forced Metal 4 launch
-presents its loading screen through this path for more than thirty frames. It then **hangs the GPU** on the first
-frame of the loaded world, which is a correctness blocker and not a performance one; the control run (Metal 3
-frame, Metal 4 present sidecar) shows the drawable road is sound, so the fault is in what the world frame
-encodes. Everything the Definition of Done asks for that needs a frame the client actually *drew and presented*
-is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT draws, depth writes, blit in a live frame,
-compute, the synchronization matrix, resize, reload, dimension, shutdown, and the real-pack and performance
-validation. The next item is narrowing the GPU fault on the world frame.
+**NO, and the first full-frame milestone is behind it.** A forced Metal 4 launch loads a world, renders it and
+presents it - nine thousand frames, 300 fps, no fault, no restart, no refusal - and the harness collects the run:
+the frame probe is fed by this path's own counters, and a 30-frame window of each generation in one session
+produces a picture that is byte-identical to Metal 3's
+(`e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519` in both arms of both sessions, `0.00% of
+pixels differ`) at the same display-paced frame time. That is Phase 5 of the plan's order and its success
+criterion - "Metal 4 produces the same required frame correctly" - measured rather than intended.
+
+What has been done, in the plan's order: the Metal 3 bookkeeping, the cold-probe harness, the Metal 4 provider
+(queue, state, encoder, clears, copies, fence, indexed and indexed-indirect draws, residency, presentation in the
+frame's own command buffer), all five native render smokes, the binding model through argument tables, the
+per-attachment contents facts delivered to the pass descriptors, and the attachment counter made a function of
+the descriptor and extended over every pass this path opens. What is **not** done is everything the Definition of
+Done asks for beyond this frame: the Vitrail fullscreen smoke pack, MRT draws, depth writes and depth sampling,
+blit inside a live frame, compute and storage, the read/write synchronization matrix, resize, pack reload,
+dimension change, shutdown, the real-pack ladder and the lifecycle gate - plus **no pack has stated anything to
+the contents road on the device**, which the smoke staircase is what will prove. The remaining blockers above
+are the list; the AUTO gate stays closed on the first of them (the intermittent capability probe), and AUTO does
+not select this path.
