@@ -840,6 +840,62 @@ shapes, the stride, the stage each table is assigned to, the scissor and its two
 field, count and exit code - seventeen mutations run, sixteen caught by the pins themselves and one after a pin
 was strengthened (a table-size pin satisfied by another smoke's identical call).
 
+### The binding plan, and the pass that fills it
+
+The layout smoke above proved the mechanism; the production objects are `Metal4BindingPlan` and the pass's own
+use of it. The plan is the Metal 4 half of the binding question: the shared translation decides *what* a program
+binds and what the MSL calls each one, and the plan turns that into the shape a table is filled in - which
+stage's table a resource belongs to, which slot in it, and how many slots each stage's table needs. It is built
+once, when a pipeline is compiled, so that filling a table per pass is a lookup rather than a discovery (§48's
+own rule: no string parsing, no regex, no resource-kind discovery per frame).
+
+Two details it answers that a first guess gets wrong:
+
+- **a table is sized to the highest index a stage is given, not to the number of names.** A named buffer at
+  metal index 2 needs a three-slot table even though it is the only binding, and the vertex stage's table also
+  has to cover the vertex layouts, which are not named bindings at all: they live at the buffer slots after the
+  named vertex-stage ones, and the plan's buffer count accounts for them;
+- **vertex buffers are not in the plan's named slots.** A vertex buffer is a layout the pipeline's vertex
+  descriptor describes, bound by address <em>and stride</em> at the plan's own vertex region - which is why the
+  pass takes the stride from the pipeline's vertex format rather than from the binding.
+
+The plan is in the bindings layer beside `MTL4ArgumentTable` rather than in the frame path, and that placement
+paid for itself: the layout smoke now builds a plan, sizes its tables from it, looks its bindings up in it and
+takes its vertex slot from it, so **the device proof is a proof of the production plan** and not of a parallel
+copy of it.
+
+**The pass now fills that path.** `Metal4RenderPass` implements the no-pack subset the migration's section 34
+asks for and refuses the rest by name:
+
+- `setPipeline` compiles through this generation's own chain, builds the plan from the artifact's footprint,
+  makes the tables the plan sizes, and releases the previous ones - so a replaced pipeline cannot be read
+  through a stale table;
+- `bindTexture`, `setUniform` (whole buffer and slice) and `setVertexBuffer` look the name up in the plan and
+  fill the stage's table at the plan's slot; a binding read by both stages is filled in both; **a name the
+  pipeline does not declare, or a texture bound to a buffer's name, is a named fault** rather than a binding
+  that quietly goes nowhere, which is the half frame section 35 forbids;
+- `setIndexBuffer` remembers the buffer as an <em>address</em> and the draw turns the engine's first index into
+  an offset on that address, which is the one difference Metal 4's indexed draw has from Metal 3's;
+- `enableScissor`/`disableScissor` set and clear the rectangle, and clearing it means setting the whole
+  attachment rather than leaving the last one in force;
+- a draw assigns the tables where they have changed, sets the pipeline state (the depth variant chosen by
+  whether the pass has a depth attachment), the depth-stencil state, the culling and fill modes and the scissor,
+  and then draws.
+
+The multi-draw, indirect and timestamp forms still refuse by name: a no-pack frame does not need them, and
+section 34 says not to build what the current slice does not use.
+
+**The evidence, stated exactly.** The plan has a device proof (through the layout smoke, 50 of 50 probes), the
+encoder's commands have one, and the compilation chain has one. The pass object's own wiring has none: it is
+built from the engine's device and from real texture views, so what stands behind it is the structural contract
+plus the two measured layers it composes. `tools/ci-metal4-provider.py` pins that wiring - the compile path,
+the plan-built tables, the lookups and their refusals, the pipeline's own stride, the index address arithmetic,
+the scissor clearing, the table release on a pipeline change, the assign-only-when-changed rule, the draw
+sequences and the operations still refused - and twenty-one mutations were run against those pins: eighteen
+caught at once, three after the pins were strengthened (a lookup pin satisfied by a second identical line, a
+release pin satisfied by another call site, and two assignment pins that a short-circuit could step over). The
+last pair is the shape a text pin cannot see on its own, and the contract file says so where it is pinned.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

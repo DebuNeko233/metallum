@@ -46,10 +46,11 @@ this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. A
                   in every process (`compile=ok(valid=true)`). The layout smoke is the new one: two argument
                   tables in one pass, one per stage, carrying a vertex buffer with its stride, two uniforms,
                   a texture and a sampler, drawn with a scissor and read back on both sides of it (50 of 50).
-                  The pass object itself is still NOT reachable here - it needs the engine's device and real
-                  texture views - so its evidence remains the structural contract plus the measured layer
-                  underneath (the attachment smoke's own evidence: 50 of 50 in the round that added it; the
-                  ring's: 56 of 56; the drawn smoke's: 100 of 100)
+                  Since this round the layout smoke builds its tables from the production `Metal4BindingPlan`,
+                  so the plan itself is what those 50 probes measured. The pass object is still NOT reachable
+                  here - it needs the engine's device and real texture views - so its evidence remains the
+                  structural contract plus the measured layers underneath (the attachment smoke's own evidence:
+                  50 of 50 in the round that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -233,9 +234,13 @@ presentation:        EXPERIMENTAL  (the present sidecar, Metal4Path + Metal4Pres
 basic:   PARTLY - the pass exists end to end: `createRenderPass` resolves the game's descriptor into
          `Metal4RenderPass`, opens it through `MTL4RenderEncoder` (attachments, load/store actions, clear
          colours, target size, the producer barrier between passes), and ends it on `submitRenderPass`.
-         The attachment half is measured on the device (50 of 50 probes); the pass object itself is pinned
-         structurally and NOT run, and no draw is encoded into one yet - every bind and draw refuses by name
-         with the operation's own name
+         The attachment half is measured on the device (50 of 50 probes), the binding plan and the encoder's
+         draw commands are measured on the device (the layout smoke), and the pass now implements the no-pack
+         binding subset: setPipeline compiles through this generation and builds the plan, the bind calls fill
+         plan-sized tables and refuse a name the pipeline does not declare, the vertex buffer is bound with the
+         pipeline's own stride, setIndexBuffer is an address the draw offsets, the scissor is set and cleared,
+         and draw/drawIndexed assign the tables, set the state and draw. The pass object is still NOT run
+         (it needs the engine's device), and the multi-draw, indirect and timestamp forms still refuse by name
 MRT:     PROVEN for the pass's half, and only that half - one pass carries four colour attachments cleared
          to red, green, blue and white and each slot is read back against the colour that slot was asked
          for; a second pass loads slot 0's existing contents and re-clears slot 1, so the load, the clear
@@ -337,7 +342,7 @@ CI, which is where every smoke here was run.
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | n/a | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | n/a | yes |
-| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index no - the draw selector takes an address, and no probe has drawn indexed geometry yet | n/a | yes (vertex) |
+| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index PARTLY - the pass turns the engine's first index into an address offset for the draw selector, and no probe has drawn indexed geometry yet | n/a | yes (vertex) |
 | argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
 | blit            | yes         | no                                | n/a           | no          |
 | mipmap          | yes         | no                                | n/a           | no          |
@@ -360,11 +365,12 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The pass object does not use the draw path yet** - the encoder's commands (arguments tables, pipeline,
-   cull, scissor, both draw selectors) are device-proven by the layout smoke, and the compilation chain compiles
-   an artifact on the device, but `Metal4RenderPass` still refuses every bind and draw by name: what is missing
-   is the binding plan that maps an artifact's footprint to table slots and the pass's use of it, which is the
-   next milestone. And with it, **no blit, compute or full synchronization matrix** - the encoder owns the frame's
+3. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
+   compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
+   over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
+   rests on the structural contract plus those measured layers. What is left before a no-pack frame is the
+   client path (a forced Metal 4 execution) and whatever that first real frame reports. And with it, **no blit,
+   compute or full synchronization matrix** - the encoder owns the frame's
    lifetime (the ring, the deferred releases, the one commit), the pass's attachment half is measured on the
    device (`MTL4RenderEncoder`), `createRenderPass` builds a real pass from the game's descriptor, and the
    compilation chain compiles a Metal 4 artifact on the device (50 of 50 probes) with its binding footprint.

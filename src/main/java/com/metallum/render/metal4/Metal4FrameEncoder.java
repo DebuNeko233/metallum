@@ -59,6 +59,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
 
     private final MetalDevice device;
     private final Metal4ExecutionState executionState;
+    private final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource;
     private final MTL4FrameRing ring;
 
     /**
@@ -90,6 +91,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
                        final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource) {
         this.device = device;
         this.executionState = executionState;
+        this.defaultShaderSource = defaultShaderSource;
         MTLDevice nativeDevice = executionState.device();
         // The queue is the generation's own object and the address comes from the execution services, which is
         // the seam the frame path's isolation turns on - the same seam the Metal 3 encoder builds its queue
@@ -268,6 +270,28 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         }
         this.currentPass = null;
         pass.finish();
+    }
+
+    /** The generation state this encoder compiles through, for the pass that sets a pipeline. */
+    Metal4ExecutionState state() {
+        return this.executionState;
+    }
+
+    /** The session's shader source, which the state needs before it can compile anything. */
+    com.mojang.blaze3d.shaders.ShaderSource shaderSource() {
+        return this.defaultShaderSource;
+    }
+
+    /**
+     * The compiled artifact for a pipeline, compiling it if this state does not hold it.
+     * <p>
+     * It is the pass that asks, because it is the pass that sets a pipeline; the cast is safe by construction -
+     * the state this encoder was made with is this generation's, and its compile path returns this generation's
+     * artifact.
+     */
+    Metal4CompiledRenderPipeline compiled(final com.mojang.blaze3d.pipeline.RenderPipeline pipeline) {
+        return (Metal4CompiledRenderPipeline) this.executionState.getOrCompilePipeline(pipeline,
+                this.defaultShaderSource);
     }
 
     /** The command buffer the frame is being encoded into, for the pass that opens on it. */

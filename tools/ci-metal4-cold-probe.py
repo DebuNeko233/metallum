@@ -422,14 +422,16 @@ if "MemorySegment.ofAddress(indexBufferAddress)" not in encoder_source:
 for needle, why in (
     ("public static boolean canBindALayout(",
      "the layout binding is measured nowhere, so the new model's core has no run behind it"),
-    # Pinned with its assignment, because the same call appears in canBindAndDraw's own table and a bare pin
-    # would be satisfied by that one while the layout smoke's table stopped covering its bindings.
-    ("vertexTable = MTL4ArgumentTable.create(device, 2L, 0L, 0L);",
-     "the smoke does not make a table sized to the vertex stage's own bindings"),
-    ("MTL4ArgumentTable.create(device, 1L, 1L, 1L)",
-     "the smoke does not make a fragment table carrying a buffer, a texture and a sampler together"),
-    ("vertexTable.address(vertices.gpuAddress(), 16L, 0L)",
-     "the vertex buffer is bound without its attribute stride, so an indexed vertex read has no layout"),
+    # Pinned with its assignment and with the plan as the source of the sizes: the same factory call appears in
+    # canBindAndDraw's own table, and a table sized from literals would stop covering the slots it is given
+    # without the smoke noticing.
+    ("vertexTable = MTL4ArgumentTable.create(device, plan.bufferSlots(MetalShaderStages.VERTEX),",
+     "the smoke does not make a vertex table sized from the plan, so what it proves is not the plan's mapping"),
+    ("fragmentTable = MTL4ArgumentTable.create(device, plan.bufferSlots(MetalShaderStages.FRAGMENT),",
+     "the smoke does not make a fragment table sized from the plan"),
+    ("vertexTable.address(vertices.gpuAddress(), 16L, plan.firstVertexBufferSlot())",
+     "the vertex buffer is bound without its attribute stride, or outside the plan's vertex region, so an indexed"
+     " vertex read has no layout"),
     ("layoutPass.setArgumentTable(vertexTable, STAGE_VERTEX)",
      "the vertex table is never assigned to the stage that reads it"),
     ("layoutPass.setArgumentTable(fragmentTable, STAGE_FRAGMENT)",

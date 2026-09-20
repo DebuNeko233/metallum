@@ -2,6 +2,9 @@ package com.metallum.mtl.metal4;
 
 import com.metallum.Metallum;
 import com.metallum.render.shared.AttachmentContents;
+import java.util.List;
+import com.metallum.render.shared.MetalShaderStages;
+import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 
 import com.metallum.mtl.MTLTexture;
@@ -1160,24 +1163,46 @@ public final class MTL4Probe {
                 return failed("layout", "one of the three uniform buffers has no GPU address");
             }
 
-            // A table is sized to what the stage binds, and the indices are the shader's own attribute indices:
-            // the vertex stage binds a buffer with a stride and a plain uniform, the fragment stage a uniform, a
-            // texture and a sampler.
-            vertexTable = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
-            fragmentTable = MTL4ArgumentTable.create(device, 1L, 1L, 1L);
+            // The plan is the production object, so the smoke builds one and fills the tables from it rather than
+            // from literals: if the plan's mapping is wrong, this is where the pixel stops being the expected one.
+            // The three named bindings are the ones the smoke's own MSL declares, described the way the shared
+            // translation would describe them: a vertex-stage uniform at buffer 1, a fragment-stage uniform at
+            // buffer 0, and a sampled image at texture 0 with its sampler at 0.
+            Metal4BindingPlan plan = Metal4BindingPlan.of(List.of(
+                    new MetalResourceBinding(MetalResourceBinding.ResourceKind.UNIFORM_BUFFER, "tint", 1,
+                            MetalShaderStages.VERTEX, null, 1, -1, -1),
+                    new MetalResourceBinding(MetalResourceBinding.ResourceKind.UNIFORM_BUFFER, "bias", 2,
+                            MetalShaderStages.FRAGMENT, null, 0, -1, -1),
+                    new MetalResourceBinding(MetalResourceBinding.ResourceKind.SAMPLED_IMAGE, "source", 0,
+                            MetalShaderStages.FRAGMENT, null, 0, 0, -1)),
+                    0, 1);
+
+            // A table is sized to the plan's own answer for its stage, which is one past the highest index that
+            // stage is given - not the number of names, and not including another stage's bindings.
+            vertexTable = MTL4ArgumentTable.create(device, plan.bufferSlots(MetalShaderStages.VERTEX),
+                    plan.textureSlots(MetalShaderStages.VERTEX), plan.samplerSlots(MetalShaderStages.VERTEX));
+            fragmentTable = MTL4ArgumentTable.create(device, plan.bufferSlots(MetalShaderStages.FRAGMENT),
+                    plan.textureSlots(MetalShaderStages.FRAGMENT), plan.samplerSlots(MetalShaderStages.FRAGMENT));
             clearTable = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
             if (vertexTable == null || fragmentTable == null || clearTable == null) {
                 return failed("layout", "a table this layout needs came back null: vertex=" + (vertexTable != null)
                         + " fragment=" + (fragmentTable != null) + " clear=" + (clearTable != null));
             }
-            if (!vertexTable.address(vertices.gpuAddress(), 16L, 0L)
-                    || !vertexTable.address(tint.gpuAddress(), 1L)
-                    || !fragmentTable.address(bias.gpuAddress(), 0L)
-                    || !fragmentTable.texture(source, 0L)
-                    || !fragmentTable.sampler(sampler, 0L)
+            Metal4BindingPlan.Slot tintSlot = plan.slot("tint");
+            Metal4BindingPlan.Slot biasSlot = plan.slot("bias");
+            Metal4BindingPlan.Slot sourceSlot = plan.slot("source");
+            if (tintSlot == null || biasSlot == null || sourceSlot == null) {
+                return failed("layout", "the plan does not hold a binding the smoke's own MSL declares, so a"
+                        + " lookup the frame path depends on answered nothing");
+            }
+            if (!vertexTable.address(vertices.gpuAddress(), 16L, plan.firstVertexBufferSlot())
+                    || !vertexTable.address(tint.gpuAddress(), tintSlot.metalIndex())
+                    || !fragmentTable.address(bias.gpuAddress(), biasSlot.metalIndex())
+                    || !fragmentTable.texture(source, sourceSlot.metalIndex())
+                    || !fragmentTable.sampler(sampler, sourceSlot.samplerMetalIndex())
                     || !clearTable.address(clearUniform.gpuAddress(), 1L)) {
-                return failed("layout", "one of the layout's bindings was refused by the table made to hold it,"
-                        + " which is the failure this smoke exists to name");
+                return failed("layout", "one of the layout's bindings was refused by the table the plan sized for"
+                        + " it - " + plan.describe());
             }
 
             vertexPipeline = MTLBuiltinPipelines.buildPipelineForProbe(LAYOUT_MSL, "metallum_layout_probe_vs",

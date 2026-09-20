@@ -152,12 +152,14 @@ for needle, why in (
     if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# The no-pack subset is implemented now, so this list is what a no-pack frame does NOT need yet - the multi
+# and indirect draw forms, and the counters. They refuse by name rather than disappearing, which is what keeps
+# the pass's gaps a list.
 for operation in ("setPipeline", "bindTexture", "setUniform", "enableScissor", "disableScissor",
-                  "setVertexBuffer", "setIndexBuffer", "drawIndexed", "multiDrawIndexed", "drawIndexedIndirect",
-                  "drawMultipleIndexed", "draw", "multiDraw", "drawIndirect", "writeTimestamp"):
-    if f'throw unimplemented("{operation}")' not in pass_source:
-        raise SystemExit(f"metal 4 provider: the render pass does not refuse {operation} by name, so that "
-                         "operation would be dropped into a pass that draws nothing")
+                  "setVertexBuffer", "setIndexBuffer", "draw", "drawIndexed"):
+    if f'public void {operation}(' not in pass_source:
+        raise SystemExit(f"metal 4 provider: the render pass no longer implements {operation}, which a no-pack "
+                         "frame needs")
 
 for needle, why in (
     # Pinned with its body, because the same `begun` test appears in submit() and a bare test would be satisfied
@@ -247,31 +249,92 @@ for needle, why in (
     if needle not in artifact:
         raise SystemExit("metal 4 provider: " + why)
 
-# Every operation the game can ask for and this path cannot perform is refused by name. The list is the
-# migration's own remaining work, one line per operation.
-# createRenderPass and submitRenderPass are deliberately NOT in this list any more: they are implemented, and
-# the block below pins what they do. Everything here is still a named refusal.
-for operation in ("transientMemory", "clearColorTexture",
-                  "clearColorAndDepthTextures", "clearDepthTexture", "writeToBuffer", "copyToBuffer",
-                  "writeToTexture", "copyBufferToTexture", "copyTextureToBuffer", "copyTextureToTexture",
-                  "createFence", "writeTimestamp"):
-    if f'throw unimplemented("{operation}")' not in encoder:
-        raise SystemExit(f"metal 4 provider: the encoder does not refuse {operation} by name, so that operation "
-                         "would be dropped into a half frame - which section 35 forbids")
-for forbidden in ("render.metal3", "mtl.metal3"):
-    if forbidden in encoder or forbidden in state:
-        raise SystemExit(f"metal 4 provider: a Metal 4 implementation names {forbidden}, which the architecture "
-                         "rules forbid")
-if re.search(r"static\s+(?:final\s+)?(?:MemorySegment|MTL4FrameRing|MetalFrameEncoder)\s+\w+\s*(?:=|;)",
-             encoder):
-    raise SystemExit("metal 4 provider: the encoder holds native state in a static, so a teardown, a reload or a "
-                     "second device could reach another session's frame - which section 106 forbids")
-if "public String stage()" not in provider:
-    raise SystemExit("metal 4 provider: the refusal does not carry its stage, so a log line cannot say which "
-                     "operation was asked for")
-if "throw new Unimplemented(\"createFrameEncoder\", \"the frame's ring could not be made at stage \"" not in provider:
-    raise SystemExit("metal 4 provider: a ring the device will not make is not refused by name, so a device "
-                     "that cannot run this path would be reported as one that can")
+# The no-pack binding subset is implemented now, so the pins describe what the pass does rather than that it
+# refuses: the pipeline is compiled through this generation, the binding plan comes from the artifact's own
+# footprint, the tables are sized from that plan, a name the pipeline does not declare is a fault, and the
+# vertex stride is the pipeline's own.
+for needle, why in (
+    ("Metal4CompiledRenderPipeline compiled = this.owner.compiled(pipeline);",
+     "the pass does not compile through this generation's own path, so a Metal 4 pass would draw with something "
+     "built elsewhere"),
+    ("this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),",
+     "the binding plan is not built from the artifact's own footprint, so the slots it fills are guesses"),
+    ("this.plan.bufferSlots(MetalShaderStages.VERTEX)",
+     "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
+    ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
+     "the fragment table is not sized from the plan"),
+    ("Metal4BindingPlan.Slot slot = requirePlan().slot(name);",
+     "a binding is filled without looking it up in the pipeline's layout"),
+    ('throw new IllegalStateException("the Metal 4 pipeline does not declare a binding called \'" + name',
+     "a name the pipeline does not declare is not refused, so a layout mismatch would be a silently dropped "
+     "binding - the half frame section 35 forbids"),
+    ("if (slot.buffer()) {", "a texture bound to a buffer's name is not refused"),
+    ("if (slot.texture()) {", "a buffer bound to a texture's name is not refused"),
+    ("long stride = format == null ? 0L : format.getVertexSize();",
+     "the vertex stride is not the pipeline's own vertex format, so a layout would be read per buffer rather "
+     "than per vertex"),
+    ("this.indexBufferAddress + (long) firstIndex * this.indexTypeBytes",
+     "the indexed draw does not turn the engine's first index into an address offset, which is the one thing "
+     "Metal 4's indexed draw does differently"),
+    ("this.scissorWidth = this.targetWidth;",
+     "disableScissor does not set the whole attachment, so the last rectangle would stay in force"),
+    ("if (!this.tablesAssigned) {",
+     "the tables are assigned on every draw rather than when they changed, which is the first-version "
+     "compromise section 50 asks for"),
+    ("throw new IllegalStateException(\"the Metal 4 pass was asked to encode \" + operation + \" with no\"",
+     "a draw without a pipeline is not a named fault"),
+    ("private void releaseTables() {", "a replaced pipeline's tables are not released at all"),
+    ("        this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),\n"
+     "                compiled.vertexBufferCount());\n        releaseTables();",
+     "a replaced pipeline's tables are not released, so a stale plan could be read through a new pipeline"),
+    # Pinned with the condition that guards them, because a table assignment short-circuited away still contains
+    # the call: this is the shape a text pin cannot see on its own, and it is recorded here rather than left to
+    # look like a pin that covers it.
+    ("if (this.vertexTable != null && !this.encoder.setArgumentTable(this.vertexTable,",
+     "the vertex table is never assigned to the encoder"),
+    ("if (this.fragmentTable != null && !this.encoder.setArgumentTable(this.fragmentTable,",
+     "the fragment table is never assigned to the encoder"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
+# What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence.
+for operation in ("multiDrawIndexed", "drawIndexedIndirect", "drawMultipleIndexed", "multiDraw", "drawIndirect",
+                  "writeTimestamp"):
+    if f'throw unimplemented("{operation}")' not in pass_source:
+        raise SystemExit(f"metal 4 provider: the render pass does not refuse {operation} by name, so an "
+                         "operation it cannot encode would be dropped into a half frame")
+
+# And the binding plan itself: the mapping the device proof drives.
+PLAN = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "Metal4BindingPlan.java"
+if not PLAN.is_file():
+    raise SystemExit("metal 4 provider: Metal4BindingPlan.java is gone, so the tables the pass fills have no "
+                     "shape to be built from")
+plan_source = PLAN.read_text(encoding="utf-8")
+for needle, why in (
+    ("public int bufferSlots(final int stage) {",
+     "the plan does not answer how many buffer slots a stage's table needs"),
+    ("highest = Math.max(highest, this.firstVertexBufferSlot + this.vertexBufferCount - 1);",
+     "the plan's buffer count does not account for the vertex layouts, so a table could be made too small for "
+     "the slots it is given"),
+    ("public int textureSlots(final int stage) {", "the plan does not answer a stage's texture slots"),
+    ("public int samplerSlots(final int stage) {", "the plan does not answer a stage's sampler slots"),
+    ("return this.byName.get(name);", "the plan does not look a binding up by the name the pack gave it"),
+    ("public boolean sampled() {", "a slot does not say whether it has a sampler beside it"),
+):
+    if needle not in plan_source:
+        raise SystemExit("metal 4 provider: " + why)
+# And the probe drives the plan rather than literals, which is what makes the device proof a proof of this class.
+probe_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                / "MTL4Probe.java").read_text(encoding="utf-8")
+for needle, why in (
+    ("Metal4BindingPlan.of(List.of(", "the layout smoke does not build a plan, so the plan is not what runs"),
+    ("plan.bufferSlots(MetalShaderStages.VERTEX)", "the smoke does not size its tables from the plan"),
+    ("plan.slot(\"tint\")", "the smoke does not look its bindings up in the plan"),
+    ("plan.firstVertexBufferSlot()", "the smoke does not take the vertex slot from the plan"),
+):
+    if needle not in probe_source:
+        raise SystemExit("metal 4 provider: " + why)
 
 # --- and it is reached by the EXECUTING generation, not by a constant ------------------------------------
 if "switch (executing)" not in services:
