@@ -19,6 +19,7 @@ import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalFramePresentation;
+import com.metallum.render.shared.MetalFrameResourceCommands;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalTransientMemory;
@@ -42,6 +43,7 @@ import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -78,9 +80,13 @@ import java.util.Set;
  * answer - what a pass said about its colour attachments' contents, which reaches the pass descriptor as a load
  * and a store action - and its other three members answer what is true of this generation rather than pretending:
  * the storage-image boundary it asks for is already encoded after every pass, and the scaler it asks about does
- * not exist until the Metal 4 MetalFX milestone. {@code MetalFrameResourceCommands} stays absent, because it is
- * an operation this path cannot perform yet and a bridged caller must find it missing and take its own fallback
- * rather than receive a do-nothing body.
+ * not exist until the Metal 4 MetalFX milestone. {@link MetalFrameResourceCommands} is carried for the same kind
+ * of reason read the other way: its three operations are not implemented yet and each answers false, which is the
+ * contract's own shape for a caller's fallback - but omitting the contract altogether does not cost this path
+ * three operations, it costs the capability dispatch as a whole. Measured: a pack's per-attachment statements
+ * never reached this encoder, because the client decides whether to install its capability adapter from
+ * {@code MetalFrameBridge.supports}, which asks whether the encoder carries <em>this</em> contract. A generation
+ * that says "ask me" and answers no per operation keeps the half that does work.
  * <p>
  * <strong>The present is the frame's own.</strong> The picture is drawn into the layer's next drawable by a
  * present triangle encoded into <em>this frame's</em> command buffer, before {@link #submit()} commits it, and
@@ -90,7 +96,8 @@ import java.util.Set;
  * one itself.
  */
 @Environment(EnvType.CLIENT)
-final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras {
+final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,
+        MetalFrameResourceCommands {
 
     /**
      * The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth.
@@ -730,6 +737,69 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     @Override
     public boolean scaleWithMetalFx(final @Nullable GpuTextureView from, final GpuTextureView to,
                                     final int contentWidth, final int contentHeight) {
+        return false;
+    }
+
+    // ------------------------------------------------- the resource operations this path has not reached
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * No, and said once in the log: this path has no mipmap command yet. The Metal 4 compute encoder carries
+     * copies and barriers and no {@code generateMipmapsForTexture:}, which is the Metal 3 road's blit call, so
+     * there is nothing to answer with until the migration's mipmap slice.
+     */
+    @Override
+    public boolean generateMipmaps(final GpuTexture texture) {
+        return refuseResourceOperation("generateMipmaps");
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * No: a storage texture is written by a compute dispatch or a blit fill on this engine, and this path has
+     * neither yet. The caller's fallback is the contract's own answer to a false.
+     */
+    @Override
+    public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {
+        return refuseResourceOperation("clearStorageTexture");
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * No: a region copy between storage textures is a 3D subresource operation, where the copies this path does
+     * have are whole-texture and 2D-region moves between the game's own textures.
+     */
+    @Override
+    public boolean copyStorageTextureRegion(final GpuTexture source, final GpuTexture destination,
+                                            final int sourceX, final int sourceY, final int sourceZ,
+                                            final int destinationX, final int destinationY, final int destinationZ,
+                                            final int width, final int height, final int depth) {
+        return refuseResourceOperation("copyStorageTextureRegion");
+    }
+
+    /** What has already been said about a resource operation this path cannot perform, so each says it once. */
+    private final Set<String> refusedResourceOperations = new HashSet<>();
+
+    /**
+     * The one answer this generation can give an operation it has not implemented: false, with the reason said
+     * once.
+     * <p>
+     * <strong>False is the contract's own fallback and not a silent drop.</strong> Every caller of these three
+     * operations takes a boolean and has another road for a false - that is what the shape is for - so this says
+     * "not here" where the plan's section 35 forbids saying nothing. What made carrying the contract necessary is
+     * the dispatch above it rather than these operations: the client installs its capability adapter for a
+     * backend that carries this contract, and it decides that from the contract's presence, so a generation that
+     * omitted it lost the attachment-contents half that <em>does</em> work - measured, as a pack's stores that
+     * were never elided and a bridge line that never appeared.
+     */
+    private boolean refuseResourceOperation(final String operation) {
+        if (this.refusedResourceOperations.add(operation)) {
+            Metallum.LOGGER.warn("Metal 4 frame encoder: {} is not implemented on this path yet, so the caller"
+                    + " takes its own fallback. The contract is carried anyway because the capability dispatch"
+                    + " asks for it whole, and the attachment-contents half of it does work here", operation);
+        }
         return false;
     }
 

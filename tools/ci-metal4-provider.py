@@ -113,18 +113,40 @@ for needle, why in (
         raise SystemExit("metal 4 provider: " + why)
 
 # The encoder: the neutral contract, the ring it owns, and a named refusal for every operation it lacks.
-if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras {" not in encoder:
+if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,\n        MetalFrameResourceCommands {" \
+        not in encoder:
     raise SystemExit("metal 4 provider: the encoder does not implement the neutral frame contract, so the "
                      "device cannot hold it")
-# Which optional contracts this path carries, and why each one it does not. Presentation is the surface's own
-# request. MetalFrameExtras now carries the attachment-contents question, which the pack side asks before every
-# pass and which this path can answer in full. MetalFrameResourceCommands stays missing on purpose: it is an
-# operation this path cannot perform yet, and a bridged caller must find it absent and take its own fallback
-# rather than receive a do-nothing body.
-if "MetalFrameResourceCommands" in encoder.split("implements", 1)[1].split("{", 1)[0]:
-    raise SystemExit("metal 4 provider: the encoder claims MetalFrameResourceCommands, which this path cannot "
-                     "perform yet - a bridged caller must find it missing and take its own fallback rather than "
-                     "receive a do-nothing body")
+# Which optional contracts this path carries, and what each one is here for. Presentation is the surface's own
+# request. MetalFrameExtras carries the attachment-contents question, which the pack side asks before every pass
+# and which this path answers in full. MetalFrameResourceCommands is carried with three honest refusals, and the
+# *carrying* is the part that matters: the client installs its capability adapter for a backend that carries this
+# contract, so a generation that omitted it lost the attachment half that does work here - measured, a pack's
+# stores were never elided on Metal 4 and the attachment bridge's "the backend was told" line never appeared.
+if "MetalFrameResourceCommands" not in encoder.split("implements", 1)[1].split("{", 1)[0]:
+    raise SystemExit("metal 4 provider: the encoder dropped MetalFrameResourceCommands, which does not cost it "
+                     "three unimplemented operations but the whole capability dispatch - the attachment-contents "
+                     "half included, which is measured to stop arriving when the contract is absent")
+for needle, why in (
+    ("public boolean generateMipmaps(final GpuTexture texture) {\n        return refuseResourceOperation(\"generateMipmaps\");",
+     "mipmap generation no longer refuses by name, so a caller would be told a chain was built"),
+    ("public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {\n"
+     "        return refuseResourceOperation(\"clearStorageTexture\");",
+     "clearing a storage texture no longer refuses by name, so a caller would be told it was cleared"),
+    ("return refuseResourceOperation(\"copyStorageTextureRegion\");",
+     "a storage-texture region copy no longer refuses by name, so a caller would be told it was copied"),
+    ("private boolean refuseResourceOperation(final String operation) {",
+     "the three resource refusals no longer run through one helper, so one of them can be answered without a "
+     "name or without a line in the log"),
+    ("this.refusedResourceOperations.add(operation)",
+     "a resource refusal is not remembered, so an operation called every frame would fill the log"),
+    ("Metal 4 frame encoder: {} is not implemented on this path yet, so the caller",
+     "the resource refusal no longer names the operation it refused"),
+    ("+ \" takes its own fallback.",
+     "the resource refusal no longer says what the caller does instead of the operation"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 # What a pass said about its attachments reaches the pass and not the encoder that outlives it: the statement is
 # taken and cleared before the pass is built, exactly as the Metal 3 encoder takes it, so a pass nobody described
 # cannot inherit the last described pass's answers. A wrong DontCare is a wrong image rather than a slower frame,
