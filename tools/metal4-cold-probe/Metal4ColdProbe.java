@@ -37,6 +37,7 @@ import java.util.Optional;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 multiTarget=&lt;bool&gt; multiTargetReason=&lt;text&gt;
  *                 depthDraw=&lt;bool&gt; depthDrawReason=&lt;text&gt;
+ *                 depthSample=&lt;bool&gt; depthSampleReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -204,6 +205,8 @@ public final class Metal4ColdProbe {
         String multiTargetReason = "-";
         boolean depthDraw = false;
         String depthDrawReason = "-";
+        boolean depthSample = false;
+        String depthSampleReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -245,6 +248,13 @@ public final class Metal4ColdProbe {
             depthDraw = makeAndSubmit && MTL4Probe.canDrawWithDepth(device);
             if (!depthDraw) {
                 depthDrawReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And the other half of the depth smoke: a depth one pass wrote, sampled by the next through a
+            // table and read back as a colour. A depth attachment that tests and writes says nothing about
+            // whether a shader can read it afterwards.
+            depthSample = makeAndSubmit && MTL4Probe.canSampleDepth(device);
+            if (!depthSample) {
+                depthSampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -351,6 +361,8 @@ public final class Metal4ColdProbe {
                     + " multiTargetReason=" + multiTargetReason.replace(' ', '_')
                     + " depthDraw=" + depthDraw
                     + " depthDrawReason=" + depthDrawReason.replace(' ', '_')
+                    + " depthSample=" + depthSample
+                    + " depthSampleReason=" + depthSampleReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

@@ -410,6 +410,15 @@ for needle, why in (
      "the driver does not count the depth draw smoke's failures"),
     ("if (( depth_draw_failures > 0 )); then",
      "the driver counts the depth draw smoke's failures and does not fail the run on them"),
+    # And the sampling half of depth, counted apart from the draw.
+    ('+ " depthSample=" + depthSample', "the harness does not print the depth sampling smoke's answer"),
+    ('+ " depthSampleReason=" + depthSampleReason',
+     "the harness does not print why the depth sampling smoke failed"),
+    ("MTL4Probe.canSampleDepth(device)", "the harness never asks the depth sampling smoke"),
+    ("depth_sample_failures=\"$(grep -c ' depthSample=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the depth sampling smoke's failures"),
+    ("if (( depth_sample_failures > 0 )); then",
+     "the driver counts the depth sampling smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -520,6 +529,55 @@ for needle, why in (
      "the depth-stencil state is built without the caller's compare function"),
 ):
     if needle not in builtin_source:
+        raise SystemExit("cold-probe harness: " + why)
+if "public static boolean canSampleDepth(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the depth sampling smoke is gone, so the harness's depthSample field "
+                     "would report a call that is not there")
+sample_probe = engine_probe_source[engine_probe_source.index("public static boolean canSampleDepth("):]
+sample_probe = sample_probe[:sample_probe.index("private static float[] depthClearColor()")]
+for needle, why in (
+    ("newSampledDepthTarget(device)",
+     "the depth the reader samples is created without the ShaderRead bit, and a texture with only the "
+     "render-target bit is refused as a sample source by the driver"),
+    ("new MTL4RenderEncoder.Depth(depth, SAMPLE_DEPTH_CLEAR)",
+     "the writer does not clear the depth attachment it is about to draw over"),
+    ("barrierForSubsequentEncoders()",
+     "the whole point of the smoke is a dependency between two passes and no barrier is encoded, so the reader "
+     "has nothing ordering it against the writer"),
+    ("table = MTL4ArgumentTable.create(device, 0L, 1L, 1L);",
+     "the reader has no one-texture, one-sampler table to sample the depth through"),
+    ("table.texture(depth)", "the depth texture is never put in the reader's table"),
+    ("setArgumentTable(table, STAGE_FRAGMENT)",
+     "the reader's table is never assigned to the fragment stage"),
+    ("MTLTexture.bytes(depth, pixel, 4L, x, y, 1L, 1L);",
+     "the depth buffer's own value is not read, so a failure cannot say what the pass wrote"),
+    ("MTLTexture.bytes(readerTarget, pixel, 4L, x, y, 1L, 1L);",
+     "the value the reader's shader wrote is not read back, so the smoke is about the buffer and not about "
+     "sampling it"),
+    ("Math.abs(read - expectedPixel) > 1",
+     "the sampled depth is compared with no tolerance at all, which the eight-bit conversion of a float depth "
+     "cannot meet - or with a tolerance wide enough to hide the quarter-range difference the smoke looks for"),
+    ("releaseIfPresent(sampler);",
+     "the sampler the smoke makes is never released, so a session of probes leaks one sampler each time"),
+):
+    if needle not in sample_probe:
+        raise SystemExit("cold-probe harness: " + why)
+# Scoped to the helper, because the same two bits are set by another smoke's source texture: a pin that read the
+# whole file would be satisfied by that call site while the depth texture lost its readability.
+if "private static MemorySegment newSampledDepthTarget(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the shader-readable depth target helper is gone, so the smoke's depth "
+                     "texture is whatever the writer's helper makes - which has no ShaderRead bit")
+sampled_depth_helper = engine_probe_source[
+    engine_probe_source.index("private static MemorySegment newSampledDepthTarget("):]
+sampled_depth_helper = sampled_depth_helper[:sampled_depth_helper.index("/**")]
+for needle, why in (
+    ("descriptor.pixelFormat(MTLPixelFormat.Depth32Float);",
+     "the sampled depth target is not a Depth32Float texture"),
+    ("descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ);",
+     "the sampled depth target's usage bits are not both set, so the texture a pass wrote cannot be sampled by "
+     "the pass after it"),
+):
+    if needle not in sampled_depth_helper:
         raise SystemExit("cold-probe harness: " + why)
 if "EXPECTED_MRT_PIXELS = {" not in engine_probe_source:
     raise SystemExit("cold-probe harness: the multi-target smoke has no table of the values its slots are "

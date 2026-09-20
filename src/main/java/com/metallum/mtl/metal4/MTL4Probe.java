@@ -1874,6 +1874,280 @@ public final class MTL4Probe {
         }
     }
 
+    /** What the depth-sampling smoke clears its depth attachment to, and what the triangle writes over it. */
+    private static final double SAMPLE_DEPTH_CLEAR = 0.5;
+    /** The depth value that survives the round trip, in the eight bits a colour target keeps it in. */
+    private static final int NEAR_DEPTH_PIXEL = 64;
+    private static final int CLEARED_DEPTH_PIXEL = 128;
+
+    /**
+     * The reader pass of the depth-sampling smoke: the sampled depth as the red channel, straight out.
+     * <p>
+     * The uv is the fragment's own position over the target's size, which is the only mapping that makes the
+     * sampled texel the one this pixel's depth belongs to - a uv from a vertex attribute would be a second thing
+     * that could be wrong. The depth goes out as it is rather than quantised by the shader, so a wrong depth is
+     * a wrong number rather than a wrong category.
+     */
+    private static final String DEPTH_SAMPLE_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct DepthSampleOut {
+              float4 position [[position]];
+            };
+
+            vertex DepthSampleOut metallum_depth_sample_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+
+              DepthSampleOut out;
+              out.position = float4(corners[vertexId], 0.0, 1.0);
+              return out;
+            }
+
+            fragment float4 metallum_depth_sample_probe_fs(
+              DepthSampleOut in [[stage_in]],
+              texture2d<float> source [[texture(0)]],
+              sampler nearest [[sampler(0)]]
+            ) {
+              const float size = 64.0;
+              float2 uv = in.position.xy / size;
+              float depth = source.sample(nearest, uv).r;
+              return float4(depth, 0.0, 0.0, 1.0);
+            }
+            """;
+
+    /**
+     * Depth written by one pass and sampled by the next: the half of the plan's depth smoke that is about a
+     * depth texture being readable at all.
+     * <p>
+     * The first pass clears the depth attachment to 0.5 and draws one triangle at 0.25 over part of it, so the
+     * depth buffer holds two known values in two known places. It ends with the producer barrier, because a pass
+     * that samples what an earlier pass wrote has to say so on this command model. The second pass samples the
+     * depth texture through a table - one texture, one sampler - at each fragment's own position and writes the
+     * sampled value out as a colour, and both readings are compared against what the first pass left: 0.25 where
+     * the triangle is, 0.5 where it is not.
+     * <p>
+     * The colour target keeps eight bits a channel, so a depth comes back at one of 256 levels: the two expected
+     * pixels are the conversions of 0.25 and 0.5 (64 and 128), and the comparison allows one level either way
+     * because that is what the conversion is. One level is 0.4 per cent of the depth range, and the two values
+     * this smoke has to tell apart are a quarter of the range apart - so the tolerance cannot hide the fault it
+     * is looking for, and a reader that gave back the clear value everywhere or the near value everywhere fails.
+     * <p>
+     * The depth texture is created with {@code ShaderRead} as well as the render-target bit: a texture with only
+     * the render-target bit is refused as a sample source, and that refusal is the driver's rather than this
+     * engine's.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a depth a pass wrote can be sampled by a later pass and read back
+     */
+    public static boolean canSampleDepth(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("depthSample", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment writerTarget = MemorySegment.NULL;
+        MemorySegment depth = MemorySegment.NULL;
+        MemorySegment readerTarget = MemorySegment.NULL;
+        MemorySegment writerPipeline = MemorySegment.NULL;
+        MemorySegment readerPipeline = MemorySegment.NULL;
+        MemorySegment depthState = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MTL4ArgumentTable table = null;
+        MTL4RenderEncoder writer = null;
+        MTL4RenderEncoder reader = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("depthSample", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            writerTarget = newTarget(device);
+            depth = newSampledDepthTarget(device);
+            readerTarget = newTarget(device);
+            if (ObjC.isNil(writerTarget) || ObjC.isNil(depth) || ObjC.isNil(readerTarget)) {
+                return failed("depthSample", "one of the three textures came back nil from"
+                        + " newTextureWithDescriptor:");
+            }
+
+            writerPipeline = MTLBuiltinPipelines.buildPipelineForProbe(DEPTH_MSL, "metallum_depth_probe_vs",
+                    "metallum_depth_probe_fs", new long[]{MTLPixelFormat.RGBA8Unorm.value},
+                    MTLPixelFormat.Depth32Float.value);
+            readerPipeline = MTLBuiltinPipelines.buildPipelineForProbe(DEPTH_SAMPLE_MSL,
+                    "metallum_depth_sample_probe_vs", "metallum_depth_sample_probe_fs",
+                    MTLPixelFormat.RGBA8Unorm.value);
+            depthState = MTLBuiltinPipelines.depthStencilStateForProbe(MTLCompareFunction.Less, true);
+            if (ObjC.isNil(writerPipeline) || ObjC.isNil(readerPipeline) || ObjC.isNil(depthState)) {
+                return failed("depthSample", "a pipeline or the depth-stencil state came back nil: writer="
+                        + !ObjC.isNil(writerPipeline) + " reader=" + !ObjC.isNil(readerPipeline) + " state="
+                        + !ObjC.isNil(depthState));
+            }
+
+            table = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (table == null) {
+                return failed("depthSample", "newArgumentTableWithDescriptor: answered nil for a one-texture,"
+                        + " one-sampler table");
+            }
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("depthSample", "newSamplerStateWithDescriptor: answered nil for a nearest sampler"
+                        + " that supports argument buffers");
+            }
+            if (!table.texture(depth) || !table.sampler(sampler)) {
+                return failed("depthSample", "the table refused setTexture:atIndex: for the depth texture or"
+                        + " setSamplerState:atIndex: for its sampler");
+            }
+
+            BEGIN.send(buffer, allocator);
+
+            // The writer: a colour target it only clears, a depth attachment cleared to 0.5, and one triangle at
+            // 0.25 - the DRAWN half of the depth smoke, reused for its geometry rather than for its readings.
+            writer = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(writerTarget,
+                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    new MTL4RenderEncoder.Depth(depth, SAMPLE_DEPTH_CLEAR), "the depth writer");
+            if (writer == null) {
+                END.send(buffer);
+                return false;
+            }
+            SET_RENDER_PIPELINE_STATE.send(writer.encoder(), writerPipeline);
+            if (!writer.setDepthStencilState(depthState)) {
+                END.send(buffer);
+                return failed("depthSample", "the writer's encoder did not answer setDepthStencilState:");
+            }
+            DRAW.send(writer.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+            if (!writer.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("depthSample", "the writer does not answer the producer barrier, so the pass that"
+                        + " samples its depth has no encoded dependency on it");
+            }
+            writer.endEncoding();
+
+            // The reader: the depth texture through the table, at each fragment's own position.
+            reader = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(readerTarget,
+                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the depth reader");
+            if (reader == null) {
+                END.send(buffer);
+                return false;
+            }
+            SET_RENDER_PIPELINE_STATE.send(reader.encoder(), readerPipeline);
+            if (!reader.setArgumentTable(table, STAGE_FRAGMENT)) {
+                END.send(buffer);
+                return failed("depthSample", "the reader's encoder did not answer"
+                        + " setArgumentTable:atStages: for the fragment stage");
+            }
+            DRAW.send(reader.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+            reader.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("depthSample", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " passes never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                long last = TARGET_SIZE - 1L;
+
+                // (8, 32) is inside the triangle the writer drew at 0.25; (48, 16) is outside it, where the
+                // writer left the 0.5 it cleared to. Both are read from the depth texture and from the reader's
+                // colour, so a failure says what the depth held as well as what the shader saw.
+                if (!sampledDepthMatches(depth, readerTarget, pixel, 8L, 32L, NEAR_DEPTH, NEAR_DEPTH_PIXEL,
+                        "the triangle the writer drew")) {
+                    return false;
+                }
+                if (!sampledDepthMatches(depth, readerTarget, pixel, 48L, 16L, SAMPLE_DEPTH_CLEAR,
+                        CLEARED_DEPTH_PIXEL, "the clear the writer left")) {
+                    return false;
+                }
+
+                // The two readings are the check that the sample follows the position and is not one texel
+                // smeared over the target: the same shader produced 64 at one pixel and 128 at the other, which
+                // is a whole quarter of the depth range apart. A third corner would only repeat the second.
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("depthSample", "sampling or reading back the depth texture threw " + threw);
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+            if (reader != null) {
+                reader.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(readerPipeline);
+            releaseIfPresent(writerPipeline);
+            releaseIfPresent(sampler);
+            releaseIfPresent(readerTarget);
+            releaseIfPresent(depth);
+            releaseIfPresent(writerTarget);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * One pixel of the depth-sampling smoke: the depth texture's own value and the colour the reader wrote from
+     * it, both compared against what the writer left. False with a reason set when either is wrong.
+     */
+    private static boolean sampledDepthMatches(final MemorySegment depth, final MemorySegment readerTarget,
+                                               final MemorySegment pixel, final long x, final long y,
+                                               final double expectedDepth, final int expectedPixel,
+                                               final String which) {
+        MTLTexture.bytes(depth, pixel, 4L, x, y, 1L, 1L);
+        float stored = pixel.get(JAVA_FLOAT, 0L);
+        if (Math.abs(stored - expectedDepth) > 0.0001f) {
+            return failed("depthSample", "the depth buffer at (" + x + "," + y + ") reads " + stored + " where "
+                    + which + " is " + expectedDepth);
+        }
+
+        MTLTexture.bytes(readerTarget, pixel, 4L, x, y, 1L, 1L);
+        int read = pixel.get(JAVA_BYTE, 0L) & 0xFF;
+        // One level either way is the eight-bit conversion of a float depth and not a tolerance on the
+        // measurement: 255 levels over the depth range, against two values a quarter of the range apart.
+        if (Math.abs(read - expectedPixel) > 1) {
+            return failed("depthSample", "the reader wrote " + read + " at (" + x + "," + y + ") where sampling"
+                    + " " + which + " (" + stored + ") should give " + expectedPixel + ", so the depth texture a"
+                    + " pass wrote did not arrive in the pass that sampled it");
+        }
+
+        return true;
+    }
+
     /** The depth smoke's colour clear, as the descriptor's four components. */
     private static float[] depthClearColor() {
         return new float[]{DEPTH_CLEAR_PIXEL[0] / 255.0f, DEPTH_CLEAR_PIXEL[1] / 255.0f,
@@ -2704,6 +2978,22 @@ public final class MTL4Probe {
             descriptor.width(TARGET_SIZE);
             descriptor.height(TARGET_SIZE);
             descriptor.usage(USAGE_RENDER_TARGET);
+            descriptor.storageMode(MTLStorageMode.Shared);
+            return device.newTexture(descriptor);
+        }
+    }
+
+    /**
+     * The same, readable by a shader as well as by a pass: what a later pass samples needs
+     * {@code MTLTextureUsageShaderRead} as well as the render-target bit, and a texture created with only the
+     * render-target bit is refused as a sample source by the driver rather than by this engine.
+     */
+    private static MemorySegment newSampledDepthTarget(final MTLDevice device) {
+        try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+            descriptor.pixelFormat(MTLPixelFormat.Depth32Float);
+            descriptor.width(TARGET_SIZE);
+            descriptor.height(TARGET_SIZE);
+            descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ);
             descriptor.storageMode(MTLStorageMode.Shared);
             return device.newTexture(descriptor);
         }
