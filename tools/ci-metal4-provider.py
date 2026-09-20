@@ -291,11 +291,10 @@ for needle, why in (
      "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
     ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
      "the fragment table is not sized from the plan"),
-    ("Metal4BindingPlan.Slot slot = this.plan.slot(name);",
-     "a binding is filled without looking it up in the pipeline's layout"),
     ("if (slot == null) {\n            throw new IllegalStateException(\"the Metal 4 pipeline \"",
      "a name the pipeline does not declare is not refused, so a layout mismatch would be a silently dropped "
      "binding - the half frame section 35 forbids"),
+    ("if (slot.buffer() == texture) {", "a texture bound to a buffer's name is not refused, or the other way"),
     ("private static final boolean TRACE = Boolean.getBoolean(\"metallum.metal4Trace\");",
      "the pass trace is not off unless a session asks for it, so every session would log a line per draw"),
     ('Metallum.LOGGER.info("Metal 4 trace: indexed draw {} of {} indices at {} of {} bytes, type {},"',
@@ -544,6 +543,7 @@ for needle, why in (
     ("public int textureSlots(final int stage) {", "the plan does not answer a stage's texture slots"),
     ("public int samplerSlots(final int stage) {", "the plan does not answer a stage's sampler slots"),
     ("return this.byName.get(name);", "the plan does not look a binding up by the name the pack gave it"),
+    ("return this.byName.get(name);", "the plan does not look a binding up by the name the pack gave it"),
     ("public boolean sampled() {", "a slot does not say whether it has a sampler beside it"),
 ):
     if needle not in plan_source:
@@ -711,6 +711,63 @@ for needle, why in (
      "it: at one slot the commands a trace prints before the fault report are the faulting submission's"),
 ):
     if needle not in ring and needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
+# --- residency, which is what the frame path's addresses are -------------------------------------------------
+# The new command model binds a buffer by GPU address and an address is not a reference, so nothing but a
+# residency set keeps the allocation behind it resident. This is not a nicety: the first forced Metal 4 runs
+# ended in a kernel GPURestart and an MTL4CommandQueueErrorTimeout until the frame path declared what it reads,
+# and the A/B is one line of wiring - with the declarations, no restart and no timeout; without them, both.
+RESIDENCY = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4ResidencySet.java"
+if not RESIDENCY.is_file():
+    raise SystemExit("metal 4 provider: MTL4ResidencySet.java is gone, so the frame path cannot declare what its"
+                     " addresses name")
+residency_source = RESIDENCY.read_text(encoding="utf-8")
+for needle, why in (
+    ('Msg.of("newResidencySetWithDescriptor:error:", ADDRESS, ADDRESS, ADDRESS)',
+     "the residency set has no factory, so nothing can be declared"),
+    ('Msg.ofVoid("addAllocation:", ADDRESS)', "an allocation cannot be added to the set"),
+    ('Msg.ofVoid("commit")', "the set cannot be committed, so its additions never take effect"),
+    ('Msg.ofVoid("requestResidency")', "residency is never requested, which is the whole point of the set"),
+    ('Msg.of("allocationCount", JAVA_LONG)', "the set cannot be asked what it holds"),
+    ('Msg.ofVoid("endResidency")', "the set is released without ending its residency"),
+    ("public boolean add(final MemorySegment allocation) {", "the wrapper cannot add an allocation"),
+    ("public boolean commit() {", "the wrapper cannot commit"),
+    ("public boolean requestResidency() {", "the wrapper cannot request residency"),
+):
+    if needle not in residency_source:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ('Msg.ofVoid("addResidencySet:", ADDRESS)',
+     "the ring cannot hand a residency set to its queue, so the frame's declarations would belong to nothing"),
+    ("public boolean addResidencySet(final MemorySegment set) {", "the ring has no call that takes a set"),
+    ("void useResource(final @Nullable MemorySegment allocation) {",
+     "the frame encoder cannot be told what the frame reads through an address"),
+    ("MTL4ResidencySet.create(this.executionState.device(), 64L,", "the frame encoder makes no residency set"),
+    ("commitResidency();", "the frame's declarations are never committed before its work is"),
+    ("this.residencyAttached = this.ring.addResidencySet(this.residency.handle());",
+     "the set is never given to the queue, so the GPU is never told about it"),
+    ("this.residency.close();", "the set is never released with the encoder"),
+):
+    if needle not in ring and needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
+# Every place the frame path binds something by address or id has to declare it, which is the difference the A/B
+# measured: an attachment, a sampled texture, a uniform, a vertex layout and an index buffer are five different
+# call sites and each one is pinned separately, because a pin on one of them would be satisfied by the others.
+for needle, why in (
+    ("this.owner.useResource(attachmentTexture);", "a colour attachment is not declared resident"),
+    ("this.owner.useResource(depthTexture);", "a depth attachment is not declared resident"),
+    ("this.owner.useResource(textureView.nativeHandle());", "a sampled texture is not declared resident"),
+    ("        declare(slice.buffer());", "a uniform buffer's allocation is not declared resident"),
+    ("        declare(buffer.buffer());", "a vertex layout's allocation is not declared resident"),
+    ("        declare(buffer);", "an index buffer's allocation is not declared resident, which is the case the"
+     " header names by name"),
+    ("        this.owner.useResource(metal.metalBuffer().handle());", "the declaration does not reach the"
+     " allocation the address belongs to"),
+):
+    if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------

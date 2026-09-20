@@ -194,6 +194,8 @@ public final class Metal4ColdProbe {
         String fenceReason = "-";
         boolean indexed = false;
         String indexedReason = "-";
+        boolean residency = false;
+        String residencyReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -252,6 +254,12 @@ public final class Metal4ColdProbe {
             indexed = makeAndSubmit && MTL4Probe.canDrawIndexed(device);
             if (!indexed) {
                 indexedReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // Whether this device can be told what has to stay resident, which is what the frame path's
+            // addresses depend on: the fault that ended the first full-frame runs was an undeclared residency.
+            residency = makeAndSubmit && MTL4Probe.canDeclareResidency(device);
+            if (!residency) {
+                residencyReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -318,6 +326,8 @@ public final class Metal4ColdProbe {
                     + " fenceReason=" + fenceReason.replace(' ', '_')
                     + " index=" + indexed
                     + " indexReason=" + indexedReason.replace(' ', '_')
+                    + " residency=" + residency
+                    + " residencyReason=" + residencyReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was

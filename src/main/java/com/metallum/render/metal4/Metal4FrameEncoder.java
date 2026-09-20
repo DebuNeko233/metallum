@@ -11,6 +11,7 @@ import com.metallum.mtl.metal4.MTL4ArgumentTable;
 import com.metallum.mtl.metal4.MTL4ComputeEncoder;
 import com.metallum.mtl.metal4.MTL4FrameRing;
 import com.metallum.mtl.metal4.MTL4RenderEncoder;
+import com.metallum.mtl.metal4.MTL4ResidencySet;
 import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
@@ -39,7 +40,9 @@ import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The Metal 4 frame encoder: the object the executing generation's frame would be built from.
@@ -131,6 +134,24 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /** The one-texture, one-sampler table the present triangle reads the picture through, made once. */
     @Nullable
     private MTL4ArgumentTable presentTable;
+    /**
+     * The allocations this frame path reads <em>through addresses</em>, declared resident as they are bound.
+     * <p>
+     * The new command model binds buffers by GPU address - the argument table's {@code setAddress:atIndex:} and
+     * the indexed draw's {@code indexBuffer} - and an address is not a reference, so nothing in the command
+     * buffer keeps the allocation behind it resident. This machine's {@code MTL4RenderCommandEncoder.h} says
+     * what to do: "Use an instance of {@code MTLResidencySet} to mark residency of the index buffer the
+     * {@code indexBuffer} parameter references." Made on first use, owned by this encoder, released with it.
+     */
+    @Nullable
+    private MTL4ResidencySet residency;
+    /** What the set already holds, by the allocation's own address, so a frame does not add the same one twice. */
+    private final Set<Long> declaredAllocations = new LinkedHashSet<>();
+    /** Whether the set has been handed to the queue, which is once and not once a frame. */
+    private boolean residencyAttached;
+    private boolean residencyDirty;
+    /** Whether a residency failure has been said already, so a device that cannot do it says so once. */
+    private boolean residencyWarned;
 
     private boolean closed;
 
@@ -201,6 +222,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             presentAll();
             return;
         }
+        commitResidency();
         if (!this.ring.endAndSubmit()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: a frame could not be submitted - {}", this.ring.refusal());
         }
@@ -286,6 +308,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.presentTable.close();
             this.presentTable = null;
         }
+        if (this.residency != null) {
+            this.residency.close();
+            this.residency = null;
+        }
         this.ring.close();
     }
 
@@ -368,8 +394,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     @Override
     public void writeToBuffer(final @NonNull GpuBufferSlice destination, final @NonNull ByteBuffer data) {
         MetalGpuBuffer target = bufferOf(destination.buffer());
+        useResource(target.metalBuffer().handle());
         int length = data.remaining();
         GpuBufferSlice staging = this.transientMemory.uploadStaging(data, 4L, GpuBuffer.USAGE_COPY_SRC);
+        useResource(bufferOf(staging.buffer()).metalBuffer().handle());
         if (!copyEncoder().copyBufferToBuffer(bufferOf(staging.buffer()).nativeHandle(),
                 staging.offset(), target.nativeHandle(), destination.offset(), length)) {
             throw new IllegalStateException("the Metal 4 copy pass refused a " + length + "-byte buffer write");
@@ -403,6 +431,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         int bytesPerImage = rowBytes * height;
         GpuBufferSlice staging = this.transientMemory.uploadStaging(
                 data.duplicate().limit(bytesPerImage), pixelSize, GpuBuffer.USAGE_COPY_SRC);
+        useResource(bufferOf(staging.buffer()).metalBuffer().handle());
+        useResource(texture.nativeHandle());
         if (!copyEncoder().copyBufferToTexture(bufferOf(staging.buffer()).nativeHandle(), staging.offset(), rowBytes,
                 bytesPerImage, width, height, 1L, texture.nativeHandle(), depthOrLayer, mipLevel, x, y, 0L)) {
             throw new IllegalStateException("the Metal 4 copy pass refused a texture write of " + width + "x"
@@ -418,6 +448,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                                     final int destinationY, final int copyWidth, final int copyHeight,
                                     final int mipLevel, final int arrayLayer) {
         MetalGpuTexture texture = textureOf(destination);
+        useResource(bufferOf(source.buffer()).metalBuffer().handle());
+        useResource(texture.nativeHandle());
         int texelSize = texture.pixelSize();
         long skipBytes = (sourceX + (long) sourceY * sourceWidth) * texelSize;
         long rowBytes = (long) sourceWidth * texelSize;
@@ -452,6 +484,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                                     final int mipLevel, final int x, final int y, final int width,
                                     final int height) {
         MetalGpuTexture texture = textureOf(source);
+        useResource(texture.nativeHandle());
+        useResource(bufferOf(destination).metalBuffer().handle());
         int rowBytes = width * texture.pixelSize();
         int bytesPerImage = rowBytes * height;
         if (!copyEncoder().copyTextureToBuffer(texture.nativeHandle(), 0L, mipLevel, x, y, 0L, width, height, 1L,
@@ -466,6 +500,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     public void copyTextureToTexture(final @NonNull GpuTexture source, final @NonNull GpuTexture destination,
                                      final int mipLevel, final int x, final int y, final int width, final int height,
                                      final int destinationX, final int destinationY) {
+        useResource(textureOf(source).nativeHandle());
+        useResource(textureOf(destination).nativeHandle());
         if (!copyEncoder().copyTextureRegion(textureOf(source).nativeHandle(), 0L, mipLevel, x, y, 0L, width,
                 height, 1L, textureOf(destination).nativeHandle(), 0L, mipLevel, destinationX, destinationY, 0L)) {
             throw new IllegalStateException("the Metal 4 copy pass refused a " + width + "x" + height
@@ -778,6 +814,12 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     private void encodeClear(final String operation, final MTL4RenderEncoder.Color[] colors,
                              final MTL4RenderEncoder.Depth depth, final long width, final long height) {
+        for (MTL4RenderEncoder.Color color : colors) {
+            useResource(color.texture());
+        }
+        if (depth != null) {
+            useResource(depth.texture());
+        }
         if (this.currentPass != null) {
             submitRenderPass();
         }
@@ -803,6 +845,64 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             pass.endEncoding();
         } finally {
             pass.close();
+        }
+    }
+
+    /**
+     * Says that this frame's work reads an allocation through an address, so it has to stay resident.
+     * <p>
+     * Called where the frame path binds something by address or id - an attachment, a sampled texture, a uniform
+     * or vertex buffer, an index buffer, a staging block a copy reads - and it is deliberately generous: the
+     * first version declares everything a frame touches rather than working out per-resource usage, which the
+     * migration's sections 52 to 53 ask for and this is not. What it replaces is declaring nothing at all.
+     */
+    void useResource(final @Nullable MemorySegment allocation) {
+        if (ObjC.isNil(allocation) || !this.declaredAllocations.add(allocation.address())) {
+            return;
+        }
+        if (this.residency == null) {
+            this.residency = MTL4ResidencySet.create(this.executionState.device(), 64L, "the frame's addresses");
+        }
+        if (this.residency == null || !this.residency.add(allocation)) {
+            this.declaredAllocations.remove(allocation.address());
+            if (!this.residencyWarned) {
+                this.residencyWarned = true;
+                Metallum.LOGGER.warn("Metal 4 frame encoder: the frame path cannot declare residency on this"
+                        + " device, so the allocations it binds by address are only as resident as the driver"
+                        + " makes them");
+            }
+            return;
+        }
+        this.residencyDirty = true;
+    }
+
+    /**
+     * Makes what the frame declared resident, before the work that reads it is committed.
+     * <p>
+     * The order is the header's: an added allocation is "uncommitted until commit is called", and the set is
+     * handed to the queue once, so the commit is what tells the GPU about this frame's addresses and the queue
+     * already holds the set that carries them.
+     */
+    private void commitResidency() {
+        if (this.residency == null || !this.residencyDirty) {
+            return;
+        }
+        this.residencyDirty = false;
+        if (!this.residency.commit() || !this.residency.requestResidency()) {
+            if (!this.residencyWarned) {
+                this.residencyWarned = true;
+                Metallum.LOGGER.warn("Metal 4 frame encoder: the residency set would not commit or request"
+                        + " residency, so the frame's addresses are not declared");
+            }
+            return;
+        }
+        if (!this.residencyAttached) {
+            this.residencyAttached = this.ring.addResidencySet(this.residency.handle());
+            if (!this.residencyAttached && !this.residencyWarned) {
+                this.residencyWarned = true;
+                Metallum.LOGGER.warn("Metal 4 frame encoder: the queue would not take the residency set, so what"
+                        + " the frame binds by address is not declared to it");
+            }
         }
     }
 

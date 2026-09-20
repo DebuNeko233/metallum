@@ -905,6 +905,82 @@ public final class MTL4Probe {
         }
     }
 
+    /**
+     * Whether this device can be told what has to stay resident, which is the one part of Metal 4's resource
+     * model the frame path depends on and does not own.
+     * <p>
+     * The new command model binds buffers by <em>GPU address</em>, and an address is not a reference: the
+     * header's own note on the draw methods says to use a residency set for "the index buffer the
+     * {@code indexBuffer} parameter references". Nothing here can prove what the GPU does with a page that is
+     * not resident - that is the frame path's business and its own run is the evidence - but what can be proven
+     * is that the objects exist, that allocations go in, that they are counted, and that a queue takes the set.
+     */
+    public static boolean canDeclareResidency(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newResidencySetWithDescriptor:error:")
+                && !device.respondsTo("newResidencySetWithDescriptor:")) {
+            return failed("residency", "this device answers to neither newResidencySetWithDescriptor:error: nor"
+                    + " newResidencySetWithDescriptor:, so a path that binds by address cannot say what has to"
+                    + " stay resident");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MTLBuffer buffer = null;
+        MemorySegment texture = MemorySegment.NULL;
+        MTL4ResidencySet set = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            if (ObjC.isNil(queue)) {
+                return failed("residency", "newMTL4CommandQueue answered nil, so there is no queue to give a"
+                        + " residency set to");
+            }
+
+            buffer = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
+            if (buffer.gpuAddress() == 0L) {
+                return failed("residency", "the device gave the buffer no GPU address, so there is no allocation"
+                        + " whose residency could be declared");
+            }
+            texture = newTarget(device);
+            if (ObjC.isNil(texture)) {
+                return failed("residency", "the " + TARGET_SIZE + "x" + TARGET_SIZE + " texture came back nil");
+            }
+
+            set = MTL4ResidencySet.create(device, 4L, "the residency proof");
+            if (set == null) {
+                return failed("residency", "the device made no residency set, so nothing can be declared");
+            }
+            if (!set.add(buffer.handle()) || !set.add(texture)) {
+                return failed("residency", "the set refused an allocation, so it cannot declare what a frame"
+                        + " reads through an address");
+            }
+            if (!set.commit() || !set.requestResidency()) {
+                return failed("residency", "the set would not commit or request residency, so its allocations"
+                        + " would stay undeclared");
+            }
+            if (set.allocationCount() != 2L) {
+                return failed("residency", "the set holds " + set.allocationCount() + " allocations after two"
+                        + " were added and committed, so what it declares is not what was put in it");
+            }
+            // Handed to the queue last, which is the order the frame path uses: the set is committed and
+            // resident before the queue is told that its work is the work the set describes.
+            if (!responds(queue, "addResidencySet:")) {
+                return failed("residency", "the Metal 4 queue does not answer addResidencySet:, so a set could"
+                        + " be made and never be part of anything the queue runs");
+            }
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("residency", "the residency proof threw " + threw);
+        } finally {
+            if (set != null) {
+                set.close();
+            }
+            releaseIfPresent(texture);
+            releaseIfPresent(buffer);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** What the first indexed triangle's flat colour reads back as. */
     private static final int[] EXPECTED_INDEXED_PIXEL = {64, 128, 128, 255};
     /** What the second reads back as, which is what says the first index became an address offset. */

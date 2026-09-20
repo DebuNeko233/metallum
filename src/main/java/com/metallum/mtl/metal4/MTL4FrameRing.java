@@ -79,6 +79,7 @@ public final class MTL4FrameRing implements AutoCloseable {
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
     private static final Msg COMMIT_WITH_OPTIONS = Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG,
             ADDRESS);
+    private static final Msg ADD_RESIDENCY_SET = Msg.ofVoid("addResidencySet:", ADDRESS);
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg WAIT_DRAWABLE = Msg.ofVoid("waitForDrawable:", ADDRESS);
     private static final Msg SIGNAL_DRAWABLE = Msg.ofVoid("signalDrawable:", ADDRESS);
@@ -316,6 +317,21 @@ public final class MTL4FrameRing implements AutoCloseable {
      */
     public long nextSubmission() {
         return signalled + 1L;
+    }
+
+    /**
+     * Marks a residency set as part of this command queue, which is how the work this ring commits is told what
+     * has to stay resident while it runs.
+     * <p>
+     * Handed to the queue once and not once a commit: the queue keeps the set, and the set's own commits are
+     * what add and remove allocations as the frame path's resources change.
+     */
+    public boolean addResidencySet(final MemorySegment set) {
+        if (closed || ObjC.isNil(set) || !responds(queue, "addResidencySet:")) {
+            return false;
+        }
+        ADD_RESIDENCY_SET.send(queue, set);
+        return true;
     }
 
     /**

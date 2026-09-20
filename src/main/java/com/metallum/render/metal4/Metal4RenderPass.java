@@ -159,7 +159,12 @@ final class Metal4RenderPass implements RenderPassBackend {
                         + view.getWidth(0) + "x" + view.getHeight(0) + ", expected " + width + "x" + height);
             }
             Vector4fc clear = attachment.clearValue().orElse(null);
-            colors[index] = new MTL4RenderEncoder.Color(nativeHandle(view), AttachmentContents.CARRIED,
+            MemorySegment attachmentTexture = nativeHandle(view);
+            // Declared resident, because an attachment is read and written as a resource the command buffer
+            // names by object: this is the half of residency that is not about addresses, and the frame path
+            // declares both from the same place.
+            this.owner.useResource(attachmentTexture);
+            colors[index] = new MTL4RenderEncoder.Color(attachmentTexture, AttachmentContents.CARRIED,
                     clear == null ? null : new float[]{clear.x(), clear.y(), clear.z(), clear.w()});
         }
 
@@ -174,7 +179,9 @@ final class Metal4RenderPass implements RenderPassBackend {
                 throw new IllegalArgumentException("Metal render-pass depth attachment is " + view.getWidth(0) + "x"
                         + view.getHeight(0) + ", expected " + width + "x" + height);
             }
-            depth = new MTL4RenderEncoder.Depth(nativeHandle(view),
+            MemorySegment depthTexture = nativeHandle(view);
+            this.owner.useResource(depthTexture);
+            depth = new MTL4RenderEncoder.Depth(depthTexture,
                     depthAttachment.clearValue().isPresent() ? depthAttachment.clearValue().getAsDouble() : null);
         }
 
@@ -357,6 +364,7 @@ final class Metal4RenderPass implements RenderPassBackend {
                     + " engine's: " + view.getClass().getName() + ", " + sampler.getClass().getName());
         }
         Sampled sampled = new Sampled(textureView.nativeHandle(), metalSampler.nativeHandle());
+        this.owner.useResource(textureView.nativeHandle());
         this.textureBindings.put(name, sampled);
         Metal4BindingPlan.Slot slot = slotFor(name, true);
         if (slot != null) {
@@ -372,6 +380,7 @@ final class Metal4RenderPass implements RenderPassBackend {
 
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice slice) {
+        declare(slice.buffer());
         long address = addressOf(slice.buffer(), slice.offset());
         this.uniformAddresses.put(name, address);
         Metal4BindingPlan.Slot slot = slotFor(name, false);
@@ -390,6 +399,7 @@ final class Metal4RenderPass implements RenderPassBackend {
      */
     @Override
     public void setVertexBuffer(final int slot, final @NonNull GpuBufferSlice buffer) {
+        declare(buffer.buffer());
         this.vertexBuffers.put(slot, buffer);
         Metal4BindingPlan plan = this.plan;
         if (plan != null) {
@@ -399,13 +409,18 @@ final class Metal4RenderPass implements RenderPassBackend {
     }
 
     /**
-     * The slot the current pipeline gives this name for this kind of resource, or null where no pipeline is set
-     * and the binding is only remembered.
+     * The slot the current pipeline gives this name for this kind of resource, or null where there is none.
      * <p>
-     * A pipeline that is set and does not declare the name is a named fault rather than something to skip: the
-     * layout the pack asked for and the layout the shader was compiled against disagree, and dropping the
-     * binding would be the half frame section 35 forbids. So is a name the pipeline declares as the other kind
-     * of resource.
+     * <strong>A name the pipeline does not declare is skipped, and that is the game's own contract.</strong> The
+     * engine hands every pass a fixed set of default uniforms - projection, model view, fog and the rest - and a
+     * given pipeline reads some of them: the first forced Metal 4 run that got this far bound {@code Fog} while
+     * the panorama pipeline was set, and that pipeline has no fog. The Metal 3 pass is built for exactly this: a
+     * name goes into a map, a draw encodes the names the pipeline's argument buffer declares, and the others are
+     * never encoded. Faulting instead made this path stricter than the reference it is being compared against,
+     * which is a bug in the guard and not in the frame.
+     * <p>
+     * A name the pipeline declares as the <em>other kind</em> of resource stays a fault: a texture bound to a
+     * buffer's name is not a name nobody reads, it is two disagreeing layouts for one name.
      */
     private Metal4BindingPlan.@Nullable Slot slotFor(final String name, final boolean texture) {
         if (this.pipeline == null) {
@@ -510,6 +525,10 @@ final class Metal4RenderPass implements RenderPassBackend {
      */
     @Override
     public void setIndexBuffer(final @NonNull GpuBuffer buffer, final @NonNull IndexType type) {
+        // The indexed draw's index buffer is an address, which is the case the header names by name: "Use an
+        // instance of MTLResidencySet to mark residency of the index buffer the indexBuffer parameter
+        // references."
+        declare(buffer);
         MTLIndexType indexType = MTLIndexType.from(type);
         this.indexBufferAddress = addressOf(buffer, 0L);
         this.indexBufferLength = buffer.size();
@@ -646,6 +665,17 @@ final class Metal4RenderPass implements RenderPassBackend {
     @Nullable
     private MTL4ArgumentTable tableFor(final int stage) {
         return (stage & MetalShaderStages.VERTEX) != 0 ? this.vertexTable : this.fragmentTable;
+    }
+
+    /**
+     * Declares the allocation behind an engine buffer, because the address this pass binds names it.
+     * <p>
+     * The address is what the table and the draw selector take; the allocation is what has to stay resident.
+     */
+    private void declare(final @NonNull GpuBuffer buffer) {
+        if (buffer instanceof MetalGpuBuffer metal) {
+            this.owner.useResource(metal.metalBuffer().handle());
+        }
     }
 
     /** The GPU address a slice of an engine buffer starts at, which is what a table binds. */

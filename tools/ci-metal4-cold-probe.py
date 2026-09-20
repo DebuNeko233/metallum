@@ -639,4 +639,38 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- residency, which is what the frame path's addresses depend on -----------------------------------------
+# The new command model binds buffers by GPU address, and an address is not a reference: this machine's
+# MTL4RenderCommandEncoder.h says to use a residency set for "the index buffer the indexBuffer parameter
+# references". What the smoke can prove is the objects: allocations go in, they are counted, the set commits and
+# requests residency, and the queue answers the call that makes the set part of its work.
+for needle, why in (
+    ("public static boolean canDeclareResidency(", "nothing measures whether this device can be told what has to"
+     " stay resident, which is the model the frame path's addresses depend on"),
+    ("set = MTL4ResidencySet.create(device, 4L, \"the residency proof\");",
+     "the smoke never makes a residency set"),
+    ("if (!set.add(buffer.handle()) || !set.add(texture)) {",
+     "the smoke never adds an allocation, so nothing is declared"),
+    ("if (!set.commit() || !set.requestResidency()) {",
+     "the smoke does not commit and request, which is what makes an added allocation effective"),
+    ("if (set.allocationCount() != 2L) {",
+     "the smoke does not check that what the set holds is what was put in it"),
+    ('if (!responds(queue, "addResidencySet:")) {',
+     "the smoke does not ask whether the queue takes a residency set at all"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " residency=" + residency', "the harness does not print the residency smoke's answer"),
+    ('+ " residencyReason=" + residencyReason', "the harness does not print why the residency smoke failed"),
+    ("MTL4Probe.canDeclareResidency(device)", "the harness never asks the residency smoke"),
+    ("residency_failures=\"$(grep -c ' residency=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the residency smoke's failures"),
+    ("if (( residency_failures > 0 )); then", "the driver counts the residency smoke's failures and does not "
+     "fail the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")
