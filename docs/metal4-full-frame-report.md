@@ -13,8 +13,10 @@ device that was really run.
 ## Starting SHAs
 
 ```
-Metallum: e55985e  (perf/optimisation; the plan's own reference is 81b3426, which this is one commit past -
-                    868d5b5 then e55985e, both Metal 3 bookkeeping, neither a Metal 4 change)
+Metallum: e55985e  STARTING_METALLUM_SHA, two commits past the plan's own reference 81b3426 -
+                    e55985e (the byte unit, the submission-index window, the tail test) then 868d5b5
+                    (the same two wordings). Both are Metal 3 bookkeeping and neither is a Metal 4 change.
+                    The first Metal 4 commit after this line is 050d1dd, the cold-probe harness.
 Vitrail:  4380250f  (perf/optimisation; exactly the plan's reference)
 ```
 
