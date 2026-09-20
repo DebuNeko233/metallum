@@ -776,8 +776,13 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         return view.texture() instanceof MetalGpuTexture texture ? texture.pixelSize() : 0;
     }
 
-    /** The GPU address a slice of an engine buffer starts at, which is what a table binds. */
-    private static long addressOf(final GpuBuffer buffer, final long offset) {
+    /**
+     * The GPU address a slice of an engine buffer starts at, which is what a table binds.
+     * <p>
+     * Package-private because the compute dispatch binds buffers the same way and this is the one place that says
+     * what an address of a slice is: a second copy of this addition is a second chance to leave the offset out.
+     */
+    static long addressOf(final GpuBuffer buffer, final long offset) {
         if (!(buffer instanceof MetalGpuBuffer metal)) {
             throw new IllegalStateException("the Metal 4 pass was handed a buffer that is not this engine's: "
                     + buffer.getClass().getName());

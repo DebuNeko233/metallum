@@ -113,7 +113,7 @@ for needle, why in (
         raise SystemExit("metal 4 provider: " + why)
 
 # The encoder: the neutral contract, the ring it owns, and a named refusal for every operation it lacks.
-if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,\n        MetalFrameResourceCommands {" \
+if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,\n        MetalFrameResourceCommands, MetalFrameComputeCommands {" \
         not in encoder:
     raise SystemExit("metal 4 provider: the encoder does not implement the neutral frame contract, so the "
                      "device cannot hold it")
@@ -1253,5 +1253,76 @@ for needle, why in (
 if "ObjC.release" in without_comments(compute):
     raise SystemExit("metal 4 provider: the compute pipeline handle releases a native object, but the pipeline "
                      "state belongs to the context and is shared by every handle to the same kernel")
+
+
+# --- and the dispatch, which is the half after the compile -------------------------------------------------
+# The Metal 3 bridge's dispatch is per-resource encoder calls; this one is a table, and the facts that matter are
+# the ones the new command model changed: the bindings are filled before the encoder opens, every allocation is
+# declared resident, and the table is handed over before the dispatch that snapshots it.
+dispatch_body = body_of(encoder, "public boolean dispatchCompute(")
+
+if "MetalFrameResourceCommands, MetalFrameComputeCommands {" not in encoder:
+    raise SystemExit("metal 4 provider: the frame encoder does not carry the neutral compute contract, so the "
+                     "flat bridge's capability check answers no and the client never dispatches here")
+
+for needle, why in (
+    ("pipeline instanceof Metal4ComputePipeline resource", "the dispatch does not recognise this generation's "
+     "pipeline resource, so it would answer false for its own handles"),
+    ("MTL4ArgumentTable table = resource.table(this.executionState.device());",
+     "the dispatch does not fill the handle's own table, which is the only way this command model binds"),
+    ("case UNIFORM_BUFFER, STORAGE_BUFFER -> bindDispatchBuffer(table, binding, buffers);",
+     "buffers are not bound by address through the table"),
+    ("case SAMPLED_IMAGE -> bindDispatchSampledImage(table, binding, textures, samplers);",
+     "sampled images are not bound with their samplers"),
+    ("case STORAGE_IMAGE -> bindDispatchStorageImage(table, binding, textures);",
+     "storage images are not bound, so a kernel that writes one writes nothing"),
+    ("MTL4ComputeEncoder compute = copyEncoder();",
+     "the dispatch opens its own encoder instead of the frame's compute encoder, so the copies it depends on "
+     "are not ordered against it"),
+    ("compute.setComputePipelineState(resource.pipelineState())",
+     "the dispatch never hands the encoder the pipeline"),
+    ("compute.setArgumentTable(table)", "the dispatch never hands the encoder the table it filled"),
+    ("compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)",
+     "the dispatch is not encoded as workgroups, which is the shape a pack's vkCmdDispatch has"),
+):
+    if needle not in dispatch_body:
+        raise SystemExit("metal 4 provider: " + why)
+
+# The order of the three encoder calls is the API's: a pipeline, then the table it reads through, then the
+# dispatch that snapshots it. Any other order encodes a dispatch the driver has nothing to run or nothing to
+# bind, which is why this is a position check and not three presence checks.
+_pipeline_at = dispatch_body.index("compute.setComputePipelineState(resource.pipelineState())")
+_table_at = dispatch_body.index("compute.setArgumentTable(table)")
+_dispatch_at = dispatch_body.index("compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)")
+if not _pipeline_at < _table_at < _dispatch_at:
+    raise SystemExit("metal 4 provider: the dispatch hands over the pipeline, the table and the workgroups in "
+                     "an order the API does not allow")
+
+# The residency declaration is not decoration on this path: an undeclared allocation reads as nothing at all,
+# which the cold record measured one declaration at a time.
+for helper in ("bindDispatchBuffer", "bindDispatchSampledImage", "bindDispatchStorageImage"):
+    helper_body = body_of(encoder, f"private void {helper}(")
+    if "useResource(" not in helper_body:
+        raise SystemExit(f"metal 4 provider: {helper} binds a resource without declaring it resident, and an "
+                         "undeclared allocation reads as nothing at all on this path")
+# And every binding is resolved before the encoder is opened, so a caller's missing binding is a refusal with
+# nothing encoded rather than a half-bound dispatch.
+if "((MetalGpuTexture) view.texture()).markContentsDirty();" \
+        not in body_of(encoder, "private void bindDispatchStorageImage("):
+    raise SystemExit("metal 4 provider: the storage image's bookkeeping is not invalidated, so a clear the "
+                     "engine recorded as materialized would be elided over contents a dispatch overwrote")
+
+_first_binding = min(dispatch_body.index(call) for call in
+                     ("bindDispatchBuffer(", "bindDispatchSampledImage(", "bindDispatchStorageImage("))
+if dispatch_body.index("copyEncoder()") < _first_binding:
+    raise SystemExit("metal 4 provider: the dispatch opens the encoder before the bindings are resolved, so a "
+                     "missing binding would be found with the pipeline already set")
+# The address of a slice is one addition, and it is not this class's to repeat.
+if "Metal4RenderPass.addressOf(slice.buffer(), slice.offset())" not in body_of(encoder, "private void bindDispatchBuffer("):
+    raise SystemExit("metal 4 provider: the dispatch computes a buffer's GPU address itself instead of using "
+                     "the one helper that adds the slice offset")
+# The kind this generation cannot bind is refused rather than dropped.
+if "case TEXEL_BUFFER -> throw new IllegalStateException(" not in dispatch_body:
+    raise SystemExit("metal 4 provider: a binding kind the dispatch cannot fill is dropped in silence")
 
 print("Metal 4 execution provider contract: PASS")

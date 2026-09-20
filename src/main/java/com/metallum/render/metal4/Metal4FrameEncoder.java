@@ -16,12 +16,16 @@ import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalComputeTranslator;
+import com.metallum.render.shared.MetalFrameComputeCommands;
 import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.shared.MetalFrameResourceCommands;
 import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuSampler;
 import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalGpuTextureView;
 import com.metallum.render.shared.MetalTransientMemory;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -30,6 +34,7 @@ import com.mojang.blaze3d.systems.RenderPassBackend;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.TransientMemory;
+import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.buffers.GpuFence;
@@ -46,6 +51,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -59,8 +66,8 @@ import java.util.Set;
  * for in one object: begin a frame, choose a slot, wait for it, reset it, begin, encode, end, commit
  * <em>once</em>, retire.
  * <p>
- * <strong>What does not exist refuses by name.</strong> Every operation this path has not encoded - a compute
- * dispatch, a timestamp, a multi-draw, a clear of one colour and depth texture in one call - raises
+ * <strong>What does not exist refuses by name.</strong> Every operation this path has not encoded - a timestamp,
+ * a multi-draw, a clear of one colour and depth texture in one call - raises
  * {@link Metal4ExecutionProvider.Unimplemented} named for itself, or is answered by an absent contract a bridge
  * finds missing and falls back from. That is section 35's rule, and the same reason the provider's own refusals
  * carry a stage: an operation dropped in silence is a half frame, and a half frame is worse than a frame that
@@ -83,7 +90,10 @@ import java.util.Set;
  * not exist until the Metal 4 MetalFX milestone. {@link MetalFrameResourceCommands} is carried for the same kind
  * of reason read the other way: mipmap generation is implemented on the frame's copy encoder - this command model
  * puts it there, and the texture is declared resident first - and the other two operations answer false, which is
- * the contract's own shape for a caller's fallback. Omitting the contract altogether does not cost this path
+ * the contract's own shape for a caller's fallback. {@link MetalFrameComputeCommands} is the newest of them, and
+ * the one a pack's own kernels arrive through: a dispatch is a table filled from the compiled handle's bindings
+ * and {@code dispatchThreadgroups:threadsPerThreadgroup:} on that same encoder - which is what closes the loop
+ * that began with a storage texture having no contents. Omitting the contract altogether does not cost this path
  * those operations, it costs the capability dispatch as a whole. Measured: a pack's per-attachment statements
  * never reached this encoder, because the client decides whether to install its capability adapter from
  * {@code MetalFrameBridge.supports}, which asks whether the encoder carries <em>this</em> contract. A generation
@@ -98,7 +108,7 @@ import java.util.Set;
  */
 @Environment(EnvType.CLIENT)
 final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,
-        MetalFrameResourceCommands {
+        MetalFrameResourceCommands, MetalFrameComputeCommands {
 
     /** The zeroing kernels this frame dispatches for a storage texture, made once per device by whoever owns it. */
     private final com.metallum.mtl.metal4.MTL4StorageTexturePipelines storagePipelines;
@@ -893,6 +903,167 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         return name.endsWith("_UINT") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.UINT
                 : name.endsWith("_SINT") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.SINT
                         : com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.FLOAT;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * A dispatch on this command model is an argument table and nothing else: the new compute encoder has no
+     * per-resource setters, so the bindings the shared translation numbered - buffers by address, textures and
+     * samplers by resource id, each in its own kind's slot - are filled into the table the compiled handle owns,
+     * the table is handed over with {@code setArgumentTable:}, and the workgroups are dispatched with
+     * {@code dispatchThreadgroups:threadsPerThreadgroup:}. That last call is deliberately the one the Metal 3
+     * bridge makes and not {@code dispatchThreads}: {@code groups*} are workgroup counts, as a Vulkan
+     * {@code vkCmdDispatch} takes them, and the shader declares its own local size.
+     * <p>
+     * <strong>Everything is resolved and declared before the encoder opens.</strong> A binding the caller did not
+     * provide has to be a refusal with nothing encoded, because the pipeline state and the table are handed over
+     * in separate calls and a dispatch half-bound is a dispatch whose shader reads a slot nobody filled - and the
+     * residency declaration is not optional on this path: an allocation this frame has not declared reads as
+     * nothing at all, which the cold record measured one declaration at a time.
+     * <p>
+     * <strong>The frame's own compute encoder carries it.</strong> This command model has no blit encoder, so the
+     * copies, the mipmap generations and the dispatches are all one encoder's commands, and within it program
+     * order is the order. The two directions that are not program order are already covered where they are
+     * encoded: a pass the game left open is submitted first (which barriers it), and the pass that follows this
+     * dispatch barriers the copy encoder before it opens.
+     */
+    @Override
+    public boolean dispatchCompute(final Object pipeline, final Map<String, GpuBufferSlice> buffers,
+                                   final Map<String, GpuTextureView> textures,
+                                   final Map<String, GpuSampler> samplers,
+                                   final int groupsX, final int groupsY, final int groupsZ,
+                                   final int localX, final int localY, final int localZ) {
+        if (this.closed || !(pipeline instanceof Metal4ComputePipeline resource) || resource.closed()) {
+            return false;
+        }
+        Objects.requireNonNull(buffers, "buffers");
+        Objects.requireNonNull(textures, "textures");
+        Objects.requireNonNull(samplers, "samplers");
+        if (groupsX < 0 || groupsY < 0 || groupsZ < 0) {
+            throw new IllegalArgumentException("Compute workgroup counts must not be negative");
+        }
+        if (localX <= 0 || localY <= 0 || localZ <= 0) {
+            throw new IllegalArgumentException("Compute local size must be positive");
+        }
+        if (groupsX == 0 || groupsY == 0 || groupsZ == 0) {
+            return true;
+        }
+
+        MTL4ArgumentTable table = resource.table(this.executionState.device());
+        if (table == null) {
+            return false;
+        }
+        for (MetalComputeTranslator.Binding binding : resource.bindings().values()) {
+            switch (binding.kind()) {
+                case UNIFORM_BUFFER, STORAGE_BUFFER -> bindDispatchBuffer(table, binding, buffers);
+                case SAMPLED_IMAGE -> bindDispatchSampledImage(table, binding, textures, samplers);
+                case STORAGE_IMAGE -> bindDispatchStorageImage(table, binding, textures);
+                case TEXEL_BUFFER -> throw new IllegalStateException(
+                        "A Metal 4 compute dispatch has no texel buffer binding: " + binding.name());
+            }
+        }
+
+        // A pass the game still has open ends first: one encoder may be open on a command buffer, and the
+        // compute encoder cannot be opened under a render pass that has not ended.
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        beginFrameIfNeeded();
+        MTL4ComputeEncoder compute = copyEncoder();
+        if (compute == null || !compute.open()) {
+            return false;
+        }
+        if (!compute.setComputePipelineState(resource.pipelineState())) {
+            throw new IllegalStateException("The Metal 4 compute encoder would not take the pipeline for "
+                    + resource.label());
+        }
+        // The table is handed over after it was filled: the header snapshots the resources in it when the
+        // dispatch is encoded, so what this dispatch reads is what the table held at the call below.
+        if (!compute.setArgumentTable(table)) {
+            throw new IllegalStateException("The Metal 4 compute encoder would not take the argument table for "
+                    + resource.label());
+        }
+        if (!compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)) {
+            throw new IllegalStateException("The Metal 4 compute encoder would not dispatch "
+                    + groupsX + "x" + groupsY + "x" + groupsZ + " threadgroups for " + resource.label());
+        }
+        return true;
+    }
+
+    /** Binds one buffer of a dispatch by the address of the slice, which is what this command model takes. */
+    private void bindDispatchBuffer(final MTL4ArgumentTable table, final MetalComputeTranslator.Binding binding,
+                                    final Map<String, GpuBufferSlice> buffers) {
+        GpuBufferSlice slice = requireComputeBuffer(binding, buffers);
+        MetalGpuBuffer buffer = bufferOf(slice.buffer());
+        useResource(buffer.metalBuffer().handle());
+        if (!table.address(Metal4RenderPass.addressOf(slice.buffer(), slice.offset()), binding.bufferIndex())) {
+            throw new IllegalStateException("The Metal 4 compute table would not take the buffer "
+                    + binding.name() + " at slot " + binding.bufferIndex());
+        }
+    }
+
+    /** Binds a sampled image and its sampler: two slots, because Metal numbers those tables separately. */
+    private void bindDispatchSampledImage(final MTL4ArgumentTable table,
+                                          final MetalComputeTranslator.Binding binding,
+                                          final Map<String, GpuTextureView> textures,
+                                          final Map<String, GpuSampler> samplers) {
+        MetalGpuTextureView view = requireComputeTexture(binding, textures, "sampled image");
+        MetalGpuSampler sampler = requireComputeSampler(binding, samplers);
+        useResource(view.nativeHandle());
+        if (!table.texture(view.nativeHandle(), binding.textureIndex())
+                || !table.sampler(sampler.nativeHandle(), binding.samplerIndex())) {
+            throw new IllegalStateException("The Metal 4 compute table would not take the sampled image "
+                    + binding.name() + " and its sampler at slots " + binding.textureIndex() + " and "
+                    + binding.samplerIndex());
+        }
+    }
+
+    /**
+     * Binds a storage image, which is the one binding the shader writes.
+     * <p>
+     * Its bookkeeping is invalidated like the Metal 3 bridge invalidates it: what a deferred clear recorded about
+     * this texture is not true once a dispatch has written it, and the flag is cheap where being wrong is a
+     * silently elided clear.
+     */
+    private void bindDispatchStorageImage(final MTL4ArgumentTable table,
+                                          final MetalComputeTranslator.Binding binding,
+                                          final Map<String, GpuTextureView> textures) {
+        MetalGpuTextureView view = requireComputeTexture(binding, textures, "storage image");
+        ((MetalGpuTexture) view.texture()).markContentsDirty();
+        useResource(view.nativeHandle());
+        if (!table.texture(view.nativeHandle(), binding.textureIndex())) {
+            throw new IllegalStateException("The Metal 4 compute table would not take the storage image "
+                    + binding.name() + " at slot " + binding.textureIndex());
+        }
+    }
+
+    private static GpuBufferSlice requireComputeBuffer(final MetalComputeTranslator.Binding binding,
+                                                       final Map<String, GpuBufferSlice> buffers) {
+        GpuBufferSlice slice = buffers.get(binding.name());
+        if (slice == null || !(slice.buffer() instanceof MetalGpuBuffer) || slice.buffer().isClosed()) {
+            throw new IllegalStateException("Missing Metal 4 compute buffer " + binding.name());
+        }
+        return slice;
+    }
+
+    private static MetalGpuTextureView requireComputeTexture(final MetalComputeTranslator.Binding binding,
+                                                             final Map<String, GpuTextureView> textures,
+                                                             final String description) {
+        GpuTextureView view = textures.get(binding.name());
+        if (!(view instanceof MetalGpuTextureView metalView) || view.isClosed()) {
+            throw new IllegalStateException("Missing Metal 4 compute " + description + " " + binding.name());
+        }
+        return metalView;
+    }
+
+    private static MetalGpuSampler requireComputeSampler(final MetalComputeTranslator.Binding binding,
+                                                         final Map<String, GpuSampler> samplers) {
+        GpuSampler sampler = samplers.get(binding.name());
+        if (!(sampler instanceof MetalGpuSampler metalSampler) || metalSampler.isClosed()) {
+            throw new IllegalStateException("Missing Metal 4 compute sampler " + binding.name());
+        }
+        return metalSampler;
     }
 
     /**
