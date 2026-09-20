@@ -40,11 +40,12 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       56 probes in two runs (3 cold + 3 warm, then 30 cold + 20 warm, `--mode raw`) with 0
-                  failures, and both device smokes passing in all of them - the allocator-slot ring (new)
-                  and the drawn sampled-texture smoke. Each is reported in a field of its own and counted
-                  apart from the capability sequence, so three different questions cannot hide behind one
-                  number (the drawn smoke's own evidence from the round that added it: 100 of 100)
+this round:       53 probes in two runs (2 cold + 1 warm, then 30 cold + 20 warm, `--mode raw`) with 0
+                  failures: the drawn sampled-texture smoke and the allocator-slot ring passed in all of
+                  them, and the provider line above now reports the state's own answers. Each question is
+                  reported in a field of its own and counted apart from the capability sequence, so three
+                  different questions cannot hide behind one number (the drawn smoke's own evidence from
+                  the round that added it: 100 of 100; the ring's: 56 of 56)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -164,9 +165,27 @@ need it.
 ```
 provider:            PROVEN as a skeleton - Metal4ExecutionProvider implements the neutral
                      MetalExecutionProvider, its queue factory is real on this device
-                     (`newMTL4CommandQueue` returns a non-nil queue), and its two frame halves refuse by
-                     name: `queue=ok,state=refused(createExecutionState),encoder=refused(createFrameEncoder)`
-                     measured in the cold-probe harness, per process, on Apple Silicon
+                     (`newMTL4CommandQueue` returns a non-nil queue), and its state is a real object whose
+                     four operations answer on the real device:
+                     `queue=ok,state=ok,stateMethods=compile:refused(getOrCompilePipeline),
+                     evict:returned,clear:returned,close:returned,encoder=not-asked(needs-the-engine-device)`
+                     - measured in the cold-probe harness, per process, on Apple Silicon, identical in 53 of
+                     53 probes. The encoder is not asked there and the line says why: it is built from the
+                     engine's device, which a bare process cannot make
+frame encoder:       EXISTS as a skeleton - `render.metal4.Metal4FrameEncoder` implements the neutral
+                     `MetalFrameEncoder`, owns the frame's ring (allocators, one command buffer, one shared
+                     event), files every deferred release against a ring slot and runs it only once that
+                     slot's completion has been observed, and refuses each operation it does not encode by
+                     name: transientMemory, createRenderPass, submitRenderPass, clearColorTexture,
+                     clearColorAndDepthTextures, clearDepthTexture, writeToBuffer, copyToBuffer,
+                     writeToTexture, copyBufferToTexture, copyTextureToBuffer, copyTextureToTexture,
+                     createFence, writeTimestamp - fourteen names, which is the migration's remaining work
+                     list. NOT PROVEN: no frame has been submitted through it, because nothing encodes into
+                     one yet; its evidence is the ring's device proof plus a structural contract
+state:               PROVEN - `Metal4ExecutionState` owns the device and answers three of the neutral
+                     state's four operations truthfully (an empty cache evicts nothing, clears nothing,
+                     releases nothing) while `getOrCompilePipeline` refuses by name, because a Metal 3
+                     artifact returned there would be a Metal 4 path running Metal 3's pipelines
 reached by:          the services now hand out the provider of the EXECUTING generation rather than a
                      constant `new Metal3ExecutionProvider()`, so selected=Metal4 with executing=Metal3
                      still builds the frame from Metal 3 objects, exactly as section 19 requires - the day a
@@ -302,15 +321,22 @@ process with no window is not the same claim as a capability proven through the 
 
 1. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
-2. ~~No Metal 4 execution provider~~ - **the skeleton exists**: `Metal4ExecutionProvider` owns the queue and
-   refuses the two halves it does not have. What is missing is the frame encoder itself, which is Phase 4.
-3. **No Metal 4 frame encoder, and no blit, compute or full synchronization matrix** - all five of the plan's
-   Phase 3 native render smokes are now measured and passing on this device (`canMakeAndSubmit`'s pass,
-   `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample sequence with its encoded
-   barrier), so the work ahead of the frame is Phase 4's encoder and the later blit, compute and dependency
-   fixtures rather than the render contract. Nothing has been drawn through the client's own frame yet.
+2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
+   all exist, and each refuses, by name, exactly what it does not have.
+3. **No encode path inside the frame encoder, and no blit, compute or full synchronization matrix** - the
+   encoder owns the frame's lifetime (the ring, the deferred releases, the one commit) but every operation that
+   would render, copy, clear or measure refuses by name, so nothing has been drawn through the client's own
+   frame yet. All five of the plan's Phase 3 native render smokes are measured and passing on this device
+   (`canMakeAndSubmit`'s pass, `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample
+   sequence with its encoded barrier), so what is ahead is the render-pass path and the later blit, compute and
+   dependency fixtures rather than the render contract.
 
 ## Metal 4 full-frame implementation complete?
 
-**NO.** One milestone has been measured, and the other twenty-two of the plan's order are ahead. The
-Definition of Done in the plan has twenty-one unchecked boxes and none checked.
+**NO.** Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
+bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, and
+the frame encoder's lifetime - the ring - proven on the device. Everything the Definition of Done asks for that
+needs a frame the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT,
+depth, argument-table binding through the frame, blit, compute, the synchronization fixtures, presentation owned
+by the full path, resize, reload, dimension, shutdown, and the real-pack and performance validation. The next
+item is the frame encoder's render-pass path, and then the first no-pack frame.

@@ -2,6 +2,7 @@ import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.metal4.MTL4Probe;
 import com.metallum.render.metal4.Metal4ExecutionProvider;
+import com.metallum.render.shared.MetalExecutionState;
 
 /**
  * One Metal 4 capability probe, in a process with nothing else in it.
@@ -84,19 +85,45 @@ public final class Metal4ColdProbe {
                         || MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:");
 
         // The provider skeleton, asked on the real device and reported once per process: its queue factory is
-        // real, and its two frame halves must refuse by name rather than return something a caller would use.
-        // This is section 110's "native smoke passed + real Apple Silicon passed" for the skeleton, and it
-        // costs one queue and three calls.
+        // real, its execution state is a real object whose one unanswerable operation refuses by name, and its
+        // frame encoder needs the engine's device, which a bare process does not have. This is section 110's
+        // "native smoke passed + real Apple Silicon passed" for the skeleton, and it costs one queue and a few
+        // calls.
         String provider;
         try {
             Metal4ExecutionProvider metal4 = new Metal4ExecutionProvider();
             // Held in a final local because the device is assigned inside a try above, so it is not
-            // effectively final and cannot be captured by the two lambdas below.
+            // effectively final and cannot be captured by the lambdas below.
             MTLDevice probeDevice = device;
             long queue = metal4.commandQueue(probeDevice);
+            String stateOutcome;
+            String stateMethods;
+            try {
+                MetalExecutionState state = metal4.createExecutionState(probeDevice);
+                stateOutcome = "ok";
+                // Three of the state's four operations are true answers for a state that caches nothing; the
+                // compile path is the one it cannot answer, and it has to say so by name.
+                stateMethods = "compile:" + refusal(() -> state.getOrCompilePipeline(null, null))
+                        + ",evict:" + refusal(() -> state.evictCachedPipelines(pipeline -> false))
+                        + ",clear:" + refusal(() -> {
+                            state.clearCachesAfterGpuCompletion();
+                            return null;
+                        })
+                        + ",close:" + refusal(() -> {
+                            state.close();
+                            return null;
+                        });
+            } catch (Throwable throwable) {
+                stateOutcome = "exception(" + throwable.getClass().getSimpleName() + ")";
+                stateMethods = "-";
+            }
+            // The encoder is deliberately not asked, which is a fact about this process rather than a gap: it is
+            // built from the engine's device, which a bare process cannot make, and asking with nulls would
+            // raise a NullPointerException that reads as a device fault.
             provider = "queue=" + (queue != 0L ? "ok" : "nil")
-                    + ",state=" + refusal(() -> metal4.createExecutionState(probeDevice))
-                    + ",encoder=" + refusal(() -> metal4.createFrameEncoder(null, null, null));
+                    + ",state=" + stateOutcome
+                    + ",stateMethods=" + stateMethods
+                    + ",encoder=not-asked(needs-the-engine-device)";
         } catch (Throwable throwable) {
             provider = "queue=exception(" + throwable.getClass().getSimpleName() + ")";
         }

@@ -1,6 +1,7 @@
 package com.metallum.render.metal4;
 
 import com.metallum.mtl.MTLDevice;
+import com.metallum.mtl.metal4.MTL4FrameRing;
 import com.metallum.objc.Msg;
 import com.metallum.render.MetalDevice;
 import com.metallum.render.execution.MetalExecutionProvider;
@@ -22,11 +23,14 @@ import java.lang.foreign.ValueLayout;
  * while, and that is what this class gives it - a provider the services can hand out for the executing
  * generation, with the same neutral signatures and no generation type in any of them.
  * <p>
- * <strong>What it does not do is execute a frame, and it says so rather than half-doing it.</strong> A queue is
- * made for real, because the probe has made one on this device many times and the queue is the provider's own
- * object. The execution state and the frame encoder do not exist, so each raises {@link Unimplemented} naming
- * its stage: section 35 of the migration plan forbids an unknown operation being silently dropped, and a
- * provider that returned a null state would move the failure twenty calls later into whatever tried to use it.
+ * <strong>All three of its objects now exist, and the refusals have moved inside them.</strong> A queue is made
+ * for real; the execution state owns the device and refuses the one operation it cannot answer - compiling a
+ * Metal 4 pipeline - by name; and the frame encoder owns the frame's allocator ring and the resources a frame
+ * cannot release yet, refusing each operation the new path does not encode. Section 35 of the migration plan
+ * forbids an unknown operation being silently dropped, and a provider that returned a null object would move the
+ * failure twenty calls later into whatever tried to use it: the refusals are one level deeper, and each still
+ * names what it refused. The only refusal left here is a ring the device will not make, which is a device answer
+ * rather than a gap in the implementation.
  * <p>
  * <strong>And it cannot be reached by accident.</strong> The services hand out the provider of the generation
  * that is <em>executing</em>, and the device states that generation as Metal 3 until a Metal 4 frame path is
@@ -56,15 +60,28 @@ public final class Metal4ExecutionProvider implements MetalExecutionProvider {
 
     @Override
     public MetalExecutionState createExecutionState(final MTLDevice device) {
-        throw new Unimplemented("createExecutionState",
-                "no Metal 4 execution state exists yet, so the frame path is still Metal 3's");
+        // A real object now, and an honest one: it owns the device this generation executes on and refuses the
+        // one operation it cannot answer - compiling a Metal 4 pipeline - by name, rather than returning a state
+        // whose first use would fail somewhere else.
+        return new Metal4ExecutionState(device);
     }
 
     @Override
     public MetalFrameEncoder createFrameEncoder(final MetalDevice device, final MetalExecutionState executionState,
                                                 final ShaderSource defaultShaderSource) {
-        throw new Unimplemented("createFrameEncoder",
-                "no Metal 4 frame encoder exists yet, so the frame path is still Metal 3's");
+        if (!(executionState instanceof Metal4ExecutionState metal4)) {
+            throw new IllegalArgumentException("Metal 4 frame encoder requires Metal4ExecutionState");
+        }
+
+        try {
+            return new Metal4FrameEncoder(device, metal4, defaultShaderSource);
+        } catch (MTL4FrameRing.Refused refused) {
+            // The ring is the frame's lifetime and cannot be made without its allocators, its command buffer and
+            // its event - so a device that will not give them is a device this path cannot run on, and the
+            // refusal names the object that came back nil rather than leaving a half-made encoder behind.
+            throw new Unimplemented("createFrameEncoder", "the frame's ring could not be made at stage "
+                    + refused.stage() + ": " + refused.getMessage());
+        }
     }
 
     /**

@@ -260,6 +260,22 @@ public final class MTL4FrameRing implements AutoCloseable {
         return slot;
     }
 
+    /**
+     * The slot the next {@link #beginFrame()} will use.
+     * <p>
+     * Exposed because a resource that cannot be released yet has to be filed against the frame that will prove
+     * its slot free, and that frame is the next one on this slot - so the owner needs to know which slot it is
+     * before it begins.
+     */
+    public int nextSlot() {
+        return (slot + 1) % allocators.length;
+    }
+
+    /** Whether a frame is begun and not yet submitted. */
+    public boolean begun() {
+        return begun;
+    }
+
     /** Why the last call answered no, for a caller that has to say what stopped it. */
     @Nullable
     public String refusal() {

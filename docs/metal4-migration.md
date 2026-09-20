@@ -768,6 +768,70 @@ short-circuited by `if (false && ...)`, is the shape a text pin cannot see: it i
 wait-count assertion on the device, which is why that assertion exists and why the two halves are noted
 together in the contract file.
 
+## The frame encoder, and the list its refusals draw
+
+Phase 4's other half is `render.metal4.Metal4FrameEncoder`, and what it is now is a frame's lifetime with an
+empty encode path inside it. It implements the neutral `MetalFrameEncoder` - the contract the device holds - and
+owns exactly three things: the ring above, the resources a frame cannot release yet, and the release order
+between them.
+
+- **The ring.** One per encoder, made from the queue the execution services answer with, so no generation owns
+  the device's queue factory and no second lifetime model grows beside the sidecar's (§31).
+- **The deferred releases.** `queueForDestroy` files a release against a ring slot - the frame's own slot while
+  a frame is begun, the next slot otherwise - and that slot's bucket is emptied only when the ring has proved
+  the slot's previous submission complete. A release that ran any earlier would be a resource given back while
+  the GPU was still reading what it fed, which is the corruption the ring exists to prevent.
+- **The wait.** `waitForSubmittedGpuWork` waits the ring and *then* runs the releases, in that order, and `close`
+  does the same before letting the ring go. The order is the method.
+
+**Everything else refuses, by name, one line per operation**: `transientMemory`, `createRenderPass`,
+`submitRenderPass`, `clearColorTexture`, `clearColorAndDepthTextures` (both forms), `clearDepthTexture`,
+`writeToBuffer`, `copyToBuffer`, `writeToTexture`, `copyBufferToTexture`, `copyTextureToBuffer` (both forms),
+`copyTextureToTexture`, `createFence` and `writeTimestamp`. Each raises the provider's `Unimplemented` carrying
+the operation's own name, so the refusals *are* the migration's remaining work list and a log line can be read
+against the plan. Section 35 is the rule they follow: an operation this path cannot encode is never dropped
+into a half frame - and a frame that says it cannot run is worth more than one that runs half of itself.
+
+`submit()` is the one method that is neither: it ends and commits the frame **once** where a frame is begun, and
+does nothing where none is. Nothing begins one yet, because a frame's begin belongs to whatever first encodes
+into it and that is the render-pass path this class does not have - so `submit()` today finds no frame, which is
+a fact about the migration's stage rather than a licence to skip the commit.
+
+**What it deliberately does not implement** are the bridges' optional contracts - `MetalFrameExtras`,
+`MetalFrameResourceCommands`, `MetalFramePresentation` and the rest. Each of them is an operation this path
+cannot perform yet, and the bridges already treat a missing contract as the explicit answer: `MetalFrameBridge`
+answers false, `MetalAttachmentBridge` does nothing, and `MetalSurface` raises naming the contract. Implementing
+them with do-nothing bodies would be exactly the silent drop the plan forbids, so the class declares one
+contract and lists only `MetalFrameEncoder`.
+
+**The state beside it** is `Metal4ExecutionState`: it owns the device this generation executes on, and three of
+the neutral state's four operations are true answers rather than refusals - nothing is cached, so eviction
+selects nothing, clearing after GPU completion clears nothing, and closing releases nothing. The fourth,
+`getOrCompilePipeline`, refuses by name: there is no Metal 4 compilation chain, and a state that answered it with
+a Metal 3 artifact would be a Metal 4 path silently running Metal 3's pipelines.
+
+**Measured on the device**: the state is made for real inside the cold-probe harness, and its four operations
+answer there - `53 of 53 probes` reported
+
+```
+state=ok,stateMethods=compile:refused(getOrCompilePipeline),evict:returned,clear:returned,close:returned
+```
+
+across 30 cold processes, 20 warm repeats and the three-probe smoke of the change itself, with no
+exception and no variation between them. `encoder=not-asked(needs-the-engine-device)` is recorded beside it, because the
+encoder is built from the engine's device, which a bare process cannot make: asking it with nulls would raise a
+NullPointerException that reads as a device fault. So the encoder's evidence is the ring's own device proof plus
+a structural contract, and **no frame has been submitted through it** - nothing encodes into one yet. That is
+recorded as the gap it is rather than implied away.
+
+`tools/ci-metal4-provider.py` was updated rather than replaced, because the concept moved and did not change:
+what used to be pinned as "the provider refuses the two halves it does not have" is now "the provider returns
+this generation's objects, and each refuses, by name, exactly the operations it does not have". It pins the
+state's three answers and its one refusal, the encoder's neutrality, the ring it makes, the queue coming from
+the services, the single refusal helper, the per-slot filing of releases, the wait-before-release order, every
+one of the fourteen refused operations, the absence of Metal 3 imports and the absence of static native state -
+and seventeen mutations were run against those pins, all caught.
+
 ## The slices, in order
 
 Each slice is measured before the next one starts, with the harness and the recipe in
