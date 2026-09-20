@@ -22,6 +22,7 @@ import com.metallum.render.metal4.Metal4ExecutionProvider;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
  *                 sampled=&lt;bool&gt; sampledReason=&lt;text&gt; sampledDraw=&lt;bool&gt; sampledDrawReason=&lt;text&gt;
+ *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
  *                 provider=&lt;text&gt; epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
@@ -102,6 +103,7 @@ public final class Metal4ColdProbe {
 
         String sampledReason = "-";
         String sampledDrawReason = "-";
+        String ringReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -114,6 +116,13 @@ public final class Metal4ColdProbe {
             boolean sampledDraw = makeAndSubmit && MTL4Probe.canDrawSampledTexture(device);
             if (!sampledDraw) {
                 sampledDrawReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The frame's allocator rule, measured before any frame encoder is built over it: twelve frames
+            // over three slots, each slot reset only after its own completion value was observed, and every
+            // frame's pixel its own. A field of its own, for the same reason the drawn smoke is.
+            boolean ring = makeAndSubmit && MTL4Probe.canReuseAllocatorSlots(device);
+            if (!ring) {
+                ringReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -151,6 +160,8 @@ public final class Metal4ColdProbe {
                     + " sampledReason=" + sampledReason.replace(' ', '_')
                     + " sampledDraw=" + sampledDraw
                     + " sampledDrawReason=" + sampledDrawReason.replace(' ', '_')
+                    + " ring=" + ring
+                    + " ringReason=" + ringReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the

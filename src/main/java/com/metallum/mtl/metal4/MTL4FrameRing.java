@@ -1,0 +1,323 @@
+package com.metallum.mtl.metal4;
+
+import com.metallum.mtl.MTLDevice;
+import com.metallum.objc.Msg;
+import com.metallum.objc.ObjC;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import org.jspecify.annotations.Nullable;
+
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
+
+/**
+ * The frame's allocator ring: the slots a Metal 4 command buffer is encoded on, and the completion value each
+ * slot's commit signalled.
+ * <p>
+ * This is the one part of the frame's lifetime where a guess is a use-after-free, so the rule is written down
+ * once, here, and every caller rotates through this object rather than keeping a ring of its own. The SDK says
+ * it in two places, both read off this machine's headers rather than remembered:
+ * <ul>
+ *   <li>{@code MTL4CommandAllocator.h}: {@code reset} "marks the command allocator's heaps for reuse", and the
+ *       caller "is responsible to ensure that all command buffers with memory originating from this allocator
+ *       instance are complete before calling resetting it" - the proof is the caller's, not the framework's;</li>
+ *   <li>{@code MTL4CommandBuffer.h}: an allocator "only service[s] a single command buffer at a time", it may
+ *       be reused once the buffer has been ended, and a command buffer is re-begun for the next frame.</li>
+ * </ul>
+ * So: <strong>a slot is never reset until the value its own commit signalled has been observed</strong>, and
+ * that wait happens in {@link #beginFrame()} at the moment the slot is about to be reused - the only place it
+ * can be proved, because it is the only place that knows the slot is about to be handed back to the GPU.
+ * <p>
+ * <strong>What this object owns and what it does not.</strong> It owns the allocators, the command buffer and
+ * the shared event, and it releases them in {@link #close()}. It does <em>not</em> own the queue: the queue
+ * belongs to the generation that made it, and the ring is given its handle. Nothing here is static - the ring
+ * is a device-owned object, so a device teardown, a reload or a second device cannot reach another session's
+ * allocators, which is the lifetime rule the migration's section 106 asks the production path to keep.
+ * <p>
+ * The frame model it realises is the conservative one the present sidecar already runs
+ * ({@code Metal4Path.java:371-381}) and the migration's section 31 asks not to duplicate: three slots, one
+ * command buffer, one commit a frame, and the incoming slot's own completion value awaited before its
+ * allocator is reset.
+ */
+@Environment(EnvType.CLIENT)
+public final class MTL4FrameRing implements AutoCloseable {
+
+    /**
+     * Three, "the shape the sample code ships": one allocator per frame in flight. The presenting sidecar
+     * already runs this depth and the migration's section 31 says to start from the proven number rather than
+     * to optimise in-flight depth while migrating.
+     */
+    public static final int FRAMES_IN_FLIGHT = 3;
+
+    /** What one slot's reuse may wait for the GPU to finish before the ring gives up on it. */
+    private static final long WAIT_MILLIS = 2000L;
+
+    private static final Msg NEW_ALLOCATOR = Msg.of("newCommandAllocator", ADDRESS);
+    private static final Msg NEW_COMMAND_BUFFER = Msg.of("newCommandBuffer", ADDRESS);
+    private static final Msg NEW_SHARED_EVENT = Msg.of("newSharedEvent", ADDRESS);
+    private static final Msg BEGIN = Msg.ofVoid("beginCommandBufferWithAllocator:", ADDRESS);
+    private static final Msg END = Msg.ofVoid("endCommandBuffer");
+    private static final Msg RESET = Msg.ofVoid("reset");
+    private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
+    private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
+    private static final Msg WAIT_UNTIL_SIGNALED =
+            Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
+    private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
+
+    /** The queue this ring submits on, which it does not own: the generation that made it releases it. */
+    private final MemorySegment queue;
+
+    @Nullable
+    private MemorySegment event;
+    @Nullable
+    private MemorySegment commandBuffer;
+    private final MemorySegment[] allocators;
+    private final long[] awaited;
+    private long signalled;
+    private long waits;
+    private int slot = -1;
+    private boolean begun;
+    private boolean closed;
+
+    @Nullable
+    private String refusal;
+
+    private MTL4FrameRing(final MemorySegment queue, final MemorySegment event, final MemorySegment commandBuffer,
+                          final MemorySegment[] allocators) {
+        this.queue = queue;
+        this.event = event;
+        this.commandBuffer = commandBuffer;
+        this.allocators = allocators;
+        this.awaited = new long[allocators.length];
+    }
+
+    /**
+     * A ring of {@code slots} allocators on a queue the caller owns.
+     *
+     * @param device the device the allocators, the command buffer and the event come from
+     * @param queue  the queue the frame's command buffer is committed to, which this ring never releases
+     * @param slots  how many frames in flight the ring bounds; at least one
+     * @param what   what the ring is for, so a refusal names the path that wanted it
+     * @throws Refused when the device will not make one of the objects, naming the stage that came back nil
+     */
+    public static MTL4FrameRing create(final MTLDevice device, final MemorySegment queue, final int slots,
+                                       final String what) {
+        if (slots < 1) {
+            throw new Refused("slots", what + " asked for " + slots + " allocator slots, and a ring needs at"
+                    + " least one");
+        }
+        if (ObjC.isNil(queue)) {
+            throw new Refused("queue", what + " was given no queue to submit on");
+        }
+
+        MemorySegment[] allocators = new MemorySegment[slots];
+        MemorySegment commandBuffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        try {
+            for (int index = 0; index < slots; index++) {
+                MemorySegment allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+                if (ObjC.isNil(allocator) || !responds(allocator, "reset")) {
+                    ObjC.release(allocator);
+                    throw new Refused("allocator", what + " could not make allocator slot " + index + " of "
+                            + slots + " (or the allocator it made does not answer reset)");
+                }
+                allocators[index] = allocator;
+            }
+
+            commandBuffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            if (ObjC.isNil(commandBuffer) || !responds(commandBuffer, "beginCommandBufferWithAllocator:")
+                    || !responds(commandBuffer, "endCommandBuffer")) {
+                throw new Refused("commandBuffer", what + " could not make a command buffer to re-begin each"
+                        + " frame");
+            }
+
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(event) || !responds(event, "waitUntilSignaledValue:timeoutMS:")) {
+                throw new Refused("event", what + " could not make the shared event its slots' completion is"
+                        + " proved with");
+            }
+
+            return new MTL4FrameRing(queue, event, commandBuffer, allocators);
+        } catch (Refused refused) {
+            releaseIfPresent(commandBuffer);
+            releaseIfPresent(event);
+            for (MemorySegment allocator : allocators) {
+                releaseIfPresent(allocator);
+            }
+            throw refused;
+        }
+    }
+
+    /**
+     * Begins the next frame: picks the next slot, waits for that slot's own completion value where it has one,
+     * resets its allocator, and begins the command buffer on it.
+     * <p>
+     * The wait is the whole rule. It is placed here rather than in a separate call so that no caller can hold a
+     * begun frame on a slot whose previous work is still running: by the time this returns true, the slot's
+     * previous submission has completed and its heaps have been marked for reuse.
+     *
+     * @return whether the frame was begun; a false answer leaves {@link #refusal()} saying where it stopped
+     */
+    public boolean beginFrame() {
+        refusal = null;
+        if (closed) {
+            refusal = "the ring is closed";
+            return false;
+        }
+        if (begun) {
+            refusal = "a frame is already begun on slot " + slot + "; a ring holds one frame at a time";
+            return false;
+        }
+
+        int next = (slot + 1) % allocators.length;
+        if (awaited[next] != 0L) {
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, awaited[next], WAIT_MILLIS) == 0L) {
+                refusal = "slot " + next + "'s completion value " + awaited[next] + " did not arrive within "
+                        + WAIT_MILLIS + " ms, so its allocator is not known to be free and is not reset";
+                return false;
+            }
+            waits++;
+        }
+
+        RESET.send(allocators[next]);
+        BEGIN.send(commandBuffer, allocators[next]);
+        slot = next;
+        begun = true;
+        return true;
+    }
+
+    /** The command buffer the current frame is encoded into. Only valid between begin and submit. */
+    public MemorySegment commandBuffer() {
+        return commandBuffer == null ? MemorySegment.NULL : commandBuffer;
+    }
+
+    /**
+     * Ends the frame, commits it once, and signals the slot's completion value on the shared event.
+     * <p>
+     * One commit a frame is the migration's own target (section 30) and the reason this object exists: a second
+     * submission is a second lifetime to retire.
+     *
+     * @return whether the frame was ended and committed
+     */
+    public boolean endAndSubmit() {
+        refusal = null;
+        if (!begun) {
+            refusal = "no frame is begun, so there is nothing to submit";
+            return false;
+        }
+
+        END.send(commandBuffer);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment buffers = arena.allocate(ADDRESS, 1);
+            buffers.set(ADDRESS, 0L, commandBuffer);
+            COMMIT.send(queue, buffers, 1L);
+        }
+        awaited[slot] = ++signalled;
+        SIGNAL_EVENT.send(queue, event, signalled);
+        begun = false;
+        return true;
+    }
+
+    /**
+     * Waits for every submission this ring has made, which is the wait a teardown or a readback needs before it
+     * touches anything the GPU wrote.
+     * <p>
+     * The last value is enough: the queue orders its own submissions, so the completion of the newest one is
+     * the completion of all of them.
+     */
+    public boolean awaitAll() {
+        refusal = null;
+        if (signalled == 0L) {
+            return true;
+        }
+        if (WAIT_UNTIL_SIGNALED.sendLong(event, signalled, WAIT_MILLIS) == 0L) {
+            refusal = "the last signalled value " + signalled + " did not arrive within " + WAIT_MILLIS + " ms";
+            return false;
+        }
+        return true;
+    }
+
+    /** The value slot {@code index}'s commit signalled, or zero where that slot has never been used. */
+    public long awaited(final int index) {
+        return awaited[index];
+    }
+
+    /** How many submissions this ring has made. */
+    public long submissions() {
+        return signalled;
+    }
+
+    /** How many times a slot was found still in flight and waited for before it was reset. */
+    public long waits() {
+        return waits;
+    }
+
+    /** The slot the last begun frame used, or -1 before the first frame. */
+    public int slot() {
+        return slot;
+    }
+
+    /** Why the last call answered no, for a caller that has to say what stopped it. */
+    @Nullable
+    public String refusal() {
+        return refusal;
+    }
+
+    /**
+     * Releases the allocators, the command buffer and the event, and nothing the GPU may still be reading.
+     * <p>
+     * The caller owns that ordering because it owns the queue: this object cannot wait for a submission whose
+     * completion value it has already been asked to forget, and a close that waited would have taken over the
+     * execution lifecycle the frame encoder owns.
+     */
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        releaseIfPresent(commandBuffer);
+        releaseIfPresent(event);
+        commandBuffer = MemorySegment.NULL;
+        event = MemorySegment.NULL;
+        for (int index = 0; index < allocators.length; index++) {
+            releaseIfPresent(allocators[index]);
+            allocators[index] = MemorySegment.NULL;
+            awaited[index] = 0L;
+        }
+    }
+
+    /** Whether an object answers a selector, which is the question to ask before reaching for one. */
+    private static boolean responds(final MemorySegment object, final String selector) {
+        return RESPONDS_TO_SELECTOR.sendLong(object, ObjC.selector(selector)) != 0L;
+    }
+
+    private static void releaseIfPresent(final @Nullable MemorySegment object) {
+        if (object != null && !ObjC.isNil(object)) {
+            ObjC.release(object);
+        }
+    }
+
+    /**
+     * Why a ring could not be made, carrying the stage that failed - the same shape the execution provider's
+     * own refusal has, and for the same reason: "not implemented" cannot be told from "the device said no"
+     * unless the refusal says which object it was.
+     */
+    public static final class Refused extends RuntimeException {
+
+        private final String stage;
+
+        Refused(final String stage, final String why) {
+            super(why);
+            this.stage = stage;
+        }
+
+        /** One of {@code slots}, {@code queue}, {@code allocator}, {@code commandBuffer} or {@code event}. */
+        public String stage() {
+            return stage;
+        }
+    }
+}

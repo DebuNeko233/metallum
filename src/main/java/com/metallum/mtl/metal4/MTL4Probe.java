@@ -651,6 +651,164 @@ public final class MTL4Probe {
         }
     }
 
+    /** How many frames the allocator-slot proof submits: four rounds of the ring, so every slot is reused thrice. */
+    private static final int RING_FRAMES = 12;
+
+    /** What frame {@code frame} writes in the red channel: sixteen apart, so no frame's pixel is another's. */
+    private static int[] ringPixel(final int frame) {
+        return new int[]{(frame + 1) * 16, 0, 0, 255};
+    }
+
+    /**
+     * Whether an allocator slot can be reused, which is the rule the frame's whole lifetime rests on.
+     * <p>
+     * The SDK's own contract for it is one sentence - the caller "is responsible to ensure that all command
+     * buffers with memory originating from this allocator instance are complete before calling resetting it"
+     * ({@code MTL4CommandAllocator.h}) - and this sequence is that sentence turned into something the device
+     * answers: twelve frames over {@link MTL4FrameRing#FRAMES_IN_FLIGHT} slots, so every slot after the first
+     * round is reset, re-begun and re-committed while earlier frames may still be in flight.
+     * <p>
+     * It is deliberately not a smoke of sharing. Each frame owns its target, its uniform buffer and its argument
+     * table, because one table re-bound while an earlier frame is still in flight is a binding that frame would
+     * read at execute time - so the sequence isolates the one question it is asking (does a slot survive being
+     * reused once its own completion has been observed) from the one it is not (how a frame's resources are
+     * shared between frames in flight, which belongs to the frame encoder).
+     * <p>
+     * Three readings and not one: every frame's pixel must be its own, the ring must have waited for an
+     * in-flight slot exactly {@code RING_FRAMES - FRAMES_IN_FLIGHT} times, and the last submission must
+     * complete. The wait count is what keeps a passing readback from being mistaken for a proof that the rule
+     * ran - a ring that never waited would have to be a different ring, and this asserts the one that is here.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether the ring reused its slots, waited for each one, and every frame's write landed
+     */
+    public static boolean canReuseAllocatorSlots(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("ring", "the device does not answer one of the factories the ring's allocators,"
+                    + " command buffer or shared event would come from, so no slot can be reused");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment[] targets = new MemorySegment[RING_FRAMES];
+        MTLBuffer[] uniforms = new MTLBuffer[RING_FRAMES];
+        MTL4ArgumentTable[] tables = new MTL4ArgumentTable[RING_FRAMES];
+        MTL4FrameRing ring = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            if (ObjC.isNil(queue)) {
+                return failed("ring", "newMTL4CommandQueue answered nil, so there is nothing to submit a reused"
+                        + " slot's work on");
+            }
+
+            try {
+                ring = MTL4FrameRing.create(device, queue, MTL4FrameRing.FRAMES_IN_FLIGHT,
+                        "the allocator-slot proof");
+            } catch (MTL4FrameRing.Refused refused) {
+                return failed("ring", "the ring could not be made at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            MemorySegment clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(
+                    MTLPixelFormat.RGBA8Unorm.value, MTLPixelFormat.Invalid.value, true);
+            if (ObjC.isNil(clearPipeline)) {
+                return failed("ring", "the clear pipeline the frames draw with came back nil");
+            }
+
+            for (int frame = 0; frame < RING_FRAMES; frame++) {
+                MemorySegment target = newTarget(device);
+                if (ObjC.isNil(target)) {
+                    return failed("ring", "the " + TARGET_SIZE + "x" + TARGET_SIZE + " RGBA8 target of frame "
+                            + frame + " came back nil");
+                }
+                targets[frame] = target;
+
+                MTLBuffer uniform = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
+                if (uniform.gpuAddress() == 0L) {
+                    return failed("ring", "the uniform buffer of frame " + frame + " has no GPU address, so the"
+                            + " pass has no colour to write");
+                }
+                uniforms[frame] = uniform;
+                MemorySegment contents = uniform.contents().reinterpret(UNIFORM_LENGTH);
+                contents.set(JAVA_FLOAT, 0, 0.0f);
+                contents.set(JAVA_FLOAT, 32, (frame + 1) * 16 / 255.0f);
+                contents.set(JAVA_FLOAT, 36, 0.0f);
+                contents.set(JAVA_FLOAT, 40, 0.0f);
+                contents.set(JAVA_FLOAT, 44, 1.0f);
+
+                MTL4ArgumentTable table = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+                if (table == null || !table.address(uniform.gpuAddress(), 1L)) {
+                    if (table != null) {
+                        table.close();
+                    }
+                    return failed("ring", "frame " + frame + " has no table to bind its own uniform through");
+                }
+                tables[frame] = table;
+            }
+
+            for (int frame = 0; frame < RING_FRAMES; frame++) {
+                if (!ring.beginFrame()) {
+                    return failed("ring", "frame " + frame + " could not begin on the ring: " + ring.refusal());
+                }
+                if (!encodePass(ring.commandBuffer(), targets[frame], tables[frame].handle(), STAGE_VERTEX,
+                        clearPipeline, false, "frame " + frame)) {
+                    return false;
+                }
+                if (!ring.endAndSubmit()) {
+                    return failed("ring", "frame " + frame + " could not be submitted: " + ring.refusal());
+                }
+            }
+
+            // The rule has to have run, and the ring's own depth says how many times: with three slots and
+            // twelve frames, nine begins find their slot still holding a submission.
+            long expectedWaits = RING_FRAMES - MTL4FrameRing.FRAMES_IN_FLIGHT;
+            if (ring.waits() != expectedWaits) {
+                return failed("ring", "the ring waited for an in-flight slot " + ring.waits() + " times where "
+                        + expectedWaits + " frames follow a slot's first use, so the sequence that ran is not the"
+                        + " one that reuses a slot only after its own completion has been observed");
+            }
+
+            if (!ring.awaitAll()) {
+                return failed("ring", "the ring's last submission did not complete: " + ring.refusal());
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                for (int frame = 0; frame < RING_FRAMES; frame++) {
+                    MTLTexture.bytes(targets[frame], pixel, 4L, 0L, 0L, 1L, 1L);
+                    int[] expected = ringPixel(frame);
+                    if (!matches(pixel, expected)) {
+                        return failed("ring", "frame " + frame + " drew " + describe(pixel) + " where "
+                                + describe(expected) + " was asked for, so a submission on a reused allocator"
+                                + " slot did not land");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("ring", "the allocator-slot proof threw " + threw);
+        } finally {
+            for (MTL4ArgumentTable table : tables) {
+                if (table != null) {
+                    table.close();
+                }
+            }
+            for (MTLBuffer uniform : uniforms) {
+                releaseIfPresent(uniform);
+            }
+            for (MemorySegment target : targets) {
+                releaseIfPresent(target);
+            }
+            if (ring != null) {
+                ring.close();
+            }
+            releaseIfPresent(queue);
+        }
+    }
+
     /** The name of one of the pattern's quadrants, for a message that says which one a readback landed in. */
     private static String quadrant(final int index) {
         return switch (index) {

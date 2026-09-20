@@ -241,4 +241,92 @@ for needle, why in (
     if needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the frame's allocator rule --------------------------------------------------------------------------
+# The one part of the frame's lifetime where a guess is a use-after-free, and the rule the frame encoder is
+# built on: a slot is not reset until the value its own commit signalled has been observed. Measured on the
+# device, the rule is load-bearing - with the wait removed, frame 0's pass never landed in five of five
+# probes - so this file pins the order the two calls appear in and not merely that both exist.
+#
+# The pins below are the structural half of that guard and they are not the whole guard: a wait that is
+# present in the text but short-circuited (`if (false && ...)`) passes every pin here, and is caught by the
+# sequence itself, which asserts on the device that the ring waited exactly RING_FRAMES - FRAMES_IN_FLIGHT
+# times. Structural pins and the device's own count together, and neither alone.
+ring = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4FrameRing.java"
+if not ring.is_file():
+    raise SystemExit("cold-probe harness: MTL4FrameRing.java is gone, so the frame's allocator lifetime has no "
+                     "owner and every frame path would have to grow a ring of its own")
+ring_source = ring.read_text(encoding="utf-8")
+
+wait_needle = "WAIT_UNTIL_SIGNALED.sendLong(event, awaited[next], WAIT_MILLIS)"
+reset_needle = "RESET.send(allocators[next]);"
+if wait_needle not in ring_source or reset_needle not in ring_source:
+    raise SystemExit("cold-probe harness: the ring no longer waits for a slot's completion before resetting "
+                     "it, which is the sentence MTL4CommandAllocator.h puts on the caller")
+if ring_source.index(reset_needle) < ring_source.index(wait_needle):
+    raise SystemExit("cold-probe harness: the ring resets the allocator BEFORE it has observed that slot's "
+                     "completion value - the exact ordering MTL4CommandAllocator.h says the caller is "
+                     "responsible for, and the ordering a run of this harness showed to be load-bearing")
+begin_needle = "BEGIN.send(commandBuffer, allocators[next]);"
+if begin_needle not in ring_source:
+    raise SystemExit("cold-probe harness: the ring never begins the command buffer on the slot's allocator")
+if ring_source.index(reset_needle) > ring_source.index(begin_needle):
+    raise SystemExit("cold-probe harness: the ring begins encoding on the allocator and only then marks its "
+                     "heaps for reuse, which would hand the memory the frame is being encoded into back to the "
+                     "allocator underneath it")
+for needle, why in (
+    ("public boolean beginFrame()", "the ring has no begin, so nothing proves a slot is free before it is used"),
+    ("awaited[slot] = ++signalled;", "a committed frame records no completion value, so its slot can never be "
+                                     "proved free and would be reset blind"),
+    ("SIGNAL_EVENT.send(queue, event, signalled);",
+     "the commit is never signalled on the event, so no completion can be waited for at all"),
+    ("public boolean awaitAll()", "the ring cannot be waited for, so a readback or a teardown has no point at "
+                                  "which the GPU is known to be finished"),
+    ("public void close()", "the ring has no release, so its allocators, command buffer and event leak"),
+    ("MTL4CommandAllocator.h", "the header the rule comes from is no longer named where the rule is implemented"),
+):
+    if needle not in ring_source:
+        raise SystemExit("cold-probe harness: " + why)
+# Section 106's rule, as a property of the file: the frame's lifetime is device-owned, and a static native
+# handle would be a second lifetime reaching across sessions. The check is on fields - a declaration that ends
+# in `=` or `;` - so the factory that returns a ring is not mistaken for one. What may be static is the
+# selector cache: a `Msg` holds a selector and a method handle, not a device's object.
+if re.search(r"static\s+(?:final\s+)?(?:MemorySegment|MTL4FrameRing|MTL4ArgumentTable|MTLBuffer)\s+\w+\s*(?:=|;)",
+             ring_source):
+    raise SystemExit("cold-probe harness: the ring holds native state in a static, so a device teardown, a "
+                     "reload or a second device could reach another session's allocators - which is what the "
+                     "migration's section 106 forbids the production path to do")
+
+ring_probe = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+              / "MTL4Probe.java").read_text(encoding="utf-8")
+for needle, why in (
+    ("public static boolean canReuseAllocatorSlots(",
+     "the allocator-slot rule is measured nowhere, so the frame's ring would be built on a contract no run has "
+     "answered"),
+    ("MTL4FrameRing.create(device, queue, MTL4FrameRing.FRAMES_IN_FLIGHT",
+     "the proof does not use the ring's own frame depth, so it would be measuring some other lifetime"),
+    ("ring.waits() != expectedWaits",
+     "the proof does not check that the ring waited for an in-flight slot, so a ring that never waited would "
+     "pass on whatever the pixels happened to hold"),
+    ("ring.awaitAll()", "the proof reads its targets without waiting for the ring's submissions"),
+    ("so a submission on a reused allocator",
+     "a frame whose pixel is wrong on a reused slot is not reported as that, so the readback stops naming the "
+     "fault"),
+):
+    if needle not in ring_probe:
+        raise SystemExit("cold-probe harness: " + why)
+
+# And the harness's half: reported, and counted apart from the capability sequence.
+for needle, why in (
+    ('+ " ring=" + ring', "the harness does not print the allocator-slot answer, so a run of it leaves no "
+                          "evidence"),
+    ('+ " ringReason=" + ringReason', "the harness prints whether the ring passed and not why it failed"),
+    ("MTL4Probe.canReuseAllocatorSlots(device)", "the harness never asks the allocator-slot proof"),
+    ("ring_failures=\"$(grep -c ' ring=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the ring's failures, so a run cannot say how many there were"),
+    ("if (( ring_failures > 0 )); then",
+     "the driver counts the ring's failures and does not fail the run on them"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

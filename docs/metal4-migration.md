@@ -722,6 +722,52 @@ ring, its own command buffer and its own shared event, so the frame path does no
 beside the sidecar's (§31), and the sidecar's statics collapse into the encoder when the frame path takes the
 present over (§107).
 
+### The ring itself: `MTL4FrameRing`, and the rule answered by the device
+
+That paragraph was written as a design. The design is now an object - `mtl.metal4.MTL4FrameRing` - and the rule
+it rests on has been measured on the device rather than assumed, because a ring is the one place in a frame
+path where being wrong is a use-after-free rather than a wrong colour.
+
+The object owns the allocators, a command buffer and a shared event, and it does not own the queue: the
+generation that made the queue keeps it, and the ring is handed its handle. `beginFrame()` is the whole rule in
+one call - pick the next slot, **wait for that slot's own signalled completion value where it has one**, reset
+its allocator, then begin the command buffer on it - because that is the only place in a frame that knows the
+slot is about to be handed back to the GPU, and a wait offered as a separate call is a wait a caller can forget.
+`endAndSubmit()` ends, commits **once**, records the value and signals it; `awaitAll()` waits the newest value,
+which is the wait a readback or a teardown needs. Nothing in it is static: the rule that the production path
+should be device-owned rather than a process-global singleton (§106) is checked as a property of the file, and a
+`MTL4FrameRing` cannot be created without a queue, so a second device cannot reach another session's allocators.
+
+**The proof** is `MTL4Probe.canReuseAllocatorSlots`: twelve frames over three slots - so every slot after the
+first round is reset, re-begun and re-committed while earlier frames may still be in flight - one commit each,
+and three readings. Every frame owns its target, its uniform buffer and its argument table, so the sequence
+isolates the lifetime question from the sharing one (a table re-bound while an earlier frame is in flight is a
+binding that frame would read at execute time, and that question belongs to the frame encoder). The readings
+are: every frame's pixel is its own; the ring waited for an in-flight slot exactly as many times as the ring's
+own depth says it must (9 of 12 begins); and the last submission completes. Measured on Apple Silicon: **56 of
+56 probes** passed in two runs (3 cold + 3 warm, then 30 cold + 20 warm, `--mode raw`), on the same device
+every other smoke ran on.
+
+**And the rule is load-bearing, which is the one thing a passing readback could not have told us.** With the
+wait removed - a one-line mutation, restored afterwards - the ring's wait count assertion fires
+(`the ring waited for an in-flight slot 0 times where 9 frames follow a slot's first use`), and with the count
+relaxed as well the pixels answer: `frame 0 drew (0, 0, 0, 0) where (16, 0, 0, 255) was asked for, so a
+submission on a reused allocator slot did not land` - the same result in five of five probes, four cold
+processes and one warm. So on this device, resetting an allocator while the GPU is still reading what was
+encoded on it loses the frame's work outright. That is the failure the header's sentence about the caller's
+responsibility is protecting against, and it is why the ring waits rather than trusting the queue. What is
+*not* measured is which of the reset, the re-begin or the commit loses the work; the observation is the lost
+frame and the hypothesis is not written as a cause.
+
+`tools/ci-metal4-cold-probe.py` pins the ring: the existence of the object, the wait and reset and begin calls
+*in that order* (a reset before the wait, or a reset after the begin, both fail the contract), the recorded
+completion value, the signal, the wait for everything, the release, the header the rule comes from, the
+absence of static native state, and the harness's field, count and exit code - eighteen mutations run against
+those pins, seventeen caught by the pins themselves. The eighteenth, a wait present in the text but
+short-circuited by `if (false && ...)`, is the shape a text pin cannot see: it is caught by the sequence's own
+wait-count assertion on the device, which is why that assertion exists and why the two halves are noted
+together in the contract file.
+
 ## The slices, in order
 
 Each slice is measured before the next one starts, with the harness and the recipe in

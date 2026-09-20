@@ -40,10 +40,11 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       100 probes in four runs - 30 cold + 20 warm in `--mode raw`, and 30 cold + 20 warm in
-                  `--mode production` - 0 failures, and the drawn sampled-texture smoke passed in all 100.
-                  That smoke is reported in a field of its own and counted apart from the capability
-                  sequence, so two different questions cannot hide behind one number
+this round:       56 probes in two runs (3 cold + 3 warm, then 30 cold + 20 warm, `--mode raw`) with 0
+                  failures, and both device smokes passing in all of them - the allocator-slot ring (new)
+                  and the drawn sampled-texture smoke. Each is reported in a field of its own and counted
+                  apart from the capability sequence, so three different questions cannot hide behind one
+                  number (the drawn smoke's own evidence from the round that added it: 100 of 100)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -171,9 +172,19 @@ reached by:          the services now hand out the provider of the EXECUTING gen
                      still builds the frame from Metal 3 objects, exactly as section 19 requires - the day a
                      Metal 4 frame path is ready, the device constructor's one line changes
 queue:               PROVEN for the provider skeleton; no frame is submitted through it yet
-allocators:          NOT STARTED
-command buffers/frame: NOT STARTED
-commits/frame:       NOT STARTED
+allocators:          PROVEN as a rule, before any encoder was built over it - `MTL4FrameRing` owns three
+                     slots, one command buffer and one shared event, and a slot is reset only after the value
+                     its own commit signalled has been observed. Measured on Apple Silicon with
+                     `MTL4Probe.canReuseAllocatorSlots`: twelve frames over three slots, every slot reset and
+                     re-begun twice over, the ring's wait count asserted against its own depth (9 of 12
+                     begins), and all twelve frames' pixels exact - 56 of 56 probes in two runs (3 cold + 3
+                     warm, then 30 cold + 20 warm, `--mode raw`). The rule is load-bearing and not a
+                     formality: with the completion wait removed, frame 0's pass never landed in five of five
+                     probes, and the harness reports `frame 0 drew (0, 0, 0, 0) where (16, 0, 0, 255) was
+                     asked for`. No frame uses the ring yet: the encoder that will is Phase 4's remaining
+                     half
+command buffers/frame: one, re-begun per frame - the shape the ring proof submits (12 begins, 12 commits)
+commits/frame:       one, PROVEN in the ring proof and the plan's own target (section 30); no frame yet
 presentation:        EXPERIMENTAL  (the present sidecar, Metal4Path + Metal4PresentGate, still in place)
 ```
 
