@@ -40,15 +40,15 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All eleven device smokes
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All twelve device smokes
                   passed in every one of them - the drawn sampled texture, the allocator-slot ring, the four
-                  colour attachments, the bound layout, the texture copies, the depth clear, the fence wait
-                  and the new **indexed draw** - and the compilation chain compiled a pipeline in every
-                  process (`compile=ok(valid=true)`). The indexed draw is the new one: two covering
-                  triangles of different flat colour, one index buffer listing all six vertices, and the same
-                  pass encoded at index 0 and at index 3 - an index buffer that is not read leaves the clear
-                  colour, and a first index that never becomes an offset draws the first triangle twice (50
-                  of 50). The fence wait and the depth clear are the round before it: two empty frames with
+                  colour attachments, the bound layout, the texture copies, the depth clear, the fence wait,
+                  the indexed draw and the new **residency set** - and the compilation chain compiled a
+                  pipeline in every process (`compile=ok(valid=true)`). The residency smoke is the new one:
+                  a set is made, two allocations (a buffer and a texture) go in, it commits and requests
+                  residency, it reports two allocations, and the queue answers `addResidencySet:` (50 of 50) -
+                  and it is the model the frame path's own run proved necessary, since without those
+                  declarations the GPU faulted and with them it renders terrain. The fence wait and the depth clear are the round before it: two empty frames with
                   both committed values waited for, the next value polling false and refused by name for a
                   wait; and a colour target beside a `Depth32Float` target cleared to 0.25 and read back
                   (both 50 of 50). The bound
@@ -323,8 +323,13 @@ vertex/index:     vertex PROVEN on the device (address + attribute stride throug
                   own triangle (50 of 50), and implemented in the pass as an address the draw offsets
 argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
                   setArgumentTable:atStages:, and the draw reads every slot
-residency:        NOT STARTED - nothing declares residency yet; the argument table has been enough on this
-                  device so far, and whether it is enough for a pack is a measurement, not an assumption
+residency:        PROVEN AND REQUIRED - the frame encoder owns one `MTL4ResidencySet` and declares every
+                  resource the frame binds by address or id (attachments, sampled textures, uniforms, vertex
+                  layouts, index buffers, the copies' staging blocks and textures); the set is committed and
+                  requested each frame and handed to the queue once. Measured: with it, no GPU fault; without
+                  it, a kernel `GPURestart` and `MTL4CommandQueueErrorTimeout` within two seconds. Device smoke:
+                  50 of 50 cold-probe processes (30 cold + 20 warm). NOT the per-resource READ/WRITE/SAMPLE facts
+                  sections 52 to 53 ask for - this first version declares everything a frame touches
 ```
 
 ## Blit
@@ -423,6 +428,7 @@ CI, which is where every smoke here was run.
 | vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index yes - see the indexed-draw row | n/a | yes |
 | argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
 | indexed draw    | yes         | yes - an index buffer as an address in the draw, six UInt16 indices, drawn at index 0 and at index 3 with each frame read back against its own triangle; the selector is the eight-argument one this SDK declares | n/a | yes |
+| residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a | yes |
 | mipmap          | yes         | no                                | n/a           | no          |
 | compute         | yes         | no                                | n/a           | no          |
@@ -464,9 +470,18 @@ process with no window is not the same claim as a capability proven through the 
    the present (the present draw removed entirely - same timeout), and the drawable wait gating the frame on the
    display (`waitForDrawable:` removed - same timeout). So the fault is in the frame's own encoded passes and
    copies, and the leading hypothesis is the one part of Metal 4's resource model this path does not use:
-   **residency** (the header requires an `MTLResidencySet` for the buffers an address-taking draw references, and
-   the device reports `residency=true`; this path declares nothing). Blocks the no-pack frame and therefore
-   AUTO.
+   **residency** - and that hypothesis is now **confirmed and fixed**: the new command model binds by GPU
+   address and nothing keeps the allocation behind an address resident unless the path declares it, so
+   `MTL4ResidencySet` now holds every resource the frame binds or reads, owned by the frame encoder and handed to
+   its queue. **The A/B**: with the declarations a forced Metal 4 launch runs with no `GPURestart` in the
+   machine's log and no `MTL4CommandQueueErrorTimeout`; without them, both within two seconds of the same frame.
+   With residency in place the path then matched the reference's binding model (a name the pipeline does not
+   declare, or declares as the other kind, is skipped rather than fatal - the engine's own `Fog` on the panorama
+   pipeline and `CloudFaces` on the clouds pipeline are the two measured cases), and the forced Metal 4 launch
+   now **renders the world**: it reaches Sodium's chunk renderer and stops at `MetalPassUniformWriter`, the
+   push-constant contract the terrain draw asks the pass for. That is the next milestone, and it is a missing
+   feature rather than a fault. The residency smoke passes 50 of 50 cold-probe processes (30 cold + 20 warm).
+   AUTO stays blocked on the remaining list below.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

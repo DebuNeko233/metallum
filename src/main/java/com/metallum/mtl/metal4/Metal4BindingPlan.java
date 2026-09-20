@@ -71,16 +71,31 @@ public final class Metal4BindingPlan {
 
     private final List<Slot> slots;
     private final Map<String, Slot> byName;
+    /**
+     * The same bindings, split by the kind of resource they name.
+     * <p>
+     * A name is not unique across kinds: one of the engine's own passes declares a texture under a name and
+     * binds a uniform of the same name, and the Metal 3 pass encodes each in its own map because it keeps its
+     * uniforms and its textures apart. One namespace here made the two collide, so the uniform was refused as
+     * "a texture's name" - a fault that was about this plan and not about the frame.
+     */
+    private final Map<String, Slot> textureByName;
+    private final Map<String, Slot> bufferByName;
     private final int firstVertexBufferSlot;
     private final int vertexBufferCount;
 
     private Metal4BindingPlan(final List<Slot> slots, final int firstVertexBufferSlot, final int vertexBufferCount) {
         this.slots = List.copyOf(slots);
         Map<String, Slot> named = new LinkedHashMap<>();
+        Map<String, Slot> textures = new LinkedHashMap<>();
+        Map<String, Slot> buffers = new LinkedHashMap<>();
         for (Slot slot : this.slots) {
             named.put(slot.name(), slot);
+            (slot.texture() ? textures : buffers).put(slot.name(), slot);
         }
         this.byName = Map.copyOf(named);
+        this.textureByName = Map.copyOf(textures);
+        this.bufferByName = Map.copyOf(buffers);
         this.firstVertexBufferSlot = firstVertexBufferSlot;
         this.vertexBufferCount = vertexBufferCount;
     }
@@ -104,6 +119,21 @@ public final class Metal4BindingPlan {
     /** Every named binding, in the order the translation declared them. */
     public List<Slot> slots() {
         return this.slots;
+    }
+
+    /**
+     * The slot this name has for this kind of resource, or null where this pipeline has none of that kind.
+     * <p>
+     * Kind-aware because a layout can hold a buffer and a texture under one name; a name this pipeline declares
+     * only as the other kind is a null here, and the caller decides whether that is a skip or a fault.
+     */
+    public Slot slot(final String name, final boolean texture) {
+        return (texture ? this.textureByName : this.bufferByName).get(name);
+    }
+
+    /** Whether this pipeline declares a binding by this name at all, whichever kind it is. */
+    public boolean declares(final String name) {
+        return this.byName.containsKey(name);
     }
 
     /** One binding by the name the pack gave it, or null where the pipeline does not declare it. */

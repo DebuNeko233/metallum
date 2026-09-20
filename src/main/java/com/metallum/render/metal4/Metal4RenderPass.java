@@ -419,25 +419,26 @@ final class Metal4RenderPass implements RenderPassBackend {
      * never encoded. Faulting instead made this path stricter than the reference it is being compared against,
      * which is a bug in the guard and not in the frame.
      * <p>
-     * A name the pipeline declares as the <em>other kind</em> of resource stays a fault: a texture bound to a
-     * buffer's name is not a name nobody reads, it is two disagreeing layouts for one name.
+     * A name the pipeline declares as the <em>other kind</em> of resource is skipped for the same reason, and
+     * that was measured too: one of the engine's own passes binds a uniform under a name whose pipeline declares
+     * a texture, and the Metal 3 pass simply never encodes that buffer. Faulting made this path stricter than
+     * the reference; the skip is reported under {@code -Dmetallum.metal4Trace} instead, so a pack bug is visible
+     * to anyone looking rather than fatal to everyone rendering.
      */
     private Metal4BindingPlan.@Nullable Slot slotFor(final String name, final boolean texture) {
         if (this.pipeline == null) {
             return null;
         }
-        Metal4BindingPlan.Slot slot = this.plan.slot(name);
-        if (slot == null) {
-            throw new IllegalStateException("the Metal 4 pipeline " + this.pipeline.getLocation() + " does not"
-                    + " declare a binding called '" + name + "', so the frame path and the shader disagree about"
-                    + " the layout");
+        Metal4BindingPlan.Slot slot = this.plan.slot(name, texture);
+        if (slot != null) {
+            return slot;
         }
-        if (slot.buffer() == texture) {
-            throw new IllegalStateException("the Metal 4 pipeline binds '" + name + "' as a "
-                    + (texture ? "buffer" : "texture") + " and the frame path bound a "
-                    + (texture ? "texture" : "buffer") + " to it, so the two disagree about the layout");
+        if (TRACE && this.plan.declares(name)) {
+            Metallum.LOGGER.info("Metal 4 trace: '{}' is a {} in the frame path's binding and a {} in the"
+                            + " pipeline's layout, so it is not encoded - the Metal 3 pass does the same",
+                    name, texture ? "texture" : "buffer", texture ? "buffer" : "texture");
         }
-        return slot;
+        return null;
     }
 
     /** Points every table that reads this name at the buffer's GPU address, offset included. */

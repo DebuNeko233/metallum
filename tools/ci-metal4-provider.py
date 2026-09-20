@@ -291,10 +291,14 @@ for needle, why in (
      "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
     ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
      "the fragment table is not sized from the plan"),
-    ("if (slot == null) {\n            throw new IllegalStateException(\"the Metal 4 pipeline \"",
-     "a name the pipeline does not declare is not refused, so a layout mismatch would be a silently dropped "
-     "binding - the half frame section 35 forbids"),
-    ("if (slot.buffer() == texture) {", "a texture bound to a buffer's name is not refused, or the other way"),
+    ("Metal4BindingPlan.Slot slot = this.plan.slot(name, texture);",
+     "a binding is filled without looking it up in the pipeline's layout by name and kind"),
+    ("if (slot != null) {\n            return slot;\n        }\n        if (TRACE && this.plan.declares(name)) {",
+     "a name the pipeline does not declare is not skipped, so this path would be stricter than the Metal 3 pass "
+     "it is the reference for: the engine hands every pass a fixed set of default uniforms and a given pipeline "
+     "reads some of them, which the first run that got this far proved by binding Fog to the panorama pipeline; "
+     "and a name the pipeline declares as the other kind is skipped for the same reason, which the cloud pass "
+     "proved by the cloud pass"),
     ("private static final boolean TRACE = Boolean.getBoolean(\"metallum.metal4Trace\");",
      "the pass trace is not off unless a session asks for it, so every session would log a line per draw"),
     ('Metallum.LOGGER.info("Metal 4 trace: indexed draw {} of {} indices at {} of {} bytes, type {},"',
@@ -314,7 +318,9 @@ for needle, why in (
      "a vertex layout is bound at the game's own slot rather than at the slot the pipeline's descriptor starts "
      "its layouts from, so it would overwrite a named vertex-stage buffer (the same expression appears in the "
      "fault's own message, which is why the pin is the call)"),
-    ("if (slot.buffer() == texture) {", "a texture bound to a buffer's name is not refused, or the other way"),
+    ("if (TRACE && this.plan.declares(name)) {",
+     "a name the pipeline declares as the other kind is neither skipped nor reported: the Metal 3 pass skips it "
+     "and this path must agree with the reference it is compared against"),
     # And the model itself: a binding is remembered and resolved when a layout exists, which is the game's own
     # order (a pass's default uniforms are bound by name before any pipeline is set) and the Metal 3 pass's own
     # model (it keeps its uniforms and textures in maps and resolves them into the argument buffer a draw
@@ -543,7 +549,13 @@ for needle, why in (
     ("public int textureSlots(final int stage) {", "the plan does not answer a stage's texture slots"),
     ("public int samplerSlots(final int stage) {", "the plan does not answer a stage's sampler slots"),
     ("return this.byName.get(name);", "the plan does not look a binding up by the name the pack gave it"),
-    ("return this.byName.get(name);", "the plan does not look a binding up by the name the pack gave it"),
+    ("public Slot slot(final String name, final boolean texture) {",
+     "the plan cannot look a binding up by name and kind, so a layout holding a buffer and a texture under one "
+     "name would collide - which one of the engine's own passes does"),
+    ("public boolean declares(final String name) {",
+     "the plan cannot say whether a name exists at all, which is what tells a skip from a kind mismatch"),
+    ("(slot.texture() ? textures : buffers).put(slot.name(), slot);",
+     "the plan's per-kind maps are not filled, so the kind-aware lookup would answer nothing"),
     ("public boolean sampled() {", "a slot does not say whether it has a sampler beside it"),
 ):
     if needle not in plan_source:

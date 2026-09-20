@@ -1411,6 +1411,68 @@ references"), and the device reports `residency=true`. The frame path declares n
 addresses and resource ids and leaves residency to the driver's default, which is the leading hypothesis and
 the next thing to measure - not to assume.
 
+### Residency: an address is not a reference, and the GPU said so
+
+The fault that ended every forced Metal 4 run was an MMU fault, and the fix was to say what has to stay resident.
+
+**What the headers say, on the very methods this path uses.** The new command model binds a buffer by
+<em>GPU address</em> - the argument table's `setAddress:atIndex:` and the indexed draw's `indexBuffer` - and an
+address is not a reference: nothing in a command buffer keeps the allocation behind it resident.
+`MTL4RenderCommandEncoder.h` says what to do about it in as many words: "Use an instance of `MTLResidencySet` to
+mark residency of the index buffer the `indexBuffer` parameter references." The frame path declared nothing, and
+the driver's guess came out wrong: the kernel logged a `GPURestart` and the API reported
+`MTL4CommandQueueErrorTimeout` - a submission that never finishes, which is what an MMU fault looks like from
+the application's side.
+
+**What was built.** `mtl.metal4.MTL4ResidencySet` wraps the object with the four moves the header describes:
+add an allocation (uncommitted), commit, request residency, and hand the set to the queue once. The frame
+encoder owns one for its own lifetime - so a reload, a teardown or a second device cannot leave one session's
+allocations on another's queue (section 106) - and every place the frame path binds something by address or id
+declares it: a colour attachment, a depth attachment, a sampled texture, a uniform, a vertex layout, an index
+buffer, and the staging blocks and textures the frame's own copies read. That is deliberately generous: this is
+"declare everything the frame touches", not the per-resource READ/WRITE/SAMPLE facts sections 52 and 53 ask
+for, and it is written down as the first version rather than as the design.
+
+**The A/B, which is one line of wiring.** With the declarations: a forced Metal 4 launch runs for minutes with
+no `GPURestart` in the machine's log - and reaches a *named* API fault instead (next section). Without them:
+the same run, the same frame, a kernel `GPURestart` within two seconds and `MTL4CommandQueueErrorTimeout` at
+the ring. **50 of 50 cold-probe processes** (30 cold + 20 warm, `--mode raw`) also pass the device smoke for it,
+which proves the objects: allocations go in, they are counted, the set commits and requests residency, and the
+queue answers `addResidencySet:`.
+
+### A binding is a name the layout decides about, including when it decides nothing
+
+With residency declared, the next stop was not a GPU fault but a named one:
+
+```text
+the Metal 4 pipeline minecraft:pipeline/panorama does not declare a binding called 'Fog',
+so the frame path and the shader disagree about the layout
+```
+
+and after that one was answered:
+
+```text
+the Metal 4 pipeline binds 'CloudFaces' as a texture and the frame path bound a buffer to it
+  at Metal4RenderPass.slotFor -> setUniform -> CloudRenderer.render
+```
+
+**Both of those were this path being stricter than the reference, and both were fixed by matching it.** The
+engine hands every pass a fixed set of default uniforms - projection, model view, fog and the rest - and a given
+pipeline reads some of them; the cloud pass binds a uniform called `CloudFaces` while its pipeline declares a
+*texture* of that name. The Metal 3 pass is built for exactly this: a name goes into a map, a draw encodes the
+names the pipeline's argument buffer declares, and the others are never encoded - including a name that exists
+as the other kind of resource, because the Metal 3 pass keeps its uniforms and its textures in two maps. So:
+
+- a name this pipeline does not declare is **skipped**;
+- a name it declares as the other kind is **skipped**, and reported under `-Dmetallum.metal4Trace` so a pack bug
+  is visible to anyone looking rather than fatal to everyone rendering;
+- the plan's lookup is **kind-aware** (`slot(name, kind)`, with `declares(name)` for the distinction), because
+  one namespace made a buffer and a texture that share a name collide - and the engine really does have one.
+
+With that, the forced Metal 4 launch renders the world: it reaches **Sodium's chunk renderer** and stops at a
+contract this path does not implement yet - `MetalPassUniformWriter`, the push-constant path the terrain draw
+asks the pass for. That is the next milestone, and it is an ordinary missing feature rather than a fault.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
