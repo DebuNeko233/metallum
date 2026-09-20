@@ -288,9 +288,15 @@ if "provider=" not in harness or "Metal4ExecutionProvider" not in harness:
 for needle, why in (
     ("MetalExecutionState state = metal4.createExecutionState(probeDevice);",
      "the harness does not make the state on the real device, so nothing reports what the state answers"),
-    ('"compile:not-asked(needs-a-pipeline-and-a-shader-source)"',
-     "the harness does not say why compiling is not asked, so a reader cannot tell a deliberate omission from a "
-     "missing answer - the chain needs a pipeline and a shader source, which a bare process cannot make"),
+    ("+ \" compile=\" + compile.replace(' ', '_')",
+     "the harness does not report what the compilation chain answered, so the chain has no evidence from an "
+     "Apple Silicon run"),
+    ("RenderPipeline.builder()",
+     "the harness does not build a pipeline description, so the compile is not reachable at all"),
+    ("compileState.getOrCompilePipeline(compileFixture, compileSource)",
+     "the harness never asks the state to compile through the chain"),
+    ("new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM,",
+     "the fixture declares no colour target, and the pipeline builder refuses one without"),
     ("state.evictCachedPipelines(pipeline -> false)",
      "the harness does not ask the state to evict, so an empty cache's answer is assumed rather than measured"),
     ("state.clearCachesAfterGpuCompletion()", "the harness does not ask the state to clear its caches"),

@@ -760,13 +760,35 @@ lexical trap the Metal 3 path paid for - then inject defines) and neither may re
 The Metal 3 context uses the shared class now; its behaviour is unchanged. `tools/ci-shader-diagnostics.py`
 follows the file and the package its contract harness compiles it into.
 
-**What is NOT proven, and it is the next milestone**: this chain has not run on the device. Compiling needs a
-`RenderPipeline` and a `ShaderSource`, which a bare cold-probe process has no way to make, so the harness cannot
-reach it - and the pass object cannot either, because nothing sets a pipeline yet. The chain's evidence this
-round is a structural contract (sixteen mutations, all caught) and the fact that the layer underneath it - MSL
-into a native pipeline state - is the same construction the device smokes have exercised all along. The next
-milestone is a cold-probe smoke that builds a pipeline description and a shader source in the bare process and
-compiles it there, which is what would turn "the chain exists" into "the chain works".
+**And it has now run on the device.** The cold-probe harness builds a pipeline description and a GLSL shader
+source of its own - a full-screen triangle whose fragment colour comes from the vertex stage, so neither shader
+is a constant - and compiles it through the state the provider hands out. That is the whole chain in a bare
+process: the game's GLSL compiler, the shared translator, and this generation's native pipeline state, which the
+artifact reports valid. Measured on Apple Silicon: **50 of 50 probes** answered `compile=ok(valid=true)` in 30
+cold processes and 20 warm repeats.
+
+Two things about how it is asked, because both are measurement decisions rather than details:
+
+- the fixture is built **before** the probe loop, because building it does no native work, and the compile runs
+  **after** the deep probes inside each attempt. Those probes have to stay the process's first native work: the
+  cold-fault distribution is a distribution over first use, and a warm-up in front of them would quietly change
+  the thing being measured. The first version put the compile first, which warmed the very path the fault lives
+  in and dropped the reported probe time from ~220 ms to ~30 ms - a measurement bug caught by reading the
+  numbers, and the reason the order is written down here;
+- the first attempt of a process compiles and the later attempts answer from the cache, so the field reports
+  both the compile and, implicitly, that the cache answers.
+
+The two failures the first attempts hit are recorded because they are the shape of the work: the pipeline
+builder refuses a location with a namespace in it (`metallum:m4_probe` is read as a path under `minecraft:`), and
+it refuses a pipeline with no primitive topology. Both are the game's own contracts rather than Metal's.
+
+`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the chain and its proof: the state owns a
+compilation context and compiles through this generation's compiler, the module, function and artifact keys all
+name the MSL profile, a replaced artifact is retired rather than closed and released where the contract says GPU
+completion has been established, the translator is asked for direct bindings and refuses to accept argument
+buffers, the artifact builds its own native states with a depth variant and a vertex descriptor, and the harness
+builds a fixture and reports what the chain answered - sixteen mutations against the chain and four against its
+proof, all caught.
 
 ## The API mapping
 

@@ -40,14 +40,15 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       3 probes (2 cold + 1 warm, `--mode raw`) with 0 failures, run to confirm the compilation
-                  chain changed nothing for the smokes the harness can reach - the drawn sampled-texture
-                  smoke, the allocator-slot ring and the colour-attachment smoke all passed. Neither the
-                  pass object nor the compilation chain is reachable here: the first needs the engine's
-                  device and real texture views, the second needs a `RenderPipeline` and a `ShaderSource`,
-                  and a bare process can make none of them. Their evidence is the structural contract plus
-                  the measured layer underneath (the attachment smoke's own evidence: 50 of 50 in the round
-                  that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100)
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. The drawn sampled-texture
+                  smoke, the allocator-slot ring and the colour-attachment smoke passed in all of them, and
+                  the compilation chain's own answer is the `compile=` field above: 50 of 50 probed compiled
+                  a pipeline through the game's GLSL compiler, the shared SPIR-V-to-MSL translator and this
+                  generation's native pipeline state (`compile=ok(valid=true)`). The pass object is still
+                  NOT reachable here - it needs the engine's device and real texture views - so its evidence
+                  remains the structural contract plus the measured layer underneath (the attachment smoke's
+                  own evidence: 50 of 50 in the round that added it; the ring's: 56 of 56; the drawn smoke's:
+                  100 of 100)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -184,17 +185,18 @@ frame encoder:       EXISTS as a skeleton - `render.metal4.Metal4FrameEncoder` i
                      createFence, writeTimestamp - fourteen names, which is the migration's remaining work
                      list. NOT PROVEN: no frame has been submitted through it, because nothing encodes into
                      one yet; its evidence is the ring's device proof plus a structural contract
-state:               PROVEN as a chain and NOT run - `Metal4ExecutionState` owns this generation's
+state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
                      compilation state (SPIR-V modules, native functions, depth-stencil states, compiled
                      artifacts) and `getOrCompilePipeline` compiles through `Metal4PipelineCompiler`: the
                      game's GLSL compiler, the SHARED SPIR-V-to-MSL translator, and this generation's own
                      native pipeline states. It asks the translator for DIRECT bindings and refuses an
                      argument-buffer layout, because Metal 4 binds through tables. Evicted or replaced
                      artifacts are filed and released only in `clearCachesAfterGpuCompletion`, whose contract
-                     says GPU completion has been established. NOT run: compiling needs a `RenderPipeline`
-                     and a `ShaderSource`, which a bare cold-probe process cannot make, so the chain's
-                     evidence is a structural contract (16 mutations, all caught) and the device-proven MSL
-                     construction underneath it
+                     says GPU completion has been established. MEASURED: the cold-probe harness builds its own
+                     pipeline description and GLSL source and compiles them through the chain - 50 of 50
+                     probes answered `compile=ok(valid=true)` in 30 cold processes and 20 warm repeats, which
+                     is the whole chain (game GLSL compiler, shared translator, this generation's native
+                     pipeline state) in a process with no window in it
 reached by:          the services now hand out the provider of the EXECUTING generation rather than a
                      constant `new Metal3ExecutionProvider()`, so selected=Metal4 with executing=Metal3
                      still builds the frame from Metal 3 objects, exactly as section 19 requires - the day a
@@ -352,11 +354,11 @@ process with no window is not the same claim as a capability proven through the 
 3. **No draw path, and no blit, compute or full synchronization matrix** - the encoder owns the frame's
    lifetime (the ring, the deferred releases, the one commit), the pass's attachment half is measured on the
    device (`MTL4RenderEncoder`), `createRenderPass` builds a real pass from the game's descriptor, and the
-   compilation chain can produce a Metal 4 pipeline artifact with its binding footprint. What is missing is the
-   binding path that fills an argument table from that footprint and the draw calls that use it, so every bind
-   and draw still refuses by name and no draw has been encoded through the client's own frame yet. Two
-   milestones are also unproven on the device and named as such: the pass object's wiring (it needs the engine's
-   device and real texture views) and the compilation chain (it needs a `RenderPipeline` and a `ShaderSource`). All five of the plan's Phase 3 native render smokes are measured and passing on this device
+   compilation chain compiles a Metal 4 artifact on the device (50 of 50 probes) with its binding footprint.
+   What is missing is the binding path that fills an argument table from that footprint and the draw calls that
+   use it, so every bind and draw still refuses by name and no draw has been encoded through the client's own
+   frame yet. One milestone remains unproven on the device and is named as such: the pass object's wiring, which
+   needs the engine's device and real texture views. All five of the plan's Phase 3 native render smokes are measured and passing on this device
    (`canMakeAndSubmit`'s pass, `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample
    sequence with its encoded barrier), so what is ahead is the render-pass path and the later blit, compute and
    dependency fixtures rather than the render contract.

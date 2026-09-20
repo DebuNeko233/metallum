@@ -389,4 +389,11 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# The compilation chain's own answer, printed by the driver: the pipeline fixture every probe compiles through
+# the Metal 4 chain. Not counted as a pass yet - the first device proof of the chain is what this line reports,
+# and the round that makes it a counted smoke is the round that has a rate to count.
+if 'echo "pipeline compile: $(grep -m1 -o \' compile=[^ ]*\' \"$probe_log\" | cut -c2-)"' not in script:
+    raise SystemExit("cold-probe harness: the driver does not print what the compilation chain answered, so a "
+                     "run of it leaves the chain's first device proof unread")
+
 print("Metal 4 cold-probe harness contract: PASS")

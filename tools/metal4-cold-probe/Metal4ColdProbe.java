@@ -1,8 +1,18 @@
 import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.render.execution.MetalShaderLanguageProfile;
 import com.metallum.mtl.metal4.MTL4Probe;
 import com.metallum.render.metal4.Metal4ExecutionProvider;
 import com.metallum.render.shared.MetalExecutionState;
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
+import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.shaders.ShaderSource;
+import com.mojang.blaze3d.shaders.ShaderType;
+
+import java.util.Optional;
 
 /**
  * One Metal 4 capability probe, in a process with nothing else in it.
@@ -32,6 +42,27 @@ import com.metallum.render.shared.MetalExecutionState;
  * device could not be made at all - so the driver counts failures without reading a line.
  */
 public final class Metal4ColdProbe {
+
+    /** The fixture's vertex shader: a full-screen triangle whose uv is its own corner, so nothing is bound. */
+    private static final String PROBE_VERTEX_GLSL = """
+            #version 450
+            layout(location = 0) out vec2 probeUv;
+            void main() {
+                vec2 corner = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
+                gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
+                probeUv = corner;
+            }
+            """;
+
+    /** The fixture's fragment shader: a colour that depends on the vertex stage, so neither is a constant. */
+    private static final String PROBE_FRAGMENT_GLSL = """
+            #version 450
+            layout(location = 0) in vec2 probeUv;
+            layout(location = 0) out vec4 probeColor;
+            void main() {
+                probeColor = vec4(probeUv, 0.25, 1.0);
+            }
+            """;
 
     /** {@code MTLGPUFamilyMetal4}, the SDK's own value (MTLDevice.h). */
     private static final long FAMILY_METAL4 = 5002L;
@@ -131,6 +162,24 @@ public final class Metal4ColdProbe {
             provider = "queue=exception(" + throwable.getClass().getSimpleName() + ")";
         }
 
+        // The compilation chain's own device proof: a pipeline description and a shader source, both made here.
+        // The fixture is built before the probe loop because building it does no native work, and the compile
+        // itself runs AFTER the deep probes inside each attempt - deliberately, because those probes have to stay
+        // the process's first native work: that is what the cold-fault distribution is a distribution of, and a
+        // warm-up in front of them would quietly change the thing being measured.
+        MetalExecutionState compileState = new Metal4ExecutionProvider().createExecutionState(device);
+        RenderPipeline compileFixture = RenderPipeline.builder()
+                .withLocation("m4_probe")
+                .withVertexShader("m4_probe_vs")
+                .withFragmentShader("m4_probe_fs")
+                .withColorTargetState(new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM,
+                        ColorTargetState.WRITE_ALL))
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .build();
+        ShaderSource compileSource = (id, type) -> type == ShaderType.VERTEX
+                ? PROBE_VERTEX_GLSL
+                : PROBE_FRAGMENT_GLSL;
+
         String sampledReason = "-";
         String sampledDrawReason = "-";
         String ringReason = "-";
@@ -177,6 +226,21 @@ public final class Metal4ColdProbe {
             boolean success = makeAndSubmit && bindAndDraw;
             allPassed &= success;
 
+            // The chain, asked once per attempt: the first attempt compiles (the game's GLSL compiler, the
+            // shared translator, this generation's native pipeline state) and the later ones answer from the
+            // cache, which is itself one of the things this reports.
+            String compile = "-";
+            try {
+                MetalShaderLanguageProfile.select(MetalShaderLanguageProfile.MSL_3_2,
+                        "the cold probe compiles its own pipeline through the Metal 4 chain");
+                CompiledRenderPipeline compiled = compileState.getOrCompilePipeline(compileFixture, compileSource);
+                compile = "ok(valid=" + compiled.isValid() + ")";
+            } catch (Throwable throwable) {
+                compile = "failed(" + throwable.getClass().getSimpleName() + ": " + oneLine(throwable.getMessage())
+                        + ")";
+            }
+
+
             System.out.println("M4_PROBE_RESULT process=" + index
                     + " attempt=" + attempt
                     + " mode=" + mode
@@ -202,6 +266,7 @@ public final class Metal4ColdProbe {
                     + " attachments=" + attachments
                     + " attachmentsReason=" + attachmentsReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
+                    + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the
                     // environment as much as about the probe, and a per-process duration cannot show that.
@@ -210,8 +275,9 @@ public final class Metal4ColdProbe {
                     + " elapsedMs=" + millis(startNanos));
         }
 
-        // The pipelines the probe drew with go back before the process does, so an attempt that is counted
-        // as passing is also an attempt that released what it made.
+        // The compilation state, then the pipelines the probe drew with: both go back before the process does, so
+        // an attempt that is counted as passing is also an attempt that released what it made.
+        compileState.close();
         MTLBuiltinPipelines.close();
 
         // The process is the unit of measurement and the device goes with it: `MTLCreateSystemDefaultDevice`

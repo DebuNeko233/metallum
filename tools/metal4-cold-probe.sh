@@ -162,6 +162,10 @@ echo
 # and sed reads that as `\1` followed by a literal `0`: the field would print the first group instead of the
 # tenth, which is how this line reported every process's probe time as `10 ms` for a run.
 echo "provider (every line): $(grep -m1 -o ' provider=[^ ]*' "$probe_log" | cut -c2-)"
+# The compilation chain's own answer: the pipeline fixture every probe compiles through the Metal 4 chain.
+# Printed once and not counted as a pass or a failure yet, because the first device proof of it is what this
+# line reports - the round that makes it a counted smoke is the round that has a rate to count.
+echo "pipeline compile: $(grep -m1 -o ' compile=[^ ]*' "$probe_log" | cut -c2-)"
 echo
 echo "per-process results (success, stage, sampled draw, ring, probe ms):"
 grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=[^ ]* retried=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).* sampled=\([^ ]*\).* sampledDraw=\([^ ]*\).* ring=\([^ ]*\).* provider=[^ ]*.*probeMs=\([^ ]*\).*/  process \1 attempt \2 retried \3 success \4 stage \5 sampled(\6) sampledDraw(\7) ring(\8) \9 ms/p'
