@@ -829,6 +829,37 @@ passed in 30 cold processes and 20 warm repeats.
    a compile before a measurement - the same class of mistake as the earlier warm-up bug, and worth writing
    down.
 
+**The engine side followed, and the client walked past it.** `Metal4FrameEncoder` now owns the pieces an
+upload needs: a `MetalTransientMemory` handed the frame's own destruction queue, rotated once per submitted
+frame for the same reason the ring's slots are (a staged block handed back while the GPU is still reading it is
+the corruption the rotation prevents), and a `MTL4ComputeEncoder` opened on demand for the copies. The four
+copies are implemented over it - `writeToBuffer` stages and copies buffer to buffer, `writeToTexture` stages
+with the row arithmetic the command needs (`width * pixelSize`), `copyBufferToTexture` honours the source
+origin's byte offset, `copyTextureToBuffer` files the caller's callback with the frame's releases, and
+`copyTextureToTexture` is the region copy. One detail is a first-version approximation and is written down as
+one: the readback callback stands in the slot's deferred releases rather than on the command buffer's
+completion block, so it may arrive a frame later - the bytes are ordered correctly, the callback is not as
+immediate as Metal 3's.
+
+A copy that arrives before any pass also **begins the frame** now, through the same `beginFrameIfNeeded` the
+first pass uses: a command buffer has to be begun before anything can be encoded into it, and beginning it is
+also where the slot's previous submission is proved complete. And a pass that follows a copy encodes the
+producer barrier, the same over-synchronisation in the other direction.
+
+**Then the client ran again and walked past the upload.** A forced Metal 4 launch now stops at the next
+operation the path lacks:
+
+```
+Unimplemented: clearColorTexture
+  at Metal4FrameEncoder.clearColorTexture
+  at CommandEncoder.clearColorTexture
+  at net.minecraft.client.renderer.Lightmap.<init>
+  at net.minecraft.client.renderer.GameRenderer.<init>
+  at net.minecraft.client.Minecraft.<init>
+```
+
+so the clears are the next milestone - and the method is still the measured way to find them.
+
 **What is still refused, and therefore still unproven through a frame**: the pass object does not call any of
 this yet. `Metal4RenderPass.setPipeline`/`bindTexture`/`setUniform`/`setVertexBuffer`/`setIndexBuffer`/`draw*`
 still refuse by name, so the encoder's commands have a device proof and the pass's use of them does not. Wiring

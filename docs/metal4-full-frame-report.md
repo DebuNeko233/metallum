@@ -184,14 +184,16 @@ frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` 
                      event), files every deferred release against a ring slot and runs it only once that
                      slot's completion has been observed, and `createRenderPass`/`submitRenderPass` build a
                      real pass from the game's descriptor (a forced Metal 4 client launch has run this far).
-                     What it still refuses by name: transientMemory, clearColorTexture,
-                     clearColorAndDepthTextures, clearDepthTexture, writeToBuffer, copyToBuffer,
-                     writeToTexture, copyBufferToTexture, copyTextureToBuffer, copyTextureToTexture,
-                     createFence, writeTimestamp - twelve names, which is the migration's remaining work list
-                     and, measured, the order the client asks for them in (`writeToTexture` first, from its
-                     own texture-manager construction). NOT PROVEN: no frame has been submitted through it,
-                     because the client stops at that first write; its evidence is the ring's device proof
-                     plus a structural contract
+                     It also owns the copies: a `MetalTransientMemory` on the frame's own rotation, a
+                     `MTL4ComputeEncoder` opened on demand, and `writeToBuffer`/`writeToTexture`/
+                     `copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture`/`transientMemory`
+                     implemented over them. MEASURED: a forced Metal 4 launch now walks past its own
+                     texture-manager upload and stops at the next gap -
+                     `Unimplemented: clearColorTexture`, from `Lightmap.<init> -> GameRenderer.<init> ->
+                     Minecraft.<init>`. What still refuses by name: clearColorTexture,
+                     clearColorAndDepthTextures, clearDepthTexture, createFence, writeTimestamp - five names.
+                     NOT PROVEN: no frame has been submitted through it; its evidence is the ring's device
+                     proof plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
                      compilation state (SPIR-V modules, native functions, depth-stencil states, compiled
                      artifacts) and `getOrCompilePipeline` compiles through `Metal4PipelineCompiler`: the
@@ -383,12 +385,11 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The copies exist natively and are not wired yet** - a forced Metal 4 launch stops at `writeToTexture` from
-   the game's texture-manager construction. The command model's copy path is now measured on the device
-   (`MTL4ComputeEncoder`: whole and region copies, 50 of 50 probes), and what is left is the engine side: the
-   frame encoder's `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/
-   `copyTextureToTexture` and `transientMemory()` (the staging arena a texture upload is staged through), which
-   still refuse by name. Then the client walks to its next named gap.
+3. **The clears are the next gap** - the copies are now native-measured *and* wired (the client walks past its
+   texture upload), and a forced Metal 4 launch stops at `clearColorTexture`, raised from
+   `Lightmap.<init> -> GameRenderer.<init>`. The clears (`clearColorTexture`,
+   `clearColorAndDepthTextures`, `clearDepthTexture`) plus `createFence` and `writeTimestamp` still refuse by
+   name; the clears are what the client asks for next, and each run names the one after that.
 4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring

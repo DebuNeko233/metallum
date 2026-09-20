@@ -163,9 +163,12 @@ for operation in ("setPipeline", "bindTexture", "setUniform", "enableScissor", "
 
 for needle, why in (
     # Pinned with its body, because the same `begun` test appears in submit() and a bare test would be satisfied
-    # by the other occurrence while the pass path stopped beginning frames.
-    ("if (!this.ring.begun()) {\n            if (!this.ring.beginFrame()) {",
+    # by the other occurrence while the frame stopped being begun at all. It is one method now, because the first
+    # pass and the first copy both need it.
+    ("private void beginFrameIfNeeded() {\n        if (this.ring.begun()) {\n            return;\n        }\n"
+     "        if (!this.ring.beginFrame()) {",
      "the frame is not begun at the first pass, so a pass has no command buffer"),
+    ("retire(this.ring.slot());", "the slot's filed releases are not run once its completion has been observed"),
     ("retire(this.ring.slot());", "the slot's filed releases are not run once its completion has been observed"),
     ("this.currentPass = pass;", "the open pass is not remembered, so nothing can end it"),
     ("pass.finish();", "submitRenderPass does not end the pass"),
@@ -304,6 +307,67 @@ for operation in ("multiDrawIndexed", "drawIndexedIndirect", "drawMultipleIndexe
     if f'throw unimplemented("{operation}")' not in pass_source:
         raise SystemExit(f"metal 4 provider: the render pass does not refuse {operation} by name, so an "
                          "operation it cannot encode would be dropped into a half frame")
+
+# --- the engine side of the copies, which is what the client's first gap asked for -------------------------
+# The native layer was measured first (MTL4ComputeEncoder: the region and whole copies, 50 of 50 probes); this is
+# the frame encoder's use of it, and the pieces that make an upload possible at all - the staging arena, the
+# rotation that hands its blocks back only after the frame that reads them is proved complete, and the compute
+# encoder the copies are encoded into. A copy that arrives before any pass also begins the frame, because a
+# command buffer has to be begun before anything can be encoded into it.
+for needle, why in (
+    ("private final MetalTransientMemory transientMemory;",
+     "the encoder has no staging arena, so nothing can be uploaded"),
+    ("this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);",
+     "the arena is not the engine's own, or is not handed this encoder's destruction queue, so its blocks would "
+     "be released on a second rotation"),
+    ("return this.transientMemory;", "transientMemory() no longer answers with the arena"),
+    ("this.transientMemory.rotate();",
+     "the arena is never rotated, so a staged block would be reused while the frame that reads it may still be in "
+     "flight"),
+    ("this.transientMemory.close();", "the arena is never released"),
+    ("private MTL4ComputeEncoder copyEncoder() {",
+     "the copies have no encoder of their own, and this command model has no blit encoder to fall back on"),
+    ("if (this.copyEncoder == null || !this.copyEncoder.open()) {",
+     "the copy encoder is not re-opened when it has been ended, so a second copy in a frame would be encoded "
+     "into a closed encoder"),
+    ("this.transientMemory.uploadStaging(data, 4L, GpuBuffer.USAGE_COPY_SRC);",
+     "a buffer write is not staged, so it has nothing to copy from"),
+    ("int rowBytes = width * pixelSize;",
+     "a texture upload does not compute the row layout the command copies with, which is a sheared image rather "
+     "than an error"),
+    ("source.offset() + skipBytes", "a buffer-to-texture copy ignores the source origin's byte offset"),
+    ("queueForDestroy(callback);",
+     "a readback's callback is not filed against the frame whose completion makes its bytes valid"),
+    ("this.copyEncoder.barrierForSubsequentEncoders();",
+     "a pass that follows a copy is not ordered against it, which section 61 forbids"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
+# The copies have to be there as implementations and not only absent from the refusal list: a method that was
+# renamed away would leave the refusal check passing and the frame path with nowhere to upload a texture.
+for implementation in ("public void writeToBuffer(final @NonNull GpuBufferSlice destination",
+                       "public void copyToBuffer(final @NonNull GpuBufferSlice source",
+                       "public void writeToTexture(final @NonNull GpuTexture destination",
+                       "public void copyBufferToTexture(final @NonNull GpuBufferSlice source",
+                       "public void copyTextureToBuffer(final @NonNull GpuTexture source",
+                       "public void copyTextureToTexture(final @NonNull GpuTexture source"):
+    if implementation not in encoder:
+        raise SystemExit(f"metal 4 provider: the frame encoder does not implement {implementation.split()[2]}, "
+                         "which the client asked for by stopping there")
+
+# What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence; and the
+# copies are no longer in that list, because the client asked for them by stopping there.
+for operation in ("clearColorTexture", "clearColorAndDepthTextures", "clearDepthTexture", "createFence",
+                  "writeTimestamp"):
+    if f'throw unimplemented("{operation}")' not in encoder:
+        raise SystemExit(f"metal 4 provider: the frame encoder does not refuse {operation} by name, so an "
+                         "operation it cannot encode would be dropped into a half frame")
+for operation in ("writeToBuffer", "copyToBuffer", "writeToTexture", "copyBufferToTexture", "copyTextureToBuffer",
+                  "copyTextureToTexture", "transientMemory"):
+    if f'throw unimplemented("{operation}")' in encoder:
+        raise SystemExit(f"metal 4 provider: the frame encoder still refuses {operation}, which the client asked "
+                         "for by stopping there")
 
 # And the binding plan itself: the mapping the device proof drives.
 PLAN = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "Metal4BindingPlan.java"

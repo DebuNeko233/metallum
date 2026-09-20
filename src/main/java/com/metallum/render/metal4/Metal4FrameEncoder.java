@@ -2,9 +2,14 @@ package com.metallum.render.metal4;
 
 import com.metallum.Metallum;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.mtl.metal4.MTL4ComputeEncoder;
 import com.metallum.mtl.metal4.MTL4FrameRing;
 import com.metallum.render.MetalDevice;
+import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalGpuBuffer;
+import com.metallum.render.shared.MetalGpuTexture;
+import com.metallum.render.shared.MetalTransientMemory;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.GpuQueryPool;
@@ -14,6 +19,7 @@ import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.TransientMemory;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.buffers.GpuFence;
+import org.jspecify.annotations.Nullable;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;
@@ -71,6 +77,20 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
      */
     private final ArrayDeque<Runnable>[] deferred;
 
+    /**
+     * The frame's staging arena and the releases that go with it.
+     * <p>
+     * A texture upload and a buffer write are copies from memory this engine owns, and that memory is rotated
+     * per submitted frame for the same reason the ring's slots are: a staging buffer handed back while the GPU
+     * is still reading it is the corruption the rotation exists to prevent.
+     */
+    private final MetalDestructionQueue destroyQueue = new MetalDestructionQueue(FRAMES_IN_FLIGHT);
+    private final MetalTransientMemory transientMemory;
+
+    /** The compute encoder the copies are encoded into, opened on demand and ended with the frame. */
+    @Nullable
+    private MTL4ComputeEncoder copyEncoder;
+
     private boolean closed;
 
     /**
@@ -99,6 +119,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         long queue = device.executionServices().commandQueue(nativeDevice);
         this.ring = MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,
                 "the Metal 4 frame encoder");
+        this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         this.deferred = new ArrayDeque[FRAMES_IN_FLIGHT];
         for (int slot = 0; slot < this.deferred.length; slot++) {
             this.deferred[slot] = new ArrayDeque<>();
@@ -130,12 +151,19 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         if (this.currentPass != null) {
             submitRenderPass();
         }
+        if (this.copyEncoder != null) {
+            this.copyEncoder.endEncoding();
+        }
         if (!this.ring.begun()) {
             return;
         }
         if (!this.ring.endAndSubmit()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: a frame could not be submitted - {}", this.ring.refusal());
         }
+        // The arena's blocks are rotated here and not earlier: the submission that reads them has just been
+        // made, and the slot that owns them is the one the ring will prove complete before reusing it.
+        this.transientMemory.rotate();
+        this.destroyQueue.rotate();
     }
 
     /**
@@ -195,9 +223,15 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
             Metallum.LOGGER.warn("Metal 4 frame encoder: closing with work that was not observed complete - {}",
                     this.ring.refusal());
         }
+        if (this.copyEncoder != null) {
+            this.copyEncoder.close();
+            this.copyEncoder = null;
+        }
         for (int slot = 0; slot < this.deferred.length; slot++) {
             retire(slot);
         }
+        this.transientMemory.close();
+        this.destroyQueue.close();
         this.ring.close();
     }
 
@@ -217,10 +251,190 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
                         + " frame");
     }
 
-    /** Transient memory is the encoder's staging arena, which arrives with the first operation that needs it. */
+    /**
+     * The encoder's staging arena: the memory a texture upload or a buffer write is copied out of.
+     * <p>
+     * It is the engine's own arena class rather than a new one, because what it has to be is the same on both
+     * paths - a rotating block allocator whose retired blocks are released on the frame's own rotation - and it
+     * is handed this encoder's destruction queue so that rotation is the frame's and not a second one's.
+     */
     @Override
     public @NonNull TransientMemory transientMemory() {
-        throw unimplemented("transientMemory");
+        return this.transientMemory;
+    }
+
+    /**
+     * The compute encoder the frame's copies are encoded into, opened on demand.
+     * <p>
+     * This command model has no blit encoder, so every copy - an upload, a download, a region copy - is a
+     * compute encoder command. Only one encoder may be open on a command buffer at a time, so a render pass the
+     * game still has open is ended first: its work is already encoded, and the pass's own submit becomes a
+     * no-op rather than a second ending.
+     */
+    private MTL4ComputeEncoder copyEncoder() {
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        if (this.copyEncoder == null || !this.copyEncoder.open()) {
+            // A copy that arrives before any pass still needs a frame: the command buffer has to be begun before
+            // anything can be encoded into it, and beginning it is also where the slot's completion is proved.
+            beginFrameIfNeeded();
+            this.copyEncoder = MTL4ComputeEncoder.open(this.executionState.device(), this.ring.commandBuffer(),
+                    "the frame's copies");
+        }
+        return this.copyEncoder;
+    }
+
+    /**
+     * Begins the frame where it has not been: the ring's slot is chosen, its previous submission is waited for,
+     * and the releases filed against it are run.
+     * <p>
+     * Both the first pass and the first copy need this, and it is one method because it is one thing - a frame
+     * begins at whatever encodes into it first, and nothing else may begin one underneath it.
+     */
+    private void beginFrameIfNeeded() {
+        if (this.ring.begun()) {
+            return;
+        }
+        if (!this.ring.beginFrame()) {
+            throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
+        }
+        // The wait inside beginFrame is what makes this legal: the slot's previous submission has completed, so
+        // everything filed against it can be released now.
+        retire(this.ring.slot());
+    }
+
+    /**
+     * Uploads bytes into a slice of GPU memory: stage them in the frame's arena, then copy buffer to buffer.
+     * <p>
+     * The Metal 3 encoder writes a dynamic buffer's backing store directly instead, which is faster and is a
+     * mechanism of its own; this path stages and copies for both, which is the slower and simpler answer and the
+     * right one while the question is whether the path runs at all.
+     */
+    @Override
+    public void writeToBuffer(final @NonNull GpuBufferSlice destination, final @NonNull ByteBuffer data) {
+        MetalGpuBuffer target = bufferOf(destination.buffer());
+        int length = data.remaining();
+        GpuBufferSlice staging = this.transientMemory.uploadStaging(data, 4L, GpuBuffer.USAGE_COPY_SRC);
+        if (!copyEncoder().copyBufferToBuffer(bufferOf(staging.buffer()).nativeHandle(),
+                staging.offset(), target.nativeHandle(), destination.offset(), length)) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a " + length + "-byte buffer write");
+        }
+    }
+
+    /** Copies bytes between two slices of GPU memory. */
+    @Override
+    public void copyToBuffer(final @NonNull GpuBufferSlice source, final @NonNull GpuBufferSlice target) {
+        if (!copyEncoder().copyBufferToBuffer(bufferOf(source.buffer()).nativeHandle(), source.offset(),
+                bufferOf(target.buffer()).nativeHandle(), target.offset(), source.length())) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a " + source.length() + "-byte buffer"
+                    + " copy");
+        }
+    }
+
+    /**
+     * Uploads bytes into a texture: staged in the frame's arena, then copied buffer to texture.
+     * <p>
+     * The row arithmetic is the engine's own - a row is the width times the texture's pixel size - because the
+     * command takes the layout of the memory it is reading, and getting it wrong is a sheared image rather than
+     * an error.
+     */
+    @Override
+    public void writeToTexture(final @NonNull GpuTexture destination, final @NonNull ByteBuffer data,
+                               final int mipLevel, final int depthOrLayer, final int x, final int y,
+                               final int width, final int height) {
+        MetalGpuTexture texture = textureOf(destination);
+        int pixelSize = texture.pixelSize();
+        int rowBytes = width * pixelSize;
+        int bytesPerImage = rowBytes * height;
+        GpuBufferSlice staging = this.transientMemory.uploadStaging(
+                data.duplicate().limit(bytesPerImage), pixelSize, GpuBuffer.USAGE_COPY_SRC);
+        if (!copyEncoder().copyBufferToTexture(bufferOf(staging.buffer()).nativeHandle(), staging.offset(), rowBytes,
+                bytesPerImage, width, height, 1L, texture.nativeHandle(), depthOrLayer, mipLevel, x, y, 0L)) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a texture write of " + width + "x"
+                    + height + " at (" + x + ", " + y + ")");
+        }
+    }
+
+    /** Copies a region of a buffer into a texture, which is the engine's other upload shape. */
+    @Override
+    public void copyBufferToTexture(final @NonNull GpuBufferSlice source, final int sourceX, final int sourceY,
+                                    final int sourceWidth, final int sourceHeight,
+                                    final @NonNull GpuTexture destination, final int destinationX,
+                                    final int destinationY, final int copyWidth, final int copyHeight,
+                                    final int mipLevel, final int arrayLayer) {
+        MetalGpuTexture texture = textureOf(destination);
+        int texelSize = texture.pixelSize();
+        long skipBytes = (sourceX + (long) sourceY * sourceWidth) * texelSize;
+        long rowBytes = (long) sourceWidth * texelSize;
+        if (!copyEncoder().copyBufferToTexture(bufferOf(source.buffer()).nativeHandle(),
+                source.offset() + skipBytes, rowBytes, rowBytes * sourceHeight, copyWidth, copyHeight, 1L,
+                texture.nativeHandle(), arrayLayer, mipLevel, destinationX, destinationY, 0L)) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a " + copyWidth + "x" + copyHeight
+                    + " texture region copy");
+        }
+    }
+
+    /**
+     * Copies a texture's region out into a buffer, and files the caller's callback with the frame's releases.
+     * <p>
+     * The callback is not run here and not run on the GPU: it is filed against the ring slot whose completion
+     * makes the bytes valid, so it fires once that slot has been proved complete. The Metal 3 path hangs the same
+     * callback on the command buffer's completion block, which is more immediate; this is the first version's
+     * answer and the difference is written down rather than implied - the bytes are ordered correctly, the
+     * callback may arrive a frame later.
+     */
+    @Override
+    public void copyTextureToBuffer(final @NonNull GpuTexture source, final @NonNull GpuBuffer destination,
+                                    final long destinationOffset, final @NonNull Runnable callback,
+                                    final int mipLevel) {
+        copyTextureToBuffer(source, destination, destinationOffset, callback, mipLevel, 0, 0,
+                (int) source.getWidth(mipLevel), (int) source.getHeight(mipLevel));
+    }
+
+    @Override
+    public void copyTextureToBuffer(final @NonNull GpuTexture source, final @NonNull GpuBuffer destination,
+                                    final long destinationOffset, final @NonNull Runnable callback,
+                                    final int mipLevel, final int x, final int y, final int width,
+                                    final int height) {
+        MetalGpuTexture texture = textureOf(source);
+        int rowBytes = width * texture.pixelSize();
+        int bytesPerImage = rowBytes * height;
+        if (!copyEncoder().copyTextureToBuffer(texture.nativeHandle(), 0L, mipLevel, x, y, 0L, width, height, 1L,
+                bufferOf(destination).nativeHandle(), destinationOffset, rowBytes, bytesPerImage)) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a readback of " + width + "x" + height);
+        }
+        queueForDestroy(callback);
+    }
+
+    /** Copies a region of one texture into another, which is the copy a frame makes most of. */
+    @Override
+    public void copyTextureToTexture(final @NonNull GpuTexture source, final @NonNull GpuTexture destination,
+                                     final int mipLevel, final int x, final int y, final int width, final int height,
+                                     final int destinationX, final int destinationY) {
+        if (!copyEncoder().copyTextureRegion(textureOf(source).nativeHandle(), 0L, mipLevel, x, y, 0L, width,
+                height, 1L, textureOf(destination).nativeHandle(), 0L, mipLevel, destinationX, destinationY, 0L)) {
+            throw new IllegalStateException("the Metal 4 copy pass refused a " + width + "x" + height
+                    + " texture-to-texture copy");
+        }
+    }
+
+    /** The engine's buffer wrapper, or a named fault where something else was handed over. */
+    private static MetalGpuBuffer bufferOf(final GpuBuffer buffer) {
+        if (!(buffer instanceof MetalGpuBuffer metal)) {
+            throw new IllegalStateException("the Metal 4 encoder was handed a buffer that is not this engine's: "
+                    + buffer.getClass().getName());
+        }
+        return metal;
+    }
+
+    /** The engine's texture wrapper, or a named fault where something else was handed over. */
+    private static MetalGpuTexture textureOf(final GpuTexture texture) {
+        if (!(texture instanceof MetalGpuTexture metal)) {
+            throw new IllegalStateException("the Metal 4 encoder was handed a texture that is not this engine's: "
+                    + texture.getClass().getName());
+        }
+        return metal;
     }
 
     /**
@@ -241,14 +455,13 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
             throw new IllegalStateException("a Metal 4 render pass is already open; submitRenderPass() ends it,"
                     + " and two open passes would encode into one command buffer with no order between them");
         }
-        if (!this.ring.begun()) {
-            if (!this.ring.beginFrame()) {
-                throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
-            }
-            // The wait inside beginFrame is what makes this legal: the slot's previous submission has completed,
-            // so everything filed against it can be released now.
-            retire(this.ring.slot());
+        // A copy the frame encoded before this pass wrote something this pass may read, so the dependency is
+        // encoded here - the same over-synchronisation the pass itself ends with, in the other direction.
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.barrierForSubsequentEncoders();
+            this.copyEncoder.endEncoding();
         }
+        beginFrameIfNeeded();
 
         Metal4RenderPass pass = new Metal4RenderPass(this, descriptor);
         this.currentPass = pass;
@@ -326,54 +539,6 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     @Override
     public void clearDepthTexture(final @NonNull GpuTexture depthTexture, final double clearDepth) {
         throw unimplemented("clearDepthTexture");
-    }
-
-    @Override
-    public void writeToBuffer(final @NonNull GpuBufferSlice destination, final @NonNull ByteBuffer data) {
-        throw unimplemented("writeToBuffer");
-    }
-
-    @Override
-    public void copyToBuffer(final @NonNull GpuBufferSlice source, final @NonNull GpuBufferSlice target) {
-        throw unimplemented("copyToBuffer");
-    }
-
-    @Override
-    public void writeToTexture(final @NonNull GpuTexture destination, final @NonNull ByteBuffer data,
-                               final int mipLevel, final int depthOrLayer, final int x, final int y,
-                               final int width, final int height) {
-        throw unimplemented("writeToTexture");
-    }
-
-    @Override
-    public void copyBufferToTexture(final @NonNull GpuBufferSlice source, final int sourceX, final int sourceY,
-                                    final int sourceWidth, final int sourceHeight,
-                                    final @NonNull GpuTexture destination, final int destinationX,
-                                    final int destinationY, final int copyWidth, final int copyHeight,
-                                    final int mipLevel, final int arrayLayer) {
-        throw unimplemented("copyBufferToTexture");
-    }
-
-    @Override
-    public void copyTextureToBuffer(final @NonNull GpuTexture source, final @NonNull GpuBuffer destination,
-                                    final long destinationOffset, final @NonNull Runnable callback,
-                                    final int mipLevel) {
-        throw unimplemented("copyTextureToBuffer");
-    }
-
-    @Override
-    public void copyTextureToBuffer(final @NonNull GpuTexture source, final @NonNull GpuBuffer destination,
-                                    final long destinationOffset, final @NonNull Runnable callback,
-                                    final int mipLevel, final int x, final int y, final int width,
-                                    final int height) {
-        throw unimplemented("copyTextureToBuffer");
-    }
-
-    @Override
-    public void copyTextureToTexture(final @NonNull GpuTexture source, final @NonNull GpuTexture destination,
-                                     final int mipLevel, final int x, final int y, final int width, final int height,
-                                     final int destinationX, final int destinationY) {
-        throw unimplemented("copyTextureToTexture");
     }
 
     /**

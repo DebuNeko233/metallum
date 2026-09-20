@@ -52,6 +52,9 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
             "copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:"
                     + "destinationSlice:destinationLevel:destinationOrigin:",
             ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS);
+    private static final Msg COPY_BUFFER_TO_BUFFER = Msg.ofVoid(
+            "copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:",
+            ADDRESS, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG);
     private static final Msg BARRIER = Msg.ofVoid("barrierAfterStages:beforeQueueStages:visibilityOptions:",
             JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
@@ -140,6 +143,18 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
             COPY_TEXTURE_REGION_TO_TEXTURE.send(open, source, sourceSlice, sourceLevel, origin, size, destination,
                     destinationSlice, destinationLevel, destinationOrigin);
         }
+        return true;
+    }
+
+    /** Copies bytes from one buffer into another, which is how a staged upload reaches its destination. */
+    public boolean copyBufferToBuffer(final MemorySegment source, final long sourceOffset,
+                                      final MemorySegment destination, final long destinationOffset,
+                                      final long size) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || ObjC.isNil(source) || ObjC.isNil(destination) || size <= 0L) {
+            return false;
+        }
+        COPY_BUFFER_TO_BUFFER.send(open, source, sourceOffset, destination, destinationOffset, size);
         return true;
     }
 
