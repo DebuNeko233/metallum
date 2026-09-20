@@ -354,9 +354,10 @@ comparison = (ROOT / "tools/vitrail-performance-compare.py").read_text(encoding=
 for needle, why in (
     ("SCENE_TOLERANCE = 2.0",
      "the comparison has no tolerance for the counters that say two arms are the same scene"),
-    ('for counter in ("renderPasses", "depthAttachments"):',
+    ('for counter in (() if cross_generation else ("renderPasses", "depthAttachments")):',
      "the comparison does not judge the scene counters that a switch cannot move - and it must not judge "
-     "loadedMiB or blits, which are what the attachment and copy switches exist to move"),
+     "loadedMiB or blits, which are what the attachment and copy switches exist to move. It is judged where two "
+     "arms executed one generation, because two generations differ on those counters by design"),
     ("scene drift: ",
      "the comparison does not name the drift it found"),
     ("return 3", "a drifted arm does not end the comparison non-zero, so it reads as a result"),
@@ -376,6 +377,19 @@ for needle, why in (
      "the comparison does not end non-zero when no arm's screen was photographed"),
     ("        return 4\n", "flat picture evidence does not end the comparison non-zero, so a session of "
                          "photographs of nothing reads as a session that agreed"),
+    # And the one A/B whose structural counters cannot be judged: two arms that executed different generations.
+    # Both are pinned, because getting this wrong in either direction is a silent fault - refusing a pair that is
+    # a generation apart, or letting a drifted scene through because its arms happened to name a generation.
+    ("def generation(line: str) -> str:",
+     "the comparison cannot read which generation executed an arm, so it cannot tell a cross-generation pair "
+     "from a drifted one"),
+    ('re.search(r"executingGeneration=(\\S+)", line)',
+     "the generation is read from something other than the probe's own executingGeneration field"),
+    ("cross_generation = len(named) > 1",
+     "the comparison does not recognise a pair whose arms executed different generations"),
+    ("the scene guard for this pair is the harness's own target, pack",
+     "the stand-aside does not say where the scene guard moves to, so a reader would take it as the check "
+     "having passed"),
 ):
     if needle not in comparison:
         raise SystemExit(why)

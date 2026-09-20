@@ -68,6 +68,12 @@ def counters(line: str) -> dict[str, float]:
     return {name: float(value) for name, value in FIELD.findall(line)}
 
 
+def generation(line: str) -> str:
+    """Which generation executed the arm, or "" where its line does not say."""
+    found = re.search(r"executingGeneration=(\S+)", line)
+    return found.group(1) if found else ""
+
+
 def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int]]]:
     """A PNG as width, height and one RGB triple a pixel.
 
@@ -252,9 +258,24 @@ def main() -> int:
     # win - measured: an arm that drew the pack at 27 000 passes a frame with 511 217 loadedMiB against the
     # baseline's 93 943, which every other check here accepted.
     drift: list[str] = []
+    # The counters that say "the same scene" are the ones no switch can move - but they are also the ones a
+    # *generation* moves, and this comparison is used for exactly that A/B. Two arms that name different
+    # executing generations open different numbers of native passes by design (this path opens one native
+    # encoder per logical pass and a pass per clear, where Metal 3 reuses one encoder and folds the clear in),
+    # so the check says so and stands aside rather than refusing the pair it cannot judge. The scene guard for
+    # such a pair is the harness's own: same world, same pack, same target, same window.
+    generations = {run.name: generation(probe_line(run)) for run in runs}
+    named = {value for value in generations.values() if value}
+    cross_generation = len(named) > 1
+    if cross_generation:
+        print()
+        print("scene: " + ", ".join(f"{name}={value or 'unknown'}" for name, value in generations.items())
+              + " - two generations executed, so the structural counters are expected to differ and the drift "
+                "check is not applied to them; the scene guard for this pair is the harness's own target, pack "
+                "and world checks")
     # Only counters no switch can move: `loadedMiB`, `storedMiB` and `blits` are what the attachment-traffic
     # and copy switches are *for*, so judging them here would refuse the very A/B they exist to decide.
-    for counter in ("renderPasses", "depthAttachments"):
+    for counter in (() if cross_generation else ("renderPasses", "depthAttachments")):
         reference = measured[first.name].get(counter)
         if not reference:
             continue
