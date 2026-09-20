@@ -37,18 +37,17 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        348 processes, 1585 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30 + 30 + 30, the eleventh added
-                  by the compute smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      632 in fourteen processes      failures: 0
+cold runs:        378 processes, 1619 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30 + 30 + 30 + 30, the twelfth
+                  added by the storage-image smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      654 in sixteen processes      failures: 0
 this round:       84 probes (30 cold and 54 warm across the census and the runs on the way to it), the whole of
-                  it after the compute smoke was added: **0 failures** and 50 of 50 on every one of the eighteen
-                  device smokes, the new one included, with 0 crash reports. The smoke this round added is the
-                  **compute dispatch**: a pipeline from the probe's own kernel, a table carrying two buffers by
-                  address, one threadgroup of 32 threads, and every output word compared against its own index's
-                  formula with a sentinel that proves the kernel ran over it. The mipmap round's smoke before it
-                  was the **mip chain**: a level-0 checkerboard, the levels above it pre-filled with a third value
-                  so a generation that did nothing cannot pass, the chain generated, and every level read back
-                  against the box average below it. The intermittent
+                  it after the storage-image smoke was added: **0 failures** and 50 of 50 on every one of the
+                  nineteen device smokes, the new one included, with 0 crash reports. The smoke this round added
+                  is the **storage image**: a kernel writes a texture through a table, twice, with the table
+                  re-pointed between the dispatches, and the texture is read back at both corners and the middle.
+                  The compute round's smoke before it was the **dispatch**: a pipeline from the probe's own kernel,
+                  a table carrying two buffers by address, one threadgroup of 32 threads, and every output word
+                  compared against its own index's formula with a sentinel that proves the kernel ran over it. The intermittent
                   capability fault did not appear in a third 30-process run, which is its known shape rather
                   than a resolution of it: it has been observed twice in about seventy cold starts and never
                   on demand, and it still blocks AUTO. The smoke the depth round added is the **depth draw**:
@@ -532,9 +531,9 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a - a no-pack frame needs no copy, and the window reports `blits 0` | yes |
 | mipmap          | yes         | yes - `canGenerateMipmaps`: a level-0 checkerboard uploaded, the levels above it pre-filled with a third value, the chain generated, and every level read back against the box average of the one below (50 of 50) | **executes** - Vitrail's `deferred-mipmap-contract` runs on this path (105 pipeline identities against Metal 3's 105, no refusal) and its chain generations are visible under the trace switch: 2448 over the run, each true, for a 2560x1440 target; correctness NOT MEASURED, because no picture of it exists | yes |
-| compute         | yes         | yes - `canDispatchCompute`: a pipeline from the probe's own kernel, a table carrying two buffers by address, one threadgroup of 32 threads, and every output word read back against its own index's formula with a sentinel proving the kernel ran (50 of 50) | **blocked**: Vitrail's `compute-storage-contract` stops before a frame with `storage image phase15Image was allocated by the active backend but that backend could not clear it to zero` - the dispatch is proven natively and the client's road needs `clearStorageTexture` and a compute-pipeline compile that does not require the Metal 3 state | yes |
-| storage buffer  | yes         | no - a buffer is bound by address and a kernel writes it (the compute smoke), but no shader in the probe declares an SSBO | blocked with compute - the same fixture fails before its dispatch | no |
-| storage image   | yes         | no - a texture is sampled through a table (proven) and written as an attachment (proven), but not written as a storage image | blocked at the zeroing the pack's allocation asks for (`clearStorageTexture`), which is the first thing the fixture reaches | no |
+| compute         | yes         | yes - `canDispatchCompute`: a pipeline from the probe's own kernel, a table carrying two buffers by address, one threadgroup of 32 threads, and every output word read back against its own index's formula with a sentinel proving the kernel ran (50 of 50) | **blocked at the pipeline compile**: `MetalComputeBridge.compile` refuses any execution state that is not Metal 3's, which is the door Vitrail's `compute-storage-contract` now reaches (the zeroing before it is done). The dispatch itself is proven natively | yes |
+| storage buffer  | yes         | no - a buffer is bound by address and a kernel writes it (the compute smoke), but no shader in the probe declares an SSBO | blocked with compute, at the pipeline compile rather than at the buffer | no |
+| storage image   | yes         | yes - `canWriteStorageImage`: a kernel writes a texture through a table, **twice**, with the table re-pointed between the dispatches, and the texture is read back at both corners and the middle (50 of 50); the frame path's `clearStorageTexture` dispatches the typed zeroing kernel over the texture's own extent | **past the zeroing, blocked at compute-pipeline compile**: the fixture's own words are `compute composite backend pipeline failed: Active Metal execution state does not support compute`, and the session runs and falls back | yes |
 | synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | yes for the frame's own boundaries: every logical pass is its own native encoder and ends with the all-stages producer barrier, which is why the storage-image boundary a pack states is already encoded unconditionally; the read/write matrix is still the plan's fixtures | yes |
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | yes - 30 presents a window; the drawn image is **NOT MEASURED** (the screenshots were a black display) | yes |

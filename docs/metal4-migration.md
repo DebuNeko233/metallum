@@ -2071,14 +2071,56 @@ That is `MetalFrameResourceCommands.clearStorageTexture`, one of the two frame-r
 still answers false to, asked for by the client's own allocation of a storage image. So the work list for this
 slice is now measured rather than guessed, in the order the client reaches it:
 
-1. **`clearStorageTexture`** - the zeroing a storage allocation asks for. The road exists: a typed kernel, a table
-   carrying the image, a dispatch, which is what this round proved natively;
-2. **a compute-pipeline compile that does not require the Metal 3 state** - `MetalComputeBridge.compile` calls
-   `Metal3ComputeBridge.compile`, which refuses anything that is not a `Metal3ExecutionState`, so a pack's own
-   compute pipeline cannot be built on this path at all;
+1. ~~**`clearStorageTexture`**~~ - **done, this round**, and the fixture gets past it: a typed zeroing kernel, the
+   image in a table by resource id, and a dispatch over the texture's own extent, with the table's per-dispatch
+   snapshot measured by a smoke that re-points one table between two dispatches;
+2. **a compute-pipeline compile that does not require the Metal 3 state** - this is where the fixture now stops,
+   in its own words: `compute composite backend pipeline failed: Active Metal execution state does not support
+   compute`. `MetalComputeBridge.compile` calls `Metal3ComputeBridge.compile`, which refuses anything that is not
+   a `Metal3ExecutionState`, so a pack's own compute pipeline cannot be built on this path at all;
 3. **`MetalFrameComputeCommands.dispatchCompute`** on the frame encoder - the dispatch itself, with the client's
    reflected binding map resolved into a table;
 4. and probably `copyStorageTextureRegion`, the other refusal, when a pack copies storage images.
+
+### The storage clear: a kernel, a table, and the snapshot one table is enough on
+
+The compute fixture's first word on this path was `storage image phase15Image was allocated by the active backend
+but that backend could not clear it to zero`, and that is now answered. A storage texture has no contents when it
+is made; this command model has no blit fill and no per-resource setter on its encoders, so a clear is the shape
+the dispatch round proved: **a typed kernel, the image in an argument table by resource id, and a dispatch over
+the texture's own extent**.
+
+The pieces, and the one design choice worth naming: `MTL4StorageTexturePipelines` carries this generation's own
+copy of the zeroing kernels - the Metal 3 layer is not on this generation's classpath, and a pin checks that
+rather than trusting it - with a cache **owned by the frame encoder** and released with it, rather than the Metal
+3 form's static map keyed on a device that could outlive its owner (section 106's rule). `dispatchThreads:`
+(`MTL4ComputeCommandEncoder.h:77`) is the open-grid form a clear needs, because the grid is a texture's extent
+and is not a multiple of any threadgroup. And `Metal4FrameEncoder.clearStorageTexture` ends an open pass, declares
+the image resident - an undeclared resource makes a command of this kind do nothing at all, which the mipmap round
+measured - binds it through a one-texture table and dispatches.
+
+**One table is enough for a frame's clears, and that is measured rather than assumed.** The header says Metal
+snapshots a table's resources when a dispatch is *encoded*, so re-pointing a shared table between two dispatches
+is safe; `canWriteStorageImage` proves it with exactly that shape - a kernel writes a texture through a table,
+twice, with the table re-pointed at a second colour buffer between the dispatches, and the texture read back at
+both corners and the middle. A table read when the GPU runs rather than when the command is encoded would show
+the second colour twice. Measured: 50 of 50 probes in 30 cold processes and 20 warm repeats, nineteen device
+smokes green.
+
+**And the client gets past it.** The compute-storage fixture now stops one door further on, at the public
+compute bridge's compile path, in its own words:
+
+```text
+compute composite backend pipeline failed: java.lang.IllegalStateException:
+    Active Metal execution state does not support compute
+```
+
+`MetalComputeBridge.compile` calls `Metal3ComputeBridge.compile`, which refuses anything that is not a
+`Metal3ExecutionState`. So the remaining list for this slice is now: **a compute-pipeline compile that this
+generation can do** (SPIR-V to MSL through the shared translator, a Metal 4 function and pipeline state, and the
+reflected binding map resolved into a table), then **`MetalFrameComputeCommands.dispatchCompute`** on the frame
+encoder. The session itself runs and falls back while that is missing, which is the designed answer for an
+absent capability rather than a half frame.
 
 ## The API mapping
 
