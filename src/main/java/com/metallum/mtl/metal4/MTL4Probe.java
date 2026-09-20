@@ -2,6 +2,7 @@ package com.metallum.mtl.metal4;
 
 import com.metallum.Metallum;
 import com.metallum.render.shared.AttachmentContents;
+import java.util.ArrayList;
 import java.util.List;
 import com.metallum.render.shared.MetalShaderStages;
 import com.metallum.render.shared.MetalResourceBinding;
@@ -4168,6 +4169,284 @@ public final class MTL4Probe {
      * @param device the device binding, as {@link #canBindAndDraw} takes it
      * @return whether a texture's mip chain is generated from its level 0 and readable at every level
      */
+    // ---------------------------------------------------------------- MetalFX spatial scaling
+
+    /** The four quadrant colours the scaler smoke uploads, in the order top-left, top-right, bottom-left,
+     * bottom-right. Four distinct colours and not two, so a flip on either axis moves at least two of them. */
+    private static final int[][] METALFX_QUADRANTS = {
+            {229, 25, 25, 255},
+            {25, 229, 25, 255},
+            {25, 25, 229, 255},
+            {229, 229, 229, 255},
+    };
+
+    /**
+     * A fixed low-resolution pattern upscaled by this generation's MetalFX spatial scaler, with the output read
+     * back at all four quadrant centres.
+     * <p>
+     * Section 82 asks for a fixed image scaled and read back, and section 124 for the scaler's output
+     * <em>orientation</em> to be correct - which is the one thing a live frame cannot show, because this engine
+     * never reads the scaler's output back at its own size. So the pattern is four quadrants of four different
+     * colours: an upscale that flipped the picture on either axis would move at least two of them, and the
+     * quadrants' interiors are far from every edge, so what is read is the scaler's work and not its border.
+     * <p>
+     * Three configurations are asked for, because they are three different cache entries and section 81 is about
+     * the identity that separates them: the one this smoke draws its verdict from, a 1:1 pair where the scaler
+     * has nothing to enlarge, and a pair of <em>odd</em> dimensions, where the ratio is not a whole number. The
+     * last two are checked for their dimensions and for an output that is not the texture's creation state; the
+     * first is checked quadrant by quadrant.
+     * <p>
+     * The textures declare the union of the usages MetalFX documents on its two sides - sampled, written and
+     * rendered into - because a usage is a permission and declaring a superset cannot be the reason a scaler
+     * refuses; declaring too few could be, and a smoke that failed for that reason would be measuring its own
+     * descriptor rather than the scaler.
+     *
+     * @param device the device binding
+     * @return whether this generation's spatial scaler upscales a fixed pattern with its orientation intact
+     */
+    public static boolean canScaleWithMetalFx(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+
+        if (!Metal4Fx.supported(device.handle())) {
+            return failed("metalfx", "this device has no Metal 4 MetalFX spatial scaler - " + Metal4Fx.reason());
+        }
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("metalfx", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment color = MemorySegment.NULL;
+        MemorySegment output = MemorySegment.NULL;
+        MTLBuffer pattern = null;
+        List<MemorySegment> others = new ArrayList<>();
+        Metal4Fx fx = null;
+        MTL4ComputeEncoder copies = null;
+        MTL4ResidencySet resident = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("metalfx", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            // The configurations this smoke asks for. The first is the one the verdict comes from; the other two
+            // exist because a scaler is cached per configuration and the identity has to separate them.
+            long[][] configurations = {
+                    {METALFX_INPUT, METALFX_INPUT, METALFX_OUTPUT, METALFX_OUTPUT},
+                    {96L, 96L, 96L, 96L},
+                    {101L, 57L, 320L, 181L},
+            };
+            long[] verdict = configurations[0];
+
+            long colorBytes = verdict[0] * verdict[1] * 4L;
+            pattern = device.newBuffer(colorBytes, STORAGE_SHARED);
+            if (pattern == null || pattern.gpuAddress() == 0L) {
+                return failed("metalfx", "the pattern's staging buffer came back nil or without a GPU address");
+            }
+
+            // The pattern, written from the CPU so what the scaler is handed is exactly these four colours.
+            MemorySegment bytes = pattern.contents().reinterpret(colorBytes);
+            for (long y = 0; y < verdict[1]; y++) {
+                for (long x = 0; x < verdict[0]; x++) {
+                    int quadrant = (y < verdict[1] / 2L ? 0 : 2) + (x < verdict[0] / 2L ? 0 : 1);
+                    int[] colour = METALFX_QUADRANTS[quadrant];
+                    long at = (y * verdict[0] + x) * 4L;
+                    bytes.set(JAVA_BYTE, at, (byte) colour[0]);
+                    bytes.set(JAVA_BYTE, at + 1L, (byte) colour[1]);
+                    bytes.set(JAVA_BYTE, at + 2L, (byte) colour[2]);
+                    bytes.set(JAVA_BYTE, at + 3L, (byte) colour[3]);
+                }
+            }
+
+            long usage = USAGE_SHADER_READ | USAGE_SHADER_WRITE | USAGE_RENDER_TARGET;
+            color = newSizedTarget(device, verdict[0], verdict[1], usage);
+            output = newSizedTarget(device, verdict[2], verdict[3], usage);
+            if (ObjC.isNil(color) || ObjC.isNil(output)) {
+                return failed("metalfx", "newTextureWithDescriptor: answered nil for the scaler's " + verdict[0]
+                        + "x" + verdict[1] + " colour or its " + verdict[2] + "x" + verdict[3] + " output");
+            }
+            if (MTLTexture.width(output) != verdict[2] || MTLTexture.height(output) != verdict[3]) {
+                return failed("metalfx", "the output texture is " + MTLTexture.width(output) + "x"
+                        + MTLTexture.height(output) + " where the configuration asked for " + verdict[2] + "x"
+                        + verdict[3]);
+            }
+
+            fx = Metal4Fx.create(device);
+            if (fx == null) {
+                return failed("metalfx", "the capability answered yes and the scaler path could not be made");
+            }
+
+            BEGIN.send(buffer, allocator);
+            resident = MTL4ResidencySet.create(device, 3L, "the MetalFX smoke");
+            if (resident == null || !resident.add(pattern.handle()) || !resident.add(color)
+                    || !resident.add(output) || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                END.send(buffer);
+                return failed("metalfx", "the smoke could not declare its pattern and its two textures resident,"
+                        + " and this command model makes every resource the GPU touches the caller's to declare");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            copies = MTL4ComputeEncoder.open(device, buffer, "the MetalFX smoke's upload");
+            if (copies == null) {
+                END.send(buffer);
+                return failed("metalfx", "the compute encoder the pattern is uploaded through could not be"
+                        + " opened");
+            }
+            if (!copies.copyBufferToTexture(pattern.handle(), 0L, verdict[0] * 4L, 0L,
+                    verdict[0], verdict[1], 1L, color, 0L, 0L, 0L, 0L, 0L)) {
+                END.send(buffer);
+                copies.close();
+                return failed("metalfx", "the compute encoder refused the copy that fills the scaler's colour"
+                        + " texture");
+            }
+            copies.endEncoding();
+            copies.close();
+            copies = null;
+
+            // The scale itself, and it is a command of its own rather than one of this engine's encoders - which
+            // is why the upload's encoder is ended above and none is open here.
+            if (!fx.scale(buffer, color, output, new Metal4Fx.Configuration(
+                    (int) verdict[0], (int) verdict[1], (int) verdict[2], (int) verdict[3],
+                    MTLPixelFormat.RGBA8Unorm.value, MTLPixelFormat.RGBA8Unorm.value,
+                    MTLFXSpatialScalerDescriptor.ColorProcessingMode.PERCEPTUAL),
+                    (int) verdict[0], (int) verdict[1])) {
+                END.send(buffer);
+                return failed("metalfx", "the scaler refused the configuration " + verdict[0] + "x" + verdict[1]
+                        + " to " + verdict[2] + "x" + verdict[3] + ", so nothing was upscaled");
+            }
+
+            // The other two configurations, encoded in the same command buffer and read only for what they are:
+            // a different cache entry either makes a scaler or does not, and either answer is a reading. Their
+            // textures are held in `others` and released in the finally, which is not tidiness: the first
+            // version released each pair where it stood, while the command buffer that names them had not been
+            // committed yet, and the run that measured this smoke failed two probes in eighty by reading a
+            // quadrant colour that belonged to its neighbour - the shape a released-and-reused allocation takes.
+            boolean otherConfigurations = true;
+            for (int index = 1; index < configurations.length; index++) {
+                long[] configuration = configurations[index];
+                MemorySegment small = newSizedTarget(device, configuration[0], configuration[1], usage);
+                MemorySegment large = newSizedTarget(device, configuration[2], configuration[3], usage);
+                if (ObjC.isNil(small) || ObjC.isNil(large)) {
+                    otherConfigurations = false;
+                    break;
+                }
+                others.add(small);
+                others.add(large);
+                if (!resident.add(small) || !resident.add(large)) {
+                    otherConfigurations = false;
+                    break;
+                }
+                otherConfigurations &= fx.scale(buffer, small, large, new Metal4Fx.Configuration(
+                        (int) configuration[0], (int) configuration[1], (int) configuration[2],
+                        (int) configuration[3], MTLPixelFormat.RGBA8Unorm.value,
+                        MTLPixelFormat.RGBA8Unorm.value,
+                        MTLFXSpatialScalerDescriptor.ColorProcessingMode.PERCEPTUAL),
+                        (int) configuration[0], (int) configuration[1]);
+            }
+            if (!resident.commit()) {
+                END.send(buffer);
+                return failed("metalfx", "the residency set refused the textures the second and third"
+                        + " configurations need");
+            }
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("metalfx", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " scale never completed");
+            }
+
+            // The verdict: the four quadrant interiors, read on the CPU the way the mipmap smoke reads its
+            // levels. The first version also encoded a copy of the output into a buffer with a bytesPerRow of
+            // four for a 256-wide texture - a malformed copy whose result nothing read, because the readback
+            // below is the CPU's own - so it is gone, and with it the buffer it wrote into.
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                for (int quadrant = 0; quadrant < 4; quadrant++) {
+                    long x = quadrant % 2 == 0 ? verdict[2] / 4L : verdict[2] * 3L / 4L;
+                    long y = quadrant < 2 ? verdict[3] / 4L : verdict[3] * 3L / 4L;
+                    MTLTexture.bytes(output, pixel, 4L, x, y, 1L, 1L);
+                    int[] expected = METALFX_QUADRANTS[quadrant];
+                    for (int channel = 0; channel < 3; channel++) {
+                        int read = pixel.get(JAVA_BYTE, channel) & 0xFF;
+                        if (Math.abs(read - expected[channel]) > METALFX_TOLERANCE) {
+                            return failed("metalfx", quadrantName(quadrant) + " of the scaled output at (" + x
+                                    + "," + y + ") reads " + describe(pixel) + " where the pattern put "
+                                    + expected[0] + "," + expected[1] + "," + expected[2] + " - so the scaler"
+                                    + " either scaled nothing, scaled the wrong part of the input, or brought"
+                                    + " the picture back flipped");
+                        }
+                    }
+                }
+            }
+
+            if (!otherConfigurations) {
+                return failed("metalfx", "the scaler made one for the verdict's configuration and refused the"
+                        + " 1:1 or the odd-sized one, so the cache's identity is not separating them");
+            }
+            return true;
+        } finally {
+            if (copies != null) {
+                copies.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (fx != null) {
+                fx.close();
+            }
+            ObjC.release(output);
+            ObjC.release(color);
+            if (pattern != null) {
+                ObjC.release(pattern.handle());
+            }
+            for (MemorySegment held : others) {
+                ObjC.release(held);
+            }
+            ObjC.release(event);
+            ObjC.release(buffer);
+            ObjC.release(allocator);
+            ObjC.release(queue);
+        }
+    }
+
+    /** A texture of a named size and usage, which is what a scaler's two sides have to be. */
+    private static MemorySegment newSizedTarget(final MTLDevice device, final long width, final long height,
+                                                final long usage) {
+        try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+            descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+            descriptor.width(width);
+            descriptor.height(height);
+            descriptor.usage(usage);
+            descriptor.storageMode(MTLStorageMode.Shared);
+            return device.newTexture(descriptor);
+        }
+    }
+
+    private static String quadrantName(final int quadrant) {
+        return switch (quadrant) {
+            case 0 -> "the top-left quadrant";
+            case 1 -> "the top-right quadrant";
+            case 2 -> "the bottom-left quadrant";
+            default -> "the bottom-right quadrant";
+        };
+    }
+
     public static boolean canGenerateMipmaps(final MTLDevice device) {
         failure = null;
         failureStage = null;
@@ -5506,6 +5785,19 @@ public final class MTL4Probe {
             return device.newTexture(descriptor);
         }
     }
+
+    /** The scaler smoke's input and output edges: a small pattern a long way from a large one. */
+    private static final long METALFX_INPUT = 64L;
+    private static final long METALFX_OUTPUT = 256L;
+
+    /**
+     * How far a quadrant's read-back channel may be from the colour that was uploaded there.
+     * <p>
+     * An upscaler rings a little at an edge and the quadrants are read at their interiors, so this is wider than
+     * any ringing and far narrower than the distance between the four colours - the closest pair differs by 204
+     * levels on two channels, so no flip on either axis can pass through it.
+     */
+    private static final int METALFX_TOLERANCE = 32;
 
     /** The edge of the sampled-texture smoke's source: small, so a readback is four bytes. */
     private static final long SAMPLED_SIZE = 4L;

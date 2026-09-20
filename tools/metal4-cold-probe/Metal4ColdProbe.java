@@ -39,6 +39,7 @@ import java.util.Optional;
  *                 depthDraw=&lt;bool&gt; depthDrawReason=&lt;text&gt;
  *                 depthSample=&lt;bool&gt; depthSampleReason=&lt;text&gt;
  *                 mipmaps=&lt;bool&gt; mipmapsReason=&lt;text&gt;
+ *                 metalFx=&lt;bool&gt; metalFxReason=&lt;text&gt;
  *                 compute=&lt;bool&gt; computeReason=&lt;text&gt;
  *                 storageImage=&lt;bool&gt; storageImageReason=&lt;text&gt;
  *                 computeSample=&lt;bool&gt; computeSampleReason=&lt;text&gt;
@@ -219,6 +220,8 @@ public final class Metal4ColdProbe {
         String depthSampleReason = "-";
         boolean mipmaps = false;
         String mipmapsReason = "-";
+        boolean metalFx = false;
+        String metalFxReason = "-";
         boolean compute = false;
         String computeReason = "-";
         boolean storageImage = false;
@@ -291,6 +294,13 @@ public final class Metal4ColdProbe {
             mipmaps = makeAndSubmit && MTL4Probe.canGenerateMipmaps(device);
             if (!mipmaps) {
                 mipmapsReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // This generation's MetalFX spatial scaler, on a fixed pattern: section 82's smoke and section 124's
+            // orientation question, which a live frame cannot answer because the engine never reads the scaler's
+            // output back at its own size.
+            metalFx = makeAndSubmit && MTL4Probe.canScaleWithMetalFx(device);
+            if (!metalFx) {
+                metalFxReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // And the dispatch itself, which is the half of the shader-pack contract the copies do not reach: a
             // pipeline from the probe's own kernel, a table carrying two buffers by address, a grid, and an exact
@@ -459,6 +469,8 @@ public final class Metal4ColdProbe {
                     + " depthSampleReason=" + depthSampleReason.replace(' ', '_')
                     + " mipmaps=" + mipmaps
                     + " mipmapsReason=" + mipmapsReason.replace(' ', '_')
+                    + " metalFx=" + metalFx
+                    + " metalFxReason=" + metalFxReason.replace(' ', '_')
                     + " compute=" + compute
                     + " computeReason=" + computeReason.replace(' ', '_')
                     + " storageImage=" + storageImage

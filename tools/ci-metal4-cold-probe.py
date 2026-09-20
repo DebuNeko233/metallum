@@ -1462,4 +1462,54 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+for needle, why in (
+    ("MTL4Probe.canScaleWithMetalFx(device)", "the harness never asks this generation's MetalFX scaler smoke"),
+    ('+ " metalFx=" + metalFx', "the harness does not print the scaler smoke's answer"),
+    ('+ " metalFxReason=" + metalFxReason', "the harness does not print why the scaler smoke failed"),
+    ("metal_fx_failures=\"$(grep -c ' metalFx=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the scaler smoke's failures"),
+    ("if (( metal_fx_failures > 0 )); then", "the driver counts the scaler smoke's failures and does not fail "
+     "the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
+# ---------------------------------------------------------------------------
+# The MetalFX scaler smoke's own three defects, because each was a way the smoke could pass while measuring
+# nothing - and one of them made it fail 2 of 80 probes with a quadrant colour belonging to its neighbour.
+#
+#   1. the verdict is a CPU read of the output. The first version also encoded a copy of the output into a
+#      buffer with a bytesPerRow of four for a 256-wide texture: a malformed copy whose result nothing read,
+#      because the CPU read is the verdict. Deleting it is the fix, so the pin is its absence;
+#   2. the second and third configurations' textures must outlive the commit. The first version released each
+#      pair where it stood, with the command buffer that names them not yet committed - the shape that produced
+#      the neighbour's colour, and the reason `others` exists;
+#   3. the four colours are four and the tolerance is narrower than the distance between the closest pair, or a
+#      flip on an axis could pass. That is what makes this a measurement of orientation rather than of "the
+#      scaler ran".
+# ---------------------------------------------------------------------------
+for needle, why in (
+    ("private static final int[][] METALFX_QUADRANTS = {", "the scaler smoke has no pattern to judge"),
+    ("private static final long METALFX_INPUT = 64L;", "the scaler smoke's input size is gone"),
+    ("private static final long METALFX_OUTPUT = 256L;", "the scaler smoke's output size is gone"),
+    ("private static final int METALFX_TOLERANCE = 32;", "the scaler smoke's tolerance is gone"),
+    ("for (int quadrant = 0; quadrant < 4; quadrant++) {\n                    long x = quadrant % 2 == 0",
+     "the scaler smoke does not read all four quadrant interiors, which is what makes the verdict an "
+     "orientation rather than a brightness"),
+    ("others.add(small);", "the second and third configurations' textures are not held until the commit that "
+     "names them has completed, so a released-and-reused allocation can be read instead of the scaled output"),
+    ("for (MemorySegment held : others) {", "the held textures are never released, so the smoke leaks on every "
+     "probe"),
+    ("MTL4ComputeEncoder.open(device, buffer, \"the MetalFX smoke's upload\")",
+     "the scaler smoke does not open the encoder its upload is copied in"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+if "copyTextureToBuffer(output" in probe_source:
+    raise SystemExit(
+        "the scaler smoke encodes a copy of its output again: the verdict is the CPU read, and a copy whose "
+        "bytesPerRow was four for a 256-wide texture is a copy of nothing that nothing reads"
+    )
+
 print("Metal 4 cold-probe harness contract: PASS")

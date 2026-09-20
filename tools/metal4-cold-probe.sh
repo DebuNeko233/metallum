@@ -187,6 +187,10 @@ depth_sample_failures="$(grep -c ' depthSample=false ' "$probe_log" || true)"
 # The mip chain, counted on its own: a copy smoke says nothing about a generation.
 mipmap_passes="$(grep -c ' mipmaps=true ' "$probe_log" || true)"
 mipmap_failures="$(grep -c ' mipmaps=false ' "$probe_log" || true)"
+# This generation's MetalFX spatial scaler, counted on its own: a fixed four-quadrant pattern, upscaled, with
+# the four quadrant interiors read back - which is the orientation question a live frame cannot answer.
+metal_fx_passes="$(grep -c ' metalFx=true ' "$probe_log" || true)"
+metal_fx_failures="$(grep -c ' metalFx=false ' "$probe_log" || true)"
 # And the dispatch, counted on its own: the copies a frame's encoder carries say nothing about a kernel.
 compute_passes="$(grep -c ' compute=true ' "$probe_log" || true)"
 compute_failures="$(grep -c ' compute=false ' "$probe_log" || true)"
@@ -252,6 +256,7 @@ echo "multi-targets:   $multi_target_passes passed   $multi_target_failures fail
 echo "depth draws:     $depth_draw_passes passed   $depth_draw_failures failed"
 echo "depth samples:   $depth_sample_passes passed   $depth_sample_failures failed"
 echo "mip chains:      $mipmap_passes passed   $mipmap_failures failed"
+echo "MetalFX spatial: $metal_fx_passes passed   $metal_fx_failures failed"
 echo "compute:         $compute_passes passed   $compute_failures failed"
 echo "storage images:  $storage_image_passes passed   $storage_image_failures failed"
 echo "bound layouts:   $layout_passes passed   $layout_failures failed"
@@ -318,6 +323,11 @@ fi
 
 if (( mipmap_failures > 0 )); then
 	echo "the mipmap smoke failed in $mipmap_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( metal_fx_failures > 0 )); then
+	echo "the MetalFX spatial smoke failed in $metal_fx_failures probe(s)" >&2
 	exit 1
 fi
 
