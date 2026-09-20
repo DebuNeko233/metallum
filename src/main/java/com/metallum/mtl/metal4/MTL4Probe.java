@@ -1462,6 +1462,204 @@ public final class MTL4Probe {
     private static final int[] RECLEARED_PIXEL = {16, 32, 48, 255};
 
     /**
+     * What the multi-target draw writes to each of its four slots.
+     * <p>
+     * Deliberately not the clear colours above: the two smokes ask different questions, and a slot that reads
+     * this smoke's clear rather than its draw has to be a value no expected pixel shares. Every slot differs
+     * from every other in more than one channel, so a swapped pair is a failure and not a coincidence.
+     */
+    private static final int[][] EXPECTED_MRT_PIXELS = {
+            {64, 128, 191, 255}, {255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}};
+
+    /** What the multi-target pass clears its four slots to, so an unwritten slot reads a known wrong value. */
+    private static final int[] MRT_CLEAR_PIXEL = {0, 0, 0, 255};
+
+    /**
+     * The four-output fragment stage the multi-target smoke draws with.
+     * <p>
+     * A fullscreen triangle from {@code [[vertex_id]]} alone, so the smoke needs no vertex buffer and no
+     * argument table: what it is about is the routing of four fragment outputs to four attachments, and every
+     * other binding would be a second mechanism that could fail in the same run.
+     */
+    private static final String MULTI_TARGET_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct MrtOut {
+              float4 position [[position]];
+            };
+
+            struct MrtColors {
+              float4 slot0 [[color(0)]];
+              float4 slot1 [[color(1)]];
+              float4 slot2 [[color(2)]];
+              float4 slot3 [[color(3)]];
+            };
+
+            vertex MrtOut metallum_mrt_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+
+              MrtOut out;
+              out.position = float4(corners[vertexId], 0.0, 1.0);
+              return out;
+            }
+
+            fragment MrtColors metallum_mrt_probe_fs(MrtOut in [[stage_in]]) {
+              MrtColors out;
+              out.slot0 = float4(0.25, 0.5, 0.75, 1.0);
+              out.slot1 = float4(1.0, 0.0, 0.0, 1.0);
+              out.slot2 = float4(0.0, 1.0, 0.0, 1.0);
+              out.slot3 = float4(0.0, 0.0, 1.0, 1.0);
+              return out;
+            }
+            """;
+
+    /**
+     * The multi-target draw: one pipeline, four fragment outputs, four attachments, each slot read back.
+     * <p>
+     * The plan's MRT smoke is "RT0 red, RT1 green, RT2 blue, RT3 white, read back per attachment", and this is
+     * the half {@link #canCarryColorAttachments} cannot reach: there, the values in the four attachments came
+     * from four clears; here they come from <em>one draw</em>, which is what says the pipeline's
+     * {@code [[color(n)]]} outputs are routed to the slots the pass describes rather than to the first one four
+     * times. The check is per slot and exact, because the failures this can have are all invisible in a picture
+     * that "looks right": a slot order that is permuted, a fragment output that lands in the wrong attachment,
+     * and a pass that describes four attachments while the pipeline declares one.
+     * <p>
+     * The pass is opened with the four clears, so a slot nothing wrote holds {@link #MRT_CLEAR_PIXEL} rather
+     * than undefined memory - which is what makes a <em>missing</em> write readable as the wrong value instead
+     * of as noise. Both corners of every slot are read, so a draw that covered only part of the target fails
+     * here rather than passing on the one pixel the fullscreen triangle happened to reach.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether one draw writes four distinct values into four slots that read back slot by slot
+     */
+    public static boolean canDrawMultipleTargets(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("multiTarget", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        int slots = EXPECTED_MRT_PIXELS.length;
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment[] targets = new MemorySegment[slots];
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTL4RenderEncoder pass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("multiTarget", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            long[] formats = new long[slots];
+            for (int slot = 0; slot < slots; slot++) {
+                formats[slot] = MTLPixelFormat.RGBA8Unorm.value;
+                MemorySegment target = newTarget(device);
+                if (ObjC.isNil(target)) {
+                    return failed("multiTarget", "the " + (slot + 1) + "th of " + slots + " colour attachments came"
+                            + " back nil from newTextureWithDescriptor:");
+                }
+                targets[slot] = target;
+            }
+
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(MULTI_TARGET_MSL, "metallum_mrt_probe_vs",
+                    "metallum_mrt_probe_fs", formats);
+            if (ObjC.isNil(pipeline)) {
+                return failed("multiTarget", "a pipeline with " + slots + " colour attachment formats came back"
+                        + " nil, so this device's Metal 4 pipeline objects cannot carry a four-output fragment"
+                        + " stage");
+            }
+
+            MTL4RenderEncoder.Color[] colors = new MTL4RenderEncoder.Color[slots];
+            for (int slot = 0; slot < slots; slot++) {
+                colors[slot] = MTL4RenderEncoder.Color.cleared(targets[slot], mrtClearColor());
+            }
+            // The command buffer is begun here and not earlier, because the targets and the pipeline are what
+            // it will carry. Measured the hard way: without this call the encoder is created on a buffer that
+            // was never begun, and the machine answers with a SIGSEGV inside IOGPU's own
+            // IOGPUDeviceGetNextGlobalTraceID rather than with a refused call.
+            BEGIN.send(buffer, allocator);
+            pass = openPass(device, buffer, colors, "the four-attachment draw");
+            if (pass == null) {
+                END.send(buffer);
+                return false;
+            }
+
+            SET_RENDER_PIPELINE_STATE.send(pass.encoder(), pipeline);
+            // Three arguments and not five: this probe's DRAW is drawPrimitives:vertexStart:vertexCount:, which
+            // is the three-long selector. The five-long overload of Msg.send belongs to the engine encoder's
+            // instanceCount/baseInstance selector, and a call that took it here would put two arguments into
+            // registers this selector never reads.
+            DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+            pass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("multiTarget", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " pass never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                long last = TARGET_SIZE - 1L;
+                for (int slot = 0; slot < slots; slot++) {
+                    for (long[] at : new long[][]{{0L, 0L}, {last, last}}) {
+                        MTLTexture.bytes(targets[slot], pixel, 4L, at[0], at[1], 1L, 1L);
+                        if (!matches(pixel, EXPECTED_MRT_PIXELS[slot])) {
+                            return failed("multiTarget", "attachment " + slot + " at (" + at[0] + "," + at[1]
+                                    + ") reads " + describe(pixel) + " where the draw writes "
+                                    + describe(EXPECTED_MRT_PIXELS[slot]) + " to it, so the fragment stage's"
+                                    + " color(" + slot + ") output did not land in the attachment the pass"
+                                    + " describes");
+                        }
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("multiTarget", "describing or reading back the four drawn attachments threw " + threw);
+        } finally {
+            if (pass != null) {
+                pass.close();
+            }
+            releaseIfPresent(pipeline);
+            for (MemorySegment target : targets) {
+                releaseIfPresent(target);
+            }
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** The multi-target pass's clear colour, as the descriptor's four components. */
+    private static float[] mrtClearColor() {
+        return new float[]{MRT_CLEAR_PIXEL[0] / 255.0f, MRT_CLEAR_PIXEL[1] / 255.0f,
+                MRT_CLEAR_PIXEL[2] / 255.0f, MRT_CLEAR_PIXEL[3] / 255.0f};
+    }
+
+    /**
      * Whether a pass can carry several colour attachments, each with its own load, store and clear.
      * <p>
      * The migration plan's MRT smoke is "RT0 red, RT1 green, RT2 blue, RT3 white, read back per attachment", and

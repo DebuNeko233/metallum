@@ -135,6 +135,10 @@ ring_passes="$(grep -c ' ring=true ' "$probe_log" || true)"
 ring_failures="$(grep -c ' ring=false ' "$probe_log" || true)"
 attachment_passes="$(grep -c ' attachments=true ' "$probe_log" || true)"
 attachment_failures="$(grep -c ' attachments=false ' "$probe_log" || true)"
+# The drawn half of the MRT smoke is counted apart from the pass half, because the two can fail independently:
+# a pass that describes four attachments says nothing about whether one draw's four fragment outputs reach them.
+multi_target_passes="$(grep -c ' multiTarget=true ' "$probe_log" || true)"
+multi_target_failures="$(grep -c ' multiTarget=false ' "$probe_log" || true)"
 layout_passes="$(grep -c ' layout=true ' "$probe_log" || true)"
 layout_failures="$(grep -c ' layout=false ' "$probe_log" || true)"
 copy_passes="$(grep -c ' copy=true ' "$probe_log" || true)"
@@ -170,6 +174,7 @@ echo "warm probes:     $warm_total   failures: $warm_failures"
 echo "sampled draws:   $sampled_draws passed   $sampled_draw_failures failed"
 echo "allocator rings: $ring_passes passed   $ring_failures failed"
 echo "colour attaches: $attachment_passes passed   $attachment_failures failed"
+echo "multi-targets:   $multi_target_passes passed   $multi_target_failures failed"
 echo "bound layouts:   $layout_passes passed   $layout_failures failed"
 echo "texture copies:  $copy_passes passed   $copy_failures failed"
 echo "depth clears:    $depth_passes passed   $depth_failures failed"
@@ -207,6 +212,11 @@ fi
 
 if (( attachment_failures > 0 )); then
 	echo "the colour-attachment smoke failed in $attachment_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( multi_target_failures > 0 )); then
+	echo "the multi-target draw smoke failed in $multi_target_failures probe(s)" >&2
 	exit 1
 fi
 

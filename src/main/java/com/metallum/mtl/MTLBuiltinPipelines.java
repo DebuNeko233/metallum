@@ -389,6 +389,38 @@ public final class MTLBuiltinPipelines {
                 MTLPixelFormat.Invalid.value, MTLColorWriteMask.All.value);
     }
 
+    /**
+     * The same, with one format a colour output, for a pass that carries more than one target.
+     * <p>
+     * One format per slot and blending disabled at every one of them, which is the single-target form's rule
+     * applied where it matters twice over: a smoke that compares a pixel with a value the fragment stage wrote
+     * may not have that value blended with what stood there, and a slot whose blend state was left at the
+     * descriptor's default would answer with something nobody asked for.
+     */
+    public static MemorySegment buildPipelineForProbe(final String mslSource, final String vertexEntry,
+                                                      final String fragmentEntry, final long[] colorFormats) {
+        MemorySegment vertexFunction = device.newFunction(mslSource, vertexEntry);
+        MemorySegment fragmentFunction = device.newFunction(mslSource, fragmentEntry);
+        if (ObjC.isNil(vertexFunction) || ObjC.isNil(fragmentFunction)) {
+            releaseIfPresent(vertexFunction);
+            releaseIfPresent(fragmentFunction);
+            return MemorySegment.NULL;
+        }
+        MemorySegment pipeline;
+        try (MTLRenderPipelineDescriptor descriptor = new MTLRenderPipelineDescriptor()) {
+            descriptor.setCompiledFunctions(vertexFunction, fragmentFunction);
+            for (int slot = 0; slot < colorFormats.length; slot++) {
+                descriptor.setColorAttachmentFormat(slot, colorFormats[slot]);
+                descriptor.disableBlending(slot, MTLColorWriteMask.All.value);
+            }
+            descriptor.setDepthStencilFormats(MTLPixelFormat.Invalid.value, MTLPixelFormat.Invalid.value);
+            pipeline = device.newRenderPipelineState(descriptor);
+        }
+        ObjC.release(vertexFunction);
+        ObjC.release(fragmentFunction);
+        return pipeline;
+    }
+
     public static MemorySegment ensureClearPipeline(final long colorFormat, final long depthFormat, final boolean writeColor) {
         long key = (colorFormat << 32) | (depthFormat << 1) | (writeColor ? 1L : 0L);
         MemorySegment cached = clearPipelines.get(key);

@@ -35,6 +35,7 @@ import java.util.Optional;
  *                 sampled=&lt;bool&gt; sampledReason=&lt;text&gt; sampledDraw=&lt;bool&gt; sampledDrawReason=&lt;text&gt;
  *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
+ *                 multiTarget=&lt;bool&gt; multiTargetReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -198,6 +199,8 @@ public final class Metal4ColdProbe {
         String residencyReason = "-";
         boolean indirect = false;
         String indirectReason = "-";
+        boolean multiTarget = false;
+        String multiTargetReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -223,6 +226,14 @@ public final class Metal4ColdProbe {
             boolean attachments = makeAndSubmit && MTL4Probe.canCarryColorAttachments(device);
             if (!attachments) {
                 attachmentsReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The DRAWN half of the MRT smoke, which the pass half above cannot reach: one pipeline with four
+            // fragment outputs, one draw, and each of the four attachments read back against the value that
+            // slot's color(n) output writes. A slot order that is permuted and a four-output fragment stage that
+            // the pipeline carries as one output are both failures here and neither is visible in a picture.
+            multiTarget = makeAndSubmit && MTL4Probe.canDrawMultipleTargets(device);
+            if (!multiTarget) {
+                multiTargetReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -325,6 +336,8 @@ public final class Metal4ColdProbe {
                     + " ringReason=" + ringReason.replace(' ', '_')
                     + " attachments=" + attachments
                     + " attachmentsReason=" + attachmentsReason.replace(' ', '_')
+                    + " multiTarget=" + multiTarget
+                    + " multiTargetReason=" + multiTargetReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy
@@ -382,6 +395,7 @@ public final class Metal4ColdProbe {
     }
 
     /** The probe's own reason text can carry newlines, which would break the one-line contract. */
+
     private static String oneLine(final String text) {
         if (text == null) {
             return "-";

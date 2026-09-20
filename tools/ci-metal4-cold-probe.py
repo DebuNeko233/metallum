@@ -385,9 +385,69 @@ for needle, why in (
      "the driver does not count the attachment smoke's failures"),
     ("if (( attachment_failures > 0 )); then",
      "the driver counts the attachment smoke's failures and does not fail the run on them"),
+    # The drawn half of the MRT smoke, counted apart from the pass half because the two fail independently.
+    ('+ " multiTarget=" + multiTarget', "the harness does not print the multi-target draw smoke's answer"),
+    ('+ " multiTargetReason=" + multiTargetReason',
+     "the harness does not print why the multi-target draw smoke failed"),
+    ("MTL4Probe.canDrawMultipleTargets(device)", "the harness never asks the multi-target draw smoke"),
+    ("multi_target_failures=\"$(grep -c ' multiTarget=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the multi-target draw smoke's failures"),
+    ("if (( multi_target_failures > 0 )); then",
+     "the driver counts the multi-target draw smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
+
+# --- the drawn half of MRT, where the probe's own contract is the readback -------------------------------
+# The pass half describes four attachments and reads them back slot by slot after four clears. What it cannot
+# say is whether one draw's four fragment outputs are routed to the four slots the pass describes: a pipeline
+# that carried the stage as one output, and a slot order that is permuted, both pass the clear smoke. So the
+# drawn smoke is pinned on the three things that make it a measurement rather than a call count - four formats
+# on the pipeline, one draw, and an exact per-slot comparison of both corners.
+engine_probe = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                / "MTL4Probe.java")
+if not engine_probe.is_file():
+    raise SystemExit("cold-probe harness: MTL4Probe.java is gone, so the smoke the harness prints an answer for "
+                     "does not exist")
+engine_probe_source = engine_probe.read_text(encoding="utf-8")
+if "public static boolean canDrawMultipleTargets(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the multi-target draw smoke is gone, so the harness's multiTarget field "
+                     "would report a call that is not there")
+mrt_probe = engine_probe_source[engine_probe_source.index("public static boolean canDrawMultipleTargets("):]
+mrt_probe = mrt_probe[:mrt_probe.index("private static float[] mrtClearColor()")]
+for needle, why in (
+    ("MTLBuiltinPipelines.buildPipelineForProbe(MULTI_TARGET_MSL, \"metallum_mrt_probe_vs\",",
+     "the multi-target smoke no longer builds its pipeline from the four-output MSL"),
+    ("\"metallum_mrt_probe_fs\", formats)",
+     "the multi-target smoke builds a pipeline with something other than one format per slot"),
+    ("long[] formats = new long[slots];", "the pipeline is given no format a slot"),
+    ("BEGIN.send(buffer, allocator);",
+     "the multi-target smoke never begins its command buffer, and a render encoder created on a buffer that "
+     "was not begun is a SIGSEGV inside IOGPU's own IOGPUDeviceGetNextGlobalTraceId rather than a refused call "
+     "- measured, and it is the fault this smoke was first written with"),
+    ("DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L)",
+     "the multi-target smoke does not draw the fullscreen triangle, which is the only thing that can put a "
+     "value in a slot"),
+    ("for (long[] at : new long[][]{{0L, 0L}, {last, last}})",
+     "only one pixel a slot is read, so a draw that covered part of a target passes"),
+    ("if (!matches(pixel, EXPECTED_MRT_PIXELS[slot]))",
+     "the multi-target readback is not compared against the value that slot's fragment output writes"),
+):
+    if needle not in mrt_probe:
+        raise SystemExit("cold-probe harness: " + why)
+if "DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)" in mrt_probe:
+    raise SystemExit("cold-probe harness: the multi-target smoke draws with the engine encoder's five-argument "
+                     "selector, which this probe's drawPrimitives:vertexStart:vertexCount: is not - the extra "
+                     "arguments land in registers the selector never reads")
+if "EXPECTED_MRT_PIXELS = {" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the multi-target smoke has no table of the values its slots are "
+                     "compared against, so the readback is a claim about nothing")
+if "float4 slot3 [[color(3)]]" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the four-output fragment stage no longer declares a fourth color(n) "
+                     "output, so the smoke cannot tell four targets from one")
+if "SET_RENDER_PIPELINE_STATE.send(pass.encoder(), pipeline);" not in mrt_probe:
+    raise SystemExit("cold-probe harness: the four-output pipeline is never assigned to the pass's encoder, so "
+                     "the draw would run the previous pipeline")
 
 # The compilation chain's own answer, printed by the driver: the pipeline fixture every probe compiles through
 # the Metal 4 chain. Not counted as a pass yet - the first device proof of the chain is what this line reports,
