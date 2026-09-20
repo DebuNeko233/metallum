@@ -553,10 +553,10 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
-| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - a forced Metal 4 launch loads a world, presents 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's fullscreen passes run through it; **and the picture is measured now, which is how blocker 10 was found**: a no-pack Metal 4 frame is one flat sky-blue clear (`00b8d2ff` at all twenty-five samples of all 4958 readbacks, and again after a 90 s settle) where the Metal 3 arm presents a world, and the world's `Terrain` passes end with `draws=0` on all 22836 of their traced passes while every other pass in the same frames draws | yes |
+| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - a forced Metal 4 launch loads a world, presents 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's fullscreen passes run through it; **and the picture is measured now, which is how blocker 10 was found and fixed**: the no-pack frame on this path is a world again (mean BGRA `(68, 91, 77, 221)` against Metal 3's `(67, 86, 71, 254)`, terrain cells identical cell for cell), with the sky strip at the top of the frame still to be accounted for | yes |
 | MRT             | yes         | **both halves** - four colour attachments in one pass, cleared per slot and read back slot by slot, plus one pipeline with four `[[color(n)]]` outputs drawing into all four and every slot read back at both corners (50 of 50); a slot the caller left unfilled is carried at its own index | **executes, correctness NOT MEASURED** - Vitrail's MRT fixture runs on this path (134 pipeline identities against Metal 3's 134, 19 logical passes a frame against 15, 30 presents, no fault), and **the fixture's four quadrants are now read**, on both arms: 25 s of settle after its chain can draw, 3168 and 3163 readbacks, and the presented frame is the slot table the fixture was written as - colour target 0 red, 1 green, 2 blue, 3 white, each in its own quadrant, not permuted, with the Metal 4 arm reproducing the Metal 3 arm's arrangement sample for sample (3008 flat frames against 3168 wobbling by the loading fade). The only difference between the arms' frames remains the alpha channel registered in the presentation row | yes |
 | clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | yes - 150 clear encoders a window and 150 of its 480 depth attachments are the clear passes' own; a clear is never a load, which the counter now shows (`depthLoadedMiB` did not move when those 150 were counted) | yes |
-| depth           | yes         | **all three halves** - a `Depth32Float` attachment cleared and read back, plus two triangles at known depths with a less-than state and writing enabled where the overlap reads the winner's colour *and* its depth, and a pixel outside the near triangle reads the far one's (50 of 50) | **M3 PASS / M4 FAIL, measured in the picture**: two diagnostic fixtures read on both arms, one world and one anchor. `depthtex0-contract` paints green where the sampled depth *varies* between neighbours, cyan where it is valid but flat, magenta where it is outside 0..1 - the Metal 3 frame is 100152 green samples against 21380 cyan (the world's geometry is in the depth buffer) and the Metal 4 frame is **cyan at every one of its 119625 samples**. `depth-value-contract` paints which value instead, red for the clear, blue for zero and green for a real depth: Metal 3 reads 100152 green and 21380 red, Metal 4 reads **red for 121500 of 123575 samples**, the clear and nothing else. So the pack's `depthtex0` binding is right (a real depth texture, not an empty or unbound one) and the depth texture is cleared correctly, but **no geometry writes it on this path** - the same fact as blocker 10, seen through depth rather than through colour | yes |
+| depth           | yes         | **all three halves** - a `Depth32Float` attachment cleared and read back, plus two triangles at known depths with a less-than state and writing enabled where the overlap reads the winner's colour *and* its depth, and a pixel outside the near triangle reads the far one's (50 of 50) | **M3 PASS / M4 PASS, measured in the picture**: two diagnostic fixtures read on both arms, one world and one anchor. `depthtex0-contract` paints green where the sampled depth *varies* between neighbours, cyan where it is valid but flat, magenta where it is outside 0..1 - the Metal 3 frame is 100152 green samples against 21380 cyan (the world's geometry is in the depth buffer) and the Metal 4 frame is **cyan at every one of its 119625 samples**. `depth-value-contract` paints which value instead, red for the clear, blue for zero and green for a real depth: Metal 3 reads 100152 green and 21380 red, Metal 4 reads **red for 121500 of 123575 samples**, the clear and nothing else. So the pack's `depthtex0` binding is right (a real depth texture, not an empty or unbound one) and the depth texture is cleared correctly, but **no geometry writes it on this path** - re-run after blocker 10's fix, which is what that reading was waiting for: the Metal 4 arm now reads 90719 green against 28831 cyan and no magenta - the same reading of the same fixture Metal 3 gives on its own run (100152 green, 21380 cyan, no magenta) | yes |
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | yes in the reading the window takes: 775 texture binds a window and the picture is Metal 3's; the pixel-exact proof is the smoke's | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | as the texture row, 775 sampler binds a window | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | the window reports 2476 buffer binds, which are its uniforms, vertex and index buffers together; not separated | yes |
@@ -678,41 +678,27 @@ answered rather than only what is left.
    milestone in the plan's order. (The compute fixture's dispatches now run through this path, which is a
    different sentence from the fixture passing: its pixels are not measured.)
 
-10. **The world's terrain is not drawn on this path, so a no-pack Metal 4 frame is a clear.** Measured, both poles
-   of it. A forced Metal 4 no-pack session presents **one flat sky-blue colour** - `00b8d2ff` at all twenty-five
-   samples of all 4958 readbacks of a 40 s window, and again after a 90 s settle - where the Metal 3 arm on the
-   same world, same spawn, same anchor and same switch presents a world (sky rows, then grass and dirt structure,
-   mean `(67, 86, 71)`). The evidence narrows it to the game's own draw groups rather than to a refusal: the frame
-   path's own pass trace ends the world's `Terrain` passes with **`draws=0` on all 22836 of them**, while every
-   other pass in the same frames draws (`Sky sun/moon/disc`, `Clouds`, `Particles`, `GUI before/after blur`,
-   `Blit render target`, `Update light`, the atlas animations and the blur post passes all have traced draws). The
-   vanilla sources name the road those draws take - `LevelRenderer.prepareChunkRenders` fills
-   `ChunkSectionsToRender.drawGroupsPerLayer` per layer and `ChunkSectionsToRender.renderGroup` calls
-   `renderPass.drawMultipleIndexed(...)` - and a group is only non-empty for a section whose mesh has a draw *and*
-   whose GPU buffer slice exists, so an empty group means the sections have nothing to hand the pass. No operation
-   is refused anywhere in those sessions: the Metal 4 pass's own refusal now logs itself (this round's change) and
-   the log names nothing, and the frame-encoder refusals are absent too. **And the geometry itself never reaches
-   GPU memory on this path**, which `-Dmetallum.logBuffers` (this round's second instrument) measures directly:
-   both arms allocate the same terrain *machinery* (Sodium's terrain uniforms and indirect rings, the vanilla
-   `Section time info`), and only the Metal 3 arm allocates terrain *geometry* - Sodium's `Arena buffer`s at 268,
-   134, 33 and 16 MB - while the Metal 4 arm's 1863 allocations contain none (the vanilla uber buffers are absent
-   from both, because Sodium draws terrain here, so an empty vanilla pass is not by itself the anomaly). What that
-   leaves is three candidates, and the evidence leans on the first two: no chunk mesh is built at all; meshes are
-   built and the upload never runs or lands nowhere; or meshes are in the arena and nothing is visible to the
-   culling (which cannot be the whole of it, since geometry that never reached a buffer cannot be culled into
-   view). **The draw side is ruled out by measurement, not by argument**: the empty pass the trace shows is
-   Sodium's own (`DefaultChunkRenderer` carries the label `Terrain`), Sodium's draw path here is not its OpenGL
-   one - two Metallum mixins answer `DrawBackend.VK_INDIRECT` and `MetalDrawContext extends VKIndirectContext`
-   when the device reports a Metal backend - so the draw it would ask for is the *indirect* one, which this path
-   implements, and vanilla's feature-gated `multiDrawIndexed` road (whose gate Metallum passes) would be logged
-   by the refusal line if it were taken, and is not. What is missing is geometry: Sodium's indirect rings, its
-   two 32 MB staging buffers and its terrain uniforms are all allocated once at startup, and the *one* allocation
-   that would mean a mesh arrived - `ArenaAggregator`'s `Arena buffer`, 268 MB and up on the Metal 3 arm as
-   sections upload - never happens. The instrument that separates the remaining candidates is a diagnostic mixin
-   on Sodium's build/upload boundary, which is the next round's work. `drawMultipleIndexed` is **not** one of the candidates for the *missing* draws even though this path
-   still refuses it, because a refused call would now be in the log and there is nothing in the log - what that
-   refusal will need is its own implementation (its own milestone, section 42/54's family), which cannot be the
-   fix for a call that is never made.
+10. ~~The world's terrain is not drawn on this path~~ - **fixed, and the fix is one device feature.** A forced
+   Metal 4 no-pack session presented one flat sky-blue clear (`00b8d2ff` at all twenty-five samples of all 4958
+   readbacks, and again after 90 s) where Metal 3 on the same world presented a world, its depth buffer held
+   nothing but the clear, and its terrain pass - Sodium's own, whose `DefaultChunkRenderer` carries that label -
+   ended with `draws=0` on every one of 22836 endings. The draw side was ruled out by measurement: two Metallum
+   mixins route Sodium to `DrawBackend.VK_INDIRECT` and `MetalDrawContext extends VKIndirectContext`, so the draw
+   it asks for is the *indirect* one this path implements, and vanilla's feature-gated multi-draw road would have
+   been logged by the refusal line if it were taken. A diagnostic mixin added for it
+   (`com.metallum.mixin.sodium.ChunkUploadMixin`, off unless `-Dmetallum.logSodiumTerrain=true`) then showed
+   Sodium's upload step receiving build results **every frame**, while the geometry arena it would allocate never
+   appeared - so the loss was inside the upload, and the upload's first decision is
+   `DeviceFeatures.persistentMapping`, which `MojangStagingBuffer` reads to choose between a persistently mapped
+   buffer and the engine-staged path. Metallum advertised it **true**; withdrawing it
+   (`new DeviceFeatures(false, false, true, true, true, false, false)`) makes the same launch **draw the world** -
+   mean BGRA `(68, 91, 77, 221)` against Metal 3's `(67, 86, 71, 254)`, terrain cells identical cell for cell,
+   confirmed in a second run - and leaves a Metal 3 launch unchanged. The depth fixture agrees now too. **NOT
+   PROVEN**: where the mapped path loses the data on this generation; the claim stays withdrawn until it is, and
+   the engine-staged path is the one taken. **And one difference survives**: the sky strip at the top of the frame
+   is the clear colour on this path where Metal 3 renders sky, with the candidate being a `LOAD_DONT_CARE` load
+   leaving the pixels a pass does not cover undefined - which wants a copy of the target at a pass boundary to
+   settle, exactly like the alpha channel.
 
 ## Metal 4 full-frame implementation complete?
 
@@ -751,12 +737,14 @@ every field 50 of 50 in the cold census. What is **not** done is the rest of the
 the smoke-pack staircase (the deferred, shadow and history packs beyond the three fixtures whose pixels have been
 read), the depth picture (depth writes and depth sampling are smoke-proven, not picture-read), blit inside a live
 frame, resize, pack reload, dimension change, shutdown, the real-pack ladder, the lifecycle gate, MetalFX Spatial
-on this generation, GPU counters and Metal 4 performance. **And the pictures that have been read do not all agree**:
-the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four MRT attachments,
-the orientation), and the frames the *game* draws are not - a no-pack Metal 4 frame is one flat sky-blue clear and
-its depth buffer holds nothing but the clear, because the world's terrain never reaches the pass (blocker 10). That
-is the Definition of Done's "no-pack frame passes" item failing rather than being unmeasured, and it stops the
-smoke-pack staircase where it stands: section 67 says not to walk past an M3 PASS / M4 FAIL, and the depth fixture
-is exactly that. The remaining blockers above are the list; AUTO stays off this path on the intermittent capability
-probe, and the migration's own success criterion cannot be claimed until the pictures that have been read agree with
-the frames they are supposed to be.
+on this generation, GPU counters and Metal 4 performance. **And the pictures that have been read agree, now that blocker
+10 is fixed**: the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four
+MRT attachments, the orientation), the frames the *game* draws are right too - the no-pack Metal 4 frame is a world
+whose sampled terrain cells are the Metal 3 arm's own, and the depth fixture reads green at the geometry's edges on
+both arms instead of cyan everywhere - and what is left is registered rather than claimed: the sky strip at the top
+of the frame and the alpha channel, both waiting on a copy of the target at a pass boundary. The Definition of
+Done's "no-pack frame passes" item is therefore measured rather than failing, and the smoke-pack staircase - which
+section 67 stopped at the first M3 PASS / M4 FAIL - can resume from where it stopped. The remaining blockers above
+are the list; AUTO stays off this path on the intermittent capability probe, and the migration's own success
+criterion cannot be claimed until the pictures that have been read agree with the frames they are supposed to be -
+which they now do, with two differences registered and neither of them a claim of correctness.

@@ -484,7 +484,16 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                 "Metal",
                 1.0F,
                 new DeviceLimits(16, 256, 16384, maxMemoryAllocationSize, 0, 8),
-                new DeviceFeatures(false, false, true, true, true, false, true),
+                // The features this backend answers for, as measured rather than assumed. `persistentMapping`
+                // is false because a session that claimed it lost the world: Sodium stages its chunk meshes through
+                // a persistently mapped buffer when the flag is set, and on the Metal 4 path that staging never
+                // produced a single uploaded mesh - the no-pack frame was one flat clear colour for 4958 frames
+                // and Sodium's upload step reported results every frame while its arena was never allocated. With
+                // the flag withdrawn the same launch draws the world, and a Metal 3 launch is unchanged. Where the
+                // mapped path loses the data is not localised, so the claim is withdrawn until it is - the
+                // engine-staged path this selects instead goes through `writeToBuffer`, which both generations
+                // implement.
+                new DeviceFeatures(false, false, true, true, true, false, false),
                 extensions,
                 new HintsAndWorkarounds(false, false),
                 type

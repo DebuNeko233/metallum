@@ -2061,6 +2061,43 @@ on Sodium's OpenGL road, which is not taken here. Vanilla's `RenderPass.multiDra
 (`new DeviceFeatures(false, false, true, true, true, false, true)`), so a call down that road would reach the
 Metal 4 pass and be logged by the refusal line - and none is. The draw side is therefore not what is missing.
 
+**Then the instrument found the meshes, and one boolean found the loss.** The diagnostic above was written as
+this project's own mixin, `com.metallum.mixin.sodium.ChunkUploadMixin`, off unless
+`-Dmetallum.logSodiumTerrain=true`, and what it says in a no-pack Metal 4 session is the opposite of what the
+missing arena suggested: **Sodium's upload step is called every frame and every call carries results** - one on the
+first call, then 4, 6, 4, 1, 2, 3, and twenty-two by the eighth. The builder produces meshes on this path. So the
+loss is inside the upload, and the upload's first engine-visible act on this path is the staging: Sodium's
+`MojangStagingBuffer` constructor reads exactly one device feature to decide how it stages -
+
+```text
+RenderSystem.getDevice().getDeviceInfo().features().persistentMapping()
+    ? new MappedStagingBuffer(size)      // a buffer the CPU maps and keeps mapped
+    : ...                                 // the engine-staged path, through writeToBuffer
+```
+
+- and Metallum advertised that flag **true**. One boolean withdrawn (`new DeviceFeatures(false, false, true, true,
+true, false, false)`) and the same forced Metal 4 no-pack launch **draws the world**: mean BGRA
+`(68, 91, 77, 221)` against the Metal 3 arm's `(67, 86, 71, 254)`, with the sampled terrain cells identical cell
+for cell (`366821`, `e3090c09`, `1f3913`, `446b33`, `412d1e`, `375729` and the rest), confirmed in a second run.
+A Metal 3 launch with the flag withdrawn is byte for byte unchanged. Where the mapped path loses the data on this
+generation is **not localised** - that is the follow-up, and the withdrawal is what makes it a follow-up rather
+than a blocker - so the claim stays withdrawn and the engine-staged path, which both generations implement, is the
+one a session uses.
+
+**And the depth fixture now agrees with Metal 3 too**, which is the check the staircase stopped on: with the
+withdrawal in place the Metal 4 arm reads **90719 green samples against 28831 cyan and no magenta** (the world's
+geometry is in the depth buffer at the edges, and nothing sampled outside 0..1), against Metal 3's baseline
+100152 green and 21380 cyan on its own run - the same reading of the same fixture, on two different scenes.
+
+**One difference survives, and it is registered rather than explained.** The *sky* strip at the top of the frame
+does not come through on this path: the Metal 4 arm's first sampled row is the clear colour `00b8d2ff` with alpha
+0 where the Metal 3 arm's is rendered sky (`9db0d7`/`85aefe`/`83adff`, alpha 255), while every row below is the
+same terrain. Its candidate is the attachment-contents policy seen from the other side: a pass that is declared to
+overwrite what it covers is given `LOAD_DONT_CARE`, which is only undefined for the pixels it does *not* cover, and
+the sky drawn before it is exactly those pixels. That is the kind of difference that looks right on one driver and
+not on another, and telling it apart from "the sky pass did not draw" wants a copy of the target at a **pass
+boundary** rather than at present - the same instrument the alpha channel has been waiting for.
+
 **And Sodium's own machinery is all there, allocated once, at startup.** The buffer log shows its indirect rings,
 its two 32 MB staging buffers and its terrain uniforms created within the same second the session came up, and
 its terrain pass is opened every frame afterwards; what never appears is the one allocation that would mean

@@ -8,6 +8,7 @@
   "client": [
     "render.PreferredGraphicsApiMixin",
     "render.VideoSettingsScreenMixin",
+    "sodium.ChunkUploadMixin",
     "sodium.DrawBackendMixin",
     "sodium.DrawContextMixin"
   ],

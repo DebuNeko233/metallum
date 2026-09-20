@@ -1573,4 +1573,19 @@ for needle, why in (
     if needle not in device_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and the device does not claim what this path has not delivered ------------------------------------------
+# Measured with one variable changed. With `persistentMapping` advertised true, Sodium stages its chunk meshes
+# through a persistently mapped buffer - `MojangStagingBuffer`'s constructor picks `MappedStagingBuffer` on that
+# flag and the engine-staged path otherwise - and on this path not one of them arrives: a no-pack Metal 4 session
+# presented one flat sky-blue clear for all 4958 readbacks of a 40 s window (and again after 90 s), Sodium's own
+# upload step reported build results every frame, and the geometry arena that would mean a mesh was accepted was
+# never allocated, on either arm's log. With the flag withdrawn the same launch draws the world - the sampled
+# terrain cells are the Metal 3 arm's own, cell for cell - and a Metal 3 launch is byte for byte unchanged. Where
+# the mapped path loses the data is not localised, so the claim stays withdrawn until it is: the engine-staged
+# path this selects instead goes through `writeToBuffer`, which both generations implement.
+if "new DeviceFeatures(false, false, true, true, true, false, false)," not in device_source:
+    raise SystemExit("metal 4 provider: the device advertises persistently mapped buffers again, and a session "
+                     "that stages through them loses the world's geometry on this path - measured as a no-pack "
+                     "frame that is one flat clear while Sodium's arena is never allocated")
+
 print("Metal 4 execution provider contract: PASS")
