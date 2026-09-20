@@ -2522,35 +2522,68 @@ second settle the same arm reaches its steady state: the grid is `ff00ff00` at e
 dispatches makes two runs the same frame" - is **refuted, and the observation it produced is withdrawn**: the
 Metal 3 anchor had not settled, and the "gentle radial ramp" was that arm's animation, not the frame's shape.
 
-### What survives: the alpha, and it survives forty seconds
+### The orientation, and a second fixture that answers it
 
-| | Metal 3, 40 s settle | Metal 4, 40 s settle |
+The question the picture column has carried since it opened is orientation: the compute-storage fixture's picture
+is a flat colour, so a readback of it can say the colour arrived and cannot say which way up it is. A **second
+diagnostic fixture** answers it without touching the companion checkout: `picture-orientation-contract` is that
+same chain - the same two compute programs, the same marker test into `colortex0`, the same `final.vsh` - with one
+file replaced, and the replacement is short enough to be the record:
+
+```glsl
+// shaders/final.fsh, in place of the flat accept/reject colour
+vec4 picture = texcoord.x < 0.5
+        ? (texcoord.y < 0.5 ? vec4(1.0, 0.0, 0.0, 0.5) : vec4(0.0, 0.0, 1.0, 0.5))
+        : (texcoord.y < 0.5 ? vec4(0.0, 1.0, 0.0, 0.5) : vec4(1.0, 1.0, 1.0, 0.5));
+gl_FragColor = green ? picture : vec4(1.0, 0.0, 1.0, 1.0);
+```
+
+Four quadrants, one channel each and one of all three, so the five-by-five grid - printed top row first - says
+which way up the image is and in which order the channels arrived; alpha 0.5, so the same reading says whether an
+alpha that is neither 0 nor 1 arrives at all. The pack lives under `run/shaderpacks/` like the smoke fixtures and
+is not tracked, because the fixtures that *are* staged from the companion Vitrail checkout may not be added to:
+that checkout stays at `4380250f`, which is a standing rule of this program rather than a convenience.
+
+**Measured on both arms, forty seconds of settle, 5162 and 4956 readbacks. Orientation is PROVEN, and the two
+roads agree.** The Metal 3 picture reads, top row first: red (`ff0000ff`, RGBA8) and green (`ff00ff00`) across the
+top rows, blue (`ffff0000`) and white (`ffffffff`) across the bottom; the same arm's drawable reads blue
+(`ff0000ff`, BGRA8) and white across the top, red (`ffff0000`) and green (`ff00ff00`) across the bottom. That is
+the present triangle's own mapping, quadrant for quadrant: the draw swaps the two ends of the memory-vertical axis
+and changes nothing else - the quadrants that share a row in the shader (`texcoord.y < 0.5`: red with green, blue
+with white) still share a row in the drawable, and the columns are not mirrored. The red-and-blue column also
+proves the channel conversion: the picture is RGBA8 and the drawable BGRA8, and the same *colour* arrives in both
+(the bytes differ by exactly the red/blue swap the two formats imply), so neither road carries a channel order
+defect to the screen. **The Metal 4 arm's grid is the same arrangement, sample for sample**, which is what the
+orientation question needed: whatever flip the present makes, this road makes the same one. Across the
+twenty-five samples of both fixtures, in fact, the two arms agree on every *colour* and differ in exactly one
+byte: the alpha, which is the subject of the section below.
+
+### What survives: the alpha, and it is not the pack's
+
+| shader's alpha | Metal 3, 40 s settle | Metal 4, 40 s settle |
 | --- | --- | --- |
-| every grid sample | `ff00ff00` (green 255, alpha 255) | `0000ff00` (green 255, **alpha 0**) |
-| mean | `(0, 255, 0, 254)` | `(0, 255, 0, 0)` |
-| shape | flat opaque green | flat green, alpha 0 |
+| `1.0` (compute-storage fixture, green picture) | alpha 255, mean `(0, 255, 0, 254)` | alpha 0, mean `(0, 255, 0, 0)` |
+| `0.5` (picture-orientation fixture, four quadrants) | alpha 255 at every sample | alpha 0 at every sample |
 
-The Metal 4 arm holds flat green with **alpha 0** for all 4953 readbacks of the forty second window, and it is
-already flat and alpha-zero on the first frame the fixture's chain can affect. The fixture's shader writes alpha
-1; the layer is opaque, so this is invisible on screen; and it is now the **one measured frame-content difference
-between the arms**, not a present-road difference:
+The second fixture is what turns the alpha from "a difference between the arms" into "**not the pack's alpha at
+all**": the shader's alpha changed from 1.0 to 0.5 and the stored alpha did not move on either arm. So the frame's
+alpha does not follow the pack's write on either road - 0.5 arrives as 255 exactly as 1.0 did - and the difference
+between the arms is therefore **not** about the pack's write, its pipeline's write mask, or its colour format:
+something else in the frame owns that channel, and the two arms disagree about what that something leaves there.
 
-- **what it is**: on this road the pack's alpha does not reach the present, while its red, green and blue do. Both
-  arms draw the pack with the same pipeline-building code and the same `ColorTargetState.writeMask()` (so the
-  write-mask mapping is not the difference), both sample the game's own render target at present, and both agree
-  byte for byte on the loading screen (the pink `ffef323d`, RGBA8) before the chain runs.
-- **what is not yet measured**: *where* the alpha goes. The candidates are the pack's write into the game's target
-  on this road (the pipeline's colour format or mask), a later pass of the frame overwriting the target after the
-  pack's `final` pass, and the sampling of that target at present. The three are told apart by reading the same
-  target **at a pass boundary** rather than at present, and by a fixture whose colour is asymmetric and whose
-  alpha is not 1 - one frame then separates "RGB landed and alpha did not" from "a later pass wrote the whole
-  pixel", and the same asymmetric fixture is what the orientation question needs anyway.
+What is measured: both arms draw the pack with the same pipeline-building code and the same
+`ColorTargetState.writeMask()`, both sample the game's own render target at present, both agree byte for byte on
+the loading screen (the pink `ef,32,3d,ff`, RGBA8) before the chain runs, and the alpha each arm stores is
+invariant under the two fixture alphas. What is not measured: which writer sets it, and why the two roads differ -
+the candidates are now the frame's own clear of the presented target and any pass after the pack's `final` that
+touches that target, and the experiment is a copy of that target **at a pass boundary** rather than at present,
+which is also the instrument a multi-target picture check wants. The layer is opaque, so this is invisible on
+screen; it is registered as a measured frame difference, not as a visible defect.
 
 What the picture column reads now: **both halves of the frame measured on both arms, the present roads proven to
-be the identity on this fixture, one difference withdrawn as an artefact of an unsettled anchor, and one - the
-alpha - measured and persistent, with its next experiment named.** Orientation is still unproven, and for the
-reason it always was: this fixture's picture is symmetric, so the readback can say the colour arrived and cannot
-say which way up it is.
+be the identity in colour and the same flip in orientation, one difference withdrawn as an artefact of an
+unsettled anchor, and one - the alpha - reframed by a second fixture as a property of the frame's own clear
+rather than of the pack's write.**
 
 ## The API mapping
 
