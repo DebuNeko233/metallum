@@ -460,4 +460,67 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the copy path, which is where this command model puts its blits ------------------------------------
+# Metal 4 has no blit encoder: a copy is a compute encoder command, so the smoke and the wrapper are the only
+# path a texture upload, download or region copy can take. The pins cover the selectors, the region's four
+# coordinates, and the two readings that make the smoke a measurement.
+compute_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                  / "MTL4ComputeEncoder.java").read_text(encoding="utf-8")
+for needle, why in (
+    ('Msg.of("computeCommandEncoder", ADDRESS)',
+     "the copies are not made on the command model's compute encoder, which is where they live"),
+    ('"copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:"',
+     "the region copy selector is gone, so a subregion copy has no command"),
+    ('"copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:"',
+     "the texture-to-buffer selector is gone, so the engine cannot read a texture back"),
+    ('"copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:"',
+     "the buffer-to-texture selector is gone, so the engine cannot upload one"),
+    # The three structs are pinned with the send they belong to, because the same helpers build the origins and
+    # sizes of the texture-to-buffer copy too - a bare pin would be satisfied by that call while the region copy
+    # stopped passing the coordinates it was given.
+    ("COPY_TEXTURE_REGION_TO_TEXTURE.send(open, source, sourceSlice, sourceLevel, origin, size, destination,\n"
+     "                    destinationSlice, destinationLevel, destinationOrigin);",
+     "the region copy does not send the coordinates it was given"),
+    ("MemorySegment origin = MTLOrigin.on(stack, sourceX, sourceY, sourceZ);\n"
+     "            MemorySegment size = MTLSize.on(stack, width, height, depth);\n"
+     "            MemorySegment destinationOrigin = MTLOrigin.on(stack, destinationX, destinationY, destinationZ);",
+     "the region's source origin, its size or its destination origin is not passed as the header's structs - the "
+     "three together, because each helper also builds another copy's struct and a bare pin would be satisfied "
+     "there"),
+    ("ObjC.retain(encoder)", "the encoder is held past its autorelease pool without a retain"),
+    ("barrierForSubsequentEncoders()", "a copy that reads what a pass wrote has no way to say so"),
+):
+    if needle not in compute_source:
+        raise SystemExit("cold-probe harness: " + why)
+# The declaration and the call have to agree: a selector declared with one argument too many makes the handle
+# throw on invocation, which reads as "objc_msgSend failed" rather than as a nil - measured while writing this.
+if 'Msg.ofVoid("copyFromTexture:toTexture:", ADDRESS, ADDRESS, ADDRESS)' in compute_source:
+    raise SystemExit("cold-probe harness: the whole-texture copy selector is declared with three arguments where "
+                     "the header has two, so the handle is invoked with the wrong arity")
+
+for needle, why in (
+    ("public static boolean canCopyTextureRegions(",
+     "the copy path is measured nowhere, so the only route a texture upload can take has no run behind it"),
+    ("copies.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, PATTERN_EDGE, PATTERN_EDGE, 1L,",
+     "the smoke does not copy a subregion from a non-zero-sized source, so the four coordinates a region copy "
+     "can be wrong about are not exercised"),
+    ("copies.copyTextureToTexture(source, wholeTarget)", "the smoke does not make a whole-texture copy"),
+    ("the region copy also wrote ", "a copy that wrote outside its region is not reported as that"),
+    ("the whole-texture copy reads ", "a whole copy that lost a quadrant is not reported as that"),
+):
+    # The probe's own source, not the harness's: the smoke lives in MTL4Probe and the harness only asks it.
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " copy=" + copy', "the harness does not print the copy smoke's answer"),
+    ('+ " copyReason=" + copyReason', "the harness does not print why the copy smoke failed"),
+    ("MTL4Probe.canCopyTextureRegions(device)", "the harness never asks the copy smoke"),
+    ("copy_failures=\"$(grep -c ' copy=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the copy smoke's failures"),
+    ("if (( copy_failures > 0 )); then", "the driver counts the copy smoke's failures and does not fail the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

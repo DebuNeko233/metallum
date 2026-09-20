@@ -40,13 +40,15 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All four device smokes passed
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All six device smokes passed
                   in every one of them - the drawn sampled texture, the allocator-slot ring, the four
                   colour attachments and the new bound layout - and the compilation chain compiled a pipeline
                   in every process (`compile=ok(valid=true)`). The layout smoke is the new one: two argument
                   tables in one pass, one per stage, carrying a vertex buffer with its stride, two uniforms,
                   a texture and a sampler, drawn with a scissor and read back on both sides of it (50 of 50).
-                  Since this round the layout smoke builds its tables from the production `Metal4BindingPlan`,
+                  The new one is the copy smoke: a region copy and a whole copy, both read back (50 of 50).
+                  Since the round that added it the layout smoke builds its tables from the production
+                  `Metal4BindingPlan`,
                   so the plan itself is what those 50 probes measured. The pass object is still NOT reachable
                   here - it needs the engine's device and real texture views - so its evidence remains the
                   structural contract plus the measured layers underneath (the attachment smoke's own evidence:
@@ -284,9 +286,14 @@ residency:        NOT STARTED - nothing declares residency yet; the argument tab
 ## Blit
 
 ```
-full:   NOT STARTED
-region: NOT STARTED
-mipmap: NOT STARTED
+full:   PROVEN as a native smoke, NOT through a frame - `MTL4ComputeEncoder.copyTextureToTexture` copies a
+        64x64 four-quadrant pattern into a second texture and every quadrant is read back, 50 of 50 probes.
+        The engine's own `copyTextureToTexture` still refuses
+region: PROVEN as a native smoke, NOT through a frame - a 32x32 region at the origin is copied into the
+        destination's other half, and both a pixel inside where it landed and a pixel outside it are read (the
+        first is the source's top-left quadrant, the second is still the clear). The engine's own
+        `copyBufferToTexture`/`copyTextureToBuffer`/`writeToTexture` still refuse
+mipmap: NOT STARTED - no mip chain has been copied on the new path
 ```
 
 ## Compute
@@ -376,10 +383,12 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The Metal 4 frame path stops at its first texture write** - a forced Metal 4 launch executes Metal 4 and
-   refuses `writeToTexture` from the game's own texture-manager construction, so no frame has been drawn. The
-   copy/upload path (Metal 4 puts copies in the compute encoder) is the next milestone, and it is what
-   sections 54-55 describe - arrived at from the client's demand rather than from the plan's order.
+3. **The copies exist natively and are not wired yet** - a forced Metal 4 launch stops at `writeToTexture` from
+   the game's texture-manager construction. The command model's copy path is now measured on the device
+   (`MTL4ComputeEncoder`: whole and region copies, 50 of 50 probes), and what is left is the engine side: the
+   frame encoder's `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/
+   `copyTextureToTexture` and `transientMemory()` (the staging arena a texture upload is staged through), which
+   still refuse by name. Then the client walks to its next named gap.
 4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring

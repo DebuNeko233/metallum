@@ -1343,6 +1343,205 @@ public final class MTL4Probe {
         return uniform;
     }
 
+
+    /**
+     * Whether a texture's contents can be copied on the new command model - whole, and region by region.
+     * <p>
+     * The plan's blit smoke is "a pattern source texture, a copied subregion, a destination, a readback", and on
+     * Metal 4 the copies live in the compute encoder: there is no blit encoder, and this is the shape a frame's
+     * texture uploads, downloads and copies take. The smoke is built so that a region copy has four coordinates
+     * to be wrong about: a pattern of four flat quadrants is rendered into the source, a 32x32 region of it is
+     * copied to a destination's other half, and both the inside and the outside of where it landed are read.
+     * <p>
+     * Then the whole texture is copied into a second destination - the form that has nowhere to be wrong about
+     * where a pixel came from - and every quadrant of it is compared with the pattern, which is what says the
+     * whole-texture form carried the contents rather than a corner of them.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a whole and a region copy both land where they were asked to
+     */
+    public static boolean canCopyTextureRegions(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("copy", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment source = MemorySegment.NULL;
+        MemorySegment regionTarget = MemorySegment.NULL;
+        MemorySegment wholeTarget = MemorySegment.NULL;
+        MemorySegment patternPipeline = MemorySegment.NULL;
+        MTL4RenderEncoder patternPass = null;
+        MTL4RenderEncoder clearPass = null;
+        MTL4ComputeEncoder copies = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("copy", "a Metal 4 queue, allocator, command buffer or shared event came back nil");
+            }
+
+            source = newTarget(device);
+            regionTarget = newTarget(device);
+            wholeTarget = newTarget(device);
+            if (ObjC.isNil(source) || ObjC.isNil(regionTarget) || ObjC.isNil(wholeTarget)) {
+                return failed("copy", "one of the three " + TARGET_SIZE + "x" + TARGET_SIZE + " RGBA8 textures came"
+                        + " back nil: source=" + !ObjC.isNil(source) + " region=" + !ObjC.isNil(regionTarget)
+                        + " whole=" + !ObjC.isNil(wholeTarget));
+            }
+
+            patternPipeline = MTLBuiltinPipelines.buildPipelineForProbe(PATTERN_MSL, "metallum_pattern_probe_vs",
+                    "metallum_pattern_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(patternPipeline)) {
+                return failed("copy", "the pattern pipeline came back nil, so the source has no four quadrants to"
+                        + " copy out of");
+            }
+
+            BEGIN.send(buffer, allocator);
+
+            patternPass = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(source, new float[]{0.0f, 0.0f,
+                            0.0f, 1.0f})}, "the copy source's pattern");
+            if (patternPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!patternPass.setRenderPipelineState(patternPipeline)
+                    || !patternPass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                END.send(buffer);
+                patternPass.close();
+                return failed("copy", "the pass that draws the copy source's pattern refused its pipeline or its"
+                        + " draw");
+            }
+            if (!patternPass.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                patternPass.close();
+                return failed("copy", "the pattern pass does not answer the producer barrier, so the copy that"
+                        + " reads it has no encoded dependency");
+            }
+            patternPass.endEncoding();
+
+            // Both destinations cleared, in one pass with two attachments, because a region copy writes only
+            // part of its destination and the rest of it has to be a colour the readback knows.
+            clearPass = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{
+                            MTL4RenderEncoder.Color.cleared(regionTarget, new float[]{0.0f, 0.0f, 0.0f, 1.0f}),
+                            MTL4RenderEncoder.Color.cleared(wholeTarget, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the copy destinations' clear");
+            if (clearPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!clearPass.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                clearPass.close();
+                return failed("copy", "the pass that clears the copy destinations does not answer the producer"
+                        + " barrier");
+            }
+            clearPass.endEncoding();
+
+            try {
+                copies = MTL4ComputeEncoder.open(device, buffer, "the copy pass");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("copy", "the copy pass could not be opened at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            // The source's top-left quadrant, 32x32 at the origin, into the region destination's top-right
+            // quadrant. Its origin is the point of the smoke: a whole-texture copy cannot be wrong about where a
+            // pixel came from, and this one can be wrong about four coordinates.
+            if (!copies.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, PATTERN_EDGE, PATTERN_EDGE, 1L,
+                    regionTarget, 0L, 0L, PATTERN_EDGE, 0L, 0L)) {
+                END.send(buffer);
+                copies.close();
+                return failed("copy", "the compute encoder refused the region copy, so this command model's only"
+                        + " copy path does not answer");
+            }
+            // And the whole texture into the second destination, which is the form the engine's texture views and
+            // mip chains use.
+            if (!copies.copyTextureToTexture(source, wholeTarget)) {
+                END.send(buffer);
+                copies.close();
+                return failed("copy", "the compute encoder refused the whole-texture copy");
+            }
+            copies.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("copy", "the shared event did not reach 1 within 2000 ms, so the submitted copies"
+                        + " never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // Where the region landed: the source's top-left quadrant, at the destination's top-right.
+                MTLTexture.bytes(regionTarget, pixel, 4L, PATTERN_EDGE + 8L, 8L, 1L, 1L);
+                if (!matches(pixel, EXPECTED_PATTERN[0])) {
+                    return failed("copy", "the region copy put " + describe(pixel) + " where the source's"
+                            + " top-left quadrant " + describe(EXPECTED_PATTERN[0]) + " was asked for, so the"
+                            + " region's source origin or its destination origin is not the one it was given");
+                }
+                // And where it did not: the destination's other half is still the clear it started from, which is
+                // what says the copy wrote its region and not the whole texture.
+                MTLTexture.bytes(regionTarget, pixel, 4L, 8L, 8L, 1L, 1L);
+                if (!matches(pixel, CLEAR_PIXEL)) {
+                    return failed("copy", "the region copy also wrote " + describe(pixel) + " outside the region it"
+                            + " was given, where the clear " + describe(CLEAR_PIXEL) + " should still be");
+                }
+
+                // The whole copy: every quadrant of the source, in its own place.
+                for (int index = 0; index < PATTERN_PIXELS.length; index++) {
+                    MTLTexture.bytes(wholeTarget, pixel, 4L, PATTERN_PIXELS[index][0], PATTERN_PIXELS[index][1],
+                            1L, 1L);
+                    if (!matches(pixel, EXPECTED_PATTERN[index])) {
+                        return failed("copy", "the whole-texture copy reads " + describe(pixel) + " at ("
+                                + PATTERN_PIXELS[index][0] + ", " + PATTERN_PIXELS[index][1] + ") where the"
+                                + " pattern's " + quadrant(index) + " " + describe(EXPECTED_PATTERN[index])
+                                + " was asked for");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("copy", "copying the texture regions threw " + threw);
+        } finally {
+            if (patternPass != null) {
+                patternPass.close();
+            }
+            if (clearPass != null) {
+                clearPass.close();
+            }
+            if (copies != null) {
+                copies.close();
+            }
+            releaseIfPresent(patternPipeline);
+            releaseIfPresent(wholeTarget);
+            releaseIfPresent(regionTarget);
+            releaseIfPresent(source);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** The name of one of the pattern's quadrants, for a message that says which one a readback landed in. */
     private static String quadrant(final int index) {
         return switch (index) {

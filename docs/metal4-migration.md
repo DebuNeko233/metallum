@@ -949,6 +949,45 @@ client is what re-orders it: a frame path that cannot upload a texture cannot be
 shape the plan asks for - named, at the operation, with the caller visible in the stack - and it is the roadmap
 for the next milestone rather than a claim that anything was drawn.
 
+### The copies: no blit encoder, and a client that asked first
+
+Metal 4 has no blit encoder. The compute encoder absorbed it, so a texture upload, a texture download, a region
+copy and a mip generation are commands on `MTL4ComputeCommandEncoder` rather than on an encoder of their own.
+`mtl.metal4.MTL4ComputeEncoder` wraps the four copies the engine's frame path needs - whole texture to texture,
+a region of one texture to another, texture to buffer, buffer to texture - with the regions passed as Metal's
+own `MTLOrigin` and `MTLSize` structs by pointer, which is the same calling shape the Metal 3 layer uses so a
+region means the same thing on both paths.
+
+**The plan puts blit after render, MRT and depth (sections 54 to 55); the client re-ordered it.** A forced Metal
+4 launch stopped at `writeToTexture`, raised from the game's own texture-manager construction, so the first
+thing a Metal 4 frame path needs is not a draw but a **texture write** - and that is a copy. The smoke is the
+plan's own blit shape, built so a region copy has something to be wrong about:
+
+- a pattern of four flat quadrants is rendered into the source (the pattern the sampled smoke already draws);
+- a **32x32 region of it at the origin** is copied into a destination's **other half**, and both the inside of
+  where it landed and a pixel outside it are read - the first must be the source's top-left quadrant, the second
+  must still be the destination's clear. A whole-texture copy can only be wrong about its contents; a region
+  copy has four coordinates to be wrong about, and those two readings are what tell them apart;
+- the **whole texture** is copied into a second destination, and all four quadrants are compared with the
+  pattern, which is what says the whole-texture form carried the contents rather than a corner of them.
+
+The copies are separated from the passes that wrote what they read by the producer barrier, as everything else
+in this migration is: on this command model a copy that reads a render pass's target has to say so.
+
+**Measured on Apple Silicon**: 50 of 50 probes passed in 30 cold processes and 20 warm repeats, with the other
+five device smokes passing in the same processes.
+
+**One trap is worth the paragraph**, because it cost a run and its message is misleading. `Msg.ofVoid` prepends
+the receiver and the selector, so a declaration must list *only* the selector's own arguments: the first version
+of the whole-texture copy declared three where the header has two, and the handle was then invoked with the
+wrong arity. That surfaced as `objc_msgSend failed: copyFromTexture:toTexture:` - which reads as a device or
+selector problem and is a declaration problem. The contract now refuses that shape by name.
+
+`tools/ci-metal4-cold-probe.py` pins the encoder factory, all four copy selectors, the region's three structs
+*together* (each helper also builds another copy's struct, so a bare pin would be satisfied there), the retain,
+the barrier, and the smoke's own two readings plus its whole-quadrant comparison - seventeen mutations run, all
+caught after three pins were strengthened for exactly that reason.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

@@ -36,6 +36,7 @@ import java.util.Optional;
  *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
+ *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 provider=&lt;text&gt; epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
@@ -186,6 +187,7 @@ public final class Metal4ColdProbe {
         String ringReason = "-";
         String attachmentsReason = "-";
         String layoutReason = "-";
+        String copyReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -218,6 +220,13 @@ public final class Metal4ColdProbe {
             boolean layout = makeAndSubmit && MTL4Probe.canBindALayout(device);
             if (!layout) {
                 layoutReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The copy path: a pattern's region copied to another texture's other half, and the whole texture
+            // copied into a second one, both read back - which is what a frame's uploads, downloads and copies
+            // are made of on this command model.
+            boolean copy = makeAndSubmit && MTL4Probe.canCopyTextureRegions(device);
+            if (!copy) {
+                copyReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -276,6 +285,8 @@ public final class Metal4ColdProbe {
                     + " attachmentsReason=" + attachmentsReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
+                    + " copy=" + copy
+                    + " copyReason=" + copyReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
