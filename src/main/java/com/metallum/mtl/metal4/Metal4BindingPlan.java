@@ -1,5 +1,6 @@
 package com.metallum.mtl.metal4;
 
+import com.metallum.render.shared.MetalArgumentBufferLayout;
 import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.render.shared.MetalShaderStages;
 import net.fabricmc.api.EnvType;
@@ -43,9 +44,10 @@ public final class Metal4BindingPlan {
      * @param stageMask         which stages read it, as {@link MetalShaderStages} masks
      * @param metalIndex        the buffer or texture slot the compiled MSL reads it from
      * @param samplerMetalIndex the slot its sampler is read from, or -1 where it has none
+     * @param argumentBufferSet the argument buffer that carries it, or -1 where the table carries it directly
      */
     public record Slot(MetalResourceBinding.ResourceKind kind, String name, int logicalIndex, int stageMask,
-                       int metalIndex, int samplerMetalIndex) {
+                       int metalIndex, int samplerMetalIndex, int argumentBufferSet) {
 
         /** Whether this slot is filled with a buffer address rather than with a resource id. */
         public boolean buffer() {
@@ -56,6 +58,18 @@ public final class Metal4BindingPlan {
         /** Whether this slot is filled with a texture, which includes a texel buffer. */
         public boolean texture() {
             return !buffer();
+        }
+
+        /**
+         * Whether this slot's indices are positions inside an argument buffer rather than table slots.
+         * <p>
+         * A wide pipeline's resources are handed over the way the reference generation hands them over - a
+         * buffer an {@code MTLArgumentEncoder} wrote - and this generation's part is what carries that buffer:
+         * one table slot for the argument buffer itself, at {@link MetalArgumentBufferLayout#bufferIndex()}.
+         * The resource's own index is its index inside that buffer and means nothing to a table.
+         */
+        public boolean indirect() {
+            return this.argumentBufferSet >= 0;
         }
 
         /** Whether this slot has a sampler beside it. */
@@ -81,10 +95,12 @@ public final class Metal4BindingPlan {
      */
     private final Map<String, Slot> textureByName;
     private final Map<String, Slot> bufferByName;
+    private final List<MetalArgumentBufferLayout> argumentBuffers;
     private final int firstVertexBufferSlot;
     private final int vertexBufferCount;
 
-    private Metal4BindingPlan(final List<Slot> slots, final int firstVertexBufferSlot, final int vertexBufferCount) {
+    private Metal4BindingPlan(final List<Slot> slots, final List<MetalArgumentBufferLayout> argumentBuffers,
+                              final int firstVertexBufferSlot, final int vertexBufferCount) {
         this.slots = List.copyOf(slots);
         Map<String, Slot> named = new LinkedHashMap<>();
         Map<String, Slot> textures = new LinkedHashMap<>();
@@ -96,6 +112,7 @@ public final class Metal4BindingPlan {
         this.byName = Map.copyOf(named);
         this.textureByName = Map.copyOf(textures);
         this.bufferByName = Map.copyOf(buffers);
+        this.argumentBuffers = List.copyOf(argumentBuffers);
         this.firstVertexBufferSlot = firstVertexBufferSlot;
         this.vertexBufferCount = vertexBufferCount;
     }
@@ -109,11 +126,39 @@ public final class Metal4BindingPlan {
      */
     public static Metal4BindingPlan of(final List<MetalResourceBinding> resources, final int firstVertexBufferSlot,
                                        final int vertexBufferCount) {
+        return of(resources, List.of(), firstVertexBufferSlot, vertexBufferCount);
+    }
+
+    /**
+     * The same for a pipeline the translation made wide, whose resources are carried by argument buffers.
+     *
+     * @param resources            what the translation said the program binds
+     * @param argumentBuffers      the argument buffers those bindings are written into
+     * @param firstVertexBufferSlot the first buffer slot the pipeline's vertex layouts use
+     * @param vertexBufferCount    how many vertex layouts the pipeline declares
+     */
+    public static Metal4BindingPlan of(final List<MetalResourceBinding> resources,
+                                       final List<MetalArgumentBufferLayout> argumentBuffers,
+                                       final int firstVertexBufferSlot, final int vertexBufferCount) {
         List<Slot> slots = resources.stream()
                 .map(resource -> new Slot(resource.kind(), resource.name(), resource.bindingIndex(),
-                        resource.stageMask(), resource.metalIndex(), resource.samplerMetalIndex()))
+                        resource.stageMask(), resource.metalIndex(), resource.samplerMetalIndex(),
+                        resource.argumentBufferSet()))
                 .toList();
-        return new Metal4BindingPlan(slots, firstVertexBufferSlot, vertexBufferCount);
+        return new Metal4BindingPlan(slots, argumentBuffers, firstVertexBufferSlot, vertexBufferCount);
+    }
+
+    /**
+     * The argument buffers this pipeline's resources are written into, each with the stage and buffer slot its
+     * table has to cover. Empty for a pipeline whose bindings fit the table's own slots.
+     */
+    public List<MetalArgumentBufferLayout> argumentBuffers() {
+        return this.argumentBuffers;
+    }
+
+    /** Whether any of this pipeline's bindings reach the shader through an argument buffer. */
+    public boolean usesArgumentBuffers() {
+        return !this.argumentBuffers.isEmpty();
     }
 
     /** Every named binding, in the order the translation declared them. */
@@ -154,13 +199,26 @@ public final class Metal4BindingPlan {
 
     /**
      * How many buffer slots the given stage's table needs: one past the highest index the stage is given, which
-     * includes the vertex layouts where the stage is the vertex one.
+     * includes the vertex layouts where the stage is the vertex one, and one slot per argument buffer the stage
+     * reads.
+     * <p>
+     * <strong>A binding an argument buffer carries is skipped here, and the table would not fit if it were
+     * not.</strong> That binding's metal index is its position <em>inside</em> the argument buffer - the
+     * translation numbers them two at a time, buffer and texture, so a twenty-entry layout reaches thirty-nine -
+     * and a table sized to that number would be a table of forty buffer slots, which Metal caps at thirty-one.
+     * What the table has to cover for such a pipeline is the argument buffer itself, one slot at the index the
+     * shared layout recorded, and that is what this adds.
      */
     public int bufferSlots(final int stage) {
         int highest = -1;
         for (Slot slot : this.slots) {
-            if (slot.buffer() && slot.readBy(stage)) {
+            if (slot.buffer() && !slot.indirect() && slot.readBy(stage)) {
                 highest = Math.max(highest, slot.metalIndex());
+            }
+        }
+        for (MetalArgumentBufferLayout argumentBuffer : this.argumentBuffers) {
+            if ((argumentBuffer.stageMask() & stage) != 0) {
+                highest = Math.max(highest, argumentBuffer.bufferIndex());
             }
         }
         if ((stage & MetalShaderStages.VERTEX) != 0 && this.vertexBufferCount > 0) {
@@ -169,22 +227,22 @@ public final class Metal4BindingPlan {
         return highest + 1;
     }
 
-    /** How many texture slots the given stage's table needs. */
+    /** How many texture slots the given stage's table needs, which an argument-buffer binding needs none of. */
     public int textureSlots(final int stage) {
         int highest = -1;
         for (Slot slot : this.slots) {
-            if (slot.texture() && slot.readBy(stage)) {
+            if (slot.texture() && !slot.indirect() && slot.readBy(stage)) {
                 highest = Math.max(highest, slot.metalIndex());
             }
         }
         return highest + 1;
     }
 
-    /** How many sampler slots the given stage's table needs. */
+    /** How many sampler slots the given stage's table needs, which is where Metal's ceiling of sixteen bites. */
     public int samplerSlots(final int stage) {
         int highest = -1;
         for (Slot slot : this.slots) {
-            if (slot.sampled() && slot.readBy(stage)) {
+            if (slot.sampled() && !slot.indirect() && slot.readBy(stage)) {
                 highest = Math.max(highest, slot.samplerMetalIndex());
             }
         }
@@ -215,6 +273,9 @@ public final class Metal4BindingPlan {
                 .append(",f=").append(samplerSlots(MetalShaderStages.FRAGMENT))
                 .append(") vertexLayouts=").append(this.vertexBufferCount)
                 .append(" from slot ").append(this.firstVertexBufferSlot);
+        if (!this.argumentBuffers.isEmpty()) {
+            words.append(" argumentBuffers=").append(this.argumentBuffers.size());
+        }
         return words.toString();
     }
 }

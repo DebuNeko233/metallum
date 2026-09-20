@@ -353,12 +353,36 @@ CONTEXT = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "meta
 COMPILER = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4PipelineCompiler.java"
 ARTIFACT = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4"
             / "Metal4CompiledRenderPipeline.java")
-for path in (CONTEXT, COMPILER, ARTIFACT):
+PLAN = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "Metal4BindingPlan.java")
+for path in (CONTEXT, COMPILER, ARTIFACT, PLAN):
     if not path.is_file():
         raise SystemExit(f"metal 4 provider: {path.name} is missing, so the generation has no compilation chain")
 context = CONTEXT.read_text(encoding="utf-8")
 compiler = COMPILER.read_text(encoding="utf-8")
 artifact = ARTIFACT.read_text(encoding="utf-8")
+plan = PLAN.read_text(encoding="utf-8")
+
+# The plan's half of the wide path, and the two mistakes that would make a wide pipeline's table unfittable: a
+# binding an argument buffer carries has an argument index and not a table slot, so counting it would size the
+# table past Metal's thirty-one buffer slots; and the argument buffer itself has to be counted, or the table
+# would not cover the slot the pass writes its address into.
+for needle, why in (
+    ("if (slot.buffer() && !slot.indirect() && slot.readBy(stage)) {",
+     "the plan counts an argument-buffer binding's index as a table slot, so a wide pipeline's table would be "
+     "sized to the argument index space and refused for exceeding Metal's thirty-one buffer slots"),
+    ("if (slot.texture() && !slot.indirect() && slot.readBy(stage)) {",
+     "the plan counts an argument-buffer texture's index as a table slot"),
+    ("if (slot.sampled() && !slot.indirect() && slot.readBy(stage)) {",
+     "the plan counts an argument-buffer sampler's index as a table slot, which is the sixteen-slot ceiling the "
+     "wide path exists to get around"),
+    ("highest = Math.max(highest, argumentBuffer.bufferIndex());",
+     "the plan does not count the argument buffer's own buffer slot, so the table would not cover the slot the "
+     "pass has to write its address into"),
+    ("public boolean indirect() {", "the plan does not say whether a slot is carried by an argument buffer"),
+    ("public boolean usesArgumentBuffers() {", "the plan does not say whether it is a wide one"),
+):
+    if needle not in plan:
+        raise SystemExit("metal 4 provider: " + why)
 
 if "new Metal4CompilationContext(device)" not in state:
     raise SystemExit("metal 4 provider: the state owns no compilation context, so it can compile nothing")
@@ -390,18 +414,44 @@ for needle, why in (
     if needle not in context and needle not in artifact and needle not in compiler:
         raise SystemExit("metal 4 provider: " + why)
 
+# The wide-pipeline boundary, which moved on a measurement rather than on taste. This generation first asked the
+# shared translator for direct bindings unconditionally, on the reading that an argument buffer is Metal 3's
+# mechanism and the table replaces it. The table replaces it for everything that fits; what it cannot replace is
+# the sampler ceiling, because MTL4ArgumentTable.h caps a table at sixteen sampler slots and MSL declares one
+# sampler attribute per sampled image. Photon's deferred4 reads nineteen. So the compiler hands the translator the
+# DEVICE's argument-buffer answer, and the invariant that keeps this safe is that a wide translation is refused
+# where the device has no tier 2 to hold it. The pin therefore moved from "always false" to the capability being
+# the device's plus the guard, and it still forbids the translation from being duplicated here.
 for needle, why in (
-    ("MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, false);",
-     "the compiler no longer asks the SHARED translator for direct bindings, so either the translation is "
-     "duplicated here or the generation asked for argument buffers - Metal 3's binding mechanism"),
-    ("if (translated.usesArgumentBuffers()) {",
-     "a translation that came back with argument buffers is accepted, so the shader would be compiled against a "
-     "binding path this generation does not fill"),
-    ("MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), false)",
-     "the artifact's key does not name the profile and the direct-binding decision"),
+    ("boolean argumentBuffersTier2 = compilation.device().supportsArgumentBuffersTier2();",
+     "the compiler does not ask the DEVICE for the argument-buffer answer, so the wide shape is decided by a "
+     "literal again"),
+    ("MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout,\n"
+     "                            argumentBuffersTier2);",
+     "the compiler no longer asks the SHARED translator for the layout, so either the translation is duplicated "
+     "here or it is asked with an answer that is not the device's"),
+    ("if (translated.usesArgumentBuffers() && !argumentBuffersTier2) {",
+     "a translation that came back wide is accepted on a device with no argument-buffer tier 2, so the resources "
+     "would be laid out in a buffer that could not be made"),
+    ("translated.usesArgumentBuffers()",
+     "the artifact is not told whether its resources are carried by an argument buffer"),
+    ("translated.vertexArgumentBufferSets()",
+     "the compiler does not pass the vertex stage's argument-buffer sets to the artifact"),
+    ("translated.fragmentArgumentBufferSets()",
+     "the compiler does not pass the fragment stage's argument-buffer sets to the artifact"),
+    ("MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(),\n"
+     "                            translated.usesArgumentBuffers())",
+     "the artifact's key does not name the profile and the binding-shape decision, so a direct artifact and a "
+     "wide one could collide"),
 ):
     if needle not in compiler:
         raise SystemExit("metal 4 provider: " + why)
+
+if "translate(vertexSpirv, fragmentSpirv, pipeline, layout, false)" in compiler:
+    raise SystemExit(
+        "metal 4 provider: the compiler asks for direct bindings by literal again, so a wide pipeline would be "
+        "refused rather than carried through the table"
+    )
 
 for needle, why in (
     ("implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable",
@@ -414,6 +464,22 @@ for needle, why in (
     ("return highest + 1;",
      "the vertex layouts no longer start past the named vertex-stage buffers, so they would overwrite them"),
     ("BitSet allResources()", "the artifact does not publish the binding footprint a pass has to fill"),
+    # The wide shape's own half: an encoder asked of the stage's own function, one layout per set per stage, and
+    # the pack's own vertex-buffer base because an argument index is not a table slot.
+    ("MTLArgumentEncoder.forFunction(vertexFunction, set)",
+     "the artifact does not ask the vertex stage's own function for an argument encoder, so the buffer length "
+     "would be a number this class guessed rather than the shader's layout"),
+    ("MTLArgumentEncoder.forFunction(fragmentFunction, set)",
+     "the artifact does not ask the fragment stage's own function for an argument encoder"),
+    ("new MetalArgumentBufferLayout(MetalShaderStages.VERTEX, set, set,",
+     "the vertex stage's argument buffer is not given the shared layout a plan is written against"),
+    ("new MetalArgumentBufferLayout(MetalShaderStages.FRAGMENT, set, set,",
+     "the fragment stage's argument buffer is not given the shared layout a plan is written against"),
+    ("private static final int WIDE_VERTEX_BUFFER_BASE = 9;",
+     "a wide pipeline has no fixed vertex-buffer base, so its vertex layouts would land in the argument index "
+     "space the named bindings numbered"),
+    ("? WIDE_VERTEX_BUFFER_BASE", "the wide vertex-buffer base is not the one the artifact uses"),
+    ("layout.encoder().close();", "the argument encoders are not released with the artifact"),
 ):
     if needle not in artifact:
         raise SystemExit("metal 4 provider: " + why)
@@ -426,8 +492,9 @@ for needle, why in (
     ("Metal4CompiledRenderPipeline compiled = this.owner.compiled(pipeline);",
      "the pass does not compile through this generation's own path, so a Metal 4 pass would draw with something "
      "built elsewhere"),
-    ("this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),",
-     "the binding plan is not built from the artifact's own footprint, so the slots it fills are guesses"),
+    ("this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.argumentBufferLayouts(),",
+     "the binding plan is not built with the artifact's argument buffers, so a wide pipeline's table would not "
+     "cover the slot its argument buffer lands in"),
     ("this.plan.bufferSlots(MetalShaderStages.VERTEX)",
      "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
     ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
@@ -451,6 +518,40 @@ for needle, why in (
      "completed, which is a release between encoding and execution"),
     ("this.owner.queueForDestroy(fragment::close);",
      "the fragment table is closed when the pass ends rather than with the frame"),
+    # The wide pipeline's binding path, which is the whole of what this generation adds to the reference one: the
+    # resources are written into a buffer by the shader's own argument encoder, and what the table carries is
+    # that buffer's address at the slot the shared layout recorded. The two pins that matter for correctness are
+    # the fault when no layout covers a binding, and the allocation of every layout up front - a wide pipeline's
+    # table has a buffer slot per set and the shader dereferences whatever is in it.
+    ("if (slot.indirect()) {\n            MetalGpuBuffer buffer = bufferOf(slice);",
+     "an argument-buffer binding is written straight into the table, where its index is an argument index and "
+     "not a table slot"),
+    ("encoder.setBuffer(buffer.metalBuffer(), slice.offset(), slot.metalIndex());",
+     "the argument buffer is not written with the buffer and offset the frame path bound, so the shader would "
+     "read the wrong bytes"),
+    ("encoder.setTexture(sampled.texture(), slot.metalIndex());",
+     "a sampled image is not written into the argument buffer at the index the MSL declares"),
+    ("encoder.setSamplerState(sampled.sampler(), slot.samplerMetalIndex());",
+     "the sampler is not written into the argument buffer, so a sampled image would read one that is not there"),
+    ("MTLArgumentEncoder encoder = bindArgumentBuffer(layout);",
+     "the encoder is not asked of the pass's own argument buffer, so the write would go to a different buffer "
+     "than the table slot points at"),
+    ("MTLResourceOptions.of(MTLStorageMode.Shared, MTLHazardTrackingMode.Tracked)",
+     "the argument buffer is not made with the storage and hazard tracking a CPU-written, GPU-read buffer needs"),
+    ("this.owner.queueForDestroy(() -> ObjC.release(created.handle()));",
+     "the argument buffer is not filed with the frame, so it would be released between encoding and execution"),
+    ("table.address(buffer.gpuAddress(), layout.bufferIndex())",
+     "the argument buffer's address does not reach the table slot the shared layout recorded, so nothing the "
+     "shader dereferences would be the buffer this pass filled"),
+    ("private void ensureArgumentBuffers() {",
+     "the argument buffers are not all made when the pipeline is set, so a set whose resources are bound late "
+     "would leave the shader dereferencing an address the table holds as nil"),
+    ("        this.tablesAssigned = false;\n        ensureArgumentBuffers();",
+     "the argument buffers are not made when the pipeline is set, so a wide pipeline's table buffer slots would "
+     "still hold nil when the first draw reads them"),
+    ("throw new IllegalStateException(\"no Metal 4 argument buffer carries '\" + slot.name() + \"' set=\"",
+     "a binding no argument buffer carries is silently dropped rather than named as the disagreement between the "
+     "translation and the artifact that it is"),
     ("this.encoder.drawIndexedPrimitives(this.artifact.topology().value, indexCount, this.indexTypeValue,\n"
      "                address, length, instanceCount, vertexOffset, firstInstance)",
      "the indexed draw does not carry the draw's own base instance, or does not pass the offset arithmetic's "
@@ -466,8 +567,10 @@ for needle, why in (
     # order (a pass's default uniforms are bound by name before any pipeline is set) and the Metal 3 pass's own
     # model (it keeps its uniforms and textures in maps and resolves them into the argument buffer a draw
     # builds).
-    ("private final Map<String, Long> uniformAddresses = new LinkedHashMap<>();",
-     "a uniform bound before the pipeline is not remembered, so the binding the game makes first would be lost"),
+    ("private final Map<String, GpuBufferSlice> uniformBindings = new LinkedHashMap<>();",
+     "a uniform bound before the pipeline is not remembered, so the binding the game makes first would be lost. "
+     "The remembered value is the slice and not a resolved address, because an argument buffer needs the buffer "
+     "and the offset the frame path bound rather than an addition of them"),
     ("private final Map<String, Sampled> textureBindings = new LinkedHashMap<>();",
      "a texture bound before the pipeline is not remembered"),
     ("private final Map<Integer, GpuBufferSlice> vertexBuffers = new LinkedHashMap<>();",
@@ -501,8 +604,9 @@ for needle, why in (
     ("throw new IllegalStateException(\"the Metal 4 pass was asked to encode \" + operation + \" with no\"",
      "a draw without a pipeline is not a named fault"),
     ("private void releaseTables() {", "a replaced pipeline's tables are not released at all"),
-    ("        this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),\n"
-     "                compiled.vertexBufferCount());\n        releaseTables();",
+    ("        this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.argumentBufferLayouts(),\n"
+     "                compiled.firstAvailableVertexBufferSlot(), compiled.vertexBufferCount());\n"
+     "        releaseTables();",
      "a replaced pipeline's tables are not released, so a stale plan could be read through a new pipeline"),
     # Pinned with the condition that guards them, because a table assignment short-circuited away still contains
     # the call: this is the shape a text pin cannot see on its own, and it is recorded here rather than left to

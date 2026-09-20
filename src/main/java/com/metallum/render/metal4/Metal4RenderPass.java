@@ -1,11 +1,18 @@
 package com.metallum.render.metal4;
 
 import com.metallum.Metallum;
+import com.metallum.mtl.MTLArgumentEncoder;
+import com.metallum.mtl.MTLBuffer;
+import com.metallum.mtl.MTLHazardTrackingMode;
 import com.metallum.mtl.MTLIndexType;
+import com.metallum.mtl.MTLResourceOptions;
+import com.metallum.mtl.MTLStorageMode;
 import com.metallum.mtl.metal4.MTL4ArgumentTable;
 import com.metallum.mtl.metal4.Metal4BindingPlan;
 import com.metallum.mtl.metal4.MTL4RenderEncoder;
+import com.metallum.objc.ObjC;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalArgumentBufferLayout;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuSampler;
 import com.metallum.render.shared.MetalGpuTexture;
@@ -54,6 +61,13 @@ import java.util.function.Supplier;
  * the pass through {@link MTL4RenderEncoder}, where the attachment mapping is already measured on the device.
  * The pipeline, the bindings, the scissor rectangle and the draws - direct, indexed and indexed-indirect - are
  * encoded into that encoder through the frame's binding plan and the argument tables it sizes.
+ * <p>
+ * <strong>A wide pipeline's bindings take one more step, and it is the same step on both generations.</strong>
+ * Where a program's resources do not fit MSL's direct slots - which on this machine means a sampler index past
+ * fifteen, since a table holds sixteen samplers and MSL declares one per sampled image - the compiler lays the
+ * program out for an argument buffer and this pass fills one through the shader's own
+ * {@link MTLArgumentEncoder}, then points a table buffer slot at it. What is Metal 4's own is that last step: the
+ * reference generation hands the buffer to the encoder directly, and this one hands the table its GPU address.
  * <p>
  * <strong>What it cannot encode refuses by name.</strong> The shapes this path has not reached - a multi-draw, an
  * indirect draw whose arguments are several commands in one buffer, a storage-image bind - raise
@@ -106,10 +120,23 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      * buffer a draw builds, so the two generations have to agree about the model or the same frame would work on
      * one path and not on the other.
      */
-    private final Map<String, Long> uniformAddresses = new LinkedHashMap<>();
+    private final Map<String, GpuBufferSlice> uniformBindings = new LinkedHashMap<>();
     private final Map<String, Sampled> textureBindings = new LinkedHashMap<>();
     /** The vertex layouts by the game's own slot, which the pipeline's descriptor numbers from its own base. */
     private final Map<Integer, GpuBufferSlice> vertexBuffers = new LinkedHashMap<>();
+
+    /**
+     * The argument buffers this pass's wide pipelines write their resources into, one per descriptor set per
+     * stage, made when a wide pipeline is set.
+     * <p>
+     * <strong>The buffer is the pass's, not the pipeline's.</strong> Its size is the layout's and its contents
+     * are this pass's bindings, and two pipelines that share a descriptor set layout share the shape a draw reads
+     * - so the map is keyed by the shared layout record, which carries the stage, the set and the length. It is
+     * dropped when the pipeline's artifact changes, because a buffer made for another artifact's layout is the
+     * wrong length for this one; the buffers themselves are not closed there, because at that moment the GPU may
+     * still be reading them, and they are already filed with the frame.
+     */
+    private final Map<MetalArgumentBufferLayout, MTLBuffer> argumentBufferStates = new LinkedHashMap<>();
 
     /** One texture and the sampler that goes with it, as the frame path bound them. */
     private record Sampled(MemorySegment texture, MemorySegment sampler) {
@@ -461,11 +488,18 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             throw new IllegalStateException("the Metal 4 pipeline " + pipeline.getLocation() + " did not compile,"
                     + " so this pass has no state to draw with");
         }
+        if (this.artifact != compiled) {
+            // A different layout means different argument buffers: their sizes come from the encoders this
+            // artifact owns, and a buffer made for another pipeline's layout is the wrong length for this one.
+            // The old buffers are not closed here - they are already filed with the frame, because at this
+            // moment the GPU may still be reading them.
+            this.argumentBufferStates.clear();
+        }
 
         this.pipeline = pipeline;
         this.artifact = compiled;
-        this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),
-                compiled.vertexBufferCount());
+        this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.argumentBufferLayouts(),
+                compiled.firstAvailableVertexBufferSlot(), compiled.vertexBufferCount());
         releaseTables();
         this.owner.statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L
                 + (this.plan.usesStage(MetalShaderStages.FRAGMENT) ? 1L : 0L));
@@ -491,6 +525,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     + " made, so nothing this pass binds would reach a shader");
         }
         this.tablesAssigned = false;
+        ensureArgumentBuffers();
         if (TRACE) {
             Metallum.LOGGER.info("Metal 4 trace: pipeline {} in '{}'", pipeline.getLocation(), label());
         }
@@ -537,11 +572,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice slice) {
         declare(slice.buffer());
-        long address = addressOf(slice.buffer(), slice.offset());
-        this.uniformAddresses.put(name, address);
+        this.uniformBindings.put(name, slice);
         Metal4BindingPlan.Slot slot = slotFor(name, false);
         if (slot != null) {
-            fillAddress(name, slot, address);
+            fillAddress(name, slot, slice);
         }
         this.tablesAssigned = false;
     }
@@ -598,8 +632,18 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     }
 
     /** Points every table that reads this name at the buffer's GPU address, offset included. */
-    private void fillAddress(final String name, final Metal4BindingPlan.Slot slot, final long address) {
+    private void fillAddress(final String name, final Metal4BindingPlan.Slot slot, final GpuBufferSlice slice) {
         MetalFrameProbe.bufferBound();
+        if (slot.indirect()) {
+            MetalGpuBuffer buffer = bufferOf(slice);
+            forEachArgumentLayout(slot, layout -> {
+                MTLArgumentEncoder encoder = bindArgumentBuffer(layout);
+                MetalFrameProbe.argBufferBufferWrite();
+                encoder.setBuffer(buffer.metalBuffer(), slice.offset(), slot.metalIndex());
+            });
+            return;
+        }
+        long address = addressOf(slice.buffer(), slice.offset());
         for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
             MTL4ArgumentTable table = tableFor(stage);
             if (table == null || !slot.readBy(stage)) {
@@ -618,6 +662,18 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         if (slot.sampled()) {
             MetalFrameProbe.samplerBound();
         }
+        if (slot.indirect()) {
+            forEachArgumentLayout(slot, layout -> {
+                MTLArgumentEncoder encoder = bindArgumentBuffer(layout);
+                MetalFrameProbe.argBufferTextureWrite();
+                encoder.setTexture(sampled.texture(), slot.metalIndex());
+                if (slot.sampled()) {
+                    MetalFrameProbe.argBufferSamplerWrite();
+                    encoder.setSamplerState(sampled.sampler(), slot.samplerMetalIndex());
+                }
+            });
+            return;
+        }
         for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
             MTL4ArgumentTable table = tableFor(stage);
             if (table == null || !slot.readBy(stage)) {
@@ -629,6 +685,106 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                         + slot.metalIndex() + " on " + stageName(stage));
             }
         }
+    }
+
+    /**
+     * Runs the work for every argument buffer that carries this binding, which is one per stage that reads it.
+     * <p>
+     * A binding read by both stages lives in both stages' sets and has to be written into both buffers, and a
+     * binding whose set no layout covers is a translation and an artifact that disagree - the shape the plan
+     * exists to make impossible, and a fault rather than a silently unbound resource.
+     */
+    private void forEachArgumentLayout(final Metal4BindingPlan.Slot slot,
+                                       final java.util.function.Consumer<MetalArgumentBufferLayout> consumer) {
+        boolean matched = false;
+        for (Metal4CompiledRenderPipeline.ArgumentBufferLayout layout : this.artifact.argumentBuffers()) {
+            if (layout.descriptorSet() != slot.argumentBufferSet()
+                    || (layout.stageMask() & slot.stageMask()) == 0) {
+                continue;
+            }
+            consumer.accept(layout.layout());
+            matched = true;
+        }
+        if (!matched) {
+            throw new IllegalStateException("no Metal 4 argument buffer carries '" + slot.name() + "' set="
+                    + slot.argumentBufferSet() + " stages=" + slot.stageMask()
+                    + ", so the pipeline's layout and its artifact disagree");
+        }
+    }
+
+    /**
+     * Makes and points every argument buffer this pipeline's tables expect, before anything is drawn.
+     * <p>
+     * <strong>Every layout, and not only the ones a binding has already asked for.</strong> A wide pipeline's
+     * table carries one buffer slot per descriptor set, and the shader dereferences whatever address is in it -
+     * so a set whose resources happen to be bound after the first draw, or not at all, would still have its slot
+     * read. Allocating the layout's own buffers up front is the reference generation's order too.
+     */
+    private void ensureArgumentBuffers() {
+        for (Metal4CompiledRenderPipeline.ArgumentBufferLayout layout : this.artifact.argumentBuffers()) {
+            bindArgumentBuffer(layout.layout());
+        }
+    }
+
+    /**
+     * The argument buffer for one layout, made on first use and pointed at the table slot it belongs in.
+     * <p>
+     * The buffer is made from the device with shared storage and tracked hazards, which is what the Metal 3 pass
+     * makes and for the same reason: this path writes it from the CPU between draws and the driver has to be
+     * able to order those writes against the reads. The address goes into the same stage's table at the slot the
+     * shared layout recorded, which is this generation's half of the mechanism - the reference generation hands
+     * the buffer to the encoder directly.
+     * <p>
+     * The length is floored at one byte because Metal will not make a zero-length buffer and an argument buffer
+     * whose layout encodes nothing is a real pipeline.
+     */
+    private MTLArgumentEncoder bindArgumentBuffer(final MetalArgumentBufferLayout layout) {
+        Metal4CompiledRenderPipeline.ArgumentBufferLayout layoutWithEncoder = null;
+        for (Metal4CompiledRenderPipeline.ArgumentBufferLayout candidate : this.artifact.argumentBuffers()) {
+            if (candidate.layout().equals(layout)) {
+                layoutWithEncoder = candidate;
+                break;
+            }
+        }
+        if (layoutWithEncoder == null) {
+            throw new IllegalStateException("the Metal 4 pass was asked to fill argument buffer set "
+                    + layout.descriptorSet() + " and the pipeline has no encoder for it");
+        }
+
+        MTLBuffer buffer = this.argumentBufferStates.get(layout);
+        if (buffer == null) {
+            long length = Math.max(1L, layout.encodedLength());
+            MTLBuffer created = this.owner.nativeDevice().newBuffer(length,
+                    MTLResourceOptions.of(MTLStorageMode.Shared, MTLHazardTrackingMode.Tracked));
+            if (created == null) {
+                throw new IllegalStateException("the Metal 4 pass could not make the argument buffer for set "
+                        + layout.descriptorSet() + " (" + length + " bytes)");
+            }
+            MetalFrameProbe.argBufferAllocated(length);
+            this.owner.queueForDestroy(() -> ObjC.release(created.handle()));
+            this.argumentBufferStates.put(layout, created);
+            buffer = created;
+        }
+        MetalFrameProbe.argBufferSet();
+        this.owner.useResource(buffer.handle());
+        layoutWithEncoder.encoder().setArgumentBuffer(buffer, 0L);
+
+        MTL4ArgumentTable table = tableFor(layout.stageMask());
+        if (table == null || !table.address(buffer.gpuAddress(), layout.bufferIndex())) {
+            throw new IllegalStateException("the Metal 4 table for " + stageName(layout.stageMask())
+                    + " refused the argument buffer for set " + layout.descriptorSet() + " at table index "
+                    + layout.bufferIndex());
+        }
+        return layoutWithEncoder.encoder();
+    }
+
+    /** The engine's own buffer behind a slice, which is what an argument encoder is handed. */
+    private static MetalGpuBuffer bufferOf(final GpuBufferSlice slice) {
+        if (!(slice.buffer() instanceof MetalGpuBuffer metal)) {
+            throw new IllegalStateException("the Metal 4 pass was handed a buffer that is not this engine's: "
+                    + slice.buffer().getClass().getName());
+        }
+        return metal;
     }
 
     /** One remembered vertex layout into the table the current plan sized, by the pipeline's own stride. */
@@ -665,10 +821,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         if (plan == null) {
             return;
         }
-        this.uniformAddresses.forEach((name, address) -> {
+        this.uniformBindings.forEach((name, slice) -> {
             Metal4BindingPlan.Slot slot = plan.slot(name);
             if (slot != null && !slot.texture()) {
-                fillAddress(name, slot, address);
+                fillAddress(name, slot, slice);
             }
         });
         this.textureBindings.forEach((name, sampled) -> {
