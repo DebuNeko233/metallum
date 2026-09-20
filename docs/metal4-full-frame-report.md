@@ -37,12 +37,15 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        258 processes, 1458 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30, the eighth added by the
-                  depth smoke's own census); failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      568 in seven processes      failures: 0
-this round:       80 probes (30 cold and 20 warm for the depth census, plus the runs on the way to it), the
-                  whole of it after the depth draw smoke was added: **0 failures** and 50 of 50 on every one
-                  of the fifteen device smokes, the new one included, with 0 crash reports. The intermittent
+cold runs:        288 processes, 1517 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30, the ninth added by
+                  the depth sampling smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      588 in ten processes      failures: 0
+this round:       59 probes (30 cold and 29 warm across the census and the runs on the way to it), the whole of
+                  it after the depth sampling smoke was added: **0 failures** and 50 of 50 on every one of the
+                  sixteen device smokes, the new one included, with 0 crash reports. The smoke this round added
+                  is **depth sampling**: a pass writes depth and ends with the producer barrier, the next samples
+                  that depth texture through a table at each fragment's own position, and both the depth
+                  buffer's values and the colours read from them are compared. The intermittent
                   capability fault did not appear in a third 30-process run, which is its known shape rather
                   than a resolution of it: it has been observed twice in about seventy cold starts and never
                   on demand, and it still blocks AUTO. The smoke the depth round added is the **depth draw**:
@@ -325,7 +328,12 @@ depth:   PROVEN, all three halves. The clear: a colour target and a `Depth32Floa
          there too). Measured on Apple Silicon: 50 of 50 probes (30 cold + 20 warm). The sampling: Vitrail's
          `depthtex0-contract` runs on this path - the game's own draws write depth and a pack pass samples it
          afterwards - with 103 pipeline identities against Metal 3's 103, 18 logical passes a frame against 11,
-         no fault and no refusal. That fixture's picture is NOT MEASURED: the display cannot be photographed
+         no fault and no refusal. The SAMPLING is readback-proven too (`canSampleDepth`): one pass writes depth
+         (0.25 over a clear of 0.5) and ends with the producer barrier, the next samples that depth texture
+         through a one-texture, one-sampler table at each fragment's own position, and the depth buffer's own
+         values (0.25 and 0.5) are read back beside the colours the reader wrote from them (64 and 128, within
+         the one level an eight-bit conversion is) - 50 of 50 probes. That fixture's picture is NOT MEASURED: the
+         display cannot be photographed
 blend:   NOT STARTED
 scissor: PARTLY - the pass's own scissor is set, cleared and measured on the device through the layout
          smoke (a pixel inside the rectangle and a pixel outside it), but the scissored form of

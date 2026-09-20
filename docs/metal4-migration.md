@@ -1976,6 +1976,34 @@ clear), so the run was refused as drift. The comparison now reads `executingGene
 line and stands that check aside where two generations executed, saying where the scene guard moves to - the
 harness's own world, pack, target and window. Two arms of one generation are judged exactly as before.
 
+### A depth a pass wrote, sampled by the pass after it
+
+The compare and the write are one question; whether a shader can read the depth buffer afterwards is another,
+and it is the one a pack's composite asks when it samples `depthtex0`. `canSampleDepth` is two passes on one
+command buffer. The writer clears the depth attachment to 0.5 and draws one triangle at 0.25 over part of it,
+then ends with the producer barrier - which this command model requires of a dependency between encoders, and
+which is why the smoke is also a small synchronisation fixture: without the barrier the reader has nothing
+ordering it against the writer. The reader samples that depth texture through a one-texture, one-sampler table
+at **each fragment's own position** (`in.position.xy / 64`, so the texel a pixel samples is the one its depth
+belongs to and not a uv attribute that could be wrong separately) and writes the sampled value out as a colour.
+
+Four readings, both sides of each compared: the depth buffer's own value at the triangle (0.25) and at the clear
+(0.5), and the colour the reader wrote from them (64 and 128). The colour target keeps eight bits a channel, so a
+depth comes back at one of 256 levels; the comparison allows one level either way, which is 0.4 per cent of the
+depth range against two values a quarter of a range apart - the tolerance cannot hide the fault the smoke looks
+for, and the two readings disagreeing by half the range is itself the check that the sample follows the position
+rather than one texel smeared over the target. Measured on this machine: 50 of 50 probes (30 cold processes and
+20 warm repeats), every other smoke green, no failure stage, 0 crash reports.
+
+The depth texture is created with `ShaderRead` as well as the render-target bit: a texture with only the
+render-target bit is refused as a sample source, and that refusal is the driver's rather than this engine's.
+
+**One guard was dropped rather than widened.** The first version read the reader target's far corner and
+required it to be 0 or 255, which is neither of the two values a correct smoke produces - that corner samples
+the cleared 0.5, so it reads 128. It was there to catch a shader that smeared one texel over the target, and the
+two readings that disagree by half the depth range already catch that; widening it would have kept a reading
+that can only fail a correct implementation.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
