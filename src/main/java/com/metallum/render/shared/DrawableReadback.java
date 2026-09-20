@@ -9,7 +9,7 @@ import java.lang.foreign.MemorySegment;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 /**
- * What a presented drawable holds, in one place for both generations.
+ * What a present road read and what it wrote, in one place for both generations.
  * <p>
  * The display cannot be photographed on this machine and its own screenshot key cannot be pressed, so the only
  * road to the picture is the drawable itself: the layer is built with {@code framebufferOnly} off
@@ -18,6 +18,11 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
  * how the pixels are read and said - a comparison whose two sides formatted differently would be comparing the
  * formatting - so the reading lives here, in the neutral layer, and each generation only has to produce the
  * buffer.
+ * <p>
+ * Two halves are read through here and each is labelled: the <em>drawable</em>, which is what left the process,
+ * and the <em>picture</em>, which is what the present triangle read. A reading that has only the drawable cannot
+ * tell a picture that was wrong from a present that changed it, and that is exactly the question two present
+ * roads disagreeing about one frame turns into.
  * <p>
  * The layer's format is BGRA8, so the bytes are blue, green, red, alpha and every message says them in that
  * order. What is printed is deliberately structural: a five by five grid of samples with the top row first -
@@ -46,6 +51,26 @@ public final class DrawableReadback {
      */
     public static void report(final String which, final long width, final long height, final MemorySegment pixels,
                               final long bytesPerRow) {
+        read("drawable", which, width, height, pixels, bytesPerRow);
+    }
+
+    /**
+     * Reads a copied picture - the texture a present triangle sampled - and says what it holds, in the same
+     * shape as the drawable's line.
+     *
+     * @param which       which arm read it, so one run's two halves are told apart in one log
+     * @param width       the picture's width in pixels
+     * @param height      the picture's height in pixels
+     * @param pixels      the buffer the picture was copied into, top row first
+     * @param bytesPerRow the row stride the copy was given
+     */
+    public static void reportPicture(final String which, final long width, final long height,
+                                     final MemorySegment pixels, final long bytesPerRow) {
+        read("picture", which, width, height, pixels, bytesPerRow);
+    }
+
+    private static void read(final String what, final String which, final long width, final long height,
+                             final MemorySegment pixels, final long bytesPerRow) {
         if (width <= 0L || height <= 0L || pixels == null) {
             return;
         }
@@ -85,9 +110,9 @@ public final class DrawableReadback {
         if (counted == 0L) {
             counted = 1L;
         }
-        Metallum.LOGGER.info("drawable readback [{}]: {}x{} ARGB rows(top first)=[{}] meanBGRA=({}, {}, {}, {})"
+        Metallum.LOGGER.info("{} readback [{}]: {}x{} ARGB rows(top first)=[{}] meanBGRA=({}, {}, {}, {})"
                         + " over {} samples",
-                which, width, height, grid, mean[0] / counted, mean[1] / counted, mean[2] / counted,
+                what, which, width, height, grid, mean[0] / counted, mean[1] / counted, mean[2] / counted,
                 mean[3] / counted, counted);
     }
 

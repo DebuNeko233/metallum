@@ -1437,6 +1437,16 @@ for needle, why in (
     ("com.metallum.render.shared.DrawableReadback.report(\"metal4\", width, height,",
      "the frame path does not read its copied drawable through the shared formatter, so the two arms' lines"
      " would not be comparable"),
+    ("copyPictureForReadback(picture.nativeHandle(), MTLTexture.width(picture.nativeHandle()),",
+     "the picture this path's present triangle read is never copied out, so a wrong picture and a present that"
+     " changed it would read the same"),
+    ("reportPictureReadback(this.ring.slot());",
+     "the copied picture is never read, or it is read before the slot's submission is known complete"),
+    ("com.metallum.render.shared.DrawableReadback.reportPicture(\"metal4\", width, height,",
+     "the frame path does not read its copied picture through the shared formatter, so the two arms' halves would"
+     " not be comparable"),
+    ("ObjC.release(this.pictureStaging[slot].handle());",
+     "the picture readback's staging buffers are never released with the encoder"),
     ("com.metallum.render.shared.DrawableReadback.bytesPerRow(width);",
      "the readback's row stride is computed here rather than by the shared helper the other arm uses"),
     ("ObjC.release(this.readbackStaging[slot].handle());",
@@ -1462,6 +1472,12 @@ for needle, why in (
      " one"),
     ("public static long bytesPerRow(final long width) {",
      "the row stride is not shared, so the two arms could disagree about it"),
+    ("public static void reportPicture(final String which, final long width, final long height,",
+     "the shared formatter cannot read the picture a present road sampled, so a reading could not tell a picture"
+     " that was wrong from a present that changed it"),
+    ('read("picture", which, width, height, pixels, bytesPerRow);',
+     "the picture's line is not labelled apart from the drawable's, so one run's two halves would read as two"
+     " frames"),
 ):
     if needle not in shared_readback:
         raise SystemExit("metal 4 provider: " + why)
@@ -1482,6 +1498,16 @@ for needle, why in (
      "the reference arm never reads what it copied, or reads it before the slot's submission is known complete"),
     ('com.metallum.render.shared.DrawableReadback.report("metal3", width, height,',
      "the reference arm does not read through the shared formatter"),
+    ("copyPictureForReadback(source.nativeHandle());",
+     "the reference arm never copies the picture its present triangle read, so the two halves of a comparison"
+     " could only come from two runs"),
+    ("reportPictureReadback((int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT));",
+     "the reference arm's copied picture is never read, or it is read before the slot's submission is known"
+     " complete"),
+    ('com.metallum.render.shared.DrawableReadback.reportPicture("metal3", width, height,',
+     "the reference arm does not read its picture through the shared formatter"),
+    ("ObjC.release(this.pictureStaging[slot].handle());",
+     "the reference arm's picture staging buffers are never released with the encoder"),
 ):
     if needle not in m3:
         raise SystemExit("metal 4 provider: " + why)

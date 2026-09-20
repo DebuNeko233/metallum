@@ -146,6 +146,18 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     private final boolean[] readbackPending;
     private final long[] readbackWidth;
     private final long[] readbackHeight;
+    /**
+     * The other side of the same question: the picture this path's present triangle read, copied in the same
+     * frame and read at the same point the drawable is.
+     * <p>
+     * The drawable's copy says what left the process; this one says what went in. A reading that has only the
+     * drawable cannot tell a picture that was wrong from a present that changed it, and that is the whole
+     * question when this road and the Metal 3 road disagree about the same frame.
+     */
+    private final MTLBuffer[] pictureStaging;
+    private final boolean[] picturePending;
+    private final long[] pictureWidth;
+    private final long[] pictureHeight;
     private final Metal4ExecutionState executionState;
     private final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource;
     private final MTL4FrameRing ring;
@@ -317,6 +329,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         this.readbackPending = new boolean[FRAMES_IN_FLIGHT];
         this.readbackWidth = new long[FRAMES_IN_FLIGHT];
         this.readbackHeight = new long[FRAMES_IN_FLIGHT];
+        this.pictureStaging = new MTLBuffer[FRAMES_IN_FLIGHT];
+        this.picturePending = new boolean[FRAMES_IN_FLIGHT];
+        this.pictureWidth = new long[FRAMES_IN_FLIGHT];
+        this.pictureHeight = new long[FRAMES_IN_FLIGHT];
     }
 
     /** The state this encoder was made from, for the helpers that will be handed it rather than the device. */
@@ -454,6 +470,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                 ObjC.release(this.readbackStaging[slot].handle());
                 this.readbackStaging[slot] = null;
             }
+            if (this.pictureStaging[slot] != null) {
+                ObjC.release(this.pictureStaging[slot].handle());
+                this.pictureStaging[slot] = null;
+            }
         }
         this.ring.close();
         // The queue came from the execution services and nothing else holds it, so this encoder is its owner and
@@ -538,6 +558,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // The slot's previous submission is complete as of the wait inside beginFrame, so a drawable copied out
         // of that submission can be read now - the same fact the retire below is allowed to run on.
         reportDrawableReadback(this.ring.slot());
+        reportPictureReadback(this.ring.slot());
         // The wait inside beginFrame is what makes this legal: the slot's previous submission has completed, so
         // everything filed against it can be released now.
         retire(this.ring.slot());
@@ -1310,6 +1331,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             pass.close();
         }
         if (this.drawableReadback) {
+            // The picture first, in the same frame and the same command buffer as the drawable's copy: the two
+            // lines a reading compares have to describe one frame rather than two.
+            copyPictureForReadback(picture.nativeHandle(), MTLTexture.width(picture.nativeHandle()),
+                    MTLTexture.height(picture.nativeHandle()));
             copyDrawableForReadback(drawableTexture, width, height);
         }
         this.presentDrawables.add(drawable);
@@ -1353,6 +1378,41 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     }
 
     /**
+     * Copies the picture this frame's present triangle read into its slot's staging buffer.
+     * <p>
+     * Encoded in the frame's own command buffer, beside the drawable's copy and in the same order the one
+     * reading has: the picture is what the present pass sampled, and the drawable is what the pass wrote, so a
+     * reading that has both can say whether the road changed the picture. The copy goes through the frame's copy
+     * encoder, whose staging allocation is declared resident for the same measured reason the drawable's is.
+     */
+    private void copyPictureForReadback(final MemorySegment picture, final long width, final long height) {
+        int slot = this.ring.slot();
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        long bytes = bytesPerRow * height;
+        MTLBuffer staging = this.pictureStaging[slot];
+        if (staging == null || staging.length() < bytes) {
+            if (staging != null) {
+                MemorySegment retired = staging.handle();
+                queueForDestroy(() -> ObjC.release(retired));
+            }
+            staging = this.executionState.device().newBuffer(bytes, MTLStorageMode.Shared.value);
+            this.pictureStaging[slot] = staging;
+        }
+        useResource(staging.handle());
+        MTL4ComputeEncoder copies = copyEncoder();
+        if (copies == null || !copies.copyTextureToBuffer(picture, 0L, 0L, 0L, 0L, 0L, width, height, 1L,
+                staging.handle(), 0L, bytesPerRow, bytesPerRow * height)) {
+            Metallum.LOGGER.warn("Metal 4 picture readback: the copy of the presented picture could not be"
+                    + " encoded, so this frame's input is not read");
+            return;
+        }
+        copies.barrierForSubsequentEncoders();
+        this.picturePending[slot] = true;
+        this.pictureWidth[slot] = width;
+        this.pictureHeight[slot] = height;
+    }
+
+    /**
      * Reads and reports the drawable a slot copied, once that slot's submission is known complete.
      * <p>
      * Called from {@link #beginFrameIfNeeded()} right after the ring has waited for the slot, which is the same
@@ -1377,6 +1437,28 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // The reading and the wording are the shared layer's, so that this arm's line and the Metal 3 arm's line
         // are the same shape: a comparison whose two sides formatted differently compares the formatting.
         com.metallum.render.shared.DrawableReadback.report("metal4", width, height,
+                staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
+    }
+
+    /**
+     * Reads and reports the picture the present triangle of this slot read, at the same point its drawable is.
+     * <p>
+     * The label carries both the generation and the half, so one run's two lines can be read against each other
+     * without either being inferred from the other.
+     */
+    private void reportPictureReadback(final int slot) {
+        if (!this.picturePending[slot]) {
+            return;
+        }
+        this.picturePending[slot] = false;
+        MTLBuffer staging = this.pictureStaging[slot];
+        long width = this.pictureWidth[slot];
+        long height = this.pictureHeight[slot];
+        if (staging == null || width <= 0L || height <= 0L) {
+            return;
+        }
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        com.metallum.render.shared.DrawableReadback.reportPicture("metal4", width, height,
                 staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
     }
 

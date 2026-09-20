@@ -2492,31 +2492,65 @@ differently compares the formatting.
 Two arms, one scene, the same fixture, the same switch, ten seconds of settle after the fixture's dispatches
 (1366 and 1372 readbacks). **Both arms present the fixture's acceptance colour**: the fixture's second compute
 writes `vec4(0, 1, 0, 1)` into its storage image and its final pass paints pure green when the chain worked, and
-both drawables are green with the red and blue channels at zero. **And they are not the same green**:
+both drawables are green with the red and blue channels at zero. That pair registered two pixel-level differences
+and called them "measured and unexplained". **The next measurement withdraws one of them, refutes both of their
+candidate mechanisms, and leaves the other one localised.**
 
-| | Metal 3 (last frame) | Metal 4 (last frame) |
+### The present roads are faithful, and the ramp was a fade
+
+Each arm now reads **both halves** of the frame it presents: the *picture* the present triangle sampled and the
+*drawable* it wrote, copied in one command buffer out of one frame (`DrawableReadback.reportPicture`, pinned on
+both arms). That answers the question the round above could not: whether the two present roads changed the image
+at all.
+
+**They do not.** Frame for frame, in both arms, the picture's reading and the drawable's reading are the same
+reading - the same five-by-five grid, the same means, 1359 pairs on one arm and 1548 on the other at ten seconds,
+4951 and 4953 at forty. So the present pass is the identity on this fixture on both roads, and the candidates the
+round above named for the alpha - the two passes' attachment load and store actions, and the shared present
+pipeline's blend state - **are refuted by measurement rather than by argument**: both passes' attachment treatment
+is `DontCare` load and `Store` store, both draw through the same `presentPipeline` object (blending disabled,
+`MTLColorWriteMask.All`), and neither of those can be the cause of a difference that is already in the picture
+before either road touches it.
+
+**And the ramp was not a difference at all: it was the Metal 3 arm's frame still fading in.** Its mean green climbs
+monotonically - 195 at `05:17:01`, 197 at `05:17:01.5`, 205 at `:01`, 215 at `:03`, 230 at `:05`, 247 at `:11` -
+and its mean alpha goes 10, 100, 252, 254 in the first two seconds and then holds `254`. **That is a cross-fade
+from the loading screen, sampled while it was still running**, not a property of either present road. At a forty
+second settle the same arm reaches its steady state: the grid is `ff00ff00` at every sample and the mean is
+`(0, 255, 0, 254)` - **flat, opaque green, which is exactly what the fixture's `final.fsh` writes**
+(`vec4(0, 1, 0, 1)`). So the comparison basis of the round above - "ten seconds of settle after the fixture's
+dispatches makes two runs the same frame" - is **refuted, and the observation it produced is withdrawn**: the
+Metal 3 anchor had not settled, and the "gentle radial ramp" was that arm's animation, not the frame's shape.
+
+### What survives: the alpha, and it survives forty seconds
+
+| | Metal 3, 40 s settle | Metal 4, 40 s settle |
 | --- | --- | --- |
-| centre sample | `ff00ff00` (green 255, alpha 255) | `0000ff00` (green 255, **alpha 0**) |
-| corner sample | `ff00e600` (green 230, alpha 255) | `0000ff00` (green 255, alpha 0) |
-| mean | `(0, 247, 0, 254)` | `(0, 255, 0, 0)` |
-| shape | a gentle radial ramp, 230 at the corners to 255 at the centre | flat |
+| every grid sample | `ff00ff00` (green 255, alpha 255) | `0000ff00` (green 255, **alpha 0**) |
+| mean | `(0, 255, 0, 254)` | `(0, 255, 0, 0)` |
+| shape | flat opaque green | flat green, alpha 0 |
 
-Two differences, both **measured and unexplained**, and each has its experiment:
+The Metal 4 arm holds flat green with **alpha 0** for all 4953 readbacks of the forty second window, and it is
+already flat and alpha-zero on the first frame the fixture's chain can affect. The fixture's shader writes alpha
+1; the layer is opaque, so this is invisible on screen; and it is now the **one measured frame-content difference
+between the arms**, not a present-road difference:
 
-- **the alpha**: the fixture's shader writes alpha 1, the Metal 3 drawable holds it, and the Metal 4 drawable
-  holds zero. The layer is opaque, so this is invisible on screen - but it is the one pixel-level difference a
-  comparison can see here, and the candidates are the two present passes' attachment load and store actions (this
-  path loads and stores the drawable, the Metal 3 road loads `DontCare`) and the shared present pipeline's blend
-  state. The experiment is to make the two attachment treatments the same and read again.
-- **the ramp**: 230 at the corners against a flat 255. A flat source drawn with blending over a destination that
-  is *not* the same colour would look exactly like this, which is why the load action above is the first
-  candidate; the scaler is not one - both arms report MetalFX available and neither logs an encode.
+- **what it is**: on this road the pack's alpha does not reach the present, while its red, green and blue do. Both
+  arms draw the pack with the same pipeline-building code and the same `ColorTargetState.writeMask()` (so the
+  write-mask mapping is not the difference), both sample the game's own render target at present, and both agree
+  byte for byte on the loading screen (the pink `ffef323d`, RGBA8) before the chain runs.
+- **what is not yet measured**: *where* the alpha goes. The candidates are the pack's write into the game's target
+  on this road (the pipeline's colour format or mask), a later pass of the frame overwriting the target after the
+  pack's `final` pass, and the sampling of that target at present. The three are told apart by reading the same
+  target **at a pass boundary** rather than at present, and by a fixture whose colour is asymmetric and whose
+  alpha is not 1 - one frame then separates "RGB landed and alpha did not" from "a later pass wrote the whole
+  pixel", and the same asymmetric fixture is what the orientation question needs anyway.
 
-So the picture column now reads: **content and colour measured on both arms, the fixture's acceptance colour
-included; two pixel-level differences registered with their experiments, and neither claimed as a defect yet.**
-What is still missing is a *second* scene for orientation: this fixture's picture is symmetric (a green ramp),
-so it can say "the colour arrived" and cannot say "the image is the right way up" - an asymmetric scene is the
-next thing to read.
+What the picture column reads now: **both halves of the frame measured on both arms, the present roads proven to
+be the identity on this fixture, one difference withdrawn as an artefact of an unsettled anchor, and one - the
+alpha - measured and persistent, with its next experiment named.** Orientation is still unproven, and for the
+reason it always was: this fixture's picture is symmetric, so the readback can say the colour arrived and cannot
+say which way up it is.
 
 ## The API mapping
 

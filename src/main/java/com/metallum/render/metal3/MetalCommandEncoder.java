@@ -233,6 +233,18 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     private final boolean[] readbackPending = new boolean[MAX_SUBMITS_IN_FLIGHT];
     private final long[] readbackWidth = new long[MAX_SUBMITS_IN_FLIGHT];
     private final long[] readbackHeight = new long[MAX_SUBMITS_IN_FLIGHT];
+    /**
+     * The other side of the same question: the picture the present triangle read, copied in the same frame and
+     * read at the same wait.
+     * <p>
+     * The drawable's copy says what left the process; this one says what went in. A reading that has only the
+     * drawable cannot tell a picture that was wrong from a present that changed it, and that difference is the
+     * whole question when two present roads disagree about the same frame.
+     */
+    private final com.metallum.mtl.MTLBuffer[] pictureStaging = new com.metallum.mtl.MTLBuffer[MAX_SUBMITS_IN_FLIGHT];
+    private final boolean[] picturePending = new boolean[MAX_SUBMITS_IN_FLIGHT];
+    private final long[] pictureWidth = new long[MAX_SUBMITS_IN_FLIGHT];
+    private final long[] pictureHeight = new long[MAX_SUBMITS_IN_FLIGHT];
 
     MTLBlitCommandEncoder blitCommandEncoder() {
         // A blit already open is where the next blit belongs. Metal orders the commands inside one encoder,
@@ -514,6 +526,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         }
 
         reportDrawableReadback((int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT));
+        reportPictureReadback((int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT));
 
         if (toClose != null) {
             // A command buffer that failed completes exactly like one that drew, so the frame's own
@@ -792,8 +805,14 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         if (!presentGate.takesPicture(layer, source.nativeHandle())) {
             MemorySegment drawableTexture =
                     commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
-            if (this.drawableReadback && !ObjC.isNil(drawableTexture)) {
-                copyDrawableForReadback(drawableTexture);
+            if (this.drawableReadback) {
+                // The picture first, because its copy is about the frame that has just been encoded and the
+                // drawable's is about the present triangle's output: both land in this command buffer in this
+                // order, and the reading below names them apart.
+                copyPictureForReadback(source.nativeHandle());
+                if (!ObjC.isNil(drawableTexture)) {
+                    copyDrawableForReadback(drawableTexture);
+                }
             }
         }
     }
@@ -828,6 +847,37 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     }
 
     /**
+     * Copies the picture this frame presents into its slot's staging buffer.
+     * <p>
+     * Encoded where the frame's own render work is behind it and the present triangle's copy is beside it, in
+     * the same command buffer, so the two copies describe one frame rather than two. The picture is a texture
+     * like any other and is copyable whatever the layer's {@code framebufferOnly} says - it is the drawable that
+     * the diagnostic switch is about, and this half is only read under the same switch so that a comparison has
+     * both halves from one run.
+     */
+    private void copyPictureForReadback(final MemorySegment picture) {
+        long width = MTLTexture.width(picture);
+        long height = MTLTexture.height(picture);
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        long bytes = bytesPerRow * height;
+
+        int slot = (int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT);
+        com.metallum.mtl.MTLBuffer staging = this.pictureStaging[slot];
+        if (staging == null || staging.length() < bytes) {
+            if (staging != null) {
+                ObjC.release(staging.handle());
+            }
+            staging = device.metalDevice().newBuffer(bytes, com.metallum.mtl.MTLStorageMode.Shared.value);
+            this.pictureStaging[slot] = staging;
+        }
+        blitCommandEncoder().copyFromTextureToBuffer(picture, 0L, 0L, 0L, 0L, width, height, staging, 0L,
+                bytesPerRow, bytesPerRow * height);
+        this.picturePending[slot] = true;
+        this.pictureWidth[slot] = width;
+        this.pictureHeight[slot] = height;
+    }
+
+    /**
      * Reads and reports the drawable a slot copied, once that slot's submission is known complete.
      * <p>
      * Called where the ring already waits: the command buffer being closed here is the slot's submission from
@@ -847,6 +897,29 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         }
         long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
         com.metallum.render.shared.DrawableReadback.report("metal3", width, height,
+                staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
+    }
+
+    /**
+     * Reads and reports the picture the present triangle of this slot read, at the same wait its drawable is
+     * read at.
+     * <p>
+     * The label carries both the arm and the half, so one run's two lines can be read against each other
+     * without either being inferred from the other.
+     */
+    private void reportPictureReadback(final int slot) {
+        if (!this.picturePending[slot]) {
+            return;
+        }
+        this.picturePending[slot] = false;
+        com.metallum.mtl.MTLBuffer staging = this.pictureStaging[slot];
+        long width = this.pictureWidth[slot];
+        long height = this.pictureHeight[slot];
+        if (staging == null || width <= 0L || height <= 0L) {
+            return;
+        }
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        com.metallum.render.shared.DrawableReadback.reportPicture("metal3", width, height,
                 staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
     }
 
@@ -1167,6 +1240,10 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
             if (this.readbackStaging[slot] != null) {
                 ObjC.release(this.readbackStaging[slot].handle());
                 this.readbackStaging[slot] = null;
+            }
+            if (this.pictureStaging[slot] != null) {
+                ObjC.release(this.pictureStaging[slot].handle());
+                this.pictureStaging[slot] = null;
             }
         }
         submitRenderPass();
