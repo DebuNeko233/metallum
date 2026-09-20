@@ -1557,4 +1557,20 @@ for needle, why in (
     if needle not in m3:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and what buffers a session made can be named, because a missing world asked for it --------------------
+# The no-pack Metal 4 frame is one flat clear and its terrain passes encode no draws; the three candidates left
+# (no section visible, no GPU slice for a visible one, or no mesh at all) are told apart by whether the terrain's
+# own buffers are created and how large they are - a question about the device, not about any pass. Off unless
+# asked for, and one line per allocation.
+DEVICE_SOURCE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "MetalDevice.java"
+device_source = DEVICE_SOURCE.read_text(encoding="utf-8")
+for needle, why in (
+    ('Boolean.getBoolean("metallum.logBuffers")',
+     "the buffer diagnostic is not asked for by one property, so it could not be off by default"),
+    ('com.metallum.Metallum.LOGGER.info("Metal buffer: {} bytes, usage {} - {}", size, usage,',
+     "an allocation is not named, so a missing terrain mesh and an unbound one read the same"),
+):
+    if needle not in device_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

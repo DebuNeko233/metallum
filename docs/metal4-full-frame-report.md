@@ -691,11 +691,17 @@ answered rather than only what is left.
    `renderPass.drawMultipleIndexed(...)` - and a group is only non-empty for a section whose mesh has a draw *and*
    whose GPU buffer slice exists, so an empty group means the sections have nothing to hand the pass. No operation
    is refused anywhere in those sessions: the Metal 4 pass's own refusal now logs itself (this round's change) and
-   the log names nothing, and the frame-encoder refusals are absent too. What that leaves is three candidates, none
-   of them measured yet, and the next step is to tell them apart rather than to guess among them: no section is
-   *visible* to the culling that fills `visibleSections`; sections are visible but have no GPU buffer slice
-   (`getRenderSectionSlice` answers null, i.e. the mesh upload never landed); or the section meshes themselves are
-   empty. `drawMultipleIndexed` is **not** one of the candidates for the *missing* draws even though this path
+   the log names nothing, and the frame-encoder refusals are absent too. **And the geometry itself never reaches
+   GPU memory on this path**, which `-Dmetallum.logBuffers` (this round's second instrument) measures directly:
+   both arms allocate the same terrain *machinery* (Sodium's terrain uniforms and indirect rings, the vanilla
+   `Section time info`), and only the Metal 3 arm allocates terrain *geometry* - Sodium's `Arena buffer`s at 268,
+   134, 33 and 16 MB - while the Metal 4 arm's 1863 allocations contain none (the vanilla uber buffers are absent
+   from both, because Sodium draws terrain here, so an empty vanilla pass is not by itself the anomaly). What that
+   leaves is three candidates, and the evidence leans on the first two: no chunk mesh is built at all; meshes are
+   built and the upload never runs or lands nowhere; or meshes are in the arena and nothing is visible to the
+   culling (which cannot be the whole of it, since geometry that never reached a buffer cannot be culled into
+   view). The instrument that separates them is a log at the upload boundary, a game-side call this engine cannot
+   see yet. `drawMultipleIndexed` is **not** one of the candidates for the *missing* draws even though this path
    still refuses it, because a refused call would now be in the log and there is nothing in the log - what that
    refusal will need is its own implementation (its own milestone, section 42/54's family), which cannot be the
    fix for a call that is never made.

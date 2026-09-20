@@ -2056,6 +2056,19 @@ buffer slice exists - and `ChunkSectionsToRender.renderGroup` walks it and calls
 skipping a group whose list is empty. The pass the trace labels `Terrain` is exactly that pass
 (`"Section layers for " + group.label()`), which is why its zero draws are the terrain's and not somebody else's.
 
+**Two things that look like the mechanism are not, and one that does not look like it is.** Sodium is what draws
+terrain in this instance, so an empty *vanilla* terrain pass is not by itself evidence of a missing world - and the
+trace cannot settle that on its own, because the Metal 3 pass has no trace switch to compare against. What the
+device's own allocations settle is the geometry side, and there the difference is total. `-Dmetallum.logBuffers`
+names every GPU buffer a session makes, and both arms allocate the same *kinds* of terrain-adjacent machinery -
+`Sodium terrain uniforms x256`, Sodium's `Indirect ring buffer #0/#1/#2`, the vanilla `Section time info` - while
+only one of them ever allocates **geometry**: the Metal 3 arm allocates Sodium's `Arena buffer`s (268435456,
+134217728, 33554432 and 16777216 bytes), and the Metal 4 arm allocates **none at all** (1863 allocations, the
+largest of them 32 MB of staging). The vanilla uber buffers (`solid`, `cutout`, `translucent`) are absent from
+*both* arms, which is Sodium doing the drawing as expected. So on this path the world's chunk geometry is never
+uploaded into GPU memory: Sodium's terrain renderer is initialised (its uniforms and its indirect ring exist) and
+never receives a mesh.
+
 **And no operation is refused anywhere in those sessions.** This round made the Metal 4 pass's refusals say so
 in the log before they throw - which section 104 asks for on its own, and which was needed here because a
 *caller that catches the throw* drops the work silently - and the log names **nothing**: neither
@@ -2063,10 +2076,14 @@ in the log before they throw - which section 104 asks for on its own, and which 
 are not being refused; they are **not being asked for**, and the empty draw group is where that happens. Three
 candidates remain, and none of them is measured yet:
 
-- no section is *visible* to whatever fills `visibleSections` (the culling side);
-- sections are visible but `getRenderSectionSlice` answers null for every one of them, i.e. the section meshes
-  never got their GPU buffer slices (the mesh upload side);
-- the section meshes have no draws for any layer at all (the compilation side).
+- no chunk mesh is *built* for this path to upload (the chunk-build side);
+- meshes are built and the upload to the arena never runs, or runs and lands nowhere (the upload side);
+- meshes are in the arena and nothing is visible to the culling that would hand them to a pass (the visibility
+  side).
+
+The allocation evidence above already leans on the first two rather than the third - geometry that never reached
+a GPU buffer cannot be culled into view - and the instrument that separates them is a log at the upload boundary
+itself, which is a game-side call the engine currently cannot see.
 
 `drawMultipleIndexed` is deliberately **not** on that list even though this path still refuses it: a refused call
 would now be in the log, and the log is empty. That refusal will need its own implementation - it is the shape a

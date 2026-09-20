@@ -230,8 +230,23 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
 
     @Override
     public @NonNull GpuBuffer createBuffer(@Nullable final Supplier<String> label, @GpuBuffer.Usage final int usage, final long size) {
+        // Named here rather than counted, because the question this answers is *which* buffer a session made:
+        // a no-pack Metal 4 frame is one flat clear because the world's terrain never reaches a pass, and the
+        // three candidates left - no section visible, no GPU slice for a visible section, or no mesh at all -
+        // are told apart by whether the terrain's own uber buffers are created and how large they are. Off
+        // unless asked for: this is a diagnostic, and it prints once per allocation.
+        if (LOG_BUFFERS) {
+            com.metallum.Metallum.LOGGER.info("Metal buffer: {} bytes, usage {} - {}", size, usage,
+                    label == null ? "(unnamed)" : label.get());
+        }
         return new MetalGpuBuffer(this, usage, size);
     }
+
+    /**
+     * Whether every GPU buffer this device makes is named in the log, off unless {@code -Dmetallum.logBuffers}
+     * says otherwise and said out loud when it is on, the way the drawable readback's switch is.
+     */
+    private static final boolean LOG_BUFFERS = Boolean.getBoolean("metallum.logBuffers");
 
     @Override
     public @NonNull GpuBuffer createBuffer(@Nullable final Supplier<String> label, @GpuBuffer.Usage final int usage, final ByteBuffer data) {
