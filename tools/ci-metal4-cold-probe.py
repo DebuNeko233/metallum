@@ -709,10 +709,19 @@ for needle, why in (
     ("if (secondTable == null || !secondTable.texture(texture, 0L)\n"
      "                    || !secondTable.address(second.gpuAddress(), 0L)",
      "the second dispatch's table is not given the image by resource id and the second colour by address"),
-    ("|| !secondTable.address(second.gpuAddress(), 0L)\n"
-     "                    || !dispatch.setArgumentTable(secondTable)) {",
-     "the second dispatch's own table is not bound to the second colour and handed over, so the smoke would"
-     " measure nothing"),
+    ("secondDispatch = MTL4ComputeEncoder.open(device, buffer, \"the storage smoke's second dispatch\");",
+     "the second dispatch has no encoder of its own, which is the measured safe shape: a second table handed to"
+     " the same encoder is not reliably honoured, and with the copy dependency smoke in the suite the smoke then"
+     " failed on alternate warm probes"),
+    ("|| !secondDispatch.setComputePipelineState(pipeline)\n"
+     "                    || !secondDispatch.setArgumentTable(secondTable)) {",
+     "the second dispatch's own encoder is not given the pipeline and its table, so the smoke would measure"
+     " nothing"),
+    ("secondDispatch.endEncoding();",
+     "the second dispatch's encoder is never ended, so its work would not be submitted"),
+    ("if (secondDispatch != null) {",
+     "the second dispatch's encoder is never released, so every probe leaks one - and releasing one before the"
+     " commit is what crashed the driver when that was tried"),
     ("if (secondTable != null) {",
      "the second dispatch's table is never released, so every probe of this smoke leaks one"),
     ("for (long[] at : new long[][]{{0L, 0L}, {STORAGE_EDGE - 1L, STORAGE_EDGE - 1L}, {1L, 3L}})",

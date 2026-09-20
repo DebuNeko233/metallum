@@ -43,6 +43,7 @@ import java.util.Optional;
  *                 storageImage=&lt;bool&gt; storageImageReason=&lt;text&gt;
  *                 computeSample=&lt;bool&gt; computeSampleReason=&lt;text&gt;
  *                 computeVertex=&lt;bool&gt; computeVertexReason=&lt;text&gt;
+ *                 copySample=&lt;bool&gt; copySampleReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -222,6 +223,8 @@ public final class Metal4ColdProbe {
         String computeSampleReason = "-";
         boolean computeVertex = false;
         String computeVertexReason = "-";
+        boolean copySample = false;
+        String copySampleReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -301,6 +304,13 @@ public final class Metal4ColdProbe {
             computeVertex = makeAndSubmit && MTL4Probe.canDrawFromComputeWrittenBuffer(device);
             if (!computeVertex) {
                 computeVertexReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And the copy's two boundaries with shader work: a pass writes a source, a copy moves a region of it
+            // into a destination's other half, and a pass samples that destination - three encoders, each ordered
+            // by its own producer barrier, and both halves of the result read.
+            copySample = makeAndSubmit && MTL4Probe.canSampleAfterCopy(device);
+            if (!copySample) {
+                copySampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -419,6 +429,8 @@ public final class Metal4ColdProbe {
                     + " computeSampleReason=" + computeSampleReason.replace(' ', '_')
                     + " computeVertex=" + computeVertex
                     + " computeVertexReason=" + computeVertexReason.replace(' ', '_')
+                    + " copySample=" + copySample
+                    + " copySampleReason=" + copySampleReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

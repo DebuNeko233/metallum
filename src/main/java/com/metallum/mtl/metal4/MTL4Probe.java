@@ -2407,6 +2407,7 @@ public final class MTL4Probe {
         MTL4ArgumentTable secondTable = null;
         MTL4ResidencySet resident = null;
         MTL4ComputeEncoder dispatch = null;
+        MTL4ComputeEncoder secondDispatch = null;
         try {
             queue = NEW_QUEUE.sendPtr(device.handle());
             allocator = NEW_ALLOCATOR.sendPtr(device.handle());
@@ -2488,19 +2489,31 @@ public final class MTL4Probe {
             // The second dispatch gets a table of its own rather than a re-pointed one, because a table object
             // handed to one encoder and handed over again after a re-point is not reliably re-read - measured,
             // and the reason the frame path's clears and dispatches each make their own.
+            // BISECT: the second dispatch gets an encoder of its own - both encoders stay open until the frame
+            // has completed, because releasing one before the commit is what crashed the driver when this was
+            // tried the other way round.
+            dispatch.endEncoding();
+            try {
+                secondDispatch = MTL4ComputeEncoder.open(device, buffer, "the storage smoke's second dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("storageImage", "the second dispatch's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
             secondTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
             if (secondTable == null || !secondTable.texture(texture, 0L)
                     || !secondTable.address(second.gpuAddress(), 0L)
-                    || !dispatch.setArgumentTable(secondTable)) {
+                    || !secondDispatch.setComputePipelineState(pipeline)
+                    || !secondDispatch.setArgumentTable(secondTable)) {
                 END.send(buffer);
-                return failed("storageImage", "the second dispatch's own table would not take the image and the"
-                        + " second colour");
+                return failed("storageImage", "the second dispatch's own encoder and table would not take the"
+                        + " image and the second colour");
             }
-            if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+            if (!secondDispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
                 END.send(buffer);
                 return failed("storageImage", "the second dispatch was not encoded");
             }
-            dispatch.endEncoding();
+            secondDispatch.endEncoding();
             END.send(buffer);
 
             try (Arena arena = Arena.ofConfined()) {
@@ -2532,6 +2545,9 @@ public final class MTL4Probe {
         } catch (RuntimeException threw) {
             return failed("storageImage", "dispatching or reading back the storage image threw " + threw);
         } finally {
+            if (secondDispatch != null) {
+                secondDispatch.close();
+            }
             if (dispatch != null) {
                 dispatch.close();
             }
@@ -3058,6 +3074,277 @@ public final class MTL4Probe {
             releaseIfPresent(allocator);
             releaseIfPresent(queue);
         }
+    }
+
+    /**
+     * The two colours the copy smoke's halves hold: the source's, and the destination's own clear.
+     */
+    private static final int[] COPY_SOURCE_PIXEL = {30, 60, 90, 255};
+    private static final int[] COPY_DESTINATION_PIXEL = {200, 100, 50, 255};
+
+    /** Half of a target, which is the region the copy moves: a half that is wrong is a region or an origin. */
+    private static final long COPY_HALF = TARGET_SIZE / 2L;
+
+    /**
+     * Whether a copy's output reaches a pass that samples it, and whether the pass's output reaches the copy.
+     * <p>
+     * This is section 60's two copy cases in one fixture, and it is three encoders in one command buffer: a
+     * render pass clears the source, a copy moves a region of it into the destination's other half, and a second
+     * render pass samples the destination. Each boundary encodes its producer barrier, so what is proven is the
+     * API's ordering and not that the three happen to share a command buffer.
+     * <p>
+     * The reading is per half, because a copy has an origin and a size and a wrong one is a wrong half rather
+     * than a wrong colour: the destination's left half must keep its own clear and its right half must hold the
+     * source's colour, and then the sampled pass draws the whole destination over the target and both halves of
+     * <em>that</em> are read - so a copy that landed but a sample that did not, and a sample that landed but a
+     * copy that did not, are different failures with different messages.
+     * <p>
+     * <strong>This smoke was written in the dependency round and held out of the census.</strong> Its presence
+     * moved the phase the process was in, and the storage-image smoke - which was failing on alternate rounds
+     * because of its own re-pointed table - then failed in the variant of the suite that had the copy and passed
+     * in the one that did not. That read as "the copy is the ingredient" until the round-42 reproducer showed
+     * the storage smoke's own shape to be the fault; with that shape fixed, the copy smoke is back and the
+     * census is where it belongs.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether a copy's writes were visible both to a CPU readback and to a pass that sampled them
+     */
+    public static boolean canSampleAfterCopy(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("copySample", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment source = MemorySegment.NULL;
+        MemorySegment destination = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment sampledPipeline = MemorySegment.NULL;
+        MTL4ArgumentTable sampledTable = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder copy = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("copySample", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            // Both textures are render targets and shader reads: each is rendered into, one of them is sampled,
+            // and the copy moves a region of one into the other.
+            source = newTarget(device, USAGE_RENDER_TARGET | USAGE_SHADER_READ);
+            destination = newTarget(device, USAGE_RENDER_TARGET | USAGE_SHADER_READ);
+            target = newTarget(device);
+            if (ObjC.isNil(source) || ObjC.isNil(destination) || ObjC.isNil(target)) {
+                return failed("copySample", "one of the smoke's textures came back nil: source="
+                        + !ObjC.isNil(source) + " destination=" + !ObjC.isNil(destination) + " target="
+                        + !ObjC.isNil(target));
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("copySample", "newSamplerStateWithDescriptor: answered nil, so the sampled pass has"
+                        + " nothing to read the copy's destination with");
+            }
+
+            sampledPipeline = MTLBuiltinPipelines.buildPipelineForProbe(SAMPLED_DRAW_MSL,
+                    "metallum_sampled_probe_vs", "metallum_sampled_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(sampledPipeline)) {
+                return failed("copySample", "the sampled pipeline this smoke draws with came back nil");
+            }
+
+            sampledTable = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (sampledTable == null || !sampledTable.texture(destination, 0L)
+                    || !sampledTable.sampler(sampler, 0L)) {
+                return failed("copySample", "the table the sampled pass binds through would not take the copy's"
+                        + " destination and its sampler");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the copy-to-pass dependency smoke");
+            if (resident == null || !resident.add(source) || !resident.add(destination) || !resident.add(target)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("copySample", "the smoke could not declare its three textures resident, and an"
+                        + " undeclared resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+
+            // Pass one: the source becomes one colour and the destination's own clear is the other. Both end with
+            // the producer barrier, because the copy that reads the one and overwrites half of the other is the
+            // next encoder.
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(source, colorOf(COPY_SOURCE_PIXEL))},
+                    "the copy smoke's source pass")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed("copySample", "the source pass does not answer the producer barrier, so the copy"
+                            + " that reads it would have no encoded dependency on it");
+                }
+            }
+
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(destination, colorOf(COPY_DESTINATION_PIXEL))},
+                    "the copy smoke's destination clear")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed("copySample", "the destination's clear pass does not answer the producer"
+                            + " barrier, so the copy that overwrites half of it would have no encoded dependency"
+                            + " on it");
+                }
+            }
+
+            // The copy: a quarter of the source, at the origin, into the destination's other half. A wrong origin
+            // or a wrong size is a wrong half, which is what the readings below are for.
+            try {
+                copy = MTL4ComputeEncoder.open(device, buffer, "the copy smoke's region copy");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("copySample", "the copy's encoder could not be opened at stage " + refused.stage()
+                        + ": " + refused.getMessage());
+            }
+            if (!copy.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, COPY_HALF, COPY_HALF, 1L,
+                    destination, 0L, 0L, COPY_HALF, 0L, 0L)) {
+                END.send(buffer);
+                return failed("copySample", "the copy encoder did not answer the selector"
+                        + " copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:"
+                        + "destinationSlice:destinationLevel:destinationOrigin:");
+            }
+            if (!copy.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("copySample", "the copy encoder does not answer the producer barrier, so the pass"
+                        + " that samples its output would have no encoded dependency on it");
+            }
+            copy.endEncoding();
+
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the pass that samples the copy's destination")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.setCullMode(MTLCullMode.None.value)
+                        || !pass.setRenderPipelineState(sampledPipeline)
+                        || !pass.setArgumentTable(sampledTable, STAGE_FRAGMENT)
+                        || !pass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                    END.send(buffer);
+                    return failed("copySample", "the sampled pass refused one of the commands it needs - the cull"
+                            + " mode, the pipeline, the table or the draw");
+                }
+            }
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("copySample", "the shared event did not reach 1 within 2000 ms, so the pass, the"
+                        + " copy and the pass that samples it never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // The source first: a copy that moved nothing and a source that was never written are two
+                // different faults, and this is the reading that tells them apart.
+                MTLTexture.bytes(source, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, COPY_SOURCE_PIXEL)) {
+                    return failed("copySample", "the source reads " + describe(pixel) + " where its pass cleared "
+                            + describe(COPY_SOURCE_PIXEL) + ", so the copy had nothing to move");
+                }
+
+                // Then the destination's two halves on the CPU: the copy's own origin and size, before any
+                // sampler is involved.
+                MTLTexture.bytes(destination, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, COPY_DESTINATION_PIXEL)) {
+                    return failed("copySample", "the destination's left half reads " + describe(pixel) + " where"
+                            + " its own clear wrote " + describe(COPY_DESTINATION_PIXEL) + ", so the copy moved"
+                            + " more than the region it was given");
+                }
+                MTLTexture.bytes(destination, pixel, 4L, COPY_HALF, 0L, 1L, 1L);
+                if (!matches(pixel, COPY_SOURCE_PIXEL)) {
+                    return failed("copySample", "the destination's right half reads " + describe(pixel) + " where"
+                            + " the copy wrote the source's " + describe(COPY_SOURCE_PIXEL) + ", so the region the"
+                            + " copy was given did not land");
+                }
+
+                // And the same two halves through the sampler, which is the dependency this smoke is about.
+                MTLTexture.bytes(target, pixel, 4L, 8L, 8L, 1L, 1L);
+                if (matches(pixel, CLEAR_PIXEL)) {
+                    return failed("copySample", "the sampling pass drew nothing at (8, 8): its target reads the"
+                            + " clear colour while the destination holds the copied region, so the copy was not"
+                            + " visible to the encoder that followed it");
+                }
+                if (!matches(pixel, COPY_DESTINATION_PIXEL)) {
+                    return failed("copySample", "the sampled pass drew " + describe(pixel) + " at (8, 8) where the"
+                            + " destination's left half holds " + describe(COPY_DESTINATION_PIXEL) + ", so the"
+                            + " sample did not come from the destination");
+                }
+                MTLTexture.bytes(target, pixel, 4L, COPY_HALF + 8L, 8L, 1L, 1L);
+                if (!matches(pixel, COPY_SOURCE_PIXEL)) {
+                    return failed("copySample", "the sampled pass drew " + describe(pixel) + " at ("
+                            + (COPY_HALF + 8L) + ", 8) where the destination's right half holds the copy's "
+                            + describe(COPY_SOURCE_PIXEL) + ", so the copied half did not reach the sampler");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("copySample", "encoding, submitting or reading back the copy-to-pass dependency threw "
+                    + threw);
+        } finally {
+            if (copy != null) {
+                copy.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (sampledTable != null) {
+                sampledTable.close();
+            }
+            releaseIfPresent(sampledPipeline);
+            releaseIfPresent(sampler);
+            releaseIfPresent(target);
+            releaseIfPresent(destination);
+            releaseIfPresent(source);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** One of the smoke colours as the descriptor's four components. */
+    private static float[] colorOf(final int[] pixel) {
+        return new float[]{pixel[0] / 255.0f, pixel[1] / 255.0f, pixel[2] / 255.0f, pixel[3] / 255.0f};
     }
 
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
@@ -4417,11 +4704,19 @@ public final class MTL4Probe {
 
     /** One shared, readback-able colour target. */
     private static MemorySegment newTarget(final MTLDevice device) {
+        return newTarget(device, USAGE_RENDER_TARGET);
+    }
+
+    /**
+     * The same target with the usage bits a smoke needs, because a texture that is only rendered into is not one
+     * a shader may read: a pass's output that a later pass samples - or that a copy moves - declares both.
+     */
+    private static MemorySegment newTarget(final MTLDevice device, final long usage) {
         try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
             descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
             descriptor.width(TARGET_SIZE);
             descriptor.height(TARGET_SIZE);
-            descriptor.usage(USAGE_RENDER_TARGET);
+            descriptor.usage(usage);
             descriptor.storageMode(MTLStorageMode.Shared);
             return device.newTexture(descriptor);
         }

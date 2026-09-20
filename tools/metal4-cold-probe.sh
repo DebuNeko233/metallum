@@ -213,6 +213,9 @@ compute_sample_passes="$(grep -c ' computeSample=true ' "$probe_log" || true)"
 compute_sample_failures="$(grep -c ' computeSample=false ' "$probe_log" || true)"
 compute_vertex_passes="$(grep -c ' computeVertex=true ' "$probe_log" || true)"
 compute_vertex_failures="$(grep -c ' computeVertex=false ' "$probe_log" || true)"
+# And the copy's two boundaries with shader work, which are encoders apart from each other.
+copy_sample_passes="$(grep -c ' copySample=true ' "$probe_log" || true)"
+copy_sample_failures="$(grep -c ' copySample=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -249,6 +252,7 @@ echo "residency sets:  $residency_passes passed   $residency_failures failed"
 echo "indirect draws:  $indirect_passes passed   $indirect_failures failed"
 echo "compute->pass:   $compute_sample_passes passed   $compute_sample_failures failed"
 echo "compute->draw:   $compute_vertex_passes passed   $compute_vertex_failures failed"
+echo "copy->pass:      $copy_sample_passes passed   $copy_sample_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -319,6 +323,11 @@ fi
 
 if (( compute_vertex_failures > 0 )); then
 	echo "the compute-to-draw dependency smoke failed in $compute_vertex_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( copy_sample_failures > 0 )); then
+	echo "the copy-to-pass dependency smoke failed in $copy_sample_failures probe(s)" >&2
 	exit 1
 fi
 

@@ -2331,6 +2331,41 @@ and it is the *table re-point between two dispatches* that stops taking - which 
 path's storage clear depends on. It is registered, not explained: the mechanism is a hypothesis until a
 reproducer exists, and the exact stage is already known (the second dispatch's write, at (0,0)).
 
+### The safe shape is one encoder per dispatch, and the copy fixture is in the census
+
+The copy's two boundaries - a pass writes a source, a copy moves a region of it into a destination's other
+half, and a pass samples that destination - are the third dependency fixture of section 60, and they are
+**back in the census** now. They were written in the dependency round and held out because their presence made
+the storage-image smoke fail; that turned out to be two separate things, and both are now measured.
+
+**One: the storage smoke's own re-pointed table, fixed.** Two: **a fresh table is not enough either.** With
+the copy smoke in the suite, `canWriteStorageImage` - by then making a table per dispatch, and deterministic
+174 of 174 on its own - failed again on alternate warm probes, 3 of 8. So the re-point was one fault and not
+the whole story, and the table is not the unit the driver honours: **the encoder is.**
+
+| the storage smoke's shape, with the copy smoke in the suite | result |
+| --- | --- |
+| one encoder, a table per dispatch | 3 of 8 warm probes lost the second dispatch |
+| **one encoder per dispatch**, a table each | **93 of 93 probes in three processes, and 50 of 50 in the census, all four smokes green** |
+
+So a dispatch that binds through a table gets an encoder of its own, and that is what the smoke does now. Two
+things about the shape are part of it and not incidental: **both encoders must stay alive until the command
+buffer has completed** - releasing the first one before the commit crashed the driver inside
+`-[AGXG17XFamilyComputeContext_mtlnext dispatchThreads:threadsPerThreadgroup:]`, a SIGSEGV in the Metal
+framework rather than a Java-level failure, which is why the smoke keeps both and closes them after its wait;
+and a table may be re-pointed between *encoders*, which the reproducer's `two-encoders` mode measured clean.
+
+**The engine still has the shape this rules out.** `Metal4FrameEncoder.dispatchCompute` and
+`clearStorageTexture` both encode into the frame's shared `copyEncoder()`, so two table-binding dispatches -
+or a dispatch and a clear - in one frame share one encoder, which is exactly the shape that lost a dispatch in
+the probe six times in eight warm probes with another smoke in the process. The round-42 fix (a table per
+dispatch) removed the re-point and is still right, but it is not sufficient on its own: the encoder has to be
+per dispatch too, and that is the next change, with the client fixture as its regression check.
+
+**Measured this round, in full.** Two 30-cold + 20-warm censuses (one without the copy smoke, one with it) and
+two hunts (four processes of 31 warm probes, and three of 31): **317 probes, no field failure**, with the copy
+fixture, the compute-to-pass and the compute-to-draw fixtures all green in every one.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
