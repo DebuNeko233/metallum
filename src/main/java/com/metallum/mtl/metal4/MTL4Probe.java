@@ -2547,6 +2547,502 @@ public final class MTL4Probe {
         }
     }
 
+    // ---------------------------------------------------------- the cross-encoder dependency smokes
+
+    /**
+     * What the kernel writes into the storage image, and therefore what the pass that samples it must draw.
+     * <p>
+     * A colour no other smoke uses, so a target that holds it cannot have got it from anywhere else.
+     */
+    private static final int[] COMPUTE_IMAGE_PIXEL = {17, 99, 201, 255};
+
+    /**
+     * Writes three vertices into a buffer as a kernel, which is what a draw consuming compute output depends on.
+     * <p>
+     * The positions cover the whole target and the last two components are the colour the vertex stage carries
+     * through, so a pixel that arrives is a pixel that came from a buffer this dispatch filled.
+     */
+    private static final String COMPUTE_VERTEX_WRITE_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            kernel void metallum_vertex_write_probe(device float4* vertices [[buffer(0)]],
+                                                    uint id [[thread_position_in_grid]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+              if (id < 3) {
+                vertices[id] = float4(corners[id], 0.25, 0.5);
+              }
+            }
+            """;
+
+    /**
+     * Whether a pass can sample what a dispatch wrote, across two encoders of different kinds in one command
+     * buffer.
+     * <p>
+     * <strong>This is the dependency a pack's compute chain is made of</strong>: the first dispatch writes a
+     * storage image, the pass that follows reads it as a sampled texture, and the two are ordered by the
+     * producer barrier the compute encoder encodes rather than by both happening to be in one command buffer.
+     * The barrier is asked for before it is sent, so an encoder that does not answer it fails here by name -
+     * section 61's rule that "one command buffer" is not a proof.
+     * <p>
+     * The two readings are the whole diagnostic: the image read back on the CPU says whether the kernel wrote
+     * it at all, and the target says whether the sample arrived. A target holding the pass's clear colour while
+     * the image holds the dispatched colour is a dependency that was not ordered; a target holding the right
+     * colour while the image holds something else cannot happen.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether a dispatch's storage-image write reached a pass that sampled it
+     */
+    public static boolean canSampleComputeOutput(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("computeSample", "the device does not answer one of the factories this sequence's"
+                    + " queue, allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment image = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment computePipeline = MemorySegment.NULL;
+        MemorySegment sampledPipeline = MemorySegment.NULL;
+        MTLBuffer colour = null;
+        MTL4ArgumentTable computeTable = null;
+        MTL4ArgumentTable sampledTable = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder dispatch = null;
+        MTL4RenderEncoder pass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("computeSample", "a Metal 4 queue, allocator, command buffer or shared event came"
+                        + " back nil");
+            }
+
+            colour = device.newBuffer(16L, STORAGE_SHARED);
+            if (colour == null || colour.gpuAddress() == 0L) {
+                return failed("computeSample", "the colour the kernel writes came back nil or without a GPU"
+                        + " address");
+            }
+            writeColor(colour, COMPUTE_IMAGE_PIXEL);
+
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(STORAGE_EDGE);
+                descriptor.height(STORAGE_EDGE);
+                // Written by a kernel and read by a fragment stage, which are two usages and therefore both bits:
+                // a texture without the write bit is refused as a storage image, and one without the read bit is
+                // not one a sampler may take.
+                descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                image = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(image)) {
+                return failed("computeSample", "newTextureWithDescriptor: answered nil for the " + STORAGE_EDGE
+                        + "x" + STORAGE_EDGE + " storage image both encoders touch");
+            }
+
+            target = newTarget(device);
+            if (ObjC.isNil(target)) {
+                return failed("computeSample", "newTextureWithDescriptor: answered nil for the target the sampling"
+                        + " pass draws into");
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("computeSample", "newSamplerStateWithDescriptor: answered nil, so the sampling pass"
+                        + " has nothing to read the image with");
+            }
+
+            function = device.newFunction(STORAGE_WRITE_MSL, "metallum_storage_write_probe");
+            if (ObjC.isNil(function)) {
+                return failed("computeSample", "the probe's storage-write kernel did not compile into a function");
+            }
+            computePipeline = device.newComputePipelineState(function);
+            sampledPipeline = MTLBuiltinPipelines.buildPipelineForProbe(SAMPLED_DRAW_MSL,
+                    "metallum_sampled_probe_vs", "metallum_sampled_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(computePipeline) || ObjC.isNil(sampledPipeline)) {
+                return failed("computeSample", "a pipeline this dependency draws with came back nil - compute="
+                        + !ObjC.isNil(computePipeline) + " sampled=" + !ObjC.isNil(sampledPipeline));
+            }
+
+            // Two tables, because two encoders of different kinds bind: the dispatch reads a colour buffer and
+            // writes the image, and the pass reads the same image through a sampler.
+            computeTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            sampledTable = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (computeTable == null || sampledTable == null
+                    || !computeTable.address(colour.gpuAddress(), 0L)
+                    || !computeTable.texture(image, 0L)
+                    || !sampledTable.texture(image, 0L)
+                    || !sampledTable.sampler(sampler, 0L)) {
+                return failed("computeSample", "a table this dependency needs would not take its resource -"
+                        + " compute=" + (computeTable != null) + " sampled=" + (sampledTable != null));
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the compute-to-pass dependency smoke");
+            if (resident == null || !resident.add(colour.handle()) || !resident.add(image)
+                    || !resident.add(target)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("computeSample", "the smoke could not declare its buffer and two textures resident,"
+                        + " and an undeclared resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+            try {
+                dispatch = MTL4ComputeEncoder.open(device, buffer, "the compute-to-pass dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("computeSample", "the dependency's dispatch encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (!dispatch.setComputePipelineState(computePipeline) || !dispatch.setArgumentTable(computeTable)) {
+                END.send(buffer);
+                return failed("computeSample", "the compute encoder did not take the kernel's pipeline and its"
+                        + " table");
+            }
+            if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("computeSample", "the dispatch over the image's own extent was not encoded");
+            }
+            // The ordering is the API's, and it is encoded here rather than inferred from one command buffer:
+            // the producer barrier is what makes everything this encoder wrote visible to what follows it.
+            if (!dispatch.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("computeSample", "the compute encoder does not answer the producer barrier, so the"
+                        + " pass that samples its output would have no encoded dependency on it");
+            }
+            dispatch.endEncoding();
+
+            pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the pass that samples the compute output");
+            if (pass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!pass.setCullMode(MTLCullMode.None.value)
+                    || !pass.setRenderPipelineState(sampledPipeline)
+                    || !pass.setArgumentTable(sampledTable, STAGE_FRAGMENT)
+                    || !pass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                END.send(buffer);
+                pass.close();
+                return failed("computeSample", "the sampling pass refused one of the commands it needs - the cull"
+                        + " mode, the pipeline, the table or the draw");
+            }
+            pass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("computeSample", "the shared event did not reach 1 within 2000 ms, so the dispatch"
+                        + " and the pass that reads it never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // The image first. A kernel that never wrote and a sample that never arrived are two different
+                // faults, and reading the dispatch's own output is what tells them apart.
+                MTLTexture.bytes(image, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, COMPUTE_IMAGE_PIXEL)) {
+                    return failed("computeSample", "the image reads " + describe(pixel) + " where the dispatch"
+                            + " wrote " + describe(COMPUTE_IMAGE_PIXEL) + ", so the pass had nothing to see");
+                }
+
+                for (long[] at : new long[][]{{0L, 0L}, {TARGET_SIZE - 1L, TARGET_SIZE - 1L}, {17L, 41L}}) {
+                    MTLTexture.bytes(target, pixel, 4L, at[0], at[1], 1L, 1L);
+                    if (matches(pixel, CLEAR_PIXEL)) {
+                        return failed("computeSample", "the sampling pass drew nothing at (" + at[0] + ", " + at[1]
+                                + "): its target reads the clear colour while the image holds "
+                                + describe(COMPUTE_IMAGE_PIXEL) + ", so what the dispatch wrote was not visible"
+                                + " to the encoder that followed it");
+                    }
+                    if (!matches(pixel, COMPUTE_IMAGE_PIXEL)) {
+                        return failed("computeSample", "the sampling pass drew " + describe(pixel) + " at ("
+                                + at[0] + ", " + at[1] + ") where the image's "
+                                + describe(COMPUTE_IMAGE_PIXEL) + " was asked for, so the sample did not reach"
+                                + " the target");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("computeSample", "encoding, submitting or reading back the compute-to-pass dependency"
+                    + " threw " + threw);
+        } finally {
+            if (pass != null) {
+                pass.close();
+            }
+            if (dispatch != null) {
+                dispatch.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (computeTable != null) {
+                computeTable.close();
+            }
+            if (sampledTable != null) {
+                sampledTable.close();
+            }
+            releaseIfPresent(sampledPipeline);
+            releaseIfPresent(computePipeline);
+            releaseIfPresent(function);
+            releaseIfPresent(sampler);
+            releaseIfPresent(target);
+            releaseIfPresent(image);
+            releaseIfPresent(colour);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * Whether a draw can read geometry a dispatch wrote, across two encoders in one command buffer.
+     * <p>
+     * The other half of the compute dependency, and the one a pack's own indirect or generated geometry needs:
+     * a kernel fills a vertex buffer by address, the barrier orders it, and the pass that follows binds that
+     * same buffer as its vertex data. <strong>The buffer starts as three copies of the origin</strong>, which is
+     * a triangle with no area - so a draw that ran before the kernel's data arrived paints no pixel at all and
+     * the target keeps its clear colour, which is a failure the readback can see rather than a picture that
+     * looks plausible.
+     * <p>
+     * The colour the vertex stage passes through comes out of the buffer's last two components, so the pixel
+     * that arrives is a pixel that came from what the dispatch wrote and not from a literal in the shader.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether a dispatch's buffer write reached a draw that read it as vertices
+     */
+    public static boolean canDrawFromComputeWrittenBuffer(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("computeVertex", "the device does not answer one of the factories this sequence's"
+                    + " queue, allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment computePipeline = MemorySegment.NULL;
+        MemorySegment vertexPipeline = MemorySegment.NULL;
+        MTLBuffer vertices = null;
+        MTL4ArgumentTable computeTable = null;
+        MTL4ArgumentTable vertexTable = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder dispatch = null;
+        MTL4RenderEncoder pass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("computeVertex", "a Metal 4 queue, allocator, command buffer or shared event came"
+                        + " back nil");
+            }
+
+            vertices = device.newBuffer(VERTEX_LENGTH, STORAGE_SHARED);
+            if (vertices == null || vertices.gpuAddress() == 0L) {
+                return failed("computeVertex", "the vertex buffer the dispatch fills came back nil or without a"
+                        + " GPU address");
+            }
+            // Three copies of the origin: nothing is drawn until the kernel's positions arrive.
+            MemorySegment sentinel = vertices.contents().reinterpret(VERTEX_LENGTH);
+            for (long word = 0; word < VERTEX_LENGTH / 4L; word++) {
+                sentinel.set(JAVA_FLOAT, word * 4L, 0.0f);
+            }
+
+            target = newTarget(device);
+            if (ObjC.isNil(target)) {
+                return failed("computeVertex", "newTextureWithDescriptor: answered nil for the target the draw"
+                        + " reads the generated geometry into");
+            }
+
+            function = device.newFunction(COMPUTE_VERTEX_WRITE_MSL, "metallum_vertex_write_probe");
+            if (ObjC.isNil(function)) {
+                return failed("computeVertex", "the probe's vertex-writing kernel did not compile into a"
+                        + " function");
+            }
+            computePipeline = device.newComputePipelineState(function);
+            vertexPipeline = MTLBuiltinPipelines.buildPipelineForProbe(VERTEX_BUFFER_MSL,
+                    "metallum_vb_probe_vs", "metallum_vb_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(computePipeline) || ObjC.isNil(vertexPipeline)) {
+                return failed("computeVertex", "a pipeline this dependency draws with came back nil - compute="
+                        + !ObjC.isNil(computePipeline) + " vertex=" + !ObjC.isNil(vertexPipeline));
+            }
+
+            // The same buffer in two tables: as the dispatch's storage buffer by plain address, and as the
+            // draw's vertex data with the attribute stride a vertex fetch reads it by.
+            computeTable = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+            vertexTable = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+            if (computeTable == null || vertexTable == null
+                    || !computeTable.address(vertices.gpuAddress(), 0L)
+                    || !vertexTable.address(vertices.gpuAddress(), 16L, 0L)) {
+                return failed("computeVertex", "a table this dependency needs would not take the buffer - compute="
+                        + (computeTable != null) + " vertex=" + (vertexTable != null)
+                        + " (does the device support attribute strides?)");
+            }
+
+            resident = MTL4ResidencySet.create(device, 2L, "the compute-to-draw dependency smoke");
+            if (resident == null || !resident.add(vertices.handle()) || !resident.add(target)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("computeVertex", "the smoke could not declare its buffer and target resident, and an"
+                        + " undeclared resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+            try {
+                dispatch = MTL4ComputeEncoder.open(device, buffer, "the compute-to-draw dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("computeVertex", "the dependency's dispatch encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (!dispatch.setComputePipelineState(computePipeline) || !dispatch.setArgumentTable(computeTable)) {
+                END.send(buffer);
+                return failed("computeVertex", "the compute encoder did not take the kernel's pipeline and its"
+                        + " table");
+            }
+            // One group of COMPUTE_THREADS threads with only the first three writing, which is the shape the
+            // dispatch smoke already proves.
+            if (!dispatch.dispatchThreadgroups(1L, 1L, 1L, COMPUTE_THREADS, 1L, 1L)) {
+                END.send(buffer);
+                return failed("computeVertex", "the dispatch that fills the vertex buffer was not encoded");
+            }
+            if (!dispatch.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("computeVertex", "the compute encoder does not answer the producer barrier, so the"
+                        + " draw that reads its output would have no encoded dependency on it");
+            }
+            dispatch.endEncoding();
+
+            pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the pass that draws the compute-written vertices");
+            if (pass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!pass.setCullMode(MTLCullMode.None.value)
+                    || !pass.setRenderPipelineState(vertexPipeline)
+                    || !pass.setArgumentTable(vertexTable, STAGE_VERTEX)
+                    || !pass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                END.send(buffer);
+                pass.close();
+                return failed("computeVertex", "the drawing pass refused one of the commands it needs - the cull"
+                        + " mode, the pipeline, the table or the draw");
+            }
+            pass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("computeVertex", "the shared event did not reach 1 within 2000 ms, so the dispatch"
+                        + " and the draw that reads it never completed");
+            }
+
+            // The buffer first, for the same reason the image is read first in the smoke above: a dispatch that
+            // never wrote and a draw that never read are two different faults.
+            MemorySegment written = vertices.contents().reinterpret(VERTEX_LENGTH);
+            float firstX = written.get(JAVA_FLOAT, 0L);
+            float firstZ = written.get(JAVA_FLOAT, 8L);
+            if (firstX != -1.0f || firstZ != 0.25f) {
+                return failed("computeVertex", "the vertex buffer's first vertex reads (" + firstX + ", ..., "
+                        + firstZ + ") where the dispatch writes (-1.0, ..., 0.25), so there was no generated"
+                        + " geometry for the draw to read");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                for (long[] at : new long[][]{{8L, 8L}, {TARGET_SIZE - 1L, TARGET_SIZE - 1L}, {31L, 15L}}) {
+                    MTLTexture.bytes(target, pixel, 4L, at[0], at[1], 1L, 1L);
+                    if (matches(pixel, CLEAR_PIXEL)) {
+                        return failed("computeVertex", "the draw produced nothing at (" + at[0] + ", " + at[1]
+                                + "): its target reads the clear colour while the vertex buffer holds the"
+                                + " dispatch's positions, so the vertices the dispatch wrote did not reach the"
+                                + " draw");
+                    }
+                    if (!matches(pixel, EXPECTED_VERTEX_PIXEL)) {
+                        return failed("computeVertex", "the draw produced " + describe(pixel) + " at (" + at[0]
+                                + ", " + at[1] + ") where the vertex buffer's own colour "
+                                + describe(EXPECTED_VERTEX_PIXEL) + " was asked for, so the draw read a buffer"
+                                + " this dispatch did not fill");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("computeVertex", "encoding, submitting or reading back the compute-to-draw dependency"
+                    + " threw " + threw);
+        } finally {
+            if (pass != null) {
+                pass.close();
+            }
+            if (dispatch != null) {
+                dispatch.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (computeTable != null) {
+                computeTable.close();
+            }
+            if (vertexTable != null) {
+                vertexTable.close();
+            }
+            releaseIfPresent(vertexPipeline);
+            releaseIfPresent(computePipeline);
+            releaseIfPresent(function);
+            releaseIfPresent(target);
+            releaseIfPresent(vertices);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
     private static final int MIP_LEVELS = 3;
     private static final int MIP_PREFILLED = 200;

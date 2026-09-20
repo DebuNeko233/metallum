@@ -444,6 +444,24 @@ for needle, why in (
      "the driver does not count the storage-image smoke's failures"),
     ("if (( storage_image_failures > 0 )); then",
      "the driver counts the storage-image smoke's failures and does not fail the run on them"),
+    # And the two cross-encoder dependencies, each counted on its own: a dispatch and a copy that both work say
+    # nothing about whether a later encoder of another kind can see what the dispatch wrote.
+    ('+ " computeSample=" + computeSample', "the harness does not print the compute-to-pass smoke's answer"),
+    ('+ " computeSampleReason=" + computeSampleReason',
+     "the harness does not print why the compute-to-pass smoke failed"),
+    ("MTL4Probe.canSampleComputeOutput(device)", "the harness never asks the compute-to-pass smoke"),
+    ("compute_sample_failures=\"$(grep -c ' computeSample=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the compute-to-pass smoke's failures"),
+    ("if (( compute_sample_failures > 0 )); then",
+     "the driver counts the compute-to-pass smoke's failures and does not fail the run on them"),
+    ('+ " computeVertex=" + computeVertex', "the harness does not print the compute-to-draw smoke's answer"),
+    ('+ " computeVertexReason=" + computeVertexReason',
+     "the harness does not print why the compute-to-draw smoke failed"),
+    ("MTL4Probe.canDrawFromComputeWrittenBuffer(device)", "the harness never asks the compute-to-draw smoke"),
+    ("compute_vertex_failures=\"$(grep -c ' computeVertex=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the compute-to-draw smoke's failures"),
+    ("if (( compute_vertex_failures > 0 )); then",
+     "the driver counts the compute-to-draw smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -702,6 +720,86 @@ for needle, why in (
     ("constant float4& colour [[buffer(0)]]",
      "the storage kernel does not read its colour from a buffer, so the reading cannot say which buffer the table"
      " held"),
+):
+    if needle not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+# --- the two cross-encoder dependencies, where the API's ordering is what the smoke proves ----------------
+# Both are new kinds of question: every smoke above establishes one encoder's own capability, and these two ask
+# whether what one encoder wrote is visible to an encoder of another kind in the same command buffer. The
+# producer barrier is the answer, so a pin checks it is encoded rather than inferred from "one command buffer".
+for smoker, stage, why_gone in (
+    ("canSampleComputeOutput", "computeSample",
+     "the compute-to-pass dependency smoke is gone, so the harness's computeSample field would report a call"
+     " that is not there"),
+    ("canDrawFromComputeWrittenBuffer", "computeVertex",
+     "the compute-to-draw dependency smoke is gone, so the harness's computeVertex field would report a call"
+     " that is not there"),
+):
+    if "public static boolean " + smoker + "(" not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why_gone)
+
+sample_probe = engine_probe_source[engine_probe_source.index("public static boolean canSampleComputeOutput("):]
+sample_probe = sample_probe[:sample_probe.index("public static boolean canDrawFromComputeWrittenBuffer(")]
+for needle, why in (
+    ("dispatch.barrierForSubsequentEncoders()",
+     "the compute-to-pass smoke samples what a dispatch wrote without encoding the producer barrier, so it would"
+     " be proving that one command buffer happened to be enough - which section 61 forbids"),
+    ("if (!dispatch.barrierForSubsequentEncoders()) {",
+     "the producer barrier is sent without asking whether the encoder answers it"),
+    ("if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {",
+     "the dispatch into the storage image is not encoded, so the pass has nothing to see"),
+    ("descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);",
+     "the image both encoders touch does not declare both usages, so one of them would be refused"),
+    ("!sampledTable.texture(image, 0L)", "the image is not bound to the pass's table by resource id"),
+    ("!sampledTable.sampler(sampler, 0L)", "the sampler is not bound to the pass's table"),
+    ("MTLTexture.bytes(image, pixel, 4L, 0L, 0L, 1L, 1L);",
+     "the dispatch's own output is not read back, so a kernel that never wrote and a sample that never arrived"
+     " would be one failure"),
+    ("if (!matches(pixel, COMPUTE_IMAGE_PIXEL)) {",
+     "the image is not compared against the colour the dispatch wrote"),
+    ("if (matches(pixel, CLEAR_PIXEL)) {",
+     "a target holding the pass's clear colour is not named as the dependency failure it is, so an unordered"
+     " sample would read as a wrong colour"),
+    ("for (long[] at : new long[][]{{0L, 0L}, {TARGET_SIZE - 1L, TARGET_SIZE - 1L}, {17L, 41L}})",
+     "the target is read at one place only, so a sample that landed in one corner could pass"),
+):
+    if needle not in sample_probe:
+        raise SystemExit("cold-probe harness: " + why)
+
+vertex_probe = engine_probe_source[engine_probe_source.index("public static boolean canDrawFromComputeWrittenBuffer("):]
+vertex_probe = vertex_probe[:vertex_probe.index("/** How many levels the mipmap smoke asks for")]
+for needle, why in (
+    ("sentinel.set(JAVA_FLOAT, word * 4L, 0.0f);",
+     "the vertex buffer is not pre-filled with a degenerate triangle, so a draw that ran before the dispatch's"
+     " data arrived could still paint pixels"),
+    ("dispatch.barrierForSubsequentEncoders()",
+     "the compute-to-draw smoke draws what a dispatch wrote without encoding the producer barrier"),
+    ("if (!dispatch.dispatchThreadgroups(1L, 1L, 1L, COMPUTE_THREADS, 1L, 1L)) {",
+     "the dispatch that fills the vertex buffer is not encoded"),
+    ("|| !computeTable.address(vertices.gpuAddress(), 0L)",
+     "the same buffer is not bound to the dispatch's table by address"),
+    ("|| !vertexTable.address(vertices.gpuAddress(), 16L, 0L)) {",
+     "the same buffer is not bound to the draw's table as vertex data with its stride, so the draw could not"
+     " read what the dispatch wrote"),
+    ("pass.setArgumentTable(vertexTable, STAGE_VERTEX)",
+     "the vertex table is not handed to the drawing pass"),
+    ("float firstX = written.get(JAVA_FLOAT, 0L);",
+     "the buffer is not read back on the CPU, so a dispatch that never wrote and a draw that never read would"
+     " be one failure"),
+    ("if (!matches(pixel, EXPECTED_VERTEX_PIXEL)) {",
+     "the drawn pixel is not compared against the colour that comes out of the buffer's own components"),
+):
+    if needle not in vertex_probe:
+        raise SystemExit("cold-probe harness: " + why)
+# The kernel that fills the buffer, pinned against the file: it writes the same three corners the vertex smoke's
+# own literal uses, so the colour the draw passes through is read from the buffer and not from the shader.
+for needle, why in (
+    ("kernel void metallum_vertex_write_probe(device float4* vertices [[buffer(0)]],",
+     "the vertex-writing kernel takes no device buffer at the slot the table binds"),
+    ("vertices[id] = float4(corners[id], 0.25, 0.5);",
+     "the kernel does not write the colour the vertex stage carries through, so a pixel could not say the draw"
+     " read this buffer"),
 ):
     if needle not in engine_probe_source:
         raise SystemExit("cold-probe harness: " + why)

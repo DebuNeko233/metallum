@@ -2203,6 +2203,47 @@ of bounds: must be between 0 and 15` and `'id' attribute only applies to non-sta
 capability probe's own measurements of the sampler ceiling and the resource-id rule, both already recorded under
 Risks.
 
+### The dependencies across encoders, and the barrier that is not "one command buffer"
+
+Section 60 lists the read/write cases a frame's passes, dispatches and copies make between each other, and
+section 61 forbids the proof that says "they are ordered because they share a command buffer". Two of those
+cases are now measured natively, each on its own value, each with the API's own ordering primitive encoded
+rather than assumed:
+
+- **a dispatch writes a storage image, the pass that follows samples it** (`canSampleComputeOutput`). The
+  compute encoder's producer barrier (`barrierForSubsequentEncoders`, `barrierAfterStages:beforeQueueStages:`)
+  is asked for before it is sent - an encoder that did not answer it fails the smoke by name - and then the
+  render pass binds the same image through a table by resource id and draws a fullscreen triangle over it. The
+  colour is a value no other smoke uses (`{17, 99, 201, 255}`), so a target that holds it cannot have got it
+  anywhere else. The two readings are the diagnostic: the image is read back on the CPU first, so a kernel that
+  never wrote and a sample that never arrived are two different failures rather than one;
+- **a dispatch writes a vertex buffer, the draw that follows reads it** (`canDrawFromComputeWrittenBuffer`).
+  The buffer is filled by a kernel through a table by plain address, the same buffer is bound to the drawing
+  pass's table as vertex data with its attribute stride, and the colour the vertex stage passes through comes
+  out of the buffer's own last two components. **The buffer starts as three copies of the origin** - a triangle
+  with no area - so a draw that ran before the kernel's data arrived paints nothing and the target keeps its
+  clear colour, which the readback can see; and the buffer is read back on the CPU as well, for the same
+  reason the image is.
+
+The render-to-render case was already measured the same way (`canDrawSampledTexture`: a pattern pass, its
+producer barrier, then a pass that samples what it wrote), so three of section 60's seven fixtures are
+native-proven. What is **not** proven: the copy crossing into shader work and back (`blit writes → render
+samples`, `render writes → blit reads`, `blit writes → compute reads`), the `compute → compute` visibility the
+client's own fixture depends on, and the read/write matrix's WAR direction. Each is its own smoke in the same
+shape as the two above, and none of them is claimed yet.
+
+**Measured, and with one honest fault in it.** Two 30-cold + 20-warm censuses and a six-process hunt
+(6 × 31 probes) were run: **286 probes**, of which `computeSample` and `computeVertex` are **286 of 286** -
+every cold process and every warm repeat, including the 30 cold processes of both censuses. The storage-image
+smoke, which is not this round's code, failed **18 of those 286** - all eighteen in one process, all from that
+process's third probe onward, every one reading the first dispatch's red where the second dispatch's green was
+asked for, with its own message saying so. Six further processes of 31 warm probes each did not reproduce it,
+and the second census of the same shape was clean 50 of 50. So this is a **new intermittency with a
+signature**: once it starts in a process it persists for the rest of that process, it has not been seen cold,
+and it is the *table re-point between two dispatches* that stops taking - which is the mechanism the frame
+path's storage clear depends on. It is registered, not explained: the mechanism is a hypothesis until a
+reproducer exists, and the exact stage is already known (the second dispatch's write, at (0,0)).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

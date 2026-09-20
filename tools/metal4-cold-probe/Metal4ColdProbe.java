@@ -41,6 +41,8 @@ import java.util.Optional;
  *                 mipmaps=&lt;bool&gt; mipmapsReason=&lt;text&gt;
  *                 compute=&lt;bool&gt; computeReason=&lt;text&gt;
  *                 storageImage=&lt;bool&gt; storageImageReason=&lt;text&gt;
+ *                 computeSample=&lt;bool&gt; computeSampleReason=&lt;text&gt;
+ *                 computeVertex=&lt;bool&gt; computeVertexReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -216,6 +218,10 @@ public final class Metal4ColdProbe {
         String computeReason = "-";
         boolean storageImage = false;
         String storageImageReason = "-";
+        boolean computeSample = false;
+        String computeSampleReason = "-";
+        boolean computeVertex = false;
+        String computeVertexReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -283,6 +289,18 @@ public final class Metal4ColdProbe {
             storageImage = makeAndSubmit && MTL4Probe.canWriteStorageImage(device);
             if (!storageImage) {
                 storageImageReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The two dependencies that cross a compute encoder's boundary: a dispatch writes a storage image that
+            // the next pass samples, and a dispatch writes a vertex buffer that the next pass draws. Each encodes
+            // the producer barrier rather than trusting one command buffer, and each reads back a value only the
+            // second encoder could have produced.
+            computeSample = makeAndSubmit && MTL4Probe.canSampleComputeOutput(device);
+            if (!computeSample) {
+                computeSampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            computeVertex = makeAndSubmit && MTL4Probe.canDrawFromComputeWrittenBuffer(device);
+            if (!computeVertex) {
+                computeVertexReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -397,6 +415,10 @@ public final class Metal4ColdProbe {
                     + " computeReason=" + computeReason.replace(' ', '_')
                     + " storageImage=" + storageImage
                     + " storageImageReason=" + storageImageReason.replace(' ', '_')
+                    + " computeSample=" + computeSample
+                    + " computeSampleReason=" + computeSampleReason.replace(' ', '_')
+                    + " computeVertex=" + computeVertex
+                    + " computeVertexReason=" + computeVertexReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

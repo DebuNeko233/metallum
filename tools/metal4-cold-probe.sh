@@ -170,6 +170,12 @@ residency_passes="$(grep -c ' residency=true ' "$probe_log" || true)"
 residency_failures="$(grep -c ' residency=false ' "$probe_log" || true)"
 indirect_passes="$(grep -c ' indirect=true ' "$probe_log" || true)"
 indirect_failures="$(grep -c ' indirect=false ' "$probe_log" || true)"
+# The two cross-encoder dependencies, counted apart from the dispatches and the copies that make them: a
+# dispatch that writes and a copy that lands say nothing about what a later encoder can see.
+compute_sample_passes="$(grep -c ' computeSample=true ' "$probe_log" || true)"
+compute_sample_failures="$(grep -c ' computeSample=false ' "$probe_log" || true)"
+compute_vertex_passes="$(grep -c ' computeVertex=true ' "$probe_log" || true)"
+compute_vertex_failures="$(grep -c ' computeVertex=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -204,6 +210,8 @@ echo "fence waits:     $fence_passes passed   $fence_failures failed"
 echo "indexed draws:   $index_passes passed   $index_failures failed"
 echo "residency sets:  $residency_passes passed   $residency_failures failed"
 echo "indirect draws:  $indirect_passes passed   $indirect_failures failed"
+echo "compute->pass:   $compute_sample_passes passed   $compute_sample_failures failed"
+echo "compute->draw:   $compute_vertex_passes passed   $compute_vertex_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -264,6 +272,16 @@ fi
 
 if (( storage_image_failures > 0 )); then
 	echo "the storage-image smoke failed in $storage_image_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( compute_sample_failures > 0 )); then
+	echo "the compute-to-pass dependency smoke failed in $compute_sample_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( compute_vertex_failures > 0 )); then
+	echo "the compute-to-draw dependency smoke failed in $compute_vertex_failures probe(s)" >&2
 	exit 1
 fi
 
