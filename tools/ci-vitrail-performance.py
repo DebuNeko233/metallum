@@ -295,6 +295,17 @@ for needle, why in (
 # and the comparison above could not see it, because that pair agreed with each other.
 harness = (ROOT / "tools/run-vitrail-performance.sh").read_text(encoding="utf-8")
 for needle, why in (
+    ("--fullscreen-size) fullscreen_size=\"$2\"; shift 2 ;;",
+     "the harness cannot be told which framebuffer the fullscreen window must take, so the render "
+     "target is whatever mode the display happens to be in"),
+    ('"overrideWidth": override_width, "overrideHeight": override_height',
+     "the fullscreen size is not written into the game's own override, which is the only thing that "
+     "decides the framebuffer a fullscreen window takes"),
+    ('os.environ.get("VITRAIL_PROFILE_FULLSCREEN_SIZE", "")',
+     "the size the harness was told is never read, so the override is written from nothing"),
+    ('if "x" in size:',
+     "the size the harness was told is not parsed, so a flag with a typo in it silently asks for the "
+     "display's own mode instead of failing"),
     ("--expect-target) expect_target=\"$2\"; shift 2 ;;",
      "the harness has no way to be told which render target a session must be measured on"),
     ('if [[ -n "$expect_target" ]]; then',

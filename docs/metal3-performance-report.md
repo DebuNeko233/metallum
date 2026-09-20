@@ -1,15 +1,67 @@
-# Metallum Metal 3 steady-state optimisation  -  status report
+# Metallum Metal 3 steady-state optimisation
 
-One row per candidate the plan names, kept current as each phase is measured. A candidate that was
-measured and found not worth doing is a finished candidate: `REJECTED` or `NOT APPLICABLE` is a result,
-and `BLOCKED BY MISSING EVIDENCE` is what an unmeasured one is never allowed to become silently.
+The final report, in the shape the plan asks for, followed by the phase-by-phase evidence it is read
+from. Every number comes from an arm in `run/`; nothing is estimated, and a candidate that was measured
+and found not worth doing is written down as a result rather than left open.
 
 ## Starting SHAs
 
 ```
-Metallum: 33866a7c3dac4d67b19b0bcd35e5c9220a5f0557  (perf/optimisation, the plan's reference HEAD)
-Vitrail:  4380250f                                   (perf/optimisation, ahead of the plan's 67ca66ca)
+Metallum: 33866a7c3dac4d67b19b0bcd35e5c9220a5f0557  (perf/optimisation; the plan's own reference HEAD)
+Vitrail:  4380250f                                   (perf/optimisation; ahead of the plan's 67ca66ca, not reset)
 ```
+
+## Benchmark
+
+```
+pack:          Photon v1.3b
+preset:        55 %
+resolution:    fullscreen at 1920x1200, world drawn at 1056x660
+camera:        548.5,63,-248.5 yaw 0 pitch 7.8
+warmup:        25 s settle after the pack's first full frame
+frames:        600
+present mode:  MAILBOX, displaySyncEnabled=false, Unlimited FPS
+path:          executingGeneration=metal3, metal4Presents=0, compiles=0
+```
+
+The framebuffer is pinned by `--fullscreen-size 1920x1200`, which the harness now writes into the game's
+own `overrideWidth`/`overrideHeight`, and every arm is checked against `--expect-target 1056x660`.
+Before that flag existed the target was whatever mode the display was in: four modes were measured in
+one evening and a crashed client moved the display between sessions. See "The instrument" at the end.
+
+## Initial Baseline (`run/m3-baseline`, a1 and a2)
+
+```
+                 a1         a2
+wallP50:       7.30       7.29   ms
+wallP95:       8.13       8.25
+wallP99:       8.54       9.13
+wallMax:      13.17       9.85
+gpuP50:        7.31       7.33
+gpu total:  4380.63    4392.70   ms over 600 frames (0.28 % apart)
+
+renderPasses/frame:   34.88      34.88
+renderEncoders/frame: 35.73      35.73   (encoders 21440 / 21440)
+blitEncoders/frame:    5.00       5.00   (3000)
+computeEncoders/frame: 3.00       3.00   (1800)
+clearEncoders/frame:   1.00       1.00   (600)
+
+passChanged/frame:    34.73      34.73   (20840 / 20840)
+blits/frame:          11.00      11.00   (6600)
+loadedMiB/frame:     156.57     156.57   (93943.3 / 93943.3)
+storedMiB/frame:     221.29     221.29   (132773.6 / 132773.6)
+
+pipeline binds 29228 / 29228 · texture 75510 / 75510 · sampler 73710 / 73710
+buffer 123318 / 129318 (this counter's own noise) · viewport 22128 / 22128 · scissor 21528 / 21528
+pipelineIdentities 345 == pipelineKeys 345 · compiles 0 · compileMs 0.00
+
+drawable wait:      p50 0.05 / 0.05 · p95 0.56 / 0.52 · max 1.04 / 2.84   ms
+submitWindow wait:  p50 0.00 / 0.00 · p95 5.82 / 5.92 · max 6.12 / 6.29   ms
+                    total 3214.41 / 3239.00 ms over 1200 calls
+```
+
+**Repeatability gate: PASS** - every structural counter identical, `gpuMs` 0.28 per cent apart,
+`wallP50` 0.14 per cent. The two arms of one session are all the gate needs and all it is given.
 
 Every structure the plan names was checked against this checkout before anything was measured:
 `MetalRenderPass.argumentBufferStates` (one native `MTLBuffer` per wide layout per pass, released through
@@ -18,81 +70,126 @@ Every structure the plan names was checked against this checkout before anything
 `endEncoder(PASS_CONFIGURATION_CHANGED)` site, `MetalTransientMemory`, `createTexelBufferTexture` and
 `MTLTexture.newBufferTextureView`.
 
-## Benchmark
+## Candidate table
+
+| Candidate | Cost observed? | Candidate implemented? | Result | Decision |
+| --- | --- | --- | --- | --- |
+| Argument-buffer allocation | yes: 2 native buffers a frame, 0.192 MiB a frame | no | measured; too small to justify an arena | **REJECTED** |
+| Render encoder churn | yes: 20928 of 66318 attempts, 31.6 % | no | every recreation is a colour-attachment change | **REJECTED** |
+| Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | yes | calls 14400 to 1200 (-91.7 %), writes and bindings unchanged | **KEPT** (`e2a221d`) |
+| Per-pass allocations | yes: profiled, `MetalRenderPass` is 0.34 % of allocation | no | not a CPU/GC hotspot | **REJECTED** |
+| Render-pass descriptor | yes: ~36 a frame, one per encoder opened | no | gate in §49 not met | **REJECTED** |
+| Texel-buffer views | yes: **0 a frame** | no | the pack uses no texel buffer | **NOT APPLICABLE** |
+| Fence synchronisation | no evidence of cost | no | GPU saturated 97.3 % in the trace | **REJECTED** |
+| Submit window | yes: p95 6.11 ms against a 7.26 ms frame at depth 3; gone at 5 | no | the frame does not move at 3, 4 or 5 | **3 KEPT** |
+
+## Argument Buffers (`run/m3-census`, c1 and c2)
 
 ```
-pack:         Photon v1.3b
-preset:       55 %
-resolution:   fullscreen at the display's 1920x1200 mode, world drawn at 1056x660
-camera:       548.5,63,-248.5 yaw 0 pitch 7.8
-warmup:       25 s settle after the pack's first full frame (the harness's own default)
-frames:       600
-present mode: MAILBOX, displaySyncEnabled=false, Unlimited FPS
-path:         executingGeneration=metal3, metal4Presents=0
+wide passes/frame:           1.0
+layouts/frame:               2.0
+native allocations/frame:    2.0      (168 bytes each)
+native bytes/frame:          0.192 MiB
+setArgumentBuffer calls/frame:  2.0 after the kept change, 24.0 before it
+actual changes/frame:        2.0      (unchanged by the kept change)
 ```
 
-**The render target is not pinned by the harness and has two states** - the display has a 1920x1200 mode
-and a 3840x2400 one, and `--fullscreen` lands on either. Every arm read below reproduces the target the
-whole programme is anchored on (`encoders` 21440 with `loadedMiB` 93943.3), and the check that says so is
-the structural counters rather than the window size or the screenshot's dimensions.
+Decision: **REJECTED** for the arena (2 allocations a frame of 168 bytes is neither the "about one" the
+plan stops at nor the "10+" it continues at), and **KEPT** for the rebinding the census found in the same
+numbers.
 
-## Initial Baseline (`run/m3-baseline`, a1 and a2)
+## Render Encoder Churn (`run/m3-census`, c1 and c2)
 
 ```
-                    a1          a2
-wallP50:            7.30        7.29   ms
-wallP95:            8.13        8.25
-wallP99:            8.54        9.13
-wallMax:           13.17        9.85
-gpuP50:             7.31        7.33
-gpu total:       4380.63     4392.70   ms over 600 frames  (0.28 % apart)
+reuse attempts:  66318      (110.5 a frame)
+reused:          45390      (75.6 a frame, 68.4 %)
+recreated:       20928      (34.9 a frame, equal to renderPasses)
 
-renderPasses:      20928       20928   (34.88 a frame)
-blitEncoders:       3000        3000
-computeEncoders:    1800        1800
-clearEncoders:       600         600
-encoders:          21440       21440
-passChanged:       20840       20840
-submit:              600         600  (one a frame)
-
-blits:              6600        6600   (11 a frame)
-blittedMiB:      22159.3     22159.3
-loadedMiB:       93943.3     93943.3
-storedMiB:      132773.6    132773.6
-depthAttachments:   4800        4800
-
-pipeline:          29228       29228
-texture:           75510       75510
-sampler:           73710       73710
-buffer:           123318      129318   (this counter's own noise: 4.9 %)
-viewport:          22128       22128
-scissor:           21528       21528
-
-pipelineIdentities:  345         345
-pipelineKeys:        345         345
-compiles:              0           0
-compileMs:          0.00        0.00
-
-drawable wait:      p50 0.05    p50 0.05  ms
-                    p95 0.56    p95 0.52
-                    max 1.04    max 2.84
-submitWindow wait:  p50 0.00    p50 0.00  ms
-                    p95 5.82    p95 5.92
-                    max 6.12    max 6.29
-                    total 3214.41 over 1200 calls   total 3239.00
+clear:            3000      color: 20928      depth: 4800      contents: 10888
+multiple:        10888      onlyColor: 10040  onlyClear: 0  onlyDepth: 0  onlyContents: 0
 ```
 
-**Repeatability gate: PASS.** Every structural counter is identical between the two arms, the GPU total
-is 0.28 per cent apart and `wallP50` 0.14 per cent, against the plan's "structurally identical and under
-about one per cent" gate. The only counter that moves is `buffer` bindings, which is that number's own
-run-to-run spread and is named rather than averaged away.
+Decision: **REJECTED** - every recreation had a colour-attachment mismatch, so the churn is what the
+frame's own attachment changes require. There is no clear-only and no contents-only case for §28 or §31
+to work on.
 
-**What the baseline already answers about P8**: `submitWindow` is not idle on Photon. Its median is
-0.00 ms but its p95 is 5.82-5.92 ms against a 7.30 ms frame, and 1200 calls totalled 3.2 s over 600
-frames, which is about 5.4 ms a frame of render-thread waiting. The plan's "do not change
-MAX_SUBMITS_IN_FLIGHT" condition is `p50 ~0 AND p95 << frame time`; the first half holds and the second
-does not, so this is back-pressure worth an A/B rather than a closed question - recorded here and taken
-in Phase 8's own turn, not now.
+## Submit Window (`run/m3-submits`)
+
+`submitWindow` is real on Photon and this is the measurement §84 asks for, at three window depths, all on
+the pinned 1056x660 target:
+
+```
+              depth 3      depth 3      depth 4      depth 5
+              (s3)         (s3b)        (s4)         (s5)
+wallP50        7.26         7.26         7.27         7.28   ms
+wallP95        8.45         8.65         8.53         8.45
+wallP99        9.48         9.58         9.04         8.67
+wallMax        9.71         9.87         9.97         9.59
+gpuP50         7.29         7.29         7.30         7.29
+gpuMs       4368.27      4368.25      4376.60      4369.25
+loadedMiB   93922.0      93943.3      93922.0      93922.0
+
+submitWindow  p50/p95/max      0.00 / 6.11 / 6.33      0.00 / 6.18 / 6.51
+                               0.00 / 6.19 / 6.44      0.00 / 0.00 / 0.00
+              total           3303.51 ms             3342.70 ms
+                              3364.63 ms                0.12 ms
+
+drawable      p50/p95/max      0.05 / 0.79 / 1.17      0.05 / 0.81 / 2.22
+                               0.05 / 0.81 / 1.30      0.05 / 0.86 / 3.03
+```
+
+**Decision: three kept.** The wait is not idle chatter - at three it is 3303 and 3343 ms over 1200 calls,
+a p95 of 6.11 and 6.18 ms against a 7.26 ms frame - and at five it disappears entirely (p95 0.00, 0.12 ms
+in total). **And the frame does not move at all**: `gpuMs` 4368.27 and 4368.25 at three, 4376.60 at four,
+4369.25 at five, `wallP50` 7.26 / 7.27 / 7.28. Depth four does not even remove the wait, which is why the
+trial was worth running rather than reasoning about: 4 sits between the two and behaves like neither
+prediction.
+
+What that says is that the wait *is* the CPU being held to the card's pace on a GPU-bound frame: letting
+the render thread further ahead catches up with nothing, and what it buys is a queue, not a frame. The
+tradeoff §65 asks to be recorded with it: each slot holds a command buffer and its share of the
+transient allocator's blocks (512 KiB blocks, rotated per submit), and the CPU ends up one to two frames
+further ahead of the picture the player sees - memory and input latency paid for no frame time.
+
+The trial's mechanism was a `-Dmetallum.submitsInFlight=N` read, which is **reverted**: production code
+holds `public static final int MAX_SUBMITS_IN_FLIGHT = 3` with the measurement written beside it. Nothing
+of the trial is left in the tree except the javadoc that records why three is three.
+
+## Per-Pass Allocation (`run/m3-alloc`, JFR)
+
+```
+MetalRenderPass/frame:     34.9 constructed
+binding objects/frame:     TextureViewAndSampler below the sampling floor
+array allocations/frame:   not visible in the sampled set
+profile result:            MetalRenderPass 0.34 % of steady-state allocation pressure
+```
+
+Decision: **REJECTED** - not a CPU or GC hotspot, and the two candidates that would remove these
+objects (4A's unchanged binding record, 4C's scratch arrays) have no measured cost to remove.
+
+## Texel Views (`run/m3-census` and `run/m3-census2`)
+
+```
+created/frame:  0
+unique/frame:   0
+```
+
+Decision: **NOT APPLICABLE** - this pack binds no texel buffer, so `newBufferTextureView` never runs.
+
+## Synchronisation (`run/m3-census`, `run/m3-census2`, the repository's GPU trace)
+
+```
+evidence:   no capture attributes cost to a fence; the trace reads 13.65 s of shader-core activity in a
+            14.04 s window (97.3 %, every second between 0.99 and 1.03), so the card is saturated and
+            there is no idle time for a fence wait to hide in. The pass table cannot supply the missing
+            evidence because its rows are CPU encode time on this backend.
+candidate:  none implemented
+result:     conservative model retained - 23 fence sites, Untracked resources, updateFence on the
+            closing encoder and waitForFence on the next
+```
+
+Decision: **REJECTED** - §83 makes "no evidence of significant cost; conservative model retained" a
+complete answer.
 
 ## Phase 4 - Per-Pass Allocation Census (JFR, `run/m3-alloc`)
 
@@ -220,19 +317,6 @@ which exists here:
 
 The conservative model stays: 23 fence sites, `Untracked` resources, `updateFence` on the closing encoder
 and `waitForFence` on the next. Nothing about it was changed, and nothing about it is claimed.
-
-## Candidate table
-
-| Candidate | Cost observed? | Candidate implemented? | Result | Decision |
-| --- | --- | --- | --- | --- |
-| Argument-buffer allocation | yes: 2 native buffers a frame, 0.192 MiB a frame | no | measured; too small to justify an arena | **REJECTED** |
-| Render encoder churn | yes: 20928 of 66318 attempts, 31.6 % | no | every recreation is a colour-attachment change | **REJECTED** |
-| Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | yes | calls 14400 to 1200 (-91.7 %), writes and bindings unchanged | **KEPT** (`e2a221d`) |
-| Per-pass allocations | yes: profiled, `MetalRenderPass` is 0.34 % of allocation | no | not a CPU/GC hotspot | **REJECTED** |
-| Render-pass descriptor | yes: ~36 a frame, one per encoder opened | no | gate in §49 not met | **REJECTED** |
-| Texel-buffer views | yes: **0 a frame** | no | the pack uses no texel buffer | **NOT APPLICABLE** |
-| Fence synchronisation | no evidence of cost | no | GPU saturated 97.3 % in the trace | **REJECTED** |
-| Submit window | yes: p95 5.82 ms against a 7.30 ms frame | no | | pending |
 
 ## Phase 1 - Argument buffer allocation census (`run/m3-census`, c1 and c2)
 
@@ -365,7 +449,166 @@ the noise floor this scene has (the baseline's own two arms are 0.28 per cent ap
 under one per cent is noise without strong mechanism evidence). The mechanism here is CPU ObjC call count
 on a GPU-bound frame, so the measured result is the call count and nothing else.
 
-## Where the programme stands, and what the next round has to do first
+## The instrument, and what it cost to trust
+
+Four findings about measuring this backend came out of the programme. Each one changed how a number was
+read, and three of them are now pinned by a contract so the next session cannot pay for them again.
+
+**The render target was machine state, not a setting.** The game asks the display for nothing in
+particular when it goes fullscreen unless `overrideWidth`/`overrideHeight` say otherwise, and the harness
+did not write them. Four framebuffers were measured across one evening - 1920x1200, 3200x1800, 3840x2400
+and 3600x2038, which is 1056x660, 1760x990, 2112x1320 and 1980x1120 drawn - and a crashed fullscreen
+client left the display on another mode for every run after it. Two arms of one session can agree with
+each other on a target the baseline never used, which `vitrail-performance-compare.py` cannot see because
+it only compares the arms with each other. The harness now takes `--fullscreen-size WxH`, writes it into
+the game's own override, and checks every run against `--expect-target WxH`; the final baseline was
+reproduced on the initial baseline's target exactly with it. Eight mutation tests pin the flag, the
+write, the read, the parse, the guard, the comparison and the log line it reads.
+
+**JFR cannot run on this client.** Two armed attempts, two JVM faults: `Internal Error
+(signals_posix.cpp:1793) ... ShouldNotReachHere()` at 22 s, with the recording armed in the command line
+of `run/hs_err_pid33650.log` and `run/hs_err_pid34617.log`. The plan's preferred instrument for Phase 4
+is therefore unusable, and the profile that answered the phase came from the crash's own emergency
+recording - 918 steady-state samples, which is enough to rank allocation by class and not enough to be
+precise about a class at a third of a per cent. Both halves are stated where the number is used.
+
+**The pass-timing table cannot price a GPU pass on this backend.** `MetalDevice.getTimestampNow()` is
+`System.nanoTime()` and the device reports a timestamp period of `1.0`, so a `Vitrail shadow chunk` row is
+the *CPU cost of encoding that pass*. That is why Phase 7 could not use the table's gaps as fence
+evidence, and it is the correction the Vitrail programme recorded in the same week.
+
+**A crashed client costs more than the session it crashed in**, which is the practical form of the first
+finding: the JFR crash moved the target for the two sessions after it, and one of those produced a pair
+of arms that had to be thrown away. The guard turns that into a failed run instead of a wrong number,
+which is the only kind of fix available from outside the game.
+
+## Kept Optimisations
+
+```
+commit:             e2a221d  perf(m3): skip the argument-buffer rebinding the encoder already holds
+mechanism:          MTLArgumentEncoder.setArgumentBuffer is state on the encoder object, and the
+                    descriptor push re-pointed it once per resource written - 14400 calls a window for
+                    1200 that retargeted anything. MetalRenderPass now keeps the buffer each compiled
+                    pipeline's encoder was last handed, in an identity map keyed by the encoder object
+                    and cleared wherever the pipeline changes, and hands it nothing when it already
+                    holds that buffer.
+before:             14400 setArgumentBuffer calls a window (24 a frame), 1200 of them real changes
+after:              1200 calls, 13200 skipped (-91.7 per cent)
+correctness proof:  texture, sampler and buffer descriptor writes and every useResource call unchanged
+                    (12000 / 12000 / 1200 / 13200 in both arms); structural counters inside the anchor's
+                    own spread; a contract pinning the three facts the skip rests on (one pass per
+                    logical pass, buffers stable within a pass, map cleared at the pipeline change,
+                    encoder told before the map records) with six mutations each failing for its own
+                    reason
+frame result:       none claimed - gpuMs moved 0.3 to 0.6 per cent, inside a floor this scene sets at
+                    0.28, and the plan's section 70 says that is noise
+```
+
+## Rejected Optimisations
+
+| Candidate | measurement | why the complexity was not justified |
+| --- | --- | --- |
+| Argument-buffer arena / suballocation | 2 native allocations a frame of 168 bytes, 0.192 MiB/frame, one wide pass and one wide draw a frame | Sections 14 and 22: the gate is about one allocation a frame, and an arena that removes 0.19 MiB from a 7.30 ms GPU-bound frame is complexity bought on a number too small to pay for it |
+| Render-encoder reuse by preserving a clear or by a looser contents policy | 20928 recreations, **every one** with a colour-attachment mismatch; onlyClear 0, onlyContents 0 | The churn is what the frame's own attachment changes require, and both candidates have no passes to work on |
+| Per-pass allocation reduction (4A unchanged binding record, 4C scratch arrays, 4B clone removal) | JFR steady state: `MetalRenderPass` 0.34 per cent of allocation pressure, `TextureViewAndSampler` below the sampling floor, the attachment arrays absent | Not a CPU or GC hotspot, so there is no measured cost for a pool or a scratch array to remove |
+| Render-pass descriptor reuse | 21738/21744 descriptors a window, one per encoder opened | Section 49's gate is that the native cost be visible in the CPU profile; it is not, and reuse would owe the whole reset contract of sections 50/51 to save one alloc/release pair per open |
+| Texel-buffer view cache | 0 views a frame | Section 82: a nought ends the direction. Building a backing-generation cache for a workload this machine does not have is speculative complexity |
+| Fence / encoder synchronisation | no capture attributes cost to a fence; the trace reads 97.3 per cent shader-core activity, so there is no idle time to hide a wait in | Section 57's evidence does not exist, and section 83 makes the conservative model a complete answer |
+| Wider submit window (4, 5) | the wait disappears at 5 (3303 ms to 0.12 ms over 1200 calls) and **the frame does not move** (gpuMs 4368.27/4368.25 at 3, 4376.60 at 4, 4369.25 at 5) | A GPU-bound frame gains nothing from letting the render thread further ahead, and the deeper window costs memory and one to two frames of input latency |
+
+## Final Baseline (`run/m3-final`, f1 and f2, pinned 1056x660)
+
+```
+                 f1         f2
+wallP50:       7.26       7.25   ms
+wallP95:       8.04       8.64
+wallP99:       8.55       9.40
+wallMax:       9.19      10.86
+gpuP50:        7.28       7.29
+gpu total:  4366.72    4368.05   ms over 600 frames (0.03 % apart)
+
+renderPasses/frame:   34.90      34.90
+renderEncoders/frame: 35.73      35.73   (21440 / 21435)
+blitEncoders/frame:    5.00       5.00
+computeEncoders/frame: 3.00       3.00
+clearEncoders/frame:   1.00       1.00
+passChanged/frame:    34.73      34.73
+blits/frame:          11.00      11.00   (6600, blittedMiB 22159.3)
+loadedMiB/frame:     156.57     156.54   (93943.3 / 93922.0)
+storedMiB/frame:     221.29     221.25
+depthAttachments:      4800       4800
+pipelineIdentities 345 == pipelineKeys 345 · compiles 0 · compileMs 0.00
+
+setArgumentBuffer calls/frame:   2.0 (1200)      skipped/frame: 22.0 (13200)
+native argument allocations/frame: 2.0 (0.192 MiB)
+descriptor writes/frame: 20 texture + 20 sampler + 2 buffer
+passDescriptors/frame: 35.88 / 35.87   texelViews/frame: 0
+argument layouts/frame: 2.0    wide passes/frame: 1.0    wide draws/frame: 1.0
+
+drawable wait:     p50 0.05 / 0.05 · p95 0.66 / 0.86 · max 0.99 / 2.51  ms
+submitWindow wait: p50 0.00 / 0.00 · p95 6.02 / 6.14 · max 6.38 / 6.42  ms
+                   total 3293.08 / 3322.49 ms over 1200 calls
+```
+
+The final baseline reproduces the initial one's target exactly (1056x660, `encoders` 21440, `loadedMiB`
+93943.3) and repeats to 0.03 per cent on `gpuMs`, which is tighter than the initial pair's 0.28.
+
+## Net Improvement
+
+```
+wall absolute:           7.30/7.29  ->  7.26/7.25 ms   (-0.04 ms a frame, -0.5 %)
+wall percentage:         -0.5 %, which is inside this scene's own floor
+GPU absolute:            4386.67   ->  4367.39 ms over 600 frames (-19.28 ms, -0.032 ms a frame)
+GPU percentage:          -0.44 %, inside the 0.28-0.7 % floor the scene measures
+P95/P99 change:          8.13/8.25 -> 8.04/8.64 (p95), 8.54/9.13 -> 8.55/9.40 (p99): unchanged
+native allocation change: none made and none needed (2 a frame before and after)
+ObjC-call change:        setArgumentBuffer 14400 -> 1200 a window, -91.7 %, 13200 skipped
+```
+
+**No frame-time improvement is claimed, because none was measured.** The programme's one kept change
+removes 13200 ObjC calls a window on a frame that is GPU-bound, and the plan's own noise floor puts
+everything under one per cent in the noise class. That is the result the plan asks to be reported
+honestly rather than dressed up: a backend cost that was real, measurable and large in *call count*, and
+which the frame never paid for.
+
+## Remaining Cost, and why further optimisation stopped
+
+The frame is 7.26 ms of GPU work the card is saturated on, and what Metal 3 spends it on is now
+decomposed. What remains is not backend overhead:
+
+- **the pack's own raster and shader execution.** The whole backend-cost census - argument buffers,
+  descriptor pushes, encoder opens, per-pass objects, texel views, fences, submit window - accounts for
+  no measurable share of a GPU-bound frame. The shadow stage alone, measured in the Vitrail programme on
+  the same scene, is 0.29 ms of the 7.30, and it is the pack's own required raster.
+- **34.9 required render passes a frame**, each into the colour attachments its own program named: every
+  one of the 20928 recreations was a colour-attachment change, which is what the frame is.
+- **11 copy-backs and 1 clear a frame**, which the Vitrail programme measured as removable bytes that
+  move no time on this scene.
+- **the required synchronisation**, retained conservatively and with no evidence it costs anything.
+- **the submit-window wait**, which is the CPU being paced by the card rather than a cost that can be
+  removed: widening the window moves the wait and not the frame.
+
+Further optimisation stopped because there is no remaining candidate with both a measured cost and a
+provable correctness argument. The plan's closing condition is met: the residual is shader execution,
+terrain raster, required passes, required attachment changes, required copies and required
+synchronisation, and no measurably significant avoidable backend overhead is left in it.
+
+## Metal3 steady-state optimisation complete?
+
+**YES.** All seven of section 88's questions are answered, and "answered" here means measured rather than
+modified:
+
+| question | answer |
+| --- | --- |
+| Argument-buffer allocation | 2 native allocations a frame of 168 bytes - **REJECTED**, too small for an arena |
+| Render encoder churn | 20928 recreations, **all** from colour-attachment changes - **REJECTED**, required by the frame |
+| Argument encoder rebinding | 14400 calls for 1200 changes - **KEPT**, 14400 to 1200 |
+| Per-pass allocation | `MetalRenderPass` 0.34 per cent of allocation pressure - **REJECTED**, not a hotspot |
+| Texel-buffer views | 0 a frame - **NOT APPLICABLE** |
+| Fence / synchronisation significance | no evidence of significant cost - **REJECTED**, conservative model retained |
+| Submit-window significance | real at 3 (p95 6.11 ms), gone at 5, frame unchanged at all three - **3 kept** |
+
+
 
 Answered and closed: argument-buffer allocation (REJECTED, 2 allocations a frame of 168 bytes),
 render-encoder churn (REJECTED, every recreation is a colour-attachment change), argument-encoder

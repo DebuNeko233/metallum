@@ -47,6 +47,7 @@ no_pack=false
 fixture_pack=false
 fullscreen=false
 expect_target=""
+fullscreen_size=""
 
 usage() {
 	cat >&2 <<'USAGE'
@@ -81,6 +82,13 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          a separate setting from the render scale because it moves a different
                          half of the frame: shadows are geometry and vertex work, which the render
                          scale does not touch.
+  --fullscreen-size WxH  the framebuffer the fullscreen window must take, written into the game's own
+                         overrideWidth/overrideHeight. Without it the game asks the display for nothing
+                         in particular and takes whatever mode it is already in, which is machine state:
+                         four different modes were measured across one evening, and a JFR crash moved the
+                         display from 1920x1200 to 3200x1800 in the middle of a programme. Written for
+                         every run, so the arms of a session and the sessions of a programme are all on
+                         one target.
   --expect-target WxH    refuse a run whose world is not drawn at this size, read from the log's own
                          "The world renders at WxH" line. The render target is not pinned by anything
                          else: the display has several fullscreen modes, the game takes the one the
@@ -126,6 +134,7 @@ while [[ $# -gt 0 ]]; do
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
 		--fullscreen) fullscreen=true; shift ;;
 		--expect-target) expect_target="$2"; shift 2 ;;
+		--fullscreen-size) fullscreen_size="$2"; shift 2 ;;
 		--no-pack) no_pack=true; shift ;;
 		--fixture) fixture_pack=true; shift ;;
 		--at) aim_args+=(--at "$2"); shift 2 ;;
@@ -163,6 +172,7 @@ game_dir="$repo_root/run"
 marker_dir="$game_dir/metallum"
 marker="$marker_dir/probe-frames"
 export VITRAIL_PROFILE_FULLSCREEN="$fullscreen"
+export VITRAIL_PROFILE_FULLSCREEN_SIZE="$fullscreen_size"
 saves_dir="$game_dir/saves"
 pack_dir="$game_dir/shaderpacks"
 pack_name="$(basename "$pack_path")"
@@ -270,9 +280,22 @@ fullscreen = "true" if os.environ.get("VITRAIL_PROFILE_FULLSCREEN") == "true" el
 # on MoltenVK, each of them logging "The last startup ended badly ... the API is put back to vulkan". Written
 # true, so the guard has nothing to answer and the run after a hang is still the run that was asked for; a
 # real player's instance is untouched, and the check below still refuses any run that came up elsewhere.
+# The fullscreen window's own size, which is what decides the framebuffer and therefore the render
+# target. `0x0` is the game's "ask the display for nothing in particular", and what that answers is
+# whatever mode the display happens to be in: the same harness measured 1920x1200, 3200x1800,
+# 3840x2400 and 3600x2038 across one evening, and a crashed fullscreen client left the display on
+# another mode for every run after it. Pinning it is what makes the arms of a session, and the
+# sessions of a programme, one target.
+size = os.environ.get("VITRAIL_PROFILE_FULLSCREEN_SIZE", "").strip()
+if "x" in size:
+    width, _, height = size.partition("x")
+    override_width, override_height = width.strip(), height.strip()
+else:
+    override_width, override_height = "0", "0"
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
            "renderClouds": '"false"', "preferredGraphicsBackend": '"default"',
-           "startedCleanly": "true"}
+           "startedCleanly": "true",
+           "overrideWidth": override_width, "overrideHeight": override_height}
 lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
 written = set()
 for index, line in enumerate(lines):

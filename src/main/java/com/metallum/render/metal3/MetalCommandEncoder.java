@@ -55,7 +55,28 @@ import com.metallum.render.MetalFx;
 @Environment(EnvType.CLIENT)
 public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameExtras, MetalFramePresentation,
         MetalFrameResourceCommands, MetalFrameDepthMipmaps, MetalFrameComputeCommands {
+    /**
+     * How many submissions may be in flight before the render thread waits for one of them to finish.
+     * <p>
+     * <strong>Three is measured, not assumed, and it stays three.</strong> The reference scene was run at
+     * three, four and five in one session (two arms at three, one each at the others, all on the pinned
+     * 1056x660 target): the render thread's submit-window wait is real at three - p50 0.00 ms but p95
+     * 6.11 and 6.18 ms against a 7.26 ms frame, 3303 and 3343 ms over 1200 calls - and vanishes at five
+     * (p95 0.00, 0.12 ms in total), while <strong>the frame does not move at all</strong>: gpuMs 4368.27
+     * and 4368.25 at three, 4376.60 at four, 4369.25 at five, and wallP50 7.26 / 7.27 / 7.28. The frame
+     * is GPU-bound, so a render thread that is allowed further ahead catches up with nothing; what the
+     * wait is, is the CPU being held to the card's pace. The deeper windows are not free either: every
+     * slot holds a command buffer and its share of the transient allocator's blocks, and the CPU runs
+     * one to two frames further ahead of the picture the player sees, which is latency paid for no frame
+     * time.
+     * <p>
+     * Every ring in this encoder is derived from this one number - the in-flight records, the semaphores,
+     * the signal blocks, the destruction queue's queue count, the slot arithmetic and the completion wait
+     * ({@code currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT}, exactly the submit whose slot is being reused) -
+     * so the depth is both the window and the lifetime, and a different depth moves all of them together.
+     */
     public static final int MAX_SUBMITS_IN_FLIGHT = 3;
+
     private static final int MAX_COLOR_ATTACHMENTS = 8;
 
     private final MetalDevice device;
