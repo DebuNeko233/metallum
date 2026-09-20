@@ -144,7 +144,7 @@ fi
 echo "warm probes:     $warm_total   failures: $warm_failures"
 echo
 echo "per-process results (success, stage, probe ms):"
-grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).*probeMs=\([^ ]*\).*/  process \1 attempt \2 mode \3 success \4 stage \5 \6 ms/p'
+grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=\([^ ]*\) retried=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).*probeMs=\([^ ]*\).*/  process \1 attempt \2 mode \3 retried \4 success \5 stage \6 \7 ms/p'
 
 if (( cold_failures > 0 )); then
 	exit 1

@@ -45,11 +45,13 @@ fix:              MTL4Probe.canBindAndDrawPersistently - one more attempt where 
                   with the first attempt's stage and reason logged either way. Metal4.available reads it,
                   so the capability record reports the device and not the first command buffer. Both halves
                   are pinned and mutation-proven.
-verified:         production path, 40 cold processes + 20 warm: 0 failures
-                  raw path,        40 cold processes + 20 warm: 0 failures (the fault did not fire in them)
-not verified:     the retry has NOT been observed firing - that arm caught nothing in forty processes, so
-                  this rests on the earlier evidence (every failure ever seen was a process's first
-                  attempt; 1100 later probes passed) and not on these two runs
+verified:         production path, 130 cold processes: 0 failures, and ONE of them shows the retry
+                  firing - process 128, `retried=true success=true stage=ok` - so the first attempt failed,
+                  the second answered, and the capability record reported true
+                  (earlier: production 40 cold + 20 warm clean; raw 40 cold + 20 warm clean)
+still open:       the CAUSE. What makes a process's first multi-encoder sequence able to lose its second
+                  pass while every later sequence in the same process is sound is a hypothesis, so
+                  section 14's Path A is not closed as such; the AUTO blocker's behaviour is
 AUTO blocker:     MITIGATED on the capability-record path, and AUTO stays blocked on what section 74 lists:
                   there is no Metal 4 full-frame implementation for it to promote. Forced Metal 4
                   development continues.

@@ -195,6 +195,21 @@ public final class MTL4Probe {
      * render=true`, forty seconds apart on one device). A probe that can only say no cannot be told apart
      * from a device that can only do no.
      */
+    /**
+     * Whether the last persistent call had to ask twice, which is what makes the retry visible.
+     * <p>
+     * A retry that cannot be seen is a retry nobody can verify: the fix that answers the capability question
+     * from the device rests on "the first attempt of a process can fail and the second does not", and a run
+     * that only prints the verdict cannot show that the second attempt is what answered. This is that fact,
+     * per call, for the harness and for the log.
+     */
+    public static boolean lastRetried() {
+        return retried;
+    }
+
+    /** Whether the last {@link #canBindAndDrawPersistently} call asked twice. */
+    private static boolean retried;
+
     public static String lastFailure() {
         return failure;
     }
@@ -233,10 +248,12 @@ public final class MTL4Probe {
      * @return the second answer where the first was no, and the first where it was yes
      */
     public static boolean canBindAndDrawPersistently(final MTLDevice device) {
+        retried = false;
         if (canBindAndDraw(device)) {
             return true;
         }
 
+        retried = true;
         String stage = lastFailureStage();
         String reason = lastFailure();
         boolean second = canBindAndDraw(device);

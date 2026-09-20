@@ -17,7 +17,7 @@ import com.metallum.mtl.metal4.MTL4Probe;
  *
  * <pre>
  * M4_PROBE_RESULT process=&lt;n&gt; attempt=&lt;n&gt; mode=&lt;raw|production&gt; success=&lt;bool&gt;
- *                 stage=&lt;ok|stage&gt; reason=&lt;text&gt;
+ *                 retried=&lt;bool&gt; stage=&lt;ok|stage&gt; reason=&lt;text&gt;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
  *                 epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
@@ -96,6 +96,9 @@ public final class Metal4ColdProbe {
             System.out.println("M4_PROBE_RESULT process=" + index
                     + " attempt=" + attempt
                     + " mode=" + mode
+                    // Whether this attempt needed the second one. In raw mode it is always false, which is
+                    // what makes a production run's true readable rather than assumed.
+                    + " retried=" + MTL4Probe.lastRetried()
                     + " success=" + success
                     + " stage=" + (stage == null ? "ok" : stage)
                     + " reason=" + (reason == null ? "-" : oneLine(reason))

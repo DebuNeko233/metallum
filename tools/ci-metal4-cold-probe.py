@@ -93,7 +93,7 @@ if 'line="$(run_one "$index" "$probes_per_process")"' not in script:
     raise SystemExit("cold-probe harness: the cold loop does not pass the per-process probe count to the "
                      "process, so the flag is parsed and ignored and every process still runs one probe")
 
-for field in ("process=", "attempt=", "mode=", "success=", "stage=", "reason=", "epochMs=", "canMakeAndSubmit=",
+for field in ("process=", "attempt=", "mode=", "retried=", "success=", "stage=", "reason=", "epochMs=", "canMakeAndSubmit=",
               "canBindAndDraw=", "familyMetal4=", "queueSelector=", "argumentTableSelector=",
               "deviceCreation=", "deviceName=", "probeMs=", "elapsedMs="):
     if field not in probe:
@@ -142,4 +142,14 @@ if "MTL4Probe.canBindAndDrawPersistently(device)" not in metal4:
         "attempt in a process can still be recorded as `this device cannot` - which is the whole of the AUTO "
         "blocker; the retry belongs on this path and not only in the harness"
     )
+# The retry's own visibility: a fix whose firing cannot be seen cannot be verified, and the verification this
+# milestone owes is exactly "a first attempt failed and the second answered".
+if "lastRetried()" not in probe:
+    raise SystemExit("cold-probe harness: the harness never reports whether the persistent path asked twice, "
+                     "so a production run cannot show that the retry is what answered")
+if "retried = true;" not in (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                             / "MTL4Probe.java").read_text(encoding="utf-8"):
+    raise SystemExit("cold-probe harness: the persistent probe never records that it retried, so lastRetried "
+                     "answers false whatever happened")
+
 print("Metal 4 cold-probe harness contract: PASS")

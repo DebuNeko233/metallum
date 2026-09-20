@@ -279,19 +279,28 @@ the one process that failed at attempt one passed attempts two to twenty - same 
 sequence, milliseconds later. A capability answer is a fact about the device; the first attempt in a process
 is not.
 
-What was verified, and what was not:
+**And the retry is now visible, which is what let it be verified rather than assumed.** The probe records
+whether the persistent call had to ask twice (`lastRetried()`) and the harness prints it per attempt, so a
+production run shows the first attempt failing and the second answering instead of only the verdict. One
+hundred and thirty cold processes on the path the capability record reads:
 
 ```
-production path, 40 cold processes (1 probe each) + 20 warm   0 failures   <- the path the record reads
-raw path,        40 cold processes (1 probe each) + 20 warm   0 failures   <- the fault did not fire here
+cold processes: 130   failures: 0
+attempts that needed the retry:  1
+    process 128  attempt 1  retried true  success true  stage ok
 ```
 
-**The second line is the honest limit of this verification.** The raw arm - the one that measures the fault -
-did not reproduce it in those forty processes, so this round did **not** observe the retry firing. What
-justifies the retry is the earlier evidence and not these two runs: a process's first attempt can fail at about
-one in twenty-five cold starts, and a process's later attempts have never failed. What would close it is a run
-in which the retry is *observable* - the probe reporting that its first attempt failed and its second
-succeeded - which is a small change to the harness's result line and is the next task here.
+**That single line is the milestone's verification.** The fault fired in that process - its first attempt
+failed, and the probe logged that attempt's stage and reason - the second attempt answered, and the answer the
+capability record reports is `true`, so AUTO's selection would not have dropped to Metal 3. It is also the
+first time the retry has been *seen* working: the earlier two runs (40 production, 40 raw) both came back
+clean, which showed the path passing but not that the retry fires.
+
+**The one thing still not established is the cause**, and it stays a hypothesis: what makes a process's first
+multi-encoder sequence able to lose its second pass, while every later sequence in the same process is sound.
+Section 14's Path A asks for "exact mechanism understood" as well as a fix, so this milestone is **not**
+closed as Path A; what is closed is the AUTO blocker's *behaviour* - the answer no longer depends on which
+sequence happened to be first.
 
 **What that leaves open, exactly.** Something about the first command buffer a process submits can drop the
 second render encoder's work, and it does so in about one cold first probe in twenty-five (4 of 160). The
