@@ -32,49 +32,49 @@ and the two rings `MAX_SUBMITS_IN_FLIGHT` drives.
 harness:          tools/metal4-cold-probe.sh  (tools/metal4-cold-probe/Metal4ColdProbe.java)
 what it does:     create device -> run the probe once -> one machine-readable line -> exit
                   no Minecraft, no world, no pack, no window, no frame
-cost a probe:     about 240 ms, cold; about 4 ms for the second and later probe in one process
+cost a probe:     about 240-460 ms cold; about 4 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        50 processes          failures: 1     (process 11)
-warm probes:      20 in one process     failures: 1     (attempt 20)
-rate:             2 of 70 = 2.9 %
-
-both failures:    stage=pixel
-                  reason=the vertex-buffer pass drew 191 in channel 2 where 128 was asked for
-                  canMakeAndSubmit=true  canBindAndDraw=false
-                  familyMetal4=true  queueSelector=true  argumentTableSelector=true
-                  deviceCreation=ok  deviceName=Apple M5 Pro  probeMs=227.3 / 5.4
-
-AUTO blocker:     REGISTERED, and narrowed rather than resolved. AUTO must not promote Metal 4
-                  full-frame execution while this is open. Forced Metal 4 development continues.
+cold runs:        100 (two runs of 50)        failures: 3     (processes 46, 48, 49 of the first run)
+warm probes:      400 (300 then 100)          failures: 0
+rate:             3 of 100 cold = 3 %;  0 of 400 warm
+uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
+AUTO blocker:     REGISTERED. AUTO must not promote Metal 4 full-frame execution while this is open.
+                  Forced Metal 4 development continues.
 ```
 
-**What the two failures establish.**
+**What a failure now says.** Every failure reads stage `pixel` and
 
-The stage is named and the value identifies the failed pass exactly. `EXPECTED_UNIFORM_PIXEL` is
-`{64, 128, 191, 255}` and `EXPECTED_VERTEX_PIXEL` is `{64, 128, 128, 255}`; they differ in **channel 2
-alone**, so a readback of 191 is the *first* pass's pixel rather than a corrupted one. Pass two's channel 2
-comes from a literal in its shader, so it would read 128 if any fragment of it had been written: 191 means
-pass two's triangle covered nothing at all, and its clip-space triangle covers the whole target, so the
-positions it read must have been degenerate.
+```
+reason=the vertex-buffer pass drew (0, 0, 0, 0) where (64, 128, 128, 255) was asked for
+canMakeAndSubmit=true  canBindAndDraw=false
+familyMetal4=true  queueSelector=true  argumentTableSelector=true
+```
 
-Two hypotheses survive and neither is distinguished by anything measured yet: the vertex buffer's contents
-written through `contents()` on a `StorageModeShared` buffer not being visible to the GPU, or the argument
-table's `setAddress:attributeStride:atIndex:` not taking effect for that draw. Both give three positions at
-the origin. The fault is equally frequent cold (1 of 50) and warm (1 of 20), so it is **not** cold first use,
-and probe times were ordinary, so it is not a timeout.
+(0, 0, 0, 0) is neither the vertex colour nor the clear colour the second pass asked for: it is the second
+target **exactly as it was created**, so the second render pass contributed nothing at all - not its draw and
+not its clear - while the first pass's own check passed in the same attempt on its own target through the same
+table mechanism. That is a narrower statement than the one this report carried last round ("the readback
+returned the first pass's pixel, so the second pass's geometry rasterised nothing"), and it is narrower
+because the probe now asks a better question.
 
-**What the two failures retire.**
+**Why the probe had to change to ask it.** It drew pass one and read the pixel back only after pass two, with
+`LOAD_DONT_CARE` on both, so a missed draw left undefined tile memory and 191 was one of the values the API
+permits it to return; and `EXPECTED_UNIFORM_PIXEL` was declared and compared nowhere, so the uniform pass - the
+one that proves a uniform bound by GPU address reaches a draw - was never checked at all. Each pass now has its
+own target, the second is cleared to a known colour, and both pixels are read. That is the plan's own Smoke 5
+shape, and it is why the first pass has 500 attempts of evidence behind it today and none yesterday.
 
-The capability record's `argumentTable=false render=false` was read as a missing argument-table capability. It
-is not: every selector answers true in both failures, and the record ANDs one `canBindAndDraw` verdict into
-both fields, so those two flags were never two findings. `-Dmetallum.execution=metal3` still pins the stable
-path, and nothing in the frame path gates on the selection.
+**Not cold first use of the argument table, and not a capability gap.** Every selector answers true in every
+failure, and `selected`/`executing` are untouched by any of this. What is left is what differs on a cold
+process: the fault appears in cold processes only (3 of 100 against 0 of 400), it clustered in three of the
+last five processes of one run and did not reproduce in the next fifty, and its probe times were ordinary
+(227, 362, 438 and 463 ms), so it is not a timeout. Driver state accumulated over a burst of process starts,
+and a low-frequency race, both remain candidates and neither is distinguished yet.
 
-**What is left for this milestone** is the smallest reproducer that separates the two hypotheses - a probe that
-reads the vertex buffer back on the CPU after the draw, or one whose second pass clears its target first so a
-missed draw reads as the clear colour instead of as undefined tile memory (`LOAD_DONT_CARE` plus `STORE_STORE`
-leaves a missed draw's pixels undefined by the API's own contract).
+**Rates are not comparable across the two rounds**, because the probe's shape changed between them: round two
+measured 1 of 50 cold and 1 of 20 warm with a one-target probe, and the sentence in this report that read that
+as "equally frequent cold and warm" is withdrawn.
 
 ## Native Smoke
 

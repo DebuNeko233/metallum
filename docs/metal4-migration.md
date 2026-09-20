@@ -205,20 +205,59 @@ all; 191 means pass two covered pixel (0, 0) with nothing. Its triangle is `(-1,
 space, which covers the whole target, so the only way it covers nothing is that the three positions it read
 were degenerate.
 
-**Two hypotheses survive, and they are named as hypotheses.** Either the vertex buffer's contents written
-through `contents()` on a `StorageModeShared` buffer were not visible to the GPU when the draw ran, or the
-argument table's `setAddress:attributeStride:atIndex:` did not take effect for that draw. Both produce
-identical geometry - three positions at the origin - and **neither is distinguished by anything measured so
-far**; the fault is equally frequent cold (1 of 50) and warm (1 of 20), so it is not cold first use, and its
-probe times (227 ms and 5.4 ms) are ordinary, so it is not a timeout. What would separate them is the
-smallest reproducer the next step asks for: a probe that reads the vertex buffer back on the CPU after the
-draw, or one whose pass two clears the target first so that "nothing drawn" reads as the clear colour instead
-of as undefined tile memory - pass two's load action is `LOAD_DONT_CARE`, so a missed draw leaves the
-readback undefined by the API's own contract and 191 is one of the values it may legitimately return.
+**The probe's own ambiguity was part of the problem, and it is fixed.** The probe drew pass one and read the
+pixel back only after pass two, and both passes used `LOAD_DONT_CARE` with `STORE_STORE` - so a missed draw
+left undefined tile memory, and 191 was one of the values the API permits it to return. Worse,
+`EXPECTED_UNIFORM_PIXEL` was **declared and compared nowhere**: the uniform pass, whose entire purpose is
+"does a uniform bound by GPU address through an argument table reach a draw", was never checked, and its
+failure could only surface one pass later as a vertex-buffer failure. The probe now gives each pass its own
+target - the plan's own Smoke 5 shape, pass A into target A and pass B into target B, one command buffer, one
+commit - clears the second target to a known colour, and reads both back:
 
-Two of the four candidate causes in the registered issue are now excluded by measurement (cold first use, and
-an argument-table capability gap). The other two - a low-frequency race and driver/GPU state - remain open,
-with the race now the better supported of the two.
+```
+(64, 128, 128, 255)  the vertex-buffer draw arrived                      -> pass
+(0, 0, 0, 255)       the second pass cleared its target and drew nothing  -> a draw that produced no fragment
+(64, 128, 191, 255)  the first pass's colour inside a cleared target      -> the two targets are not the two
+                                                                             textures the passes were given
+anything else        reported with all four channels, not with one
+```
+
+`MTLLoadActionClear` is 2 and the clear colour is four doubles, both read from this machine's SDK header
+(`MTLRenderPass.h:33-35,148-151`) rather than guessed; `MTL4RenderPass.h:33` declares the Metal 4 descriptor's
+`colorAttachments` as the **Metal 3** `MTLRenderPassColorAttachmentDescriptorArray`, which is why the ordinary
+`setClearColor:` is the right call.
+
+**What the diagnostic probe then measured, twice.**
+
+```
+run A:   50 cold processes -> 3 failures (processes 46, 48 and 49)   300 warm probes -> 0
+run B:   50 cold processes -> 0 failures                             100 warm probes -> 0
+totals:  3 of 100 cold (3 %),   0 of 400 warm,   0 of 500 on the uniform/table pass
+```
+
+All three read stage `pixel` and reason `the vertex-buffer pass drew (0, 0, 0, 0) where (64, 128, 128, 255)
+was asked for`. **That value is the finding**: it is neither the vertex colour nor the clear colour, it is the
+second target **exactly as it was created**, so the second render pass contributed nothing at all - not its
+draw and not its clear - while the first pass's own check passed in the same attempt, on its own target,
+through the same table mechanism.
+
+**The three failures were three of the last five processes of run A, and the next run did not reproduce
+them.** Fifty more cold processes, none failed. A per-process constant failure probability would put three in
+five at about 0.07 per cent; a state that builds over a burst of consecutive process starts, or an
+environmental one, fits better - and §13's list has both (driver state, and a low-frequency race). Stated
+without over-reading: in this data the fault is **cold-process-only** (3 of 100 against 0 of 400), it
+**clusters**, and when it happens the second pass's work never reaches its target.
+
+**The shape changed between the two rounds, so the rates are not comparable, and the earlier "equally
+frequent cold and warm, so not cold first use" is withdrawn.** Round two's probe used one target for both
+passes; round three's gives each pass its own. Round two's 1 of 50 cold and 1 of 20 warm were measured with the
+old shape, and with the two-target probe the warm population is clean over 400 probes. The two rounds
+measured two different probe shapes, and only the second can say which pass failed.
+
+Two of the four candidate causes in the registered issue are therefore excluded by measurement (an
+argument-table capability gap, and - in the new shape's data - warm or repeated failure). What remains is
+**what differs on a cold process**, now narrowed from "the vertex draw produced no valid pixel" to "the second
+render pass contributed nothing to its target at all".
 
 ### Registered: the intermittent argument-table probe failure
 
@@ -245,10 +284,13 @@ What remains to do about it:
 2. ~~count cold-first and warm/repeated separately~~ - **done**: 1 of 50 cold, 1 of 20 warm, so not cold-only;
 3. ~~locate it from the existing stage/reason instrumentation~~ - **done**: stage `pixel`, and the value read
    identifies the failed pass exactly;
-4. **build the smallest reproducer** that tells the two surviving hypotheses apart - the vertex buffer's
-   contents not reaching the GPU, or the table's address binding not taking effect - and fix whichever it is;
-5. do not write "first use of the argument table is the root cause" without that evidence - it is now
-   positively excluded, cold and warm failing at the same rate;
+4. ~~build the smallest reproducer~~ - **done**: each pass has its own target, the second is cleared, and
+   both pixels are read, so a failure names which pass contributed nothing instead of leaving an ambiguous
+   value. What it shows is that the *second render pass as a whole* contributes nothing, not merely that its
+   draw produced no fragment;
+5. **find what differs on a cold process**, which is now the whole of the question: the fault is cold-only in
+   this data (3 of 100 against 0 of 400) and clustered, and it is not an argument-table capability gap - every
+   selector answers true in every failure;
 6. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
    inert unless the property is set, and nothing in the frame path reads it). The new harness does not use it:
    it repeats the probe in its own process, which is the experiment the switch was standing in for.

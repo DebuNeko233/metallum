@@ -30,6 +30,7 @@ import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
@@ -74,6 +75,16 @@ public final class MTL4Probe {
     private static final Msg ATTACHMENT_AT = Msg.of("objectAtIndexedSubscript:", ADDRESS, JAVA_LONG);
     private static final Msg SET_TEXTURE = Msg.ofVoid("setTexture:", ADDRESS);
     private static final Msg SET_LOAD_ACTION = Msg.ofVoid("setLoadAction:", JAVA_LONG);
+    /**
+     * {@code MTLRenderPassColorAttachmentDescriptor.setClearColor:}, four doubles - {@code MTLClearColor} is
+     * four doubles and arm64 passes them in registers, which is how {@code MTLRenderPassDescriptor} already
+     * sends it. The Metal 4 descriptor's {@code colorAttachments} is that same class, read off this machine's
+     * SDK header rather than assumed: {@code MTL4RenderPass.h:33} declares the property as
+     * {@code MTLRenderPassColorAttachmentDescriptorArray}, so the attachment and its clear colour are the
+     * Metal 3 ones.
+     */
+    private static final Msg SET_CLEAR_COLOR = Msg.ofVoid("setClearColor:",
+            JAVA_DOUBLE, JAVA_DOUBLE, JAVA_DOUBLE, JAVA_DOUBLE);
     private static final Msg SET_STORE_ACTION = Msg.ofVoid("setStoreAction:", JAVA_LONG);
     private static final Msg RENDER_ENCODER = Msg.of("renderCommandEncoderWithDescriptor:", ADDRESS, ADDRESS);
     private static final Msg END_ENCODING = Msg.ofVoid("endEncoding");
@@ -82,6 +93,16 @@ public final class MTL4Probe {
     private static final long TARGET_SIZE = 64L;
     private static final long USAGE_RENDER_TARGET = 4L;
     private static final long LOAD_DONT_CARE = 0L;
+
+    /**
+     * {@code MTLLoadActionClear}, the SDK's own value ({@code MTLRenderPass.h:35}). It is what makes this
+     * probe's failures self-describing: with {@code DontCare} an unwritten pixel is undefined by the API's
+     * contract, so a missed draw and a wrong colour read the same.
+     */
+    private static final long LOAD_CLEAR = 2L;
+
+    /** What the second pass's clear leaves behind: black with an opaque alpha, which no draw here produces. */
+    private static final int[] CLEAR_PIXEL = {0, 0, 0, 255};
     private static final long STORE_STORE = 1L;
     private static final Msg NEW_SHARED_EVENT = Msg.of("newSharedEvent", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
@@ -214,6 +235,7 @@ public final class MTL4Probe {
         MemorySegment buffer = MemorySegment.NULL;
         MemorySegment event = MemorySegment.NULL;
         MemorySegment target = MemorySegment.NULL;
+        MemorySegment vertexTarget = MemorySegment.NULL;
         MemorySegment pass = MemorySegment.NULL;
         MTLBuffer uniformBuffer = null;
         MTLBuffer vertexBuffer = null;
@@ -260,6 +282,17 @@ public final class MTL4Probe {
                 // elsewhere: a nil target is not a draw that went wrong, it is a target that was never made.
                 return failed("target", "newTextureWithDescriptor: answered nil for the " + TARGET_SIZE + "x"
                         + TARGET_SIZE + " RGBA8 render target");
+            }
+
+            // A second target for the second pass, which is the plan's own two-encoder shape - pass A into
+            // target A, pass B into target B, one command buffer, one commit - and it is also what lets both
+            // passes be read back. One target cannot do both jobs: the second pass clears its target, so the
+            // first pass's pixel would be gone before anything read it and the check on the uniform draw would
+            // go with it. EXPECTED_UNIFORM_PIXEL was declared and compared nowhere for exactly that reason.
+            vertexTarget = newTarget(device);
+            if (ObjC.isNil(vertexTarget)) {
+                return failed("target", "newTextureWithDescriptor: answered nil for the second " + TARGET_SIZE + "x"
+                        + TARGET_SIZE + " RGBA8 render target, which the vertex-buffer pass draws into");
             }
 
             // The second shape: a vertex buffer bound by address *and* stride, read by a pipeline whose
@@ -339,7 +372,7 @@ public final class MTL4Probe {
             // the same command buffer, which is also what says two encoders of the new kind can follow one
             // another without an event between them.
             if (drew) {
-                drew = encodeVertexDraw(buffer, drawTarget, verticesTable.handle(), vertexPipeline);
+                drew = encodeVertexDraw(buffer, vertexTarget, verticesTable.handle(), vertexPipeline);
             }
             END.send(buffer);
             ObjC.release(vertexPipeline);
@@ -362,15 +395,35 @@ public final class MTL4Probe {
 
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment pixel = arena.allocate(4);
+
+                // Screen one: the uniform pass, into its own target, which nothing has written over. This check
+                // was missing entirely - the constant was declared and compared nowhere - so a device whose
+                // table-bound uniform stopped reaching the draw was never contradicted, only reported as a
+                // vertex-buffer failure one pass later.
                 MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);
-                for (int index = 0; index < EXPECTED_VERTEX_PIXEL.length; index++) {
-                    if ((pixel.get(JAVA_BYTE, index) & 0xFF) != EXPECTED_VERTEX_PIXEL[index]) {
-                        // A call that was accepted and a picture that did not arrive are different findings: one
-                        // is a binding the encoder took and the GPU ignored, the other is a call that failed.
-                        return failed("pixel", "the vertex-buffer pass drew " + (pixel.get(JAVA_BYTE, index) & 0xFF)
-                                + " in channel " + index + " where " + EXPECTED_VERTEX_PIXEL[index]
-                                + " was asked for");
+                if (!matches(pixel, EXPECTED_UNIFORM_PIXEL)) {
+                    return failed("pixel", "the uniform pass drew " + describe(pixel) + " where "
+                            + describe(EXPECTED_UNIFORM_PIXEL) + " was asked for, so the address-bound uniform"
+                            + " did not reach the draw");
+                }
+
+                // Screen two: the vertex-buffer pass, whose target was cleared first, so the answers below are
+                // findings rather than one ambiguous pixel.
+                MTLTexture.bytes(vertexTarget, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, EXPECTED_VERTEX_PIXEL)) {
+                    String saw = describe(pixel);
+                    if (matches(pixel, CLEAR_PIXEL)) {
+                        return failed("pixel", "the vertex-buffer pass ran and drew nothing: its target reads "
+                                + saw + ", the clear colour it started from, so the pipeline and the encoder took"
+                                + " the work and the vertex buffer produced no fragment");
                     }
+                    if (matches(pixel, EXPECTED_UNIFORM_PIXEL)) {
+                        return failed("pixel", "the second pass read the first pass's colour " + saw + " in its own"
+                                + " cleared target, which no clear can leave behind: the two targets are not the"
+                                + " two textures the passes were given");
+                    }
+                    return failed("pixel", "the vertex-buffer pass drew " + saw + " where "
+                            + describe(EXPECTED_VERTEX_PIXEL) + " was asked for");
                 }
             }
 
@@ -387,12 +440,33 @@ public final class MTL4Probe {
             releaseIfPresent(uniformBuffer);
             releaseIfPresent(vertexBuffer);
             releaseIfPresent(target);
+            releaseIfPresent(vertexTarget);
             releaseIfPresent(pass);
             releaseIfPresent(event);
             releaseIfPresent(buffer);
             releaseIfPresent(allocator);
             releaseIfPresent(queue);
         }
+    }
+
+    /** Whether a readback is exactly an expected pixel, channel by channel. */
+    private static boolean matches(final MemorySegment pixel, final int[] expected) {
+        for (int index = 0; index < expected.length; index++) {
+            if ((pixel.get(JAVA_BYTE, index) & 0xFF) != expected[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The four channels of a readback, for a message that says what was seen and not only what was wrong. */
+    private static String describe(final MemorySegment pixel) {
+        return "(" + (pixel.get(JAVA_BYTE, 0L) & 0xFF) + ", " + (pixel.get(JAVA_BYTE, 1L) & 0xFF) + ", "
+                + (pixel.get(JAVA_BYTE, 2L) & 0xFF) + ", " + (pixel.get(JAVA_BYTE, 3L) & 0xFF) + ")";
+    }
+
+    private static String describe(final int[] pixel) {
+        return "(" + pixel[0] + ", " + pixel[1] + ", " + pixel[2] + ", " + pixel[3] + ")";
     }
 
     /** One shared, readback-able colour target. */
@@ -407,7 +481,7 @@ public final class MTL4Probe {
         }
     }
 
-    /** The vertex-buffer pass, into the target the uniform pass has just written. */
+    /** The vertex-buffer pass, into a target of its own, which it clears before it draws. */
     private static boolean encodeVertexDraw(final MemorySegment commandBuffer, final MemorySegment target,
                                             final MemorySegment vertexTable, final MemorySegment pipeline) {
         MemorySegment pass = NEW_RENDER_PASS.sendPtr(ObjC.clazz("MTL4RenderPassDescriptor"));
@@ -426,8 +500,13 @@ public final class MTL4Probe {
                 return failed("attachment", "the second pass's descriptor gave no colour attachment at index 0");
             }
             SET_TEXTURE.send(attachment, target);
-            SET_LOAD_ACTION.send(attachment, LOAD_DONT_CARE);
+            // Cleared rather than left undefined, so that "the pass ran and drew nothing" is a reading and not
+            // a guess: the screen this replaced held the first pass's colour on a hit and undefined memory on a
+            // miss, and 191 - the first pass's own pixel - was one of the values a miss could legitimately
+            // return. Every draw here produces a colour with a non-zero red channel, so black means no fragment.
+            SET_LOAD_ACTION.send(attachment, LOAD_CLEAR);
             SET_STORE_ACTION.send(attachment, STORE_STORE);
+            SET_CLEAR_COLOR.send(attachment, 0.0, 0.0, 0.0, 1.0);
 
             MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
             if (ObjC.isNil(encoder)) {
