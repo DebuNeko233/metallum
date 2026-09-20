@@ -175,4 +175,70 @@ if "sampled=" not in probe:
     raise SystemExit("cold-probe harness: the harness does not report the sampled-texture smoke, so it has no "
                      "evidence from an Apple Silicon run")
 
+# --- the fourth render smoke's drawn half ----------------------------------------------------------------
+# The binding half proved a table accepts a texture and a sampler. The drawn half is the plan's own smoke -
+# "drawn as a fixed pattern, read back" - and it is a sequence of its own: a pattern pass, the producer barrier
+# the new command model requires of a dependency between encoders, a sampled pass through the table, one
+# commit, and a readback of the same four quadrants in both textures. What the pins below are for is that each
+# part of that chain is still there, because a smoke that quietly stopped drawing would still print a line.
+for needle, why in (
+    ("public static boolean canDrawSampledTexture(",
+     "the drawn half of the sampled-texture smoke is gone from the probe, so the smoke the plan asks for is "
+     "owed again"),
+    ("private static final int[][] EXPECTED_PATTERN = {",
+     "the drawn smoke has no expected pattern, so its readback cannot fail and cannot pass either"),
+    ("descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ);",
+     "the source texture no longer declares that a shader reads it, so the sampled pass reads a texture the "
+     "device was never told about - the usage is part of the question and not bookkeeping"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+for needle, why in (
+    ("BARRIER.send(encoder, STAGE_ALL, STAGE_FRAGMENT, VISIBILITY_DEVICE);",
+     "the pass that fills the sampled source ends without the producer barrier, so the dependency between the "
+     "two encoders is assumed rather than encoded - which is exactly what section 61 forbids while migrating"),
+    ("if (!responds(encoder, BARRIER.name())) {",
+     "the barrier is sent without asking the encoder for the selector first, so a device that does not "
+     "implement it raises an Objective-C exception instead of reporting a stage"),
+    ("encodePass(buffer, destination, sampled.handle(), STAGE_FRAGMENT, sampledPipeline, false,",
+     "the sampled pass is not given the table at the fragment stage, so the table-bound texture and sampler "
+     "have no stage to reach the shader on"),
+    ("MTLTexture.bytes(source, pixel, 4L, x, y, 1L, 1L);",
+     "the source is not read back, so a pattern that never landed is reported as a sample that never arrived"),
+    ("MTLTexture.bytes(destination, pixel, 4L, x, y, 1L, 1L);",
+     "the destination is not read back, so the drawn smoke claims a result it never measured"),
+    ("so the sample reached the wrong place in the source",
+     "a sample that landed in the wrong quadrant is not reported as one, so a flip reads as a wrong colour "
+     "and the answer stops naming the fault"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+# The harness's own half: the drawn result is reported, and counted apart from the capability sequence. The
+# print expressions are pinned rather than the bare field names, because the field names also appear in the
+# class's own documentation - a pin that a comment can satisfy is a pin that a removed print still passes.
+for needle, why in (
+    ('+ " sampledDraw=" + sampledDraw',
+     "the harness does not print the drawn smoke's answer, so a run of it leaves no evidence"),
+    ('+ " sampledDrawReason=" + sampledDrawReason',
+     "the harness prints whether the drawn smoke passed and not why it failed, which is the half that says "
+     "where to look"),
+):
+    if needle not in probe:
+        raise SystemExit("cold-probe harness: " + why)
+if "MTL4Probe.canDrawSampledTexture(device)" not in probe:
+    raise SystemExit("cold-probe harness: the harness never asks the drawn smoke, so the probe's answer is "
+                     "measured nowhere")
+# The driver counts the drawn smoke in a line of its own and fails the run on it: a smoke whose failures are
+# only printed is a smoke the next reader has to notice by eye.
+for needle, why in (
+    ("sampled_draw_failures=\"$(grep -c ' sampledDraw=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the drawn smoke's failures, so a run cannot say how many there were"),
+    ("if (( sampled_draw_failures > 0 )); then",
+     "the driver counts the drawn smoke's failures and does not fail the run on them, so a failing smoke "
+     "reports success through the harness's own exit code"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

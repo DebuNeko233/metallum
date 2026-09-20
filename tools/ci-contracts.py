@@ -1494,7 +1494,11 @@ require("the argument table is asked for by the selector its header declares",
         "src/main/java/com/metallum/mtl/metal4/MTL4ArgumentTable.java", (
     'device.respondsTo("newArgumentTableWithDescriptor:error:")',
     "NEW_TABLE_WITH_ERROR.sendPtr(device.handle(), descriptor, MemorySegment.NULL)",
-    "SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);",
+    # The texture binding moved from a hard-coded slot zero to the slot the layout names, because the
+    # sampled-texture smoke samples through one slot while the frame's own layouts bind more than one: the
+    # pin follows the call and keeps what it was watching, which is the resource id and the header's selector.
+    "public boolean texture(final MemorySegment textureHandle, final long index) {",
+    "SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), index);",
     "SET_INITIALIZE.send(descriptor, 0L);",
 ))
 require("a missing table is said out loud rather than hidden",

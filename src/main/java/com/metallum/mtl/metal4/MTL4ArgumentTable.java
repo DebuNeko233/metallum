@@ -168,11 +168,25 @@ public final class MTL4ArgumentTable implements AutoCloseable {
 
     /** Points the table's one texture slot at a texture, by the resource id the framework gives it. */
     public boolean texture(final MemorySegment textureHandle) {
+        return texture(textureHandle, 0L);
+    }
+
+    /**
+     * The same, at the slot the layout binds.
+     * <p>
+     * A pass that samples more than one image fills more than one slot, and the slot is the index the shader's
+     * own {@code [[texture(n)]]} attribute names - which is why the index is the caller's and not this
+     * class's: the binding is the program's, and a table that always wrote slot zero could bind one image and
+     * silently leave a second one unread.
+     *
+     * @return whether there was a resource id to bind
+     */
+    public boolean texture(final MemorySegment textureHandle, final long index) {
         if (ObjC.isNil(textureHandle) || !responds(textureHandle, "gpuResourceID")) {
             return false;
         }
 
-        SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), 0L);
+        SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), index);
         return true;
     }
 

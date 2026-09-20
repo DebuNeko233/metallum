@@ -32,12 +32,18 @@ and the two rings `MAX_SUBMITS_IN_FLIGHT` drives.
 harness:          tools/metal4-cold-probe.sh  (tools/metal4-cold-probe/Metal4ColdProbe.java)
 what it does:     create device -> run the probe once -> one machine-readable line -> exit
                   no Minecraft, no world, no pack, no window, no frame
-cost a probe:     about 240-460 ms cold; about 4 ms for the second and later probe in one process
+cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round's runs (240-460 ms in the
+                  earlier ones, taken on a differently loaded machine and with less work in the probe);
+                  about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
+this round:       100 probes in four runs - 30 cold + 20 warm in `--mode raw`, and 30 cold + 20 warm in
+                  `--mode production` - 0 failures, and the drawn sampled-texture smoke passed in all 100.
+                  That smoke is reported in a field of its own and counted apart from the capability
+                  sequence, so two different questions cannot hide behind one number
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -116,17 +122,41 @@ texture/sampler:  HALF PROVEN. A table made for exactly one texture and one samp
                   supportArgumentBuffers, a table of shape (0 buffers, 1 texture, 1 sampler), then
                   setTexture:atIndex: and setSamplerState:atIndex:), measured on Apple Silicon in
                   45 of 45 attempts across 25 cold processes and 20 warm probes, with every call's
-                  refusal reported by name. The DRAWN half - a sampled pattern read back channel by
-                  channel - is OWED and is the next task; this entry is not it
+                  refusal reported by name
+                  DRAWN TOO now, by `canDrawSampledTexture`: a pattern pass renders four flat quadrants
+                  into a 64x64 source that declares RenderTarget | ShaderRead, the pass ends with the
+                  producer barrier the new command model requires of a dependency between encoders, and a
+                  second pass in the SAME command buffer samples that source through a one-texture/
+                  one-sampler table at the fragment stage into a target of its own; one commit, one
+                  shared-event wait, then both textures are read back at a pixel inside each quadrant.
+                  Measured on Apple Silicon: 100 of 100 probes PASS (30 cold + 20 warm in `--mode raw`,
+                  30 cold + 20 warm in `--mode production`), capability sequence passing in all of them
 multi-pass:       PROVEN and now the probe's own shape - two render encoders in one command buffer,
                   each into a target of its own (pass A into target A, pass B into target B), one
                   commit, one shared-event wait, both pixels read back
 ```
 
-**What the owed half needs, so it is a task and not a wish**: reuse the first pass's target as the source
-(a texture this probe has already filled with a known colour, so no texture-write path has to be added),
-bind it with a nearest sampler through a one-texture/one-sampler table, draw a full-screen triangle whose
-fragment shader samples it, read the third target back and compare with (64, 128, 191, 255).
+**How the drawn half answers, and why the answer can fail.** Both textures are read at the same four pixels,
+one well inside each quadrant, so the source says whether the pattern landed and the destination says whether
+the sample arrived - a pattern that never rendered is reported as that and not as a sample failure. The check
+is not vacuous: with the destination readback transposed (a one-character mutation of the read region), the
+harness reports
+
+```
+sampledDraw=false sampledDrawReason=sampledDraw(the_sampled_pass_read_the_pattern's_bottom-left_colour_
+(0,_255,_64,_255)_at_(40,_8)_where_its_top-right_(255,_0,_64,_255)_was_asked_for,_so_the_sample_reached_
+the_wrong_place_in_the_source)
+```
+
+and the driver exits 1 on it, which is the half of the harness that says a failing smoke cannot report
+success. **What it does not prove**: filtering beyond nearest - nothing here binds linear, aniso, mip levels
+or an address mode - and that the barrier is what ordered the two passes. The readback is correct with the
+barrier encoded; whether this device would also have ordered them without one is NOT MEASURED, because the
+API contract for the new command model requires the barrier and the migration's own rule is to express a
+dependency before optimising it. The capability record also does not consume this smoke yet:
+`Metal4.available` still reads `canBindAndDrawPersistently`, so the AUTO-blocker distribution measured on that
+path across 160 processes stays comparable. It is wired into the record when a Metal 4 frame path exists to
+need it.
 
 ## M4 Frame
 
@@ -237,8 +267,8 @@ CI, which is where every smoke here was run.
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
 | MRT             | yes         | no - one target per pass          | n/a           | no          |
 | depth           | yes         | no                                | n/a           | no          |
-| sampled texture | yes         | **half** - binds through a table; the drawn pattern is owed | n/a | yes (binding) |
-| sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made and bound | n/a | yes |
+| sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants | n/a | yes |
+| sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255) | n/a | yes |
 | vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255); index no | n/a | yes (vertex) |
 | argument table  | n/a (M3 uses argument buffers) | yes - buffer, texture and sampler tables made, bound and used | n/a | yes |
@@ -247,7 +277,7 @@ CI, which is where every smoke here was run.
 | compute         | yes         | no                                | n/a           | no          |
 | storage buffer  | yes         | no                                | n/a           | no          |
 | storage image   | yes         | no                                | n/a           | no          |
-| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; no cross-encoder dependency fixture | n/a | yes |
+| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; and one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them), but not the read/write matrix the plan's section 60 lists | n/a | yes |
 | presentation    | yes         | EXPERIMENTAL - the `Metal4Path` sidecar behind `-Dmetallum.metal4Present`, not the frame's road | n/a | yes (sidecar) |
 | MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | n/a | no          |
 | counters        | whole frame | no                                | n/a           | no          |
@@ -263,8 +293,11 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the skeleton exists**: `Metal4ExecutionProvider` owns the queue and
    refuses the two halves it does not have. What is missing is the frame encoder itself, which is Phase 4.
-3. **No Metal 4 frame encoder, render smoke, blit, compute or synchronization fixture** - all of the
-   implementation milestones are ahead.
+3. **No Metal 4 frame encoder, and no blit, compute or full synchronization matrix** - all five of the plan's
+   Phase 3 native render smokes are now measured and passing on this device (`canMakeAndSubmit`'s pass,
+   `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample sequence with its encoded
+   barrier), so the work ahead of the frame is Phase 4's encoder and the later blit, compute and dependency
+   fixtures rather than the render contract. Nothing has been drawn through the client's own frame yet.
 
 ## Metal 4 full-frame implementation complete?
 

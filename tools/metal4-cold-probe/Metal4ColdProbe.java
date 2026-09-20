@@ -21,7 +21,8 @@ import com.metallum.render.metal4.Metal4ExecutionProvider;
  *                 retried=&lt;bool&gt; stage=&lt;ok|stage&gt; reason=&lt;text&gt;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
- *                 epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
+ *                 sampled=&lt;bool&gt; sampledReason=&lt;text&gt; sampledDraw=&lt;bool&gt; sampledDrawReason=&lt;text&gt;
+ *                 provider=&lt;text&gt; epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
  * <p>Exit code 0 when every attempt in this process passed, 1 when a probe attempt failed, 2 when the
@@ -100,10 +101,20 @@ public final class Metal4ColdProbe {
         }
 
         String sampledReason = "-";
+        String sampledDrawReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
             boolean makeAndSubmit = MTL4Probe.canMakeAndSubmit(device);
+            // The fourth render smoke's DRAWN half, asked first of the three deep probes and reported in a
+            // field of its own: it is a sequence of its own - a pattern pass, an encoder barrier, a sampled
+            // pass, one commit, a readback - and a failure in it must not be reported as a failure of the
+            // capability sequence below, whose per-process distribution is what the AUTO blocker is measured
+            // with. Asked before that sequence because the stage and reason fields below belong to it.
+            boolean sampledDraw = makeAndSubmit && MTL4Probe.canDrawSampledTexture(device);
+            if (!sampledDraw) {
+                sampledDrawReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
             // failure says which of the two contracts broke.
@@ -138,6 +149,8 @@ public final class Metal4ColdProbe {
                     + " deviceName=" + deviceName
                     + " sampled=" + sampled
                     + " sampledReason=" + sampledReason.replace(' ', '_')
+                    + " sampledDraw=" + sampledDraw
+                    + " sampledDrawReason=" + sampledDrawReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the

@@ -117,9 +117,33 @@ public final class MTL4Probe {
     private static final Msg SET_RENDER_PIPELINE_STATE = Msg.ofVoid("setRenderPipelineState:", ADDRESS);
     private static final Msg DRAW =
             Msg.ofVoid("drawPrimitives:vertexStart:vertexCount:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
+    /**
+     * {@code MTL4CommandEncoder.barrierAfterStages:beforeQueueStages:visibilityOptions:} - the producer
+     * barrier, read off this machine's SDK header ({@code MTL4CommandEncoder.h:91}): everything encoded in
+     * the current encoder up to this point, on {@code afterStages}, completes before work encoded in
+     * <em>subsequent</em> encoders on {@code beforeQueueStages} begins.
+     * <p>
+     * This is the difference between the two command models, and it is why a Metal 4 pass that samples a
+     * target an earlier pass wrote encodes the dependency itself: the header documents the barrier as the
+     * mechanism, and the migration plan's rule is to express the dependency before optimising it.
+     */
+    private static final Msg BARRIER = Msg.ofVoid("barrierAfterStages:beforeQueueStages:visibilityOptions:",
+            JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
     /** {@code MTLRenderStagesVertex}, the stage the clear pipeline's uniform is read on. */
     private static final long STAGE_VERTEX = 1L;
+
+    /** {@code MTLStageFragment}, the stage a sampled texture and a sampler are read on. */
+    private static final long STAGE_FRAGMENT = 2L;
+
+    /** {@code MTLStageAll}, the conservative mask for "everything encoded so far" ({@code MTLCommandEncoder.h}). */
+    private static final long STAGE_ALL = Long.MAX_VALUE;
+
+    /** {@code MTL4VisibilityOptionDevice}: flush to the device coherence point, which is the safe option. */
+    private static final long VISIBILITY_DEVICE = 1L;
+
+    /** {@code MTLTextureUsageShaderRead}: a target another pass samples has to declare it. */
+    private static final long USAGE_SHADER_READ = 1L;
 
     /** {@code MTLResourceStorageModeShared}, so the CPU can write the uniforms the pass reads. */
     private static final long STORAGE_SHARED = 0L;
@@ -135,6 +159,107 @@ public final class MTL4Probe {
 
     /** {@code (0.25, 0.5, 0.5, 1.0)}: the colour only a draw that read its vertex buffer can produce. */
     private static final int[] EXPECTED_VERTEX_PIXEL = {64, 128, 128, 255};
+
+    /** The edge of the sampled smoke's pattern: a {@link #TARGET_SIZE} target split into four quadrants. */
+    private static final long PATTERN_EDGE = TARGET_SIZE / 2;
+
+    /**
+     * One pixel well inside each quadrant of the pattern, in the order {@link #EXPECTED_PATTERN} lists the
+     * colours: top-left, top-right, bottom-left, bottom-right. The inset is what makes the readback a
+     * question about a quadrant rather than about a seam.
+     */
+    private static final long[][] PATTERN_PIXELS = {
+            {8L, 8L}, {PATTERN_EDGE + 8L, 8L}, {8L, PATTERN_EDGE + 8L},
+            {PATTERN_EDGE + 8L, PATTERN_EDGE + 8L}};
+
+    /**
+     * What the pattern pass writes, quadrant by quadrant: red and green carry the quadrant's coordinates and
+     * blue is the literal {@code 0.25} the source's own fill writes. The blue channel is what makes the
+     * sampled readback distinguishable from every other pixel this probe produces - the clear colour, the
+     * uniform draw's 191 and the vertex draw's 128 are all different from 64 - so a sample that reached the
+     * wrong target or dropped the texture cannot read as success.
+     */
+    private static final int[][] EXPECTED_PATTERN = {
+            {0, 0, 64, 255}, {255, 0, 64, 255}, {0, 255, 64, 255}, {255, 255, 64, 255}};
+
+    /**
+     * The pass that fills the sampled source: four quadrants, each a flat colour of its own.
+     * <p>
+     * A flat pattern and not a gradient, because the readback is compared channel by channel: a value that
+     * arrives through interpolation would make the check a question about the driver's rounding as well as
+     * about the binding. {@code in.position.xy} is in pixels of the target, so the quadrant a fragment is in
+     * is a step of the same numbers the readback uses, and the top-left quadrant is the one at the low
+     * coordinates - which is also what makes a flipped sample read as a flip rather than as a wrong colour.
+     */
+    private static final String PATTERN_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct PatternOut {
+              float4 position [[position]];
+            };
+
+            vertex PatternOut metallum_pattern_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+
+              PatternOut out;
+              out.position = float4(corners[vertexId], 0.0, 1.0);
+              return out;
+            }
+
+            fragment float4 metallum_pattern_probe_fs(PatternOut in [[stage_in]]) {
+              float2 quadrant = step(float2(%d.0), in.position.xy);
+              return float4(quadrant.x, quadrant.y, 0.25, 1.0);
+            }
+            """.formatted(PATTERN_EDGE);
+
+    /**
+     * The pass that samples the pattern back out of it, once, through an argument table.
+     * <p>
+     * The texture is read by the sampler with nearest filtering at the fragment's own position, so the
+     * sample grid is the texel grid and the destination should hold the source: what the readback answers is
+     * whether the table-bound texture, the table-bound sampler, the pipeline and the encoder work together,
+     * and - because the source is a four-quadrant pattern - whether the sample arrived the right way up.
+     */
+    private static final String SAMPLED_DRAW_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct SampledOut {
+              float4 position [[position]];
+              float2 uv;
+            };
+
+            vertex SampledOut metallum_sampled_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+              const float2 uvs[3] = {
+                float2(0.0, 0.0),
+                float2(2.0, 0.0),
+                float2(0.0, 2.0)
+              };
+
+              SampledOut out;
+              out.position = float4(corners[vertexId], 0.0, 1.0);
+              out.uv = uvs[vertexId];
+              return out;
+            }
+
+            fragment float4 metallum_sampled_probe_fs(
+              SampledOut in [[stage_in]],
+              texture2d<float> pattern [[texture(0)]],
+              sampler nearest [[sampler(0)]]
+            ) {
+              return pattern.sample(nearest, in.uv);
+            }
+            """;
 
     /**
      * A pipeline whose colour comes out of a vertex buffer.
@@ -333,6 +458,207 @@ public final class MTL4Probe {
             releaseIfPresent(texture);
             releaseIfPresent(sampler);
         }
+    }
+
+    /**
+     * Whether a sampled texture and a sampler can be <em>drawn through</em> on the real device, and read back.
+     * <p>
+     * This is the drawn half of the migration plan's fourth render smoke - "a sampled texture and a sampler,
+     * drawn as a fixed pattern, read back" - and the half {@link #canBindSampledTexture} recorded as owed. It
+     * is a sequence of its own rather than a third pass in {@link #canBindAndDraw} so that the capability
+     * record's own measured distribution is not restated by a new question: the two are reported apart and
+     * fail apart.
+     * <p>
+     * The shape is the smallest one that has everything the frame's own passes need. A pattern pass renders
+     * four flat quadrants into a 64x64 source that declares it is read by a shader; the pass ends with the
+     * producer barrier the new command model requires of a dependency between encoders
+     * ({@code MTL4CommandEncoder.barrierAfterStages:beforeQueueStages:visibilityOptions:}); a second pass, in
+     * the <em>same</em> command buffer, samples that source through an argument table and draws it into a
+     * target of its own; the command buffer is committed once, waited for through a shared event, and both
+     * textures are read back pixel by pixel.
+     * <p>
+     * <strong>What this proves and what it does not.</strong> The binding half proved a table accepts a texture
+     * and a sampler. This proves the whole chain carries them - table, texture, sampler, pipeline, encoder,
+     * submission, readback - and, because the source is four quadrants of known colour, that the sample
+     * arrived in the right place: a flipped or offset sample reads a different quadrant and is reported as
+     * one. What it does not prove is anything about filtering beyond nearest, aniso or mip levels, none of
+     * which this sequence binds.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether the pattern reached the source and the sample reached the destination, channel by channel
+     */
+    public static boolean canDrawSampledTexture(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("sampledDraw", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from, so no pass can be encoded");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment source = MemorySegment.NULL;
+        MemorySegment destination = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment patternPipeline = MemorySegment.NULL;
+        MemorySegment sampledPipeline = MemorySegment.NULL;
+        MTL4ArgumentTable sampled = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("sampledDraw", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil - queue=" + !ObjC.isNil(queue) + " allocator=" + !ObjC.isNil(allocator)
+                        + " buffer=" + !ObjC.isNil(buffer) + " event=" + !ObjC.isNil(event));
+            }
+
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(TARGET_SIZE);
+                descriptor.height(TARGET_SIZE);
+                // RenderTarget *and* ShaderRead: this texture is rendered into by one pass and sampled by the
+                // next, and a texture that does not declare the read is not one a shader may read. The
+                // non-sampled targets below declare the render target alone, which is what they are.
+                descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                source = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(source)) {
+                return failed("sampledDraw", "newTextureWithDescriptor: answered nil for the " + TARGET_SIZE + "x"
+                        + TARGET_SIZE + " RGBA8 pattern source the sampled pass reads");
+            }
+
+            destination = newTarget(device);
+            if (ObjC.isNil(destination)) {
+                return failed("sampledDraw", "newTextureWithDescriptor: answered nil for the " + TARGET_SIZE + "x"
+                        + TARGET_SIZE + " RGBA8 target the sampled pass draws into");
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("sampledDraw", "newSamplerStateWithDescriptor: answered nil, so there is no sampler"
+                        + " for the pass to read the pattern with");
+            }
+
+            sampled = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (sampled == null || !sampled.texture(source) || !sampled.sampler(sampler)) {
+                return failed("sampledDraw", "a table made for one texture and one sampler did not take both the"
+                        + " pattern and the sampler (table=" + (sampled != null) + ")");
+            }
+
+            patternPipeline = MTLBuiltinPipelines.buildPipelineForProbe(PATTERN_MSL, "metallum_pattern_probe_vs",
+                    "metallum_pattern_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            sampledPipeline = MTLBuiltinPipelines.buildPipelineForProbe(SAMPLED_DRAW_MSL,
+                    "metallum_sampled_probe_vs", "metallum_sampled_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(patternPipeline) || ObjC.isNil(sampledPipeline)) {
+                return failed("sampledDraw", "one of the sampled smoke's own pipelines came back nil - pattern="
+                        + !ObjC.isNil(patternPipeline) + " sampled=" + !ObjC.isNil(sampledPipeline)
+                        + " (the probe's own MSL compiles here)");
+            }
+
+            BEGIN.send(buffer, allocator);
+            // Pass one fills the source and ends with the producer barrier; pass two samples it. One command
+            // buffer and one commit, because a dependency between encoders is what the barrier is for - a
+            // second submission would answer a different question.
+            if (!encodePass(buffer, source, MemorySegment.NULL, 0L, patternPipeline, true, "the pattern pass")) {
+                END.send(buffer);
+                return false;
+            }
+            if (!encodePass(buffer, destination, sampled.handle(), STAGE_FRAGMENT, sampledPipeline, false,
+                    "the sampled pass")) {
+                END.send(buffer);
+                return false;
+            }
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("sampledDraw", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " work never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                for (int index = 0; index < PATTERN_PIXELS.length; index++) {
+                    long x = PATTERN_PIXELS[index][0];
+                    long y = PATTERN_PIXELS[index][1];
+
+                    // The source first. A pattern that never landed and a sample that never arrived are two
+                    // different faults, and reading the same pixel of both textures is what tells them apart:
+                    // without this, a source that was never written would be reported as a sample failure.
+                    MTLTexture.bytes(source, pixel, 4L, x, y, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_PATTERN[index])) {
+                        return failed("sampledDraw", "the pattern pass drew " + describe(pixel) + " at (" + x + ", "
+                                + y + ") where " + describe(EXPECTED_PATTERN[index]) + " was asked for, so the"
+                                + " source holds no pattern for the sampled pass to read");
+                    }
+
+                    // And then the same pixel of the destination, which is what the sampled draw produced.
+                    MTLTexture.bytes(destination, pixel, 4L, x, y, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_PATTERN[index])) {
+                        String saw = describe(pixel);
+                        if (matches(pixel, CLEAR_PIXEL)) {
+                            return failed("sampledDraw", "the sampled pass ran and drew nothing at (" + x + ", " + y
+                                    + "): its target reads " + saw + ", the clear colour it started from, so the"
+                                    + " table-bound texture and sampler reached no fragment");
+                        }
+                        for (int other = 0; other < EXPECTED_PATTERN.length; other++) {
+                            if (matches(pixel, EXPECTED_PATTERN[other])) {
+                                return failed("sampledDraw", "the sampled pass read the pattern's "
+                                        + quadrant(other) + " colour " + saw + " at (" + x + ", " + y + ") where"
+                                        + " its " + quadrant(index) + " " + describe(EXPECTED_PATTERN[index])
+                                        + " was asked for, so the sample reached the wrong place in the source");
+                            }
+                        }
+                        return failed("sampledDraw", "the sampled pass drew " + saw + " at (" + x + ", " + y
+                                + ") where " + describe(EXPECTED_PATTERN[index]) + " was asked for, so the"
+                                + " table-bound texture or sampler did not reach the draw");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("sampledDraw", "encoding, submitting or reading back the sampled draw threw " + threw);
+        } finally {
+            if (sampled != null) {
+                sampled.close();
+            }
+            releaseIfPresent(patternPipeline);
+            releaseIfPresent(sampledPipeline);
+            releaseIfPresent(source);
+            releaseIfPresent(destination);
+            releaseIfPresent(sampler);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** The name of one of the pattern's quadrants, for a message that says which one a readback landed in. */
+    private static String quadrant(final int index) {
+        return switch (index) {
+            case 0 -> "top-left";
+            case 1 -> "top-right";
+            case 2 -> "bottom-left";
+            default -> "bottom-right";
+        };
     }
 
     private static boolean failed(final String stage, final String why) {
@@ -610,12 +936,36 @@ public final class MTL4Probe {
     /** The edge of the sampled-texture smoke's source: small, so a readback is four bytes. */
     private static final long SAMPLED_SIZE = 4L;
 
-    /** The vertex-buffer pass, into a target of its own, which it clears before it draws. */
+    /**
+     * The vertex-buffer pass, into a target of its own, which it clears before it draws.
+     * <p>
+     * The clear is what makes a missed draw readable: this target used to hold the first pass's colour on a
+     * hit and undefined memory on a miss, and 191 - the first pass's own pixel - was one of the values a miss
+     * could legitimately return.
+     */
     private static boolean encodeVertexDraw(final MemorySegment commandBuffer, final MemorySegment target,
                                             final MemorySegment vertexTable, final MemorySegment pipeline) {
+        return encodePass(commandBuffer, target, vertexTable, STAGE_VERTEX, pipeline, false,
+                "the vertex-buffer pass");
+    }
+
+    /**
+     * One full-screen pass into a target of its own, with the table and the barrier its caller asks for.
+     * <p>
+     * Every target is cleared rather than left undefined, so that "the pass ran and drew nothing" is a reading
+     * and not a guess: an unwritten pixel is the clear colour, which no draw in this probe produces. The
+     * barrier is the new command model's producer barrier and is encoded only where a later encoder reads what
+     * this one wrote.
+     *
+     * @param which a name for the pass, so a failure says which one it was
+     * @return whether the pass was encoded and ended
+     */
+    private static boolean encodePass(final MemorySegment commandBuffer, final MemorySegment target,
+                                      final MemorySegment table, final long stages, final MemorySegment pipeline,
+                                      final boolean barrier, final String which) {
         MemorySegment pass = NEW_RENDER_PASS.sendPtr(ObjC.clazz("MTL4RenderPassDescriptor"));
         if (ObjC.isNil(pass)) {
-            return failed("pass", "newRenderPassDescriptor answered nil for the second pass");
+            return failed("pass", "newRenderPassDescriptor answered nil for " + which);
         }
 
         try {
@@ -626,25 +976,35 @@ public final class MTL4Probe {
                     ? MemorySegment.NULL
                     : ATTACHMENT_AT.sendPtr(attachments, 0L);
             if (ObjC.isNil(attachment)) {
-                return failed("attachment", "the second pass's descriptor gave no colour attachment at index 0");
+                return failed("attachment", "the descriptor for " + which + " gave no colour attachment at"
+                        + " index 0");
             }
             SET_TEXTURE.send(attachment, target);
-            // Cleared rather than left undefined, so that "the pass ran and drew nothing" is a reading and not
-            // a guess: the screen this replaced held the first pass's colour on a hit and undefined memory on a
-            // miss, and 191 - the first pass's own pixel - was one of the values a miss could legitimately
-            // return. Every draw here produces a colour with a non-zero red channel, so black means no fragment.
             SET_LOAD_ACTION.send(attachment, LOAD_CLEAR);
             SET_STORE_ACTION.send(attachment, STORE_STORE);
             SET_CLEAR_COLOR.send(attachment, 0.0, 0.0, 0.0, 1.0);
 
             MemorySegment encoder = RENDER_ENCODER.sendPtr(commandBuffer, pass);
             if (ObjC.isNil(encoder)) {
-                return failed("encoder", "the second render command encoder could not be opened on the same"
-                        + " command buffer as the first");
+                return failed("encoder", "no render command encoder could be opened on this command buffer for "
+                        + which);
             }
-            SET_ARGUMENT_TABLE.send(encoder, vertexTable, STAGE_VERTEX);
+            if (!ObjC.isNil(table)) {
+                SET_ARGUMENT_TABLE.send(encoder, table, stages);
+            }
             SET_RENDER_PIPELINE_STATE.send(encoder, pipeline);
             DRAW.send(encoder, MTLPrimitiveType.Triangle.value, 0L, 3L);
+            if (barrier) {
+                // Asked before it is sent, like every other selector here: a barrier this encoder does not
+                // implement is an Objective-C exception, and a pass that sampled without one would be a
+                // dependency that was assumed - which is the one thing a migration must not do.
+                if (!responds(encoder, BARRIER.name())) {
+                    END_ENCODING.send(encoder);
+                    return failed("barrier", which + "'s encoder does not answer " + BARRIER.name() + ", so it"
+                            + " cannot order itself against the pass that reads its target");
+                }
+                BARRIER.send(encoder, STAGE_ALL, STAGE_FRAGMENT, VISIBILITY_DEVICE);
+            }
             END_ENCODING.send(encoder);
             return true;
         } finally {

@@ -124,6 +124,12 @@ run_one "warm" "$warm_runs" >> "$warm_log" || true
 cat "$warm_log" >> "$probe_log"
 warm_failures="$(grep -c ' success=false ' "$warm_log" || true)"
 warm_total="$(grep -c '^M4_PROBE_RESULT' "$warm_log" || true)"
+# The sampled-texture DRAW smoke is counted apart from the capability sequence, because it answers a
+# different question: the sequence is what the AUTO blocker is measured with, and the draw is whether a
+# table-bound texture and sampler reach a fragment at all. A run that reported only one number for both
+# would hide a failing smoke behind a passing capability.
+sampled_draws="$(grep -c ' sampledDraw=true ' "$probe_log" || true)"
+sampled_draw_failures="$(grep -c ' sampledDraw=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -142,10 +148,22 @@ if (( cold_failures > 0 )); then
 	grep ' success=false ' "$probe_log" | sed -n 's/.*reason=\([^ ]*\).*/  \1/p' | sort | uniq -c
 fi
 echo "warm probes:     $warm_total   failures: $warm_failures"
+echo "sampled draws:   $sampled_draws passed   $sampled_draw_failures failed"
 echo
-echo "per-process results (success, stage, probe ms):"
-grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=\([^ ]*\) retried=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).* sampled=\([^ ]*\).* provider=\([^ ]*\).*probeMs=\([^ ]*\).*/  process \1 attempt \2 mode \3 retried \4 success \5 stage \6 sampled(\7) provider \8 \9 ms/p'
+# The provider line is the same in every attempt, so it is printed once and not per process - which is also
+# what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
+# and sed reads that as `\1` followed by a literal `0`: the field would print the first group instead of the
+# tenth, which is how this line reported every process's probe time as `10 ms` for a run.
+echo "provider (every line): $(grep -m1 -o ' provider=[^ ]*' "$probe_log" | cut -c2-)"
+echo
+echo "per-process results (success, stage, sampled draw, probe ms):"
+grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=\([^ ]*\) retried=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).* sampled=\([^ ]*\).* sampledDraw=\([^ ]*\).* provider=[^ ]*.*probeMs=\([^ ]*\).*/  process \1 attempt \2 mode \3 retried \4 success \5 stage \6 sampled(\7) sampledDraw(\8) \9 ms/p'
 
 if (( cold_failures > 0 )); then
+	exit 1
+fi
+
+if (( sampled_draw_failures > 0 )); then
+	echo "the sampled-texture draw smoke failed in $sampled_draw_failures probe(s)" >&2
 	exit 1
 fi

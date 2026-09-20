@@ -607,7 +607,7 @@ refusals by name, the stage the refusal carries, that no Metal 3 package is impo
 implementation, that the services choose by `executing`, and that the harness asks the provider on a real
 device - six mutations, each failing for its own reason.
 
-### The fourth render smoke's binding half, and the half that is owed
+### The fourth render smoke: the binding half, and then the drawn half
 
 The migration plan's Phase 3 asks for five native smokes before anything touches the Minecraft frame, and four
 of them are already the probe's own shape: the constant-colour draw is its first pass (a table-bound uniform
@@ -616,18 +616,66 @@ vertex smoke is its second (a buffer bound by address and stride 16, drawn by a 
 of the buffer, read back as (64, 128, 128, 255)), and the two-encoder smoke is the pair - pass A into target A,
 pass B into target B, one command buffer, one commit, one shared-event wait, both pixels read.
 
-The fifth had no coverage at all: **a sampled texture and a sampler**. What landed this round is its binding
-half, `MTL4Probe.canBindSampledTexture`: a 4x4 RGBA8 shared texture, a nearest sampler that declares argument
-buffer support, and a table made for exactly one texture and one sampler, then both setters - with each
-refusal reported by name rather than as a bare false. Measured on Apple Silicon in 45 of 45 attempts across 25
-cold processes and 20 warm probes, and pinned in `tools/ci-metal4-cold-probe.py` with three mutations.
+The fifth had no coverage at all: **a sampled texture and a sampler**. Its binding half landed first,
+`MTL4Probe.canBindSampledTexture`: a 4x4 RGBA8 shared texture, a nearest sampler that declares argument buffer
+support, and a table made for exactly one texture and one sampler, then both setters - with each refusal
+reported by name rather than as a bare false. Measured on Apple Silicon in 45 of 45 attempts across 25 cold
+processes and 20 warm probes.
 
-**What is NOT proven is the drawn half**, and it is recorded as owed rather than implied by the binding: a
-pattern sampled through the table, drawn into a target and read back channel by channel. Its design is fixed so
-the next attempt is small: reuse the first pass's target as the source - a texture the probe has already filled
-with a known colour, which avoids adding a texture-write path - bind it with the nearest sampler through the
-one-texture/one-sampler table, draw a full-screen triangle whose fragment shader samples it, and compare the
-third target's pixel with (64, 128, 191, 255).
+**The drawn half landed next**, as `MTL4Probe.canDrawSampledTexture` - a sequence of its own rather than a
+third pass inside `canBindAndDraw`, so that the per-process distribution the AUTO blocker is measured with is
+not restated by a new question: the two are reported in separate fields and fail apart. It is the smallest
+shape that has everything a frame's own pass needs.
+
+1. A pattern pass renders four flat quadrants into a 64x64 source that declares `RenderTarget | ShaderRead`.
+   The usage is part of the question and not bookkeeping: a texture that does not declare the read is not one
+   a shader may read.
+2. The pass ends with `barrierAfterStages:beforeQueueStages:visibilityOptions:`, the producer barrier the new
+   command model requires of a dependency between encoders - the first place in this engine where a Metal 4
+   dependency is encoded rather than assumed. The selector is asked of the encoder before it is sent, like
+   every other selector here, so a device that does not implement it reports a stage instead of raising.
+3. A second pass in the **same** command buffer samples that source at the fragment stage through a
+   one-texture/one-sampler table and draws it into a target of its own.
+4. The command buffer is committed **once**, waited for through a shared event, and then both textures are
+   read back at the same four pixels - one well inside each quadrant.
+
+Reading both textures is what keeps the answer from being a guess. The source says whether the pattern landed
+and the destination says whether the sample arrived, so a pattern that never rendered is not reported as a
+sample that never arrived; and because the source is four quadrants of known colour, a sample that arrives
+flipped or offset reads a different quadrant and the message names the quadrant it read and the one it was
+asked for.
+
+Measured on Apple Silicon (Apple M5 Pro, macOS 27): **100 of 100 probes passed** - 30 cold processes plus 20
+warm repeats of one process in `--mode raw`, and the same again in `--mode production` - with the capability
+sequence passing in every one of them and nothing to attribute. The check is not vacuous: with the destination
+readback transposed (a one-character mutation of the read region) the same harness reports
+`sampledDraw=false` with `the sampled pass read the pattern's bottom-left colour (0, 255, 64, 255) at (40, 8)
+where its top-right (255, 0, 64, 255) was asked for, so the sample reached the wrong place in the source`, and
+the driver exits 1. `tools/ci-metal4-cold-probe.py` pins the whole chain - the sequence's presence, the
+expected pattern, the source's `ShaderRead` usage, the barrier and the selector check before it, the table at
+the fragment stage, both readbacks and the wrong-quadrant report, plus the harness's two printed fields and the
+driver's count. Sixteen mutations were run against those pins: the first pass caught ten and exposed two pins
+that documentation text alone could satisfy (the printed field name also appears in the class's javadoc, and the
+count variable is named more than once), so those two were strengthened against the print expressions and the
+counting line themselves and then caught the same mutations - sixteen of sixteen. Two more were run against
+`tools/ci-contracts.py`'s updated table pin, and both were caught.
+
+**What it does not prove.** Nothing here binds linear filtering, anisotropy, a mip level or an address mode, so
+the smoke says nothing about them. And the barrier's necessity is not measured: the readback is correct with it
+encoded, while whether this device would also have ordered the two passes without one is NOT MEASURED - the API
+contract for the new command model requires it and the migration's rule is to express a dependency before
+optimising it, so the barrier is written and the question is left open rather than answered by a passing
+readback. The capability record does not consume the smoke yet either: `Metal4.available` still reads
+`canBindAndDrawPersistently`, which keeps the AUTO-blocker distribution measured across 160 processes
+comparable; the smoke joins the record when a Metal 4 frame path exists to need it.
+
+Two smaller corrections came with it. The argument table's texture binding moved from a hard-coded slot zero to
+the slot the layout names (`texture(handle, index)`), because the smoke binds a slot the shader's own
+`[[texture(n)]]` attribute names and one table will have to hold more than one image - `tools/ci-contracts.py`'s
+pin on that call was updated to follow the call rather than deleted. And the harness's per-process line had a
+sed bug of its own: with a tenth capture group it had to be written `\10`, which sed reads as `\1` followed by
+a literal `0`, so probe times printed as `10 ms` for every process. The provider line is now printed once and
+the substitution has nine groups, which is also why the fix is written down in the script next to the sed.
 
 ## The API mapping
 
@@ -647,7 +695,7 @@ today and what it becomes.
 | `setVertexSamplerState:atIndex:` / `setFragmentSamplerState:atIndex:` | `setSamplerState:atIndex:` by resource id | proven by the present |
 | the per-layout argument buffer written by `MTLArgumentEncoder` | the table itself: the resources are bound into table slots instead of being encoded into a buffer | this is the part with the 16-sampler ceiling |
 | `useResource:usage:stages:` | `MTLResidencySet` added to the queue (`addResidencySet:`) | the present works without one, so residency is a correctness/performance question to measure rather than a blocker |
-| `updateFence:afterStages:` / `waitForFence:beforeStages:` | `barrierAfterEncoderStages:beforeEncoderStages:` and `barrierAfterStages:beforeQueueStages:` on the encoders | the engine's fence chain is what P1's read/write description was built for |
+| `updateFence:afterStages:` / `waitForFence:beforeStages:` | `barrierAfterEncoderStages:beforeEncoderStages:` and `barrierAfterStages:beforeQueueStages:` on the encoders | the engine's fence chain is what P1's read/write description was built for; the producer barrier is already encoded and measured in the probe's sampled-texture smoke - a render pass that samples what the pass before it wrote, in one command buffer |
 | `MTLFXSpatialScaler` (+ `encodeToCommandBuffer:` on a Metal 3 buffer) | `MTL4FXSpatialScaler` (on the Metal 4 buffer), built by `MTLFXSpatialScalerDescriptor.newSpatialScalerWithDevice:compiler:` | the Metal 4 variants ship in the same framework |
 
 ## The slices, in order
