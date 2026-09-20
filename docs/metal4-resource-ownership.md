@@ -48,6 +48,8 @@ Two rules run through every row:
 | `MTLBuffer` (the argument buffers, wide pipelines only) | `Metal4RenderPass.bindArgumentBuffer` | **the pass that fills it**, one per descriptor set per stage, made when a wide pipeline is set | the buffer is read when the frame's command buffer runs, which is after the pass has ended | `queueForDestroy(() -> ObjC.release(...))`, filed where it is made, so the slot's completion is the proof |
 | `MTL4ResidencySet` | `Metal4FrameEncoder` (first `useResource`) | the frame encoder | the session's; committed and attached once | `Metal4FrameEncoder.close()` |
 | `MTL4StorageTexturePipelines` (the zeroing kernels) | `Metal4FrameEncoder`'s constructor | the frame encoder | the encoder's | `Metal4FrameEncoder.close()` |
+| `MTL4Compiler` (MetalFX's, this generation's) | `Metal4Fx.create` -> `MTL4Compiler.create` (`newCompilerWithDescriptor:error:`) | the `Metal4Fx` that asked for it | the path's; Metal 4's pipeline factories take one, and MetalFX's Metal 4 spelling is the first thing in this engine that needs it | `Metal4Fx.close()`, with the frame encoder |
+| `MTL4FXSpatialScaler` (one per configuration) | `Metal4Fx.makeScaler`, through the descriptor's `newSpatialScalerWithDevice:compiler:` | the `Metal4Fx` that made it, which the frame encoder owns | the session's: a scaler compiles its own pipeline, so it is made once per configuration and reused, and a refused configuration is remembered as refused | `Metal4Fx.close()`, from `Metal4FrameEncoder.close()` |
 | `MetalTransientMemory` (staging arena) | the frame encoder's constructor | the frame encoder | the encoder's | `Metal4FrameEncoder.close()`, after the deferred releases |
 | `MetalDestructionQueue` | the frame encoder's constructor | the frame encoder | the encoder's | `Metal4FrameEncoder.close()` |
 | deferred releases (per slot) | `queueForDestroy` | the frame encoder | a slot's | `retire(slot)`, run once that slot's completion is observed |
@@ -119,9 +121,18 @@ because a display-paced session has no backlog to wait on.
   candidate under the rule the change came from - a table may be re-pointed between encoders but not within one
   - so a pool would have to be keyed by the dispatch's place in the frame rather than by the kernel.
 - **nothing in the Metal 4 path is a process-global singleton** (section 106): the queue, the ring, the tables,
-  the residency set, the storage pipelines and the compilation caches are all owned by the frame encoder or the
-  execution state, so a second device in one process gets its own. The one static state left in the path is the
-  probe's own (`MTL4Probe`, `MTLBuiltinPipelines`), which no session frame path uses.
+  the residency set, the storage pipelines, the MetalFX compiler and its scalers, and the compilation caches are
+  all owned by the frame encoder or the execution state, so a second device in one process gets its own. The one
+  static state left in the path is the probe's own (`MTL4Probe`, `MTLBuiltinPipelines`), which no session frame
+  path uses. **The MetalFX capability answer is the one static that is deliberate**: `Metal4Fx.supported` is asked
+  once per process because it is a property of the device and the system, and it is the answer a *selection* reads
+  before any frame encoder exists - but the objects that answer it are made and released inside the question, and
+  nothing a frame uses is held there.
+- **the Metal 3 and Metal 4 scaler caches share a key and nothing else** (section 80): `MetalFx.scalers` holds
+  `MTLFXSpatialScaler` objects and `Metal4Fx.scalers` holds `MTL4FXSpatialScaler` ones, keyed by the same five
+  facts plus the colour processing mode because those are the facts that make a different scaler - not because the
+  object is interchangeable. It is not: the two are different protocols with different factories and different
+  encodes, and a shared cache would have handed one generation's compiled pipeline to the other.
 - **a teardown waited twice around a close, and the second wait was on a released ring** (fixed): see the
   section above. It is a ledger finding and not only a bug - the second wait was inside a cache clear that
   `executionState.close()` performs anyway, so the fix was a deletion, and the ownership question it raised ("who

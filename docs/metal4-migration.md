@@ -3749,6 +3749,74 @@ the first thing the numbers show is the *fade*, both arms starting at 50-60 as t
 single reading taken during it says the arms disagree wildly. Read as a sequence, the two converge to their own
 plateaus - which is a difference that survives, and a different claim from the one the first frame supports.
 
+### MetalFX spatial, on this generation's own terms
+
+Section 77 gates this milestone on the frame path being basically correct, and at this point the ladder passes on
+all three real packs, the lifecycle gate has readings, and the synchronous matrix is closed on the device - so the
+gate is met and the work is the next thing the plan lists.
+
+**It is a second path and not a parameter of the first, and the headers say why.** macOS 26's
+`MTL4FXSpatialScaler.h` declares a different protocol whose encode takes an `MTL4CommandBuffer`, and the
+descriptor's Metal 4 spelling takes a *compiler* - `newSpatialScalerWithDevice:compiler:` - because Metal 4 keeps
+pipeline compilation in an object the app owns rather than on the device. Section 80 asks for exactly the split
+that follows: the logical configuration key may be shared, the native objects may not, because a scaler compiles
+its own pipeline and one generation's compiled pipeline is not the other's.
+
+Three objects, in the layer that already owns Metal 4's device-level ones:
+
+```text
+MTL4Compiler         the compiler object the Metal 4 factory needs. Every way it can fail is an answer and not
+                     an exception: no device, no newCompilerWithDescriptor:error:, no MTL4CompilerDescriptor
+                     class, and a nil factory are four sentences, each said once, and a null handle
+MTL4FXSpatialScaler  the scaler, configured through the base protocol both generations share and encoded with
+                     encodeToCommandBuffer: on the frame's own Metal 4 command buffer
+Metal4Fx             this generation's capability question, its own configuration-keyed cache, and the encode
+```
+
+**Availability is a functional question, which is the whole point of asking it here.** Apple's gate is
+`+supportsMetal4FX:`, and a device that answers yes can still refuse a scaler - so `Metal4Fx.supported` asks the
+class question and then *makes* one for a plain colour pair with a compiler and lets both go. That is not
+tidiness: the capability record uses this answer to decide whether choosing Metal 4 would cost the player the
+render-scale setting, and a `respondsTo`-only answer would report a scaler that does not exist as one that does.
+The record's clause therefore moved from `MetalFx.metal4SpatialSupported` to `Metal4Fx.supported`, and the
+generation-reach ledger grew by one name on a line that already crossed - which is how that ledger is meant to
+grow: as a decision with a reason, not a drift.
+
+**No fence, and it is a fact about the new command model rather than an omission.** The Metal 3 path hands its
+scaler the frame's fence because this engine's textures opt out of Metal's own hazard tracking, and
+`MTLFXSpatialScaler.fence` is exactly what Apple declares for that case. Metal 4 has no fence object in this
+engine at all - `Metal4Fence` records why: the new command model orders work with encoder barriers and queue
+events - so what orders the scaler against the passes around it is the one command buffer's own encode order plus
+the all-stages barrier every pass already ends with. The frame path ends any open encoder of ours first, declares
+both textures resident, and the pins hold all of it.
+
+**Measured, ComplementaryReimagined_r5.9.1 at renderscale=55, one arm each, both at 2560x1440:**
+
+```text
+Metal 4   Metal 4 MetalFX spatial scaling: available, the device supports it and made one
+          (Vitrail) The 55% render scale brings the picture back with MetalFX
+          pipelineIdentities=333  pipelineKeys=333  compiles=712  gpuM4Frames=600
+Metal 3   MetalFX spatial scaling: available, the device supports it, factory newSpatialScalerWithDevice:
+          (Vitrail) The 55% render scale brings the picture back with MetalFX
+          pipelineIdentities=333  pipelineKeys=333  compiles=712  gpuFrames=596
+```
+
+Both draw the chain at 704x396 and 1408x792 - the pack's own scaled targets, identical on both - present at the
+native 2560x1440, refuse no scaler and stop for nothing. The program set matches at 333 identities and 712
+compiles, which is section 70's comparison. The two arms' pictures differ and are *not* read as a verdict: two
+launches of a pack with history and clouds are what section 116 says not to compare that way.
+
+**And one pair was discarded rather than read.** The first attempt at the same configuration had the Metal 4 arm
+at a 1280x720 drawable for its whole session while the Metal 3 arm moved to 2560x1440 after about ten seconds.
+The *game's own target* and the drawable moved together, so no code of ours chose either - and the repeat pair
+above is 2560x1440 throughout on both arms. It is written down because section 115 says an arm whose output extent
+differs is an arm to discard, and that is what happened to it; the lesson is that a render-scale session has one
+more scene fact to check than a native-scale one.
+
+**What is not measured** is registered with the readings: output orientation for the scaler (no asymmetric scaled
+fixture has been run), the configuration switch and resize behaviours of section 82, and any performance
+comparison - the two arms above were display-paced and section 84's fixed 1920x1200 target has not been run.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
@@ -3771,7 +3839,11 @@ plateaus - which is a difference that survives, and a different claim from the o
   a measurement, not an assumption.
 - **Pipelines.** `newRenderPipelineStateWithDescriptor:` is Metal 3's factory and its objects draw on
   Metal 4 encoders (proven), but `MTL4Compiler` also makes `MTL4RenderPipeline` objects for background
-  compilation, which is where the low-frame work wants to go.
+  compilation, which is where the low-frame work wants to go. **Half of this is now realised**: the MetalFX
+  milestone needed a compiler object, so `MTL4Compiler` exists and is proven on the device - but it is used for
+  one factory and not for the frame's own pipelines, which are still made through the device's Metal 3 factory.
+  Moving them is a separate question with a binary-archive and startup answer, and section 100 keeps it out of
+  the steady-state work.
 - **Machine state.** A migration this wide cannot be judged scene by scene: it needs the deterministic
   fixture the companion repository's smoke scenes provide, and the same-configuration floor taken in the
   same session, or the picture verdicts will be the sun moving.

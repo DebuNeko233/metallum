@@ -568,12 +568,45 @@ rather than a simulation of them - and what it found on its first real run was a
 ## MetalFX Spatial
 
 ```
-supported:            PROVEN for Metal 3, and the Metal 4 factory capability is probed
-                      (MetalFx.metal4SpatialSupported) - no Metal 4 scaler path is implemented
-configuration cache:  Metal 3 only
-M3 result:            PROVEN (one scaler per configuration, cached, fallback-safe)
-M4 result:            NOT STARTED
-performance:          NOT STARTED
+supported:            PROVEN on BOTH generations, and by a functional question on each. Metal 3 asks
+                      +[MTLFXSpatialScalerDescriptor supportsDevice:] and then makes one. Metal 4 asks
+                      +supportsMetal4FX: and then makes one with a compiler and lets it go
+                      (Metal4Fx.supported) - the class question alone is not the answer, because a device
+                      that answers yes can still refuse every scaler. The capability record uses the Metal 4
+                      answer, which is what it must ask before choosing Metal 4 does not cost the render-scale
+                      setting
+configuration cache:  one per generation, keyed identically and holding nothing shared - the M3 scalers in
+                      MetalFx, the M4 scalers in Metal4Fx, because a scaler is a compiled pipeline and one
+                      generation's is not the other's (section 80). A refused configuration is remembered as
+                      refused in each
+M3 result:            PROVEN (one scaler per configuration, cached, fallback-safe) and re-measured this round
+                      at 55%: it takes the MetalFX road and the chain draws
+M4 result:            PROVEN ON THE DEVICE AND IN A LIVE FRAME - `MTL4Compiler` asks the device for
+                      `newCompilerWithDescriptor:error:`, the artifact is made with the descriptor's Metal 4
+                      spelling `newSpatialScalerWithDevice:compiler:`, and `Metal4FrameEncoder.scaleWithMetalFx`
+                      encodes it into the frame's own Metal 4 command buffer with no encoder of ours open.
+                      MEASURED, ComplementaryReimagined_r5.9.1 at renderscale=55, one session each:
+
+                        Metal 4   "Metal 4 MetalFX spatial scaling: available, the device supports it and
+                                   made one"; (Vitrail) "The 55% render scale brings the picture back with
+                                   MetalFX"; 333 pipeline identities, 333 keys, 712 compiles, 600 M4 frames
+                        Metal 3   "MetalFX spatial scaling: available, the device supports it, factory
+                                   newSpatialScalerWithDevice:"; the same Vitrail line; 333 identities,
+                                   333 keys, 712 compiles, 596 frames
+
+                      Both draw the chain at 704x396 and 1408x792 - the pack's own scaled targets, identical
+                      on both - present at the native 2560x1440, refuse no scaler and stop for nothing. The
+                      program set matches at 333 identities and 712 compiles, which is section 70's
+                      comparison; the arms' *pictures* differ and are not read as a verdict, because two
+                      launches of a pack with history and clouds are what section 116 says not to compare
+                      that way. **Output orientation is NOT MEASURED for the scaler** - no fixture with an
+                      asymmetric pattern has been scaled - and no fence is set on this generation's path,
+                      which is a fact about Metal 4 rather than a choice: there is no fence object in this
+                      engine's Metal 4 model at all, so what orders the scaler is the one command buffer's
+                      encode order and the all-stages barrier every pass already ends with. What tests that
+                      is the render-scale frame above, and it does not test it adversarially
+performance:          NOT STARTED for either generation's scaler: the two arms' frames were paced by the
+                      display in this pair, and section 84's 1920x1200 fixed target has not been run
 ```
 
 ## Performance
@@ -671,7 +704,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | synchronization | yes         | **all seven of section 60's fixtures** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; a pass that samples what the pass before it wrote; **a pass that samples what a dispatch wrote** (`canSampleComputeOutput`: the producer barrier is asked for before it is sent, the image is read back on the CPU so a kernel that never wrote and a sample that never arrived are two failures, and the target holds a colour no other smoke uses); **a draw that reads vertices a dispatch wrote** (`canDrawFromComputeWrittenBuffer`: the buffer starts as three copies of the origin, so a draw that ran early paints nothing). Plus **the copy's two boundaries** (`canSampleAfterCopy`: a pass writes a source, a copy moves a region into the destination's other half, and a pass samples it - both halves read on the CPU and both through the sampler, 50 of 50 in the census and 93 of 93 in a hunt). And **the read side**: `canDispatchSampledRender` (a pass writes, a dispatch samples it - "render writes storage image → compute reads") and `canDispatchSampledCopy` (a copy writes, a dispatch samples it - "blit writes → compute reads"), each with a sentinel per channel and all sixteen samples compared against the producer's colour. And **`canDispatchAfterDispatch`**, the chain of two dispatches a pack's own compute chain is made of and the shape Vitrail's compute fixture depends on: the first writes a storage image, the second samples it, sixteen samples read back against a per-channel sentinel (50 of 50). By section 61's classification **all three directions are measured**: read-after-write is the seven fixtures above and the compute chain; write-after-write is the storage smoke (two dispatches writing one texture, read as the second write); and **write-after-read is `canWriteAfterRead`** - a pass samples a texture through a table and a later dispatch writes that same texture, read back as two facts (what the reader saw before the write, and that the write landed), with the ordering failure named as itself. Its sensitivity was checked by pointing the comparison at the writer's colour, which makes it fail. A 30-cold + 20-warm census is 50 of 50 on all eight fields | yes for the frame's own boundaries: every logical pass is its own native encoder and ends with the all-stages producer barrier, which is why the storage-image boundary a pack states is already encoded unconditionally; the rest of the matrix is still the plan's fixtures | yes |
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it. **Both halves of the presented frame are readable on both generations** behind `-Dmetallum.drawableReadback=true` (the layer's `framebufferOnly` off, the picture the triangle sampled *and* the drawable it wrote copied into a shared buffer, read when the slot completes, one formatter in the shared layer) | yes - 30 presents a window; **and the two arms compared on one scene, one fixture, one switch, at ten and at forty seconds of settle (1366/1372 and 4951/4953 readbacks): both present the fixture's acceptance colour (pure green, red and blue at zero), and on both arms the picture read is the drawable written, frame for frame - so the present pass is the identity on this fixture and the difference is frame content, not present treatment.** One difference is measured and persists forty seconds: the Metal 4 frame is flat green with **alpha 0** where the Metal 3 frame is flat opaque green - invisible on an opaque layer, mechanism not yet localised (the pack's write into the game's target, a later pass, or the sampling of it), and its experiment is a pass-boundary copy plus a fixture whose colour is asymmetric and whose alpha is not 1. The "gentle radial ramp (230..255)" registered in an earlier round is **withdrawn**: it was the Metal 3 arm's frame still cross-fading from the loading screen, and at forty seconds that arm reads flat opaque green. **Orientation is PROVEN on a second, diagnostic fixture** (four quadrant colours at alpha 0.5): both arms present the same arrangement sample for sample - the present draw swaps the two ends of the memory-vertical axis and nothing else - and the RGBA8/BGRA8 channel conversion is correct on both. **The alpha is not the pack's**: the shader's alpha moved 1.0 to 0.5 and the stored alpha did not move on either arm (255 on Metal 3, 0 on Metal 4), so the difference is in the frame's own clear rather than in the pack's write, and which writer owns that channel is not yet localised. **The full-frame path is the session's only Metal 4 submission structure**: the present-only sidecar is not started when Metal 4 executes (measured before and after the convergence change - its start line 1 time and one commit-feedback registration against 0, with the frame encoder presenting 1964 then 2182 frames), and it is still started for the reference shell, a Metal 3-executing session with the property on | yes |
-| MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | no - `metalFxAvailable()` answers false, which is what this encoder answered before it carried the contract, so a caller keeps its own fallback road | no          |
+| MetalFX spatial | yes         | **a second path, not a parameter of the first** - this generation's own compiler (`newCompilerWithDescriptor:error:`), its own scaler made by the descriptor's Metal 4 spelling, its own configuration-keyed cache, and an encode into a `MTL4CommandBuffer` | **yes, in a live frame**: `metalFxAvailable()` answers the scaler path's own existence, and at renderscale=55 Vitrail logs `The 55% render scale brings the picture back with MetalFX` on this path with the reference arm's program set (333 identities, 712 compiles) and the pack's own scaled targets (704x396, 1408x792) on both. Output orientation for the scaler is NOT MEASURED | yes |
 | counters        | whole frame | no - the Metal 3 frame's whole-frame driver time is its own | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; not comparable with Metal 3's `gpuMillis` until section 92 is established | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
@@ -888,6 +921,20 @@ answered rather than only what is left.
    localise it is the pass-by-pass attachment trace of a session that reads the target's *mean* rather than its
    sampled cells, because a multiply by a radial mask is exactly what a per-pass readback would separate from
    the pack's own write.
+
+14. **The MetalFX scaler's output orientation and its configuration edges are NOT MEASURED, and its ordering is
+   argued rather than adversarially tested.** The Metal 4 path is a second scaler with its own protocol, and what
+   is proven about it is: the device makes one (functionally, not by a `respondsTo`), Vitrail takes the road, the
+   frame draws, and the reference arm's program set and scaled target sizes match. What is not:
+   **orientation** - no asymmetric fixture has been scaled, and the scaler is the one thing in the frame whose
+   output this engine never reads back at its own size; **the configuration switch and resize** of section 82 - a
+   scaler is cached per configuration and a new one is made for a new size, which is the code path but has no
+   reading; and **ordering** - the Metal 3 scaler is handed the frame's fence because this engine's textures opt
+   out of hazard tracking, and Metal 4 has no fence object at all in this engine's model, so the encode order
+   inside one command buffer plus the all-stages barrier every pass ends with is what orders it. That is a claim
+   about the API that the render-scale frame is consistent with and does not falsify. The experiment that would is
+   a fixture whose scaled output is read back at the input's size and compared against a pattern the input could
+   not have produced late.
 
 ## Metal 4 full-frame implementation complete?
 
