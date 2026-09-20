@@ -37,19 +37,22 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        228 processes, 1378 probes (50 + 50 + 60 + 60 + 10 + 3 + 5, the sixth and seventh added
-                  by the MRT smoke's own runs); failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      548 in five processes      failures: 0
-this round:       118 probes (30 + 30 + 5 + 3 cold with 20 + 20 + 5 + 3 warm, `--mode raw`), the last 100 of
-                  them after the multi-target draw smoke and the unused-slot pass were added: **0 failures**,
-                  and 50 of 50 on every one of the fourteen device smokes, the two new ones included. The
-                  intermittent capability fault did not appear in either 30-process run, which is its known
-                  shape rather than a resolution of it: it has been observed twice in about seventy cold
-                  starts and never on demand, and it still blocks AUTO. The smoke the MRT round added is the
+cold runs:        258 processes, 1458 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30, the eighth added by the
+                  depth smoke's own census); failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      568 in seven processes      failures: 0
+this round:       80 probes (30 cold and 20 warm for the depth census, plus the runs on the way to it), the
+                  whole of it after the depth draw smoke was added: **0 failures** and 50 of 50 on every one
+                  of the fifteen device smokes, the new one included, with 0 crash reports. The intermittent
+                  capability fault did not appear in a third 30-process run, which is its known shape rather
+                  than a resolution of it: it has been observed twice in about seventy cold starts and never
+                  on demand, and it still blocks AUTO. The smoke the depth round added is the **depth draw**:
+                  two triangles at known depths, a less-than compare with writing enabled, and the overlap
+                  read back as the winner's colour *and* its depth - plus a pixel outside the near triangle,
+                  so a compare that rejected everything fails too. The MRT round's smoke before it was the
                   **multi-target draw**: a four-output fragment stage, one fullscreen triangle and every
-                  attachment read back against that slot's own value; the pass smoke gained an unfilled slot
-                  between two filled ones. The previous round's residency smoke was: a set is made, two
-                  allocations (a buffer and a texture) go in, it commits and requests
+                  attachment read back against that slot's own value; its pass smoke gained an unfilled slot
+                  between two filled ones. The residency smoke was: a set is made, two allocations (a buffer
+                  and a texture) go in, it commits and requests
                   residency, it reports two allocations, and the queue answers `addResidencySet:` (50 of 50) -
                   and it is the model the frame path's own run proved necessary, since without those
                   declarations the GPU faulted and with them it renders terrain. The fence wait and the depth clear are the round before it: two empty frames with
@@ -312,10 +315,17 @@ clear:   PROVEN as a pass of its own, and it is a decision with a cost. On this 
          is a lifetime model of its own; that is a later optimisation, not a correctness gap, and it is not
          claimed to be free. The clear's pass ends with the producer barrier, and it is opened only after
          any copy the frame encoded is ordered, so the clear cannot land before what it overwrites
-depth:   PARTLY - the descriptor path takes a depth attachment and its clear, and a smoke now proves the
-         load action itself: a colour target and a `Depth32Float` target in one pass, the depth cleared to
-         0.25, read back through `MTLTexture.bytes` and compared (50 of 50 probes). What is NOT proven is a
-         draw that tests or writes depth - no pipeline is bound with a depth-stencil state yet
+depth:   PROVEN, all three halves. The clear: a colour target and a `Depth32Float` target in one pass, the
+         depth cleared to 0.25, read back through `MTLTexture.bytes` and compared (50 of 50 probes). The
+         compare and the write (`canDrawWithDepth`): two triangles at known depths, a pipeline that declares a
+         `Depth32Float` attachment, one less-than state with writing enabled, and the FAR triangle drawn
+         SECOND so the overlap is a test of the compare rather than of the draw order - the overlap reads the
+         near triangle's colour AND its 0.25 (so the winner wrote the buffer), and a pixel outside the near
+         triangle reads the far triangle's colour and its 0.75 (so a compare that rejected everything fails
+         there too). Measured on Apple Silicon: 50 of 50 probes (30 cold + 20 warm). The sampling: Vitrail's
+         `depthtex0-contract` runs on this path - the game's own draws write depth and a pack pass samples it
+         afterwards - with 103 pipeline identities against Metal 3's 103, 18 logical passes a frame against 11,
+         no fault and no refusal. That fixture's picture is NOT MEASURED: the display cannot be photographed
 blend:   NOT STARTED
 scissor: PARTLY - the pass's own scissor is set, cleared and measured on the device through the layout
          smoke (a pixel inside the rectangle and a pixel outside it), but the scissored form of
@@ -499,7 +509,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - the no-pack world frame renders and presents, 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's four fullscreen passes run through it (20 logical passes a frame, `pipelineIdentities 105` against Metal 3's 105, no `GPURestart`); **the picture is NOT MEASURED** - every screenshot was a black display, so the image is unverified | yes |
 | MRT             | yes         | **both halves** - four colour attachments in one pass, cleared per slot and read back slot by slot, plus one pipeline with four `[[color(n)]]` outputs drawing into all four and every slot read back at both corners (50 of 50); a slot the caller left unfilled is carried at its own index | **executes, correctness NOT MEASURED** - Vitrail's MRT fixture runs on this path (134 pipeline identities against Metal 3's 134, 19 logical passes a frame against 15, 30 presents, no fault), and the picture column is void so the four quadrants were never looked at | yes |
 | clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | yes - 150 clear encoders a window and 150 of its 480 depth attachments are the clear passes' own; a clear is never a load, which the counter now shows (`depthLoadedMiB` did not move when those 150 were counted) | yes |
-| depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | the window attaches depth 480 times and counts its clear passes' depth traffic; no depth draw and no depth sample yet | yes |
+| depth           | yes         | **all three halves** - a `Depth32Float` attachment cleared and read back, plus two triangles at known depths with a less-than state and writing enabled where the overlap reads the winner's colour *and* its depth, and a pixel outside the near triangle reads the far one's (50 of 50) | **executes, correctness NOT MEASURED** - Vitrail's `depthtex0-contract` runs on this path (the game's draws write depth, a pack pass samples it: 103 pipeline identities against Metal 3's 103, no fault), and no picture of it exists because the display cannot be photographed | yes |
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | yes in the reading the window takes: 775 texture binds a window and the picture is Metal 3's; the pixel-exact proof is the smoke's | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | as the texture row, 775 sampler binds a window | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | the window reports 2476 buffer binds, which are its uniforms, vertex and index buffers together; not separated | yes |

@@ -1923,6 +1923,59 @@ coloured quadrants read off a screenshot, and the display cannot be photographed
 void and the MRT frame's correctness is NOT MEASURED. The execution evidence - the same program set compiled
 into the same number of pipeline identities, the attachments described, the present made - is what exists.
 
+### The depth smoke: a compare that rejects, a write that records, and two faults of the smoke's own
+
+Depth had a clear and a readback. A pass that carries a depth attachment and empties it says nothing about a
+compare function or a depth write, so the smoke is now two triangles at known depths: a near lower-left one at
+0.25 and a far one at 0.75 covering the target, one pipeline that declares a `Depth32Float` attachment, one
+less-than state with writing enabled, and **the far triangle drawn second on purpose**. The near one has
+already written 0.25 where they overlap, so a compare rejects the later fragments and the overlap stays red,
+where a pass whose depth state did nothing would paint the whole target green.
+
+Four readings, and two of them are a pair: the overlap's colour (the near triangle) and its depth (0.25, so
+the winner wrote the buffer), then a pixel outside the near triangle reading the far triangle's colour and its
+0.75, so a compare that rejected *everything* fails there too. Measured on this machine: 50 of 50 probes (30
+cold processes and 20 warm repeats), every other smoke green, no failure stage.
+
+**Both faults the smoke has had were its own, and the second one was only visible to the warm population.**
+
+The first was the pixel it read: the near triangle's interior is `x ∈ [-1, 0]`, `y ≤ 1` and `y ≥ 2x + 1`, and
+the smoke's first version read `(8, 56)` - inside the far triangle only. So it reported a depth compare that
+had never been asked to reject anything. Getting there took two experiments that are worth keeping as method:
+a `Never` compare read black, which proved the *state* was applied (so the fault was not the state), and
+reversing the draw order changed nothing, which proved the failing pixel was not about order either.
+
+The second was a release. The smoke released the depth-stencil state it was handed, and that state is
+**cached**: `MTLBuiltinPipelines.ensureDepthStencilState` hands the same object to the engine's own clears for
+the life of the process. The second probe of a warm process then died inside `objc_msgSend` with the selector
+`release` and a receiver that was already a freed pointer - the crash report's own registers carrying the
+selector string `release` and a garbage receiver. The engine already gets this right (`Metal4CompiledRenderPipeline.close`
+says in as many words that the state belongs to the compilation context, and releases it once with the rest of
+the context), so the smoke was the only thing wrong. **A fault that only repeats can find**: one probe per
+process would have passed for ever.
+
+With the compare and the write measured, the frame path's depth road was run as a fixture: Vitrail's
+`depthtex0-contract`, whose composite samples the `depthtex0` the terrain wrote and writes a derived value to
+another target.
+
+```text
+m3: renderPasses=330  clearEncoders=0    depthAttachments=150  pipelineIdentities=103  loadedMiB=3059.7   storedMiB=6252.8
+m4: renderPasses=540  clearEncoders=150  depthAttachments=510  pipelineIdentities=103  loadedMiB=10653.4  storedMiB=15955.9
+m3: 8.05 ms a frame, 124.2 fps, gpuP50 5.27    m4: 8.08 ms a frame, 123.8 fps, gpuM4P50 3.14
+```
+
+The same 103 programs, 18 logical passes a frame against Metal 3's 11, 30 presents, no fault and no refusal:
+the game's own draws write depth on this path and a pack pass samples it afterwards. **The picture is NOT
+MEASURED** - the fixture's acceptance is a picture and the display cannot be photographed - so what this says
+is that the road runs, not that the image is right.
+
+**And the comparison needed teaching for this A/B.** Its drift check refuses two arms whose render-pass and
+depth-attachment counts differ by more than 2 per cent, because a drifted scene reads like a win; across
+generations those counters differ *by design* (this path opens a native encoder per logical pass and a pass per
+clear), so the run was refused as drift. The comparison now reads `executingGeneration` from each arm's probe
+line and stands that check aside where two generations executed, saying where the scene guard moves to - the
+harness's own world, pack, target and window. Two arms of one generation are judged exactly as before.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
