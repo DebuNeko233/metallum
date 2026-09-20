@@ -1169,4 +1169,89 @@ for needle, why in (
     if needle not in harness:
         raise SystemExit("metal 4 provider: " + why)
 
+
+# --- the compute road, which is the door the client's compute fixture reaches ------------------------------
+# Vitrail's `compute-storage-contract` stopped on this path at "Active Metal execution state does not support
+# compute", which is the neutral bridge asking its question and getting no. So this generation's state answers
+# it now, and what is pinned here is the shape of that answer: the translation is the SHARED one, the pipeline
+# state is cached by the context that caches the function it was made from, and the handle owns a table without
+# owning the state.
+COMPUTE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4ComputePipeline.java"
+CONTEXT = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4CompilationContext.java"
+for path in (COMPUTE, CONTEXT):
+    if not path.is_file():
+        raise SystemExit(f"metal 4 provider: {path.name} is missing, so the compute road has no implementation")
+
+compute = COMPUTE.read_text(encoding="utf-8")
+context = CONTEXT.read_text(encoding="utf-8")
+
+
+def without_comments(source: str) -> str:
+    """The source with comments and string literals removed, so a rule reads what a compiler reads."""
+    stripped = re.sub(r"/\*[\s\S]*?\*/", "", source)
+    stripped = re.sub(r"//[^\n]*", "", stripped)
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', stripped)
+
+
+for needle, why in (
+    ("implements MetalExecutionState, MetalComputeCompiler",
+     "the Metal 4 state does not answer the neutral compute-compile question, which is the one Vitrail's "
+     "fixture asks"),
+    ("public Object compileCompute(final MetalDevice device, final String label, final ByteBuffer spirv)",
+     "the compute compile's neutral signature is gone"),
+    ("MetalComputeTranslator.translate(spirv)",
+     "the state does not translate through the shared layer, so this generation has grown its own SPIR-V "
+     "reflection or has none"),
+    ("return new Metal4ComputePipeline(label, translated.entryPoint(), pipelineState, translated.bindings());",
+     "the compile does not answer this generation's pipeline resource, so a dispatch has nothing to name"),
+):
+    if needle not in state:
+        raise SystemExit("metal 4 provider: " + why)
+
+# One translation, two generations: the Metal 4 compute path may not carry SPIRV-Cross of its own.
+for name, source in (("Metal4ExecutionState", state), ("Metal4ComputePipeline", compute)):
+    if "spvc_" in without_comments(source):
+        raise SystemExit(f"metal 4 provider: {name} carries its own SPIRV-Cross calls, so the compute "
+                         "translation is duplicated rather than shared")
+
+for needle, why in (
+    ("synchronized MemorySegment getOrCompileComputePipeline(final String msl, final String entryPoint)",
+     "the context does not compile a compute pipeline state, so every handle makes its own"),
+    ("this.device.newComputePipelineState(getOrCompileFunction(key.msl(), key.entryPoint()))",
+     "the pipeline state is not made from the cached native function, so the function cache is bypassed"),
+    ("this.computePipelineCache.clear();",
+     "the compute pipeline states are never released, so a session leaks one per kernel"),
+):
+    if needle not in context:
+        raise SystemExit("metal 4 provider: " + why)
+if context.index("for (MemorySegment pipeline : this.computePipelineCache.values())") > \
+        context.index("this.computePipelineCache.clear();"):
+    raise SystemExit("metal 4 provider: the compute pipeline cache is cleared before it is released")
+# Read inside the method, not file-wide: the function cache's key is the same text, and a file-wide search would
+# stay green while this cache lost the profile from its own.
+compile_pipeline_body = body_of(context, "synchronized MemorySegment getOrCompileComputePipeline(")
+if "new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token())" \
+        not in compile_pipeline_body:
+    raise SystemExit("metal 4 provider: the compute pipeline cache is not keyed by the profile, so a state "
+                     "compiled for one MSL profile would be handed to a session on another")
+if "this.computePipelineCache.clear();" not in body_of(context, "synchronized void clearCachesAfterGpuCompletion()"):
+    raise SystemExit("metal 4 provider: the compute pipeline cache is not released with the caches, so it "
+                     "outlives the completion that made the release legal")
+
+for needle, why in (
+    ("private final Map<String, MetalComputeTranslator.Binding> bindings;",
+     "the handle does not store the shared translation's bindings, so a dispatch would have to re-reflect"),
+    ("Map<String, MetalComputeTranslator.Binding> bindings() {",
+     "the handle does not answer with its bindings, so a dispatch cannot fill a table from them"),
+    ("MTL4ArgumentTable.create(device, this.bufferSlots, this.textureSlots, this.samplerSlots)",
+     "the handle's table is not sized to the argument counts the translation gave it"),
+):
+    if needle not in compute:
+        raise SystemExit("metal 4 provider: " + why)
+# The state is shared and this handle does not own it: a close that released it would free an object another
+# handle is still dispatching through.
+if "ObjC.release" in without_comments(compute):
+    raise SystemExit("metal 4 provider: the compute pipeline handle releases a native object, but the pipeline "
+                     "state belongs to the context and is shared by every handle to the same kernel")
+
 print("Metal 4 execution provider contract: PASS")

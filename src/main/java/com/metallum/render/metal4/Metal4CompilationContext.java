@@ -62,6 +62,7 @@ final class Metal4CompilationContext {
     private final MTLDevice device;
     private final Map<ShaderCompilationKey, IntermediaryShaderModule> shaderCache = new HashMap<>();
     private final Map<MslFunctionKey, MemorySegment> functionCache = new HashMap<>();
+    private final Map<MslFunctionKey, MemorySegment> computePipelineCache = new HashMap<>();
     private final Map<Long, MemorySegment> depthStencilStates = new HashMap<>();
     private final Map<RenderPipeline, Metal4CompiledRenderPipeline> compiledPipelines = new IdentityHashMap<>();
     private final ArrayDeque<Metal4CompiledRenderPipeline> retired = new ArrayDeque<>();
@@ -110,8 +111,22 @@ final class Metal4CompilationContext {
                 key -> this.device.newFunction(key.msl(), key.entryPoint()));
     }
 
-    /** A depth-stencil state for the comparison and write flags, made once and kept. */
-    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
+    /**
+     * The native compute pipeline state for a kernel, compiled once per (MSL, entry point, profile).
+     * <p>
+     * A compute pipeline state is a compiled object with no draw-time parameters, so it is the same kind of thing
+     * as the native function it is made from and is keyed the same way - which is what makes two handles to one
+     * kernel share one state on this path, where the Metal 3 bridge makes a state per handle. Its lifetime is
+     * this context's for that reason: it is released with the functions, once the caller has established GPU
+     * completion, rather than by whichever handle finished with it first.
+     */
+    synchronized MemorySegment getOrCompileComputePipeline(final String msl, final String entryPoint) {
+        return this.computePipelineCache.computeIfAbsent(
+                new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token()),
+                key -> this.device.newComputePipelineState(getOrCompileFunction(key.msl(), key.entryPoint())));
+    }
+
+    /** A depth-stencil state for the comparison and write flags, made once and kept. */    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {
         long key = (compareFunction.value << 1) | (writeDepth ? 1L : 0L);
         MemorySegment cached = this.depthStencilStates.get(key);
         if (cached != null) {
@@ -190,6 +205,12 @@ final class Metal4CompilationContext {
             }
         }
         this.functionCache.clear();
+        for (MemorySegment pipeline : this.computePipelineCache.values()) {
+            if (!ObjC.isNil(pipeline)) {
+                ObjC.release(pipeline);
+            }
+        }
+        this.computePipelineCache.clear();
     }
 
     /** Releases the compilation state itself, including the depth-stencil states it made. */
