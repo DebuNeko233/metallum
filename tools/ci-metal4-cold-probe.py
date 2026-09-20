@@ -343,6 +343,13 @@ for needle, why in (
     ("COLOR_ATTACHMENTS.sendPtr(descriptor)", "the pass descriptor's colour attachments are never reached"),
     ("ATTACHMENT_AT.sendPtr(attachments, index)",
      "only one attachment is ever described, so a second colour target has nowhere to go"),
+    ("if (color == null || ObjC.isNil(color.texture())) {",
+     "a colour slot the caller did not fill is not recognised as unused, so the loop dereferences a null Color "
+     "- measured: this was a NullPointerException that killed the whole frame on Vitrail's MRT fixture, whose "
+     "coverage path hands the backend unused slots before the attachment it does write"),
+    ("                    continue;\n                }\n                MemorySegment attachment = ATTACHMENT_AT",
+     "an unused colour slot is not left empty at its own index, so the attachments that are there would move to "
+     "other slots' numbers"),
     ("SET_LOAD_ACTION.send(attachment, loadAction(color.contents(), color.clear() != null));",
      "the load action is not the mapping's answer, so a clear and a load are the same call"),
     ("SET_STORE_ACTION.send(attachment, storeAction(color.contents()));",
@@ -439,6 +446,14 @@ if "DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)" 
     raise SystemExit("cold-probe harness: the multi-target smoke draws with the engine encoder's five-argument "
                      "selector, which this probe's drawPrimitives:vertexStart:vertexCount: is not - the extra "
                      "arguments land in registers the selector never reads")
+for needle, why in (
+    ("MTL4RenderEncoder.Color[] withUnused = {", "the attachment smoke no longer describes an unused slot"),
+    ("                    null,\n", "the attachment smoke has no unused slot in the array it describes"),
+    ('"the unused-slot pass"', "the attachment smoke's unused-slot pass has no name, so a refusal from it would "
+                               "not say which pass"),
+):
+    if needle not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
 if "EXPECTED_MRT_PIXELS = {" not in engine_probe_source:
     raise SystemExit("cold-probe harness: the multi-target smoke has no table of the values its slots are "
                      "compared against, so the readback is a claim about nothing")

@@ -1705,6 +1705,7 @@ public final class MTL4Probe {
         MTL4RenderEncoder clearPass = null;
         MTL4RenderEncoder reusedPass = null;
         MTL4RenderEncoder discardPass = null;
+        MTL4RenderEncoder unusedPass = null;
         try {
             queue = NEW_QUEUE.sendPtr(device.handle());
             allocator = NEW_ALLOCATOR.sendPtr(device.handle());
@@ -1765,6 +1766,24 @@ public final class MTL4Probe {
                 return false;
             }
             discardPass.endEncoding();
+
+            // A slot the caller reserved and did not fill, which is what an MRT descriptor looks like when the
+            // program behind it writes fewer outputs than the pass carries. Measured: this loop used to
+            // dereference the null and the whole frame died with a NullPointerException, and the client reached
+            // it on Vitrail's MRT fixture, whose coverage path hands the backend two unused slots before the
+            // attachment it does write. The filled slots have to keep their own indices, which the readback
+            // below says twice: slot 0 still holds its first pass's colour, and the third entry of this array
+            // re-clears the texture it names.
+            MTL4RenderEncoder.Color[] withUnused = {
+                    new MTL4RenderEncoder.Color(targets[0], AttachmentContents.CARRIED, null),
+                    null,
+                    MTL4RenderEncoder.Color.cleared(targets[1], reclearedColor())};
+            unusedPass = openPass(device, buffer, withUnused, "the unused-slot pass");
+            if (unusedPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            unusedPass.endEncoding();
             END.send(buffer);
 
             try (Arena arena = Arena.ofConfined()) {
@@ -1812,6 +1831,9 @@ public final class MTL4Probe {
             }
             if (discardPass != null) {
                 discardPass.close();
+            }
+            if (unusedPass != null) {
+                unusedPass.close();
             }
             for (MemorySegment target : targets) {
                 releaseIfPresent(target);

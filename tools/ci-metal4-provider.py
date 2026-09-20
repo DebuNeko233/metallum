@@ -248,6 +248,10 @@ for needle, why in (
 # They are pinned through the single mapping that decides them, so a pass that counted a load it did not ask for
 # (or a store it discarded) fails here rather than turning into a wrong reading of what a frame costs.
 for needle, why in (
+    ("MTL4RenderEncoder.Color[] colors = new MTL4RenderEncoder.Color[attachments.size()];",
+     "the pass no longer describes one colour slot per attachment the descriptor has, so an unused slot would "
+     "be compacted away and every attachment after it would sit at another slot's number - measured on "
+     "Vitrail's MRT fixture, whose unused slots come before the attachment that is written"),
     ("final @Nullable AttachmentContents[] contents) {",
      "the pass constructor no longer takes what the frame path stated for it, so nothing can reach the "
      "descriptor's load and store actions"),

@@ -186,9 +186,15 @@ public final class MTL4RenderEncoder implements AutoCloseable {
             }
             for (int index = 0; index < colors.length; index++) {
                 Color color = colors[index];
-                if (ObjC.isNil(color.texture())) {
-                    throw new Refused("colorAttachment", which + "'s colour attachment " + index + " is nil, and a"
-                            + " pass cannot be described around a texture that is not there");
+                if (color == null || ObjC.isNil(color.texture())) {
+                    // An unused slot - one the game reserved and did not fill - is left empty at its own index
+                    // rather than compacted or refused. Measured on Vitrail's MRT fixture, whose opaque coverage
+                    // path hands the backend two unused slots before the attachment it does write: the first
+                    // version dereferenced the null and the whole frame died with a NullPointerException from
+                    // this loop. The Metal 3 descriptor loop skips the same slot the same way, and compacting
+                    // would be worse than refusing - the attachments that are there would move to other slots'
+                    // numbers and the picture would be a permutation of the right one.
+                    continue;
                 }
                 MemorySegment attachment = ATTACHMENT_AT.sendPtr(attachments, index);
                 if (ObjC.isNil(attachment)) {
