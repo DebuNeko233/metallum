@@ -698,6 +698,30 @@ today and what it becomes.
 | `updateFence:afterStages:` / `waitForFence:beforeStages:` | `barrierAfterEncoderStages:beforeEncoderStages:` and `barrierAfterStages:beforeQueueStages:` on the encoders | the engine's fence chain is what P1's read/write description was built for; the producer barrier is already encoded and measured in the probe's sampled-texture smoke - a render pass that samples what the pass before it wrote, in one command buffer |
 | `MTLFXSpatialScaler` (+ `encodeToCommandBuffer:` on a Metal 3 buffer) | `MTL4FXSpatialScaler` (on the Metal 4 buffer), built by `MTLFXSpatialScalerDescriptor.newSpatialScalerWithDevice:compiler:` | the Metal 4 variants ship in the same framework |
 
+### What the headers say about the frame's lifetime, before a line of the frame encoder is written
+
+Read off this machine's SDK (`MacOSX.sdk/.../Metal.framework/Headers`) rather than remembered, because the
+frame's ring is the one place where a guess is a use-after-free:
+
+- `MTL4CommandAllocator.h`: `reset` "marks the command allocator's heaps for reuse", and "you are responsible
+  to ensure that all command buffers with memory originating from this allocator instance are complete before
+  calling resetting it". So the slot's completion is the caller's proof, not the framework's.
+- `MTL4CommandBuffer.h`: "Command allocators only service a single command buffer at a time", and "you can
+  safely reuse command allocators after ending the command buffer using it by calling `endCommandBuffer`" -
+  while `endCommandBuffer` is also the call that "allows you to reuse the `MTL4CommandAllocator` to start
+  servicing other command buffers", and committing a buffer that was never ended is an error.
+- `MTL4CommandEncoder.h`: a dependency between encoders is a barrier the caller encodes
+  (`barrierAfterStages:beforeQueueStages:visibilityOptions:` for the producer direction), which the sampled
+  smoke above now exercises on the real device.
+
+What that fixes for Phase 4: the frame's ring is **allocators plus the completion value each slot's commit
+signalled** - the shape `Metal4Path` already runs today (`Metal4Path.java:371-381`: wait the incoming slot's
+own value, then `reset`, then `beginCommandBufferWithAllocator:`) - with one command buffer re-begun per frame,
+and `reset` only ever called after that slot's value has been observed. The neutral frame encoder owns that
+ring, its own command buffer and its own shared event, so the frame path does not grow a second lifetime model
+beside the sidecar's (§31), and the sidecar's statics collapse into the encoder when the frame path takes the
+present over (§107).
+
 ## The slices, in order
 
 Each slice is measured before the next one starts, with the harness and the recipe in
