@@ -87,12 +87,20 @@ final class Metal4ExecutionState implements MetalExecutionState, MetalComputeCom
         Objects.requireNonNull(spirv, "spirv");
 
         MetalComputeTranslator.Translated translated = MetalComputeTranslator.translate(spirv);
+        // Asked first and named separately, because "this device would not make the function" and "it would not
+        // make a pipeline from the function" are two different failures and the Metal 3 path words them apart
+        // too. The context guards the same value before it builds anything, so a nil can never reach the
+        // pipeline factory; this is the message the caller reads.
+        if (ObjC.isNil(this.compilation.getOrCompileFunction(translated.msl(), translated.entryPoint()))) {
+            throw new IllegalStateException("Failed to compile Metal compute function for " + label);
+        }
         MemorySegment pipelineState = this.compilation.getOrCompileComputePipeline(
                 translated.msl(), translated.entryPoint());
         if (ObjC.isNil(pipelineState)) {
             throw new IllegalStateException("Failed to create Metal compute pipeline for " + label);
         }
-        return new Metal4ComputePipeline(label, translated.entryPoint(), pipelineState, translated.bindings());
+        return new Metal4ComputePipeline(device, label, translated.entryPoint(), pipelineState,
+                translated.bindings());
     }
 
     /**

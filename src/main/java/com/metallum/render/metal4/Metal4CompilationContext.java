@@ -123,7 +123,19 @@ final class Metal4CompilationContext {
     synchronized MemorySegment getOrCompileComputePipeline(final String msl, final String entryPoint) {
         return this.computePipelineCache.computeIfAbsent(
                 new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token()),
-                key -> this.device.newComputePipelineState(getOrCompileFunction(key.msl(), key.entryPoint())));
+                key -> {
+                    MemorySegment function = getOrCompileFunction(key.msl(), key.entryPoint());
+                    // A function this device would not make is nil, and `newComputePipelineState` is not a
+                    // question a nil can be asked: Metal asserts (`computeFunction must not be nil`) and the
+                    // process dies rather than the compile failing. Measured on this machine, because the
+                    // guard's absence is invisible until a pack's kernel is refused - which the device does do,
+                    // and says so in the log before this line is reached. The null answer is not cached by
+                    // `computeIfAbsent`, so a later compile of the same kernel asks again rather than
+                    // remembering the refusal.
+                    return ObjC.isNil(function)
+                            ? MemorySegment.NULL
+                            : this.device.newComputePipelineState(function);
+                });
     }
 
     /** A depth-stencil state for the comparison and write flags, made once and kept. */    synchronized MemorySegment depthStencilState(final MTLCompareFunction compareFunction, final boolean writeDepth) {

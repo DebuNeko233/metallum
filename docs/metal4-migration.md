@@ -2138,16 +2138,17 @@ profile with, and the Metal 3 bridge now calls it. Behaviour is unchanged: same 
 same limits, same error text. The binding kind is the shared `MetalResourceBinding.ResourceKind` rather than a
 private enum saying the same four things.
 
-**The state compiles, the context caches.** `Metal4ExecutionState implements MetalComputeCompiler`: translate,
-`newFunction` for the MSL, `newComputePipelineState` for the function. The function cache already keys a native
-function by (MSL, entry point, profile), so a compute pipeline state is keyed by exactly that and cached beside
-it - which is why two handles to one kernel share one native state on this path, and why the state's lifetime is
-the compilation context's: it is released with the functions in `clearCachesAfterGpuCompletion`, once the caller
-has established GPU completion. `Metal4ComputePipeline` is the handle the caller holds, and it owns the one
-thing Metal 3's handle does not need: **the argument table**. This command model has no per-resource setters, so
-a dispatch is a table and nothing else; the table is made on first use, sized to the argument counts the
-translation gave that kernel, and released by `close()`. The pipeline state deliberately is not - a handle that
-released it would free an object another handle is still dispatching through.
+**The state compiles, the context caches, and the handle holds a reference.** `Metal4ExecutionState implements
+MetalComputeCompiler`: translate, `newFunction` for the MSL, `newComputePipelineState` for the function. The
+function cache already keys a native function by (MSL, entry point, profile), so a compute pipeline state is
+keyed by exactly that and cached beside it - which is why two handles to one kernel share one native state on
+this path. Sharing is a refcount and not a hand-over: `Metal4ComputePipeline` retains the state, so the context
+releasing its own reference in `clearCachesAfterGpuCompletion()` (which the game reaches on **every resource
+reload**, F3+T, through `GpuDevice.clearPipelineCache`) cannot free an object a live handle is dispatching with,
+and the handle's `close()` hands its reference to the device's destruction queue the way the Metal 3 handle hands
+over the state it owns outright. The handle also owns the one thing Metal 3's does not need: **the argument
+table**. This command model has no per-resource setters, so a dispatch is a table and nothing else; it is made on
+first use, sized to the argument counts the translation gave that kernel, and released by `close()`.
 
 **And the dispatch is that table, filled from the translation's own numbering.** `Metal4FrameEncoder` now carries
 `MetalFrameComputeCommands`: every binding is resolved and declared resident *before* the encoder opens (a
@@ -2183,6 +2184,19 @@ in-game F2 screenshot is a framebuffer readback and therefore the one picture ro
 display capture is a flat colour), and this session could not press it - macOS refused the automation
 (`execution error: 未获得授权将Apple事件发送给System Events (-1743)`), so a human has to press F2 for that half.
 The dispatch road and the chain's completion are measured; the pixels are not.
+
+**Two faults were caught by an adversarial review of this round's own commits, before either reached a client,
+and both are fixed and pinned.** The first: the pipeline-state cache asked `newComputePipelineState` to build from
+a function it had not checked, and a device that refuses a kernel's MSL answers nil for that function - which
+Metal asserts on (`computeFunction must not be nil`) and the process dies with SIGABRT rather than the compile
+failing. Every sibling call site in the engine guards exactly that value; the new one did not. It now does, in the
+cache, and `compileCompute` names a refused **function** and a refused **pipeline** as the two different failures
+the Metal 3 path already words apart. The second: the handle held the shared pipeline state as a borrowed
+pointer, so the context's cache clear - one F3+T away through `ShaderManager.apply` - would have freed the state
+under a live pack handle, and the next dispatch would have messaged freed memory. The retain and the deferred
+release above are that fix. Both are mutation-proved in the provider contract (a nil function reaching the
+factory, a borrowed pointer, a handle that never gives its reference back, and a handle that releases where it
+stands: four mutations, four caught).
 
 Two MSL refusals appear in the same startup, and neither is this round's: `'sampler' attribute parameter is out
 of bounds: must be between 0 and 15` and `'id' attribute only applies to non-static data members` are the

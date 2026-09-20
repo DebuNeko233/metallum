@@ -1202,7 +1202,7 @@ for needle, why in (
     ("MetalComputeTranslator.translate(spirv)",
      "the state does not translate through the shared layer, so this generation has grown its own SPIR-V "
      "reflection or has none"),
-    ("return new Metal4ComputePipeline(label, translated.entryPoint(), pipelineState, translated.bindings());",
+    ("return new Metal4ComputePipeline(device, label, translated.entryPoint(), pipelineState,",
      "the compile does not answer this generation's pipeline resource, so a dispatch has nothing to name"),
 ):
     if needle not in state:
@@ -1217,7 +1217,7 @@ for name, source in (("Metal4ExecutionState", state), ("Metal4ComputePipeline", 
 for needle, why in (
     ("synchronized MemorySegment getOrCompileComputePipeline(final String msl, final String entryPoint)",
      "the context does not compile a compute pipeline state, so every handle makes its own"),
-    ("this.device.newComputePipelineState(getOrCompileFunction(key.msl(), key.entryPoint()))",
+    ("MemorySegment function = getOrCompileFunction(key.msl(), key.entryPoint());",
      "the pipeline state is not made from the cached native function, so the function cache is bypassed"),
     ("this.computePipelineCache.clear();",
      "the compute pipeline states are never released, so a session leaks one per kernel"),
@@ -1248,11 +1248,38 @@ for needle, why in (
 ):
     if needle not in compute:
         raise SystemExit("metal 4 provider: " + why)
-# The state is shared and this handle does not own it: a close that released it would free an object another
-# handle is still dispatching through.
+# The state is SHARED, so a handle holds a reference rather than the object: it retains one of its own, and its
+# close hands that reference to the device's deferred release. Both halves are pinned, because either one alone
+# is a lifetime fault - no retain means a borrowed pointer into a cache the game clears on every resource reload
+# (F3+T reaches `clearCachesAfterGpuCompletion`), and a direct `ObjC.release` means a handle that frees an object
+# another handle is still dispatching through, or frees its own while encoded work may still name it.
+for needle, why in (
+    ("this.pipelineState = ObjC.retain(Objects.requireNonNull(pipelineState, \"pipelineState\"));",
+     "the handle holds the pipeline state without a reference of its own, so a cache clear frees an object it "
+     "is still dispatching with"),
+    ("this.device.queueResourceRelease(this.pipelineState);",
+     "the handle never gives its reference back, so every compiled kernel leaks its state"),
+):
+    if needle not in compute:
+        raise SystemExit("metal 4 provider: " + why)
 if "ObjC.release" in without_comments(compute):
-    raise SystemExit("metal 4 provider: the compute pipeline handle releases a native object, but the pipeline "
-                     "state belongs to the context and is shared by every handle to the same kernel")
+    raise SystemExit("metal 4 provider: the compute pipeline handle releases a native object where it stands, "
+                     "but work already encoded may still name it - the release belongs on the device's "
+                     "destruction queue")
+if "queueResourceRelease(" not in body_of(compute, "public void close()"):
+    raise SystemExit("metal 4 provider: the handle's close does not hand its reference to the state back, so a "
+                     "dispatched kernel's state outlives every handle to it")
+
+# And the nil a refused function answers with never reaches the pipeline factory: Metal asserts on
+# `computeFunction must not be nil` and kills the process, which is not a compile the client can fall back from.
+compile_pipeline = body_of(context, "synchronized MemorySegment getOrCompileComputePipeline(")
+if "ObjC.isNil(function)" not in compile_pipeline or "MemorySegment.NULL" not in compile_pipeline:
+    raise SystemExit("metal 4 provider: the compute pipeline cache asks the factory to build a state from a "
+                     "function it has not checked, and a nil function aborts the process instead of failing the "
+                     "compile")
+if "Failed to compile Metal compute function for " not in state:
+    raise SystemExit("metal 4 provider: a refused function is not named as itself, so a caller cannot tell a "
+                     "kernel this device would not compile from a pipeline it would not make")
 
 
 # --- and the dispatch, which is the half after the compile -------------------------------------------------
