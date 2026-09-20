@@ -136,6 +136,18 @@ public final class MTLFXSpatialScalerDescriptor implements AutoCloseable {
         return "";
     }
 
+    /**
+     * The descriptor object itself, which is what the Metal 4 factory is sent to.
+     * <p>
+     * Exposed because the Metal 4 scaler is made by a selector this class does not carry - the compiler argument
+     * belongs to that generation's API - and the object a factory is sent to is the descriptor, not its class.
+     * The alternative was a second copy of the descriptor's configuration inside the Metal 4 layer, which is two
+     * places for one configuration to be wrong.
+     */
+    public MemorySegment handle() {
+        return this.handle;
+    }
+
     @Override
     public void close() {
         ObjC.release(handle);

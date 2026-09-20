@@ -190,4 +190,88 @@ require("the scaler is given it before it encodes", (ROOT / "src/main/java/com/m
     "if (!scaler.fence(fence) && !fenceRefused) {",
 ))
 
+# ---------------------------------------------------------------------------
+# The Metal 4 scaler is a second path and not a parameter of the first
+#
+# Section 80: the logical configuration key may be shared, the native objects may not, because a scaler compiles
+# its own pipeline and one generation's compiled pipeline is not the other's. So the Metal 4 path has its own
+# class, its own cache and its own factory - and the factory needs a compiler object, which is the whole of the
+# API difference the header declares (macOS 26's MTL4FXSpatialScaler.h takes an MTL4CommandBuffer, and the
+# descriptor's Metal 4 spelling is `newSpatialScalerWithDevice:compiler:`).
+#
+# Its availability question is a functional one on purpose. `+supportsMetal4FX:` is Apple's own gate, and a
+# device that answers yes can still refuse a scaler - so the answer reported to the capability record is the one
+# that actually made a scaler and let it go. A `respondsTo`-only answer would tell the record that choosing
+# Metal 4 keeps the render-scale setting while the device refuses every scaler it is asked for.
+#
+# And there is no fence on this path, which is a difference the two generations' APIs force rather than a
+# preference: Metal 4 has no fence object in this engine at all - Metal4Fence records that the new command model
+# orders work with encoder barriers and queue events - so what orders the scaler against the passes around it is
+# the one command buffer's encode order. The pin holds that the Metal 4 scaler is never handed a Metal 3 fence.
+# ---------------------------------------------------------------------------
+METAL4_FX = ROOT / "src/main/java/com/metallum/mtl/metal4/Metal4Fx.java"
+M4_SCALER = ROOT / "src/main/java/com/metallum/mtl/metal4/MTL4FXSpatialScaler.java"
+M4_COMPILER = ROOT / "src/main/java/com/metallum/mtl/metal4/MTL4Compiler.java"
+for path in (METAL4_FX, M4_SCALER, M4_COMPILER):
+    if not path.is_file():
+        raise SystemExit(f"the Metal 4 MetalFX path is missing {path.name}, so one generation of the scaler "
+                         "has no implementation")
+
+metal4_fx = METAL4_FX.read_text(encoding="utf-8")
+m4_scaler = M4_SCALER.read_text(encoding="utf-8")
+m4_compiler = M4_COMPILER.read_text(encoding="utf-8")
+m4_encoder = (ROOT / "src/main/java/com/metallum/render/metal4/Metal4FrameEncoder.java").read_text(encoding="utf-8")
+
+require("the Metal 4 scaler asks Apple's Metal 4 gate", metal4_fx, (
+    'Msg.of("supportsMetal4FX:", JAVA_LONG, ADDRESS)',
+    "if (!MTL4Probe.respondsTo(scalerClass, \"supportsMetal4FX:\")) {",
+    "SUPPORTS_METAL4_FX.sendLong(scalerClass, device) == 0L",
+))
+require("the Metal 4 factory is the header's", metal4_fx, (
+    'Msg.of("newSpatialScalerWithDevice:compiler:", ADDRESS, ADDRESS, ADDRESS)',
+    'MTL4Probe.respondsTo(descriptor.handle(),\n                    "newSpatialScalerWithDevice:compiler:")',
+    "NEW_SCALER_WITH_COMPILER.sendPtr(descriptor.handle(), device,",
+))
+require("availability is a functional question", metal4_fx, (
+    "MTL4Compiler probeCompiler = MTL4Compiler.create(new MTLDevice(device));",
+    "MTL4FXSpatialScaler probe = makeScaler(device, probeCompiler, new Configuration(1280, 720, 1920, 1080,",
+    "supported = true;",
+))
+require("the Metal 4 path keeps its own scalers", metal4_fx, (
+    "private final Map<Configuration, MTL4FXSpatialScaler> scalers = new LinkedHashMap<>();",
+    "private final Map<Configuration, Boolean> refused = new LinkedHashMap<>();",
+    "this.scalers.put(configuration, scaler);",
+))
+if "MetalFx." in metal4_fx or "MTLFXSpatialScaler " in metal4_fx:
+    raise SystemExit(
+        "the Metal 4 scaler path names the Metal 3 one, so the two generations share a native scaler - section 80 "
+        "forbids it, and a shared compiled pipeline is the shape that would make it look fine until a resize"
+    )
+require("the Metal 4 scaler encodes into a Metal 4 command buffer", m4_scaler, (
+    'Msg.ofVoid("encodeToCommandBuffer:", ADDRESS)',
+    "ENCODE.send(this.handle, commandBuffer);",
+    'RESPONDS_TO_SELECTOR.sendLong(this.handle, ObjC.selector("setInputContentOriginX:"))',
+))
+if "setFence:" in m4_scaler:
+    raise SystemExit(
+        "the Metal 4 scaler is handed a fence, and Metal 4 has no fence object in this engine: the ordering it "
+        "would be given does not exist on this path"
+    )
+require("the compiler factory is the header's and every failure is an answer", m4_compiler, (
+    'Msg.of("newCompilerWithDescriptor:error:", ADDRESS, ADDRESS, ADDRESS)',
+    'device.respondsTo("newCompilerWithDescriptor:error:")',
+    "if (ObjC.isNil(made)) {",
+))
+require("the frame path uses its own scaler and no fence", m4_encoder, (
+    "this.metalFx = Metal4Fx.create(nativeDevice);",
+    "return !this.closed && this.metalFx != null;",
+    "return this.metalFx.scale(this.ring.commandBuffer(), color.nativeHandle(), output.nativeHandle(),",
+    "if (this.metalFx != null) {\n            this.metalFx.close();",
+))
+if "MetalFx.scale(" in m4_encoder:
+    raise SystemExit(
+        "the Metal 4 frame path calls the Metal 3 scaler's encode, which takes an MTLCommandBuffer - the wrong "
+        "object for this command model"
+    )
+
 print("MetalFX availability contract: PASS")

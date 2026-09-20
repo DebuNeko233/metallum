@@ -240,8 +240,16 @@ GENERATION_REACH: dict[str, tuple[str, ...]] = {
         "com.metallum.render.metal3.Metal3ExecutionProvider",
         "com.metallum.render.metal4.Metal4ExecutionProvider",
     ),
-    # The device's own capability question, which is what the selector asks before a generation is chosen.
-    "com/metallum/render/execution/MetalDeviceCapabilities.java": ("com.metallum.mtl.metal4.MTL4Probe",),
+    # The device's own capability question, which is what the selector asks before a generation is chosen. The
+    # MetalFX clause joined the probe when the Metal 4 scaler landed: the record has to ask whether THIS
+    # generation can scale, and the answer is the Metal 4 path's own functional question - the Metal 3 answer is
+    # a different class, a different factory and a different encode (section 80). One more name on a line that
+    # already crossed is the honest way to record it: the alternative was to leave the record asking a
+    # `respondsTo` and report a scaler that does not exist as one that does.
+    "com/metallum/render/execution/MetalDeviceCapabilities.java": (
+        "com.metallum.mtl.metal4.MTL4Probe",
+        "com.metallum.mtl.metal4.Metal4Fx",
+    ),
     # The Metal 4 skeleton the earlier milestones left in place: the capability advertisement, its probe at
     # device creation, and the present path behind its developer switch.
     "com/metallum/render/Metal4.java": ("com.metallum.mtl.metal4.MTL4Probe",),

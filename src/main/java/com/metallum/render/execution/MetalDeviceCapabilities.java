@@ -1,6 +1,7 @@
 package com.metallum.render.execution;
 
 import com.metallum.mtl.metal4.MTL4Probe;
+import com.metallum.mtl.metal4.Metal4Fx;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.objc.ObjC;
 import com.metallum.render.Metal4;
@@ -117,7 +118,11 @@ public record MetalDeviceCapabilities(
                 factory(device, "newTextureViewPoolWithDescriptor:error:"),
                 factory(device, "newCompilerWithDescriptor:error:"),
                 MetalFx.spatialSupported(device.handle()),
-                MetalFx.metal4SpatialSupported(device.handle()),
+                // The Metal 4 scaler's own question, which is a functional one: the class question plus a
+                // scaler actually made with a compiler and released. It is not the same answer as Metal 3's and
+                // not the same object - section 80 - and it is asked here because the answer decides whether
+                // choosing Metal 4 would cost the player the render-scale setting.
+                Metal4Fx.supported(device.handle()),
                 MetalShaderLanguageProbe.newestMetal3Profile(device)
         );
     }

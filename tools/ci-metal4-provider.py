@@ -220,20 +220,33 @@ built = encoder.index("new Metal4RenderPass(", read_facts)
 if not read_facts < cleared < built:
     raise SystemExit("metal 4 provider: what one pass was told is read and cleared after that pass is built, so it "
                      "would leak onto the next")
-# The other three members of the contract answer what is true of this generation rather than pretending. The
-# storage-image boundary is already encoded after every pass on this path, so accepting the flag is not a silent
-# drop; the scaler does not exist until the Metal 4 MetalFX milestone, and false is the answer that sends the
-# caller to its own fallback instead of claiming a picture was scaled.
+# The other three members of the contract answer what is true of this generation. The storage-image boundary is
+# already encoded after every pass on this path, so accepting the flag is not a silent drop. The scaler used to be
+# a literal `false` with the Metal 4 MetalFX milestone named as the reason; that milestone has landed, so the pins
+# moved to the invariants that make the answer honest: the capability is the scaler path's own existence - the
+# device's functional answer, never a literal - and the scale is the generation's own object rather than a
+# borrowed one, which is section 80's split and the reason a Metal 4 frame cannot be handed a Metal 3 scaler.
 if "public void setNextPassReadsStorageImage(final boolean reads) {" not in encoder:
     raise SystemExit("metal 4 provider: the encoder does not accept the storage-image boundary statement, so a "
                      "caller finds the contract incomplete on the road that does answer the attachment half of "
                      "it and falls back from both")
-if "return false;" not in body_of(encoder, "public boolean metalFxAvailable() {"):
-    raise SystemExit("metal 4 provider: the encoder no longer answers that this generation has no MetalFX scaler "
-                     "yet, and a caller told otherwise would take a scaled road that does not exist")
-if "return false;" not in body_of(encoder, "public boolean scaleWithMetalFx("):
-    raise SystemExit("metal 4 provider: the encoder no longer answers the scale request with the fallback it took "
-                     "before it carried this contract, so a caller would be told a picture was scaled")
+if "return !this.closed && this.metalFx != null;" not in body_of(encoder, "public boolean metalFxAvailable() {"):
+    raise SystemExit("metal 4 provider: the MetalFX answer is no longer the scaler path's own existence, so a "
+                     "session would either claim a scaled road it cannot take or refuse one it has")
+for needle, why in (
+    ("this.metalFx = Metal4Fx.create(nativeDevice);",
+     "the encoder does not make this generation's own MetalFX path, so the answer cannot be its existence"),
+    ("return this.metalFx.scale(this.ring.commandBuffer(), color.nativeHandle(), output.nativeHandle(),",
+     "the scale is not encoded on this frame's own Metal 4 command buffer through this generation's scaler"),
+    ("if (this.copyEncoder != null && this.copyEncoder.open()) {\n            this.copyEncoder.endEncoding();",
+     "an encoder of ours may still be open when the scaler encodes, which orders the upscale before work it has "
+     "to follow"),
+    ("if (this.metalFx != null) {\n            this.metalFx.close();",
+     "the scalers and their compiler are not released with the encoder that made them, so a second device in one "
+     "process could be handed the first one's compiled pipelines"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 for needle, why in (
     ("MTL4FrameRing.create(nativeDevice, this.queue, FRAMES_IN_FLIGHT,",
      "the encoder does not make the frame's ring, so the frame's allocator lifetime has no owner"),

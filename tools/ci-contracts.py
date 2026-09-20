@@ -984,7 +984,11 @@ require("the capability record asks every clause of the minimum contract",
     "public boolean metalFxParityForMetal4() {",
     "device.supportsFamily(FAMILY_METAL4)",
     "device.respondsTo(\"newMTL4CommandQueue\")",
-    'MetalFx.metal4SpatialSupported(device.handle())',
+    # The Metal 4 scaler's clause is the Metal 4 path's own question, and a functional one: the class
+    # question plus a scaler actually made with a compiler and released. It is not Metal 3's answer and not
+    # Metal 3's object - section 80 - and the record asks it because the answer decides whether choosing
+    # Metal 4 would cost the player the render-scale setting.
+    'Metal4Fx.supported(device.handle())',
 ))
 # The device used to make its own Metal 3 queue, and that one line is what made "the device belongs to
 # shared" impossible to write down. The queue now comes through the execution services, whose first consumer

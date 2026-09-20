@@ -3,6 +3,7 @@ package com.metallum.render.metal4;
 import com.metallum.Metallum;
 import com.metallum.mtl.CAMetalDrawable;
 import com.metallum.mtl.MTLBuffer;
+import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 import com.metallum.mtl.MTLStorageMode;
 import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.CAMetalLayer;
@@ -13,6 +14,7 @@ import com.metallum.mtl.metal4.MTL4ArgumentTable;
 import com.metallum.mtl.metal4.MTL4ComputeEncoder;
 import com.metallum.mtl.metal4.MTL4FrameRing;
 import com.metallum.mtl.metal4.MTL4RenderEncoder;
+import com.metallum.mtl.metal4.Metal4Fx;
 import com.metallum.mtl.metal4.MTL4ResidencySet;
 import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
@@ -309,6 +311,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     private AttachmentContents[] nextPassContents;
 
     /**
+     * This generation's MetalFX spatial scaler path, or null where the device cannot have one.
+     * <p>
+     * Owned by the encoder rather than by a static keyed on a device, which is section 106's rule and the same
+     * reason the storage pipelines beside it are: a second device in one process must not inherit the first one's
+     * compiled scalers. Section 80 is the other half - the Metal 3 scalers live in their own cache and this path
+     * holds nothing of theirs, because a scaler is a compiled pipeline and one generation's is not the other's.
+     */
+    private final Metal4Fx metalFx;
+
+    /**
      * @param device             the engine's device, which is where the queue address comes from
      * @param executionState     this generation's state, whose device the ring is made on
      * @param defaultShaderSource the session's shader source; held by the compilation chain when that lands,
@@ -332,6 +344,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // Owned by this encoder and not by a static keyed on a device: section 106's rule, and the reason a
         // second device in one process would otherwise inherit the first one's pipelines.
         this.storagePipelines = new com.metallum.mtl.metal4.MTL4StorageTexturePipelines(nativeDevice);
+        // Asked once per session, and its answer is what `metalFxAvailable()` reports: a device that cannot make
+        // a Metal 4 scaler sends the caller to its own scale road rather than to a wrong picture.
+        this.metalFx = Metal4Fx.create(nativeDevice);
         this.deferred = new ArrayDeque[FRAMES_IN_FLIGHT];
         for (int slot = 0; slot < this.deferred.length; slot++) {
             this.deferred[slot] = new ArrayDeque<>();
@@ -496,6 +511,11 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.residency != null) {
             this.residency.close();
             this.residency = null;
+        }
+        // The scalers are compiled pipelines and the compiler is Metal 4's own object, so both go with the
+        // encoder that made them rather than with a static the next device would find.
+        if (this.metalFx != null) {
+            this.metalFx.close();
         }
         for (int slot = 0; slot < this.readbackStaging.length; slot++) {
             if (this.readbackStaging[slot] != null) {
@@ -839,28 +859,60 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     }
 
     /**
-     * Whether this generation can scale with MetalFX, which it cannot yet: the Metal 4 spatial scaler is the
-     * migration's own later milestone (section 77). The honest answer is the one that sends the caller to its
-     * own scale path; the answer that claimed a picture had been scaled would be a wrong image.
+     * Whether this generation can scale with MetalFX.
+     * <p>
+     * The answer is the scaler path's own existence, which is Apple's class question plus a functional creation
+     * of one scaler on this device (see {@link Metal4Fx#supported}). It used to be a literal false with the
+     * migration's next milestone named as the reason; the reason is now the device's answer, and a device that
+     * cannot is still sent to the caller's own scale road rather than to a picture nobody scaled.
      *
      * @see #scaleWithMetalFx(GpuTextureView, GpuTextureView, int, int)
      */
     @Override
     public boolean metalFxAvailable() {
-        return false;
+        return !this.closed && this.metalFx != null;
     }
 
     /**
-     * {@inheritDoc}
+     * Encodes one MetalFX spatial upscale of a smaller picture into a larger one, on this frame's command buffer.
      * <p>
-     * False rather than a scale, and false is what this encoder answered before it carried
-     * {@link MetalFrameExtras} at all: a Metal 4 scaler does not exist to answer with, and the caller's own
-     * fallback is the road it already took.
+     * The scaler's encode is a command of its own rather than one of this engine's encoders, so no encoder of
+     * ours may still be open when it goes in - an open one would order the upscale before work it has to follow.
+     * Both textures are declared resident first, which is what the rest of this path does with anything it hands
+     * over by handle.
+     * <p>
+     * <strong>Nothing here sets a fence, and the reason is measured rather than assumed.</strong> The Metal 3
+     * path hands the scaler the frame's fence because its textures opt out of hazard tracking; Metal 4 has no
+     * fence object at all in this engine - {@code Metal4Fence} says why - so what orders this encode against the
+     * passes around it is the one command buffer's own encode order plus the all-stages barrier every pass ends
+     * with. That claim is the frame's to test, and a render-scale session is where it is tested.
      */
     @Override
     public boolean scaleWithMetalFx(final @Nullable GpuTextureView from, final GpuTextureView to,
                                     final int contentWidth, final int contentHeight) {
-        return false;
+        if (this.closed || this.metalFx == null || from == null || to == null
+                || !(from.texture() instanceof MetalGpuTexture color)
+                || !(to.texture() instanceof MetalGpuTexture output)) {
+            return false;
+        }
+
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.endEncoding();
+        }
+        beginFrameIfNeeded();
+        useResource(color.nativeHandle());
+        useResource(output.nativeHandle());
+
+        Metal4Fx.Configuration configuration = new Metal4Fx.Configuration(
+                (int) MTLTexture.width(color.nativeHandle()), (int) MTLTexture.height(color.nativeHandle()),
+                (int) MTLTexture.width(output.nativeHandle()), (int) MTLTexture.height(output.nativeHandle()),
+                color.mtlPixelFormat().value, output.mtlPixelFormat().value,
+                MTLFXSpatialScalerDescriptor.ColorProcessingMode.PERCEPTUAL);
+        return this.metalFx.scale(this.ring.commandBuffer(), color.nativeHandle(), output.nativeHandle(),
+                configuration, contentWidth, contentHeight);
     }
 
     // ------------------------------------------------- the resource operations this path has not reached
