@@ -225,6 +225,38 @@ No Metal 4 frame exists to time. The Metal 3 reference on the pinned scene is
 `run/m3-final`, and it is the baseline any Metal 4 frame will be read against - always with
 `--fullscreen-size` and `--expect-target` set, and with nothing else running on the machine.
 
+## Capability matrix
+
+Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it
+(the cold-probe harness); `M4 real frame` means through a frame the client drew, which does not exist yet and is
+therefore `n/a` everywhere; `Real-device` means the same run was on this machine's Apple Silicon rather than in
+CI, which is where every smoke here was run.
+
+| Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
+| --------------- | ----------- | --------------------------------- | ------------- | ----------- |
+| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
+| MRT             | yes         | no - one target per pass          | n/a           | no          |
+| depth           | yes         | no                                | n/a           | no          |
+| sampled texture | yes         | **half** - binds through a table; the drawn pattern is owed | n/a | yes (binding) |
+| sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made and bound | n/a | yes |
+| uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255) | n/a | yes |
+| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255); index no | n/a | yes (vertex) |
+| argument table  | n/a (M3 uses argument buffers) | yes - buffer, texture and sampler tables made, bound and used | n/a | yes |
+| blit            | yes         | no                                | n/a           | no          |
+| mipmap          | yes         | no                                | n/a           | no          |
+| compute         | yes         | no                                | n/a           | no          |
+| storage buffer  | yes         | no                                | n/a           | no          |
+| storage image   | yes         | no                                | n/a           | no          |
+| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; no cross-encoder dependency fixture | n/a | yes |
+| presentation    | yes         | EXPERIMENTAL - the `Metal4Path` sidecar behind `-Dmetallum.metal4Present`, not the frame's road | n/a | yes (sidecar) |
+| MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | n/a | no          |
+| counters        | whole frame | no                                | n/a           | no          |
+
+**What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
+and its blanks are the work. Nothing in the `M4 real frame` column can be filled until a Metal 4 frame encoder
+exists, which is Phase 4; and nothing in it should be filled from a smoke, because a capability proven in a
+process with no window is not the same claim as a capability proven through the client's own frame.
+
 ## Remaining blockers
 
 1. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
