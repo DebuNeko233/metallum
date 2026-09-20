@@ -152,4 +152,27 @@ if "retried = true;" not in (ROOT / "src" / "main" / "java" / "com" / "metallum"
     raise SystemExit("cold-probe harness: the persistent probe never records that it retried, so lastRetried "
                      "answers false whatever happened")
 
+# --- the fourth render smoke's binding half --------------------------------------------------------------
+# The migration plan's smoke 4 is "a sampled texture and a sampler, drawn as a fixed pattern, read back". The
+# binding half is what the present sidecar exercises on the real path and what this proves in a process with no
+# window in it; the draw and readback are the other half and are recorded as owed rather than implied.
+probe_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                / "MTL4Probe.java").read_text(encoding="utf-8")
+for needle, why in (
+    ("public static boolean canBindSampledTexture(", "the sampled-texture smoke is gone from the probe"),
+    ("MTL4ArgumentTable.create(device, 0L, 1L, 1L)",
+     "the smoke does not make a table of the shape it is testing, so its answer is about some other table"),
+    ("return failed(\"sampled\", \"the table refused setTexture:atIndex:",
+     "a refused texture binding is not reported, so a table that took the call and dropped it would read as "
+     "success"),
+    ("return failed(\"sampled\", \"the table refused setSamplerState:atIndex:",
+     "a refused sampler binding is not reported"),
+    ("releaseIfPresent(texture);", "the smoke's source texture is never released"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+if "sampled=" not in probe:
+    raise SystemExit("cold-probe harness: the harness does not report the sampled-texture smoke, so it has no "
+                     "evidence from an Apple Silicon run")
+
 print("Metal 4 cold-probe harness contract: PASS")

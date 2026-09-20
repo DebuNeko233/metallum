@@ -607,6 +607,28 @@ refusals by name, the stage the refusal carries, that no Metal 3 package is impo
 implementation, that the services choose by `executing`, and that the harness asks the provider on a real
 device - six mutations, each failing for its own reason.
 
+### The fourth render smoke's binding half, and the half that is owed
+
+The migration plan's Phase 3 asks for five native smokes before anything touches the Minecraft frame, and four
+of them are already the probe's own shape: the constant-colour draw is its first pass (a table-bound uniform
+writing (0.25, 0.5, 0.75, 1.0), read back as (64, 128, 191, 255)), the uniform smoke is that same pass, the
+vertex smoke is its second (a buffer bound by address and stride 16, drawn by a pipeline whose colour comes out
+of the buffer, read back as (64, 128, 128, 255)), and the two-encoder smoke is the pair - pass A into target A,
+pass B into target B, one command buffer, one commit, one shared-event wait, both pixels read.
+
+The fifth had no coverage at all: **a sampled texture and a sampler**. What landed this round is its binding
+half, `MTL4Probe.canBindSampledTexture`: a 4x4 RGBA8 shared texture, a nearest sampler that declares argument
+buffer support, and a table made for exactly one texture and one sampler, then both setters - with each
+refusal reported by name rather than as a bare false. Measured on Apple Silicon in 45 of 45 attempts across 25
+cold processes and 20 warm probes, and pinned in `tools/ci-metal4-cold-probe.py` with three mutations.
+
+**What is NOT proven is the drawn half**, and it is recorded as owed rather than implied by the binding: a
+pattern sampled through the table, drawn into a target and read back channel by channel. Its design is fixed so
+the next attempt is small: reuse the first pass's target as the source - a texture the probe has already filled
+with a known colour, which avoids adding a texture-write path - bind it with the nearest sampler through the
+one-texture/one-sampler table, draw a full-screen triangle whose fragment shader samples it, and compare the
+third target's pixel with (64, 128, 191, 255).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

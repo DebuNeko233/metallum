@@ -5,6 +5,8 @@ import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 
 import com.metallum.mtl.MTLTexture;
 
+import com.metallum.mtl.MTLSamplerDescriptor;
+import com.metallum.mtl.MTLSamplerMinMagFilter;
 import com.metallum.mtl.MTLStorageMode;
 
 import com.metallum.mtl.MTLPixelFormat;
@@ -260,6 +262,77 @@ public final class MTL4Probe {
         Metallum.LOGGER.warn("Metal 4 probe: the first attempt in this process failed at {} ({}), and the"
                 + " second answered {} - the capability record reads the second", stage, reason, second);
         return second;
+    }
+
+    /**
+     * Whether a sampled texture and a sampler can both be carried by one Metal 4 argument table.
+     * <p>
+     * This is the binding half of the migration plan's fourth render smoke - "a sampled texture and a sampler,
+     * drawn as a fixed pattern, read back" - and it is the half the present sidecar has been exercising on the
+     * real path since it landed, which is why it is asked here as well: a capability the frame path depends on
+     * should be provable in a process that has no window in it. What it does NOT do is draw through them; the
+     * sampled draw and its readback are the other half and are named as owed rather than implied by this.
+     * <p>
+     * Two tables are made and not one, because a table is made for a shape: a table asked for one texture and
+     * one sampler is a different object from the buffer tables the other probes make, and the header's ceiling
+     * on sampler slots is a property of the table rather than of this call.
+     *
+     * @return whether both resources were accepted by a table made to hold them
+     */
+    public static boolean canBindSampledTexture(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        MemorySegment texture = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MTL4ArgumentTable sampled = null;
+        try {
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(SAMPLED_SIZE);
+                descriptor.height(SAMPLED_SIZE);
+                descriptor.usage(USAGE_RENDER_TARGET);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                texture = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(texture)) {
+                return failed("sampled", "newTextureWithDescriptor: answered nil for the " + SAMPLED_SIZE + "x"
+                        + SAMPLED_SIZE + " RGBA8 source texture the sampler would read");
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("sampled", "newSamplerStateWithDescriptor: answered nil, so nothing can carry the"
+                        + " sampler the shader would declare");
+            }
+
+            sampled = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (sampled == null) {
+                return failed("sampled", "a table asked for one texture and one sampler came back null");
+            }
+
+            if (!sampled.texture(texture)) {
+                return failed("sampled", "the table refused setTexture:atIndex: for a texture it was made to hold");
+            }
+            if (!sampled.sampler(sampler)) {
+                return failed("sampled", "the table refused setSamplerState:atIndex: for a sampler it was made to"
+                        + " hold");
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("sampled", "making or binding the sampled pair threw " + threw);
+        } finally {
+            if (sampled != null) {
+                sampled.close();
+            }
+            releaseIfPresent(texture);
+            releaseIfPresent(sampler);
+        }
     }
 
     private static boolean failed(final String stage, final String why) {
@@ -533,6 +606,9 @@ public final class MTL4Probe {
             return device.newTexture(descriptor);
         }
     }
+
+    /** The edge of the sampled-texture smoke's source: small, so a readback is four bytes. */
+    private static final long SAMPLED_SIZE = 4L;
 
     /** The vertex-buffer pass, into a target of its own, which it clears before it draws. */
     private static boolean encodeVertexDraw(final MemorySegment commandBuffer, final MemorySegment target,

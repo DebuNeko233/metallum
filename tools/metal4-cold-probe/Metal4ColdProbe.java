@@ -99,10 +99,18 @@ public final class Metal4ColdProbe {
             provider = "queue=exception(" + throwable.getClass().getSimpleName() + ")";
         }
 
+        String sampledReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
             boolean makeAndSubmit = MTL4Probe.canMakeAndSubmit(device);
+            // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
+            // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
+            // failure says which of the two contracts broke.
+            boolean sampled = makeAndSubmit && MTL4Probe.canBindSampledTexture(device);
+            if (!sampled) {
+                sampledReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
             // Mirrors the capability record's own order: the bind probe is only asked where the first one
             // passed, so a failure here reports the stage that really stopped the sequence.
             boolean bindAndDraw = makeAndSubmit
@@ -128,6 +136,8 @@ public final class Metal4ColdProbe {
                     + " argumentTableSelector=" + argumentTableSelector
                     + " deviceCreation=" + deviceCreation
                     + " deviceName=" + deviceName
+                    + " sampled=" + sampled
+                    + " sampledReason=" + sampledReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the

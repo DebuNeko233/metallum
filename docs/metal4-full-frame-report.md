@@ -101,12 +101,32 @@ as "equally frequent cold and warm" is withdrawn.
 ## Native Smoke
 
 ```
-colour:           NOT STARTED
-vertex:           NOT STARTED
-uniform:          NOT STARTED
-texture/sampler:  NOT STARTED
-multi-pass:       NOT STARTED
+colour:           PROVEN as part of canBindAndDraw's first pass - a table-bound uniform draws
+                  (0.25, 0.5, 0.75, 1.0) into a 64x64 RGBA8 target and the pixel is read back as
+                  (64, 128, 191, 255), channel by channel. Verified separately since the two-target
+                  rework, so a failure of this pass is now reported as this pass.
+uniform:          PROVEN by the same pass and the same readback - the colour comes from
+                  setAddress:atIndex: with no buffer offset, and the value read is the value written
+vertex:           PROVEN by the second pass - a vertex buffer bound by GPU address *and* stride 16,
+                  drawn by a pipeline whose colour comes out of that buffer, read back as
+                  (64, 128, 128, 255). Its channel 2 is a literal in the shader, which is what makes a
+                  readback of 191 (the first pass's colour) proof that this pass covered nothing
+texture/sampler:  HALF PROVEN. A table made for exactly one texture and one sampler accepts both
+                  (`canBindSampledTexture`: create a 4x4 RGBA8 shared texture, a nearest sampler with
+                  supportArgumentBuffers, a table of shape (0 buffers, 1 texture, 1 sampler), then
+                  setTexture:atIndex: and setSamplerState:atIndex:), measured on Apple Silicon in
+                  45 of 45 attempts across 25 cold processes and 20 warm probes, with every call's
+                  refusal reported by name. The DRAWN half - a sampled pattern read back channel by
+                  channel - is OWED and is the next task; this entry is not it
+multi-pass:       PROVEN and now the probe's own shape - two render encoders in one command buffer,
+                  each into a target of its own (pass A into target A, pass B into target B), one
+                  commit, one shared-event wait, both pixels read back
 ```
+
+**What the owed half needs, so it is a task and not a wish**: reuse the first pass's target as the source
+(a texture this probe has already filled with a known colour, so no texture-write path has to be added),
+bind it with a nearest sampler through a one-texture/one-sampler table, draw a full-screen triangle whose
+fragment shader samples it, read the third target back and compare with (64, 128, 191, 255).
 
 ## M4 Frame
 
