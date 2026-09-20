@@ -2150,6 +2150,192 @@ public final class MTL4Probe {
         return true;
     }
 
+    /** How many threads the compute smoke dispatches, the bias its kernel adds, and what it pre-fills with. */
+    private static final int COMPUTE_THREADS = 32;
+    private static final int COMPUTE_BIAS = 7;
+    private static final int COMPUTE_SENTINEL = 0xDEADBEEF;
+
+    /**
+     * The kernel the compute smoke dispatches: its thread's index, doubled and biased.
+     * <p>
+     * The value depends on the thread's own position in the grid, so a dispatch that ran one thread and filled
+     * the rest with its answer fails, and a grid that was the wrong shape fails too. The bias arrives as a
+     * uniform buffer, so a dispatch whose table did not carry the second buffer fails as well.
+     */
+    private static final String COMPUTE_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            kernel void metallum_compute_probe(device uint* out [[buffer(0)]],
+                                               constant uint& bias [[buffer(1)]],
+                                               uint id [[thread_position_in_grid]]) {
+              out[id] = id * 2u + bias;
+            }
+            """;
+
+    /**
+     * A compute dispatch: a pipeline from this probe's own MSL, a table carrying two buffers by address, a grid
+     * of threadgroups, and an exact readback of the buffer the kernel wrote.
+     * <p>
+     * This is the plan's compute smoke - "input buffer, compute transformation, output, readback exact" - and the
+     * two facts that make it a measurement rather than a call count are that the output buffer is <em>pre-filled
+     * with a sentinel</em> the kernel never writes, so a dispatch that did nothing leaves it there, and that every
+     * thread's expected value is its own index, so a grid of the wrong shape or a single thread's answer repeated
+     * cannot pass.
+     * <p>
+     * The buffers are declared resident before the dispatch: an undeclared resource makes a command of this
+     * command model do nothing at all, silently, which the mipmap smoke measured for a copy and this one assumes
+     * for a dispatch rather than finding out the same way.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a dispatch runs a kernel whose output is read back exactly
+     */
+    public static boolean canDispatchCompute(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("compute", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTLBuffer out = null;
+        MTLBuffer bias = null;
+        MTL4ArgumentTable table = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder dispatch = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("compute", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            long outBytes = COMPUTE_THREADS * 4L;
+            out = device.newBuffer(outBytes, STORAGE_SHARED);
+            bias = device.newBuffer(16L, STORAGE_SHARED);
+            if (out == null || bias == null || out.gpuAddress() == 0L || bias.gpuAddress() == 0L) {
+                return failed("compute", "a buffer came back nil or without a GPU address, so there is nothing"
+                        + " for a dispatch to read or write by address");
+            }
+            MemorySegment outWords = out.contents().reinterpret(outBytes);
+            for (long index = 0; index < COMPUTE_THREADS; index++) {
+                outWords.set(JAVA_INT, index * 4L, COMPUTE_SENTINEL);
+            }
+            bias.contents().reinterpret(16L).set(JAVA_INT, 0L, COMPUTE_BIAS);
+
+            function = device.newFunction(COMPUTE_MSL, "metallum_compute_probe");
+            if (ObjC.isNil(function)) {
+                return failed("compute", "the probe's own kernel MSL did not compile into a function");
+            }
+            pipeline = device.newComputePipelineState(function);
+            if (ObjC.isNil(pipeline)) {
+                return failed("compute", "newComputePipelineStateWithFunction: answered nil, so this device"
+                        + " cannot make a compute pipeline from the probe's kernel");
+            }
+
+            table = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
+            if (table == null || !table.address(out.gpuAddress(), 0L) || !table.address(bias.gpuAddress(), 1L)) {
+                return failed("compute", "a table made for two buffers did not take the output and the bias by"
+                        + " address");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the compute smoke");
+            if (resident == null || !resident.add(out.handle()) || !resident.add(bias.handle())
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("compute", "the smoke could not declare its buffers resident, and an undeclared"
+                        + " resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+            try {
+                dispatch = MTL4ComputeEncoder.open(device, buffer, "the compute dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("compute", "the compute dispatch's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+
+            if (!dispatch.setComputePipelineState(pipeline)) {
+                END.send(buffer);
+                return failed("compute", "the encoder did not answer setComputePipelineState: for the probe's"
+                        + " kernel");
+            }
+            if (!dispatch.setArgumentTable(table)) {
+                END.send(buffer);
+                return failed("compute", "the encoder did not answer setArgumentTable: for the table carrying the"
+                        + " output and the bias");
+            }
+            if (!dispatch.dispatchThreadgroups(1L, 1L, 1L, COMPUTE_THREADS, 1L, 1L)) {
+                END.send(buffer);
+                return failed("compute", "the encoder did not answer"
+                        + " dispatchThreadgroups:threadsPerThreadgroup: for one group of " + COMPUTE_THREADS
+                        + " threads");
+            }
+            dispatch.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("compute", "the shared event did not reach 1 within 2000 ms, so the dispatch never"
+                        + " completed");
+            }
+
+            MemorySegment written = out.contents().reinterpret(outBytes);
+            for (long index = 0; index < COMPUTE_THREADS; index++) {
+                int read = written.get(JAVA_INT, index * 4L);
+                int expected = (int) (index * 2L) + COMPUTE_BIAS;
+                if (read == COMPUTE_SENTINEL) {
+                    return failed("compute", "output word " + index + " still holds the sentinel the smoke wrote"
+                            + " before the dispatch, so the kernel did not run over it");
+                }
+                if (read != expected) {
+                    return failed("compute", "output word " + index + " reads " + read + " where the kernel's own"
+                            + " formula for that thread is " + expected + ", so the grid's shape or the bias did"
+                            + " not reach the shader as dispatched");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("compute", "dispatching or reading back the compute smoke threw " + threw);
+        } finally {
+            if (dispatch != null) {
+                dispatch.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            releaseIfPresent(function);
+            releaseIfPresent(out);
+            releaseIfPresent(bias);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
     private static final int MIP_LEVELS = 3;
     private static final int MIP_PREFILLED = 200;

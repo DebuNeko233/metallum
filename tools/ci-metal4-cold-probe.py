@@ -427,6 +427,14 @@ for needle, why in (
      "the driver does not count the mipmap smoke's failures"),
     ("if (( mipmap_failures > 0 )); then",
      "the driver counts the mipmap smoke's failures and does not fail the run on them"),
+    # And the dispatch, counted on its own.
+    ('+ " compute=" + compute', "the harness does not print the compute smoke's answer"),
+    ('+ " computeReason=" + computeReason', "the harness does not print why the compute smoke failed"),
+    ("MTL4Probe.canDispatchCompute(device)", "the harness never asks the compute smoke"),
+    ("compute_failures=\"$(grep -c ' compute=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the compute smoke's failures"),
+    ("if (( compute_failures > 0 )); then",
+     "the driver counts the compute smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -627,7 +635,37 @@ mip_helper = mip_helper[:mip_helper.index("/**")]
 if "descriptor.mipmapLevelCount(MIP_LEVELS);" not in mip_helper:
     raise SystemExit("cold-probe harness: the texture the mipmap smoke generates has one level, so there is no"
                      " chain to generate")
-# And the native call itself, where the command lives.
+# --- the dispatch itself, where the probe's own kernel is the contract ----------------------------------
+if "public static boolean canDispatchCompute(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the compute dispatch smoke is gone, so the harness's compute field "
+                     "would report a call that is not there")
+compute_probe = engine_probe_source[engine_probe_source.index("public static boolean canDispatchCompute("):]
+compute_probe = compute_probe[:compute_probe.index("/** How many levels the mipmap smoke asks for")]
+for needle, why in (
+    ('device.newFunction(COMPUTE_MSL, "metallum_compute_probe")',
+     "the dispatch smoke builds no pipeline from the probe's own kernel"),
+    ("device.newComputePipelineState(function)",
+     "the kernel is never made into a compute pipeline, so there is nothing to dispatch"),
+    ("table.address(out.gpuAddress(), 0L)", "the output buffer is not bound by address"),
+    ("table.address(bias.gpuAddress(), 1L)", "the uniform the kernel adds is not bound by address"),
+    ("resident.add(out.handle())", "the output buffer is not declared resident before the dispatch"),
+    ("resident.add(bias.handle())", "the uniform buffer is not declared resident before the dispatch"),
+    ("dispatch.setComputePipelineState(pipeline)", "the pipeline is never handed to the encoder"),
+    ("dispatch.setArgumentTable(table)", "the table is never handed to the encoder"),
+    ("dispatch.dispatchThreadgroups(1L, 1L, 1L, COMPUTE_THREADS, 1L, 1L)",
+     "the dispatch is never encoded, so nothing runs"),
+    ("outWords.set(JAVA_INT, index * 4L, COMPUTE_SENTINEL);",
+     "the output buffer is not pre-filled with a sentinel, so a dispatch that did nothing could pass on"
+     " whatever a fresh buffer holds"),
+    ("if (read == COMPUTE_SENTINEL) {",
+     "the sentinel is not refused afterwards, so the pre-fill proves nothing"),
+    ("int expected = (int) (index * 2L) + COMPUTE_BIAS;",
+     "each thread's output is not compared against its own index's formula, so a grid of the wrong shape or one"
+     " thread's answer repeated could pass"),
+):
+    if needle not in compute_probe:
+        raise SystemExit("cold-probe harness: " + why)
+# And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
                    / "MTL4ComputeEncoder.java")
 if not compute_encoder.is_file():
@@ -640,6 +678,22 @@ for needle, why in (
     ("if (open == null || ObjC.isNil(texture) || !responds(open, GENERATE_MIPMAPS.name())) {",
      "the generation is sent without asking whether the encoder answers it, so an encoder that does not would"
      " take the command and do nothing"),
+    # The dispatch's three calls and their selectors, read off MTL4ComputeCommandEncoder.h.
+    ('Msg.ofVoid("setComputePipelineState:", ADDRESS)',
+     "the compute pipeline selector is not the one MTL4ComputeCommandEncoder.h:51 declares"),
+    ('Msg.ofVoid("setArgumentTable:", ADDRESS)',
+     "the compute argument table selector is not the one MTL4ComputeCommandEncoder.h:661 declares - and it takes"
+     " no stage mask, because a dispatch has one stage"),
+    ('Msg.ofVoid("dispatchThreadgroups:threadsPerThreadgroup:", ADDRESS, ADDRESS)',
+     "the dispatch selector is not the one MTL4ComputeCommandEncoder.h:87 declares"),
+    ("MTLSize.on(stack, groupsX, groupsY, groupsZ)",
+     "the workgroup counts are not passed as an MTLSize, which is how the header declares them"),
+    ("MTLSize.on(stack, localX, localY, localZ)",
+     "the threads-per-threadgroup counts are not passed as an MTLSize"),
+    ("if (open == null || groupsX <= 0L || groupsY <= 0L || groupsZ <= 0L",
+     "a dispatch with an empty grid is sent rather than refused"),
+    ("if (!responds(open, DISPATCH_THREADGROUPS.name())) {",
+     "the dispatch is sent without asking whether the encoder answers it"),
 ):
     if needle not in compute_source:
         raise SystemExit("cold-probe harness: " + why)

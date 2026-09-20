@@ -150,6 +150,9 @@ depth_sample_failures="$(grep -c ' depthSample=false ' "$probe_log" || true)"
 # The mip chain, counted on its own: a copy smoke says nothing about a generation.
 mipmap_passes="$(grep -c ' mipmaps=true ' "$probe_log" || true)"
 mipmap_failures="$(grep -c ' mipmaps=false ' "$probe_log" || true)"
+# And the dispatch, counted on its own: the copies a frame's encoder carries say nothing about a kernel.
+compute_passes="$(grep -c ' compute=true ' "$probe_log" || true)"
+compute_failures="$(grep -c ' compute=false ' "$probe_log" || true)"
 layout_passes="$(grep -c ' layout=true ' "$probe_log" || true)"
 layout_failures="$(grep -c ' layout=false ' "$probe_log" || true)"
 copy_passes="$(grep -c ' copy=true ' "$probe_log" || true)"
@@ -189,6 +192,7 @@ echo "multi-targets:   $multi_target_passes passed   $multi_target_failures fail
 echo "depth draws:     $depth_draw_passes passed   $depth_draw_failures failed"
 echo "depth samples:   $depth_sample_passes passed   $depth_sample_failures failed"
 echo "mip chains:      $mipmap_passes passed   $mipmap_failures failed"
+echo "compute:         $compute_passes passed   $compute_failures failed"
 echo "bound layouts:   $layout_passes passed   $layout_failures failed"
 echo "texture copies:  $copy_passes passed   $copy_failures failed"
 echo "depth clears:    $depth_passes passed   $depth_failures failed"
@@ -246,6 +250,11 @@ fi
 
 if (( mipmap_failures > 0 )); then
 	echo "the mipmap smoke failed in $mipmap_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( compute_failures > 0 )); then
+	echo "the compute dispatch smoke failed in $compute_failures probe(s)" >&2
 	exit 1
 fi
 

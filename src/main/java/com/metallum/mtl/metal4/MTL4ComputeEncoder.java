@@ -220,6 +220,73 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
         return true;
     }
 
+    // ------------------------------------------------------------------ the compute dispatch itself
+
+    /**
+     * {@code setComputePipelineState:}, {@code setArgumentTable:} and
+     * {@code dispatchThreadgroups:threadsPerThreadgroup:}, read off this machine's SDK header
+     * ({@code MTL4ComputeCommandEncoder.h:51}, {@code :661} and {@code :87}).
+     * <p>
+     * The argument table takes no stage mask here, which is the one place this encoder is simpler than the
+     * render one: a compute dispatch has one stage, so there is nothing to say about which it is.
+     */
+    private static final Msg SET_COMPUTE_PIPELINE = Msg.ofVoid("setComputePipelineState:", ADDRESS);
+    private static final Msg SET_ARGUMENT_TABLE = Msg.ofVoid("setArgumentTable:", ADDRESS);
+    private static final Msg DISPATCH_THREADGROUPS =
+            Msg.ofVoid("dispatchThreadgroups:threadsPerThreadgroup:", ADDRESS, ADDRESS);
+
+    /** Hands the encoder the pipeline the dispatch runs, answering whether it was accepted. */
+    public boolean setComputePipelineState(final MemorySegment pipeline) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || ObjC.isNil(pipeline) || !responds(open, SET_COMPUTE_PIPELINE.name())) {
+            return false;
+        }
+        SET_COMPUTE_PIPELINE.send(open, pipeline);
+        return true;
+    }
+
+    /**
+     * Hands the encoder the table the dispatch's shader reads through.
+     * <p>
+     * The table is snapshotted when the dispatch is encoded, which the header says in as many words - so a table
+     * changed after a dispatch does not change what that dispatch saw, and a caller reusing one table for two
+     * dispatches with different contents has to know which dispatch gets which.
+     */
+    public boolean setArgumentTable(final MTL4ArgumentTable table) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || table == null || !responds(open, SET_ARGUMENT_TABLE.name())) {
+            return false;
+        }
+        SET_ARGUMENT_TABLE.send(open, table.handle());
+        return true;
+    }
+
+    /**
+     * Dispatches a grid of threadgroups.
+     * <p>
+     * Workgroup counts and the shader's own threads-per-threadgroup, which is the shape a Vulkan
+     * {@code vkCmdDispatch} has: the caller asks for groups and the shader declares its local size. Both arrive
+     * as {@code MTLSize}, three unsigned integers each, which arm64 hands over as pointers to the struct - the
+     * same convention the copy methods' regions use.
+     */
+    public boolean dispatchThreadgroups(final long groupsX, final long groupsY, final long groupsZ,
+                                        final long localX, final long localY, final long localZ) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || groupsX <= 0L || groupsY <= 0L || groupsZ <= 0L
+                || localX <= 0L || localY <= 0L || localZ <= 0L) {
+            return false;
+        }
+        if (!responds(open, DISPATCH_THREADGROUPS.name())) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            MemorySegment groups = MTLSize.on(stack, groupsX, groupsY, groupsZ);
+            MemorySegment threads = MTLSize.on(stack, localX, localY, localZ);
+            DISPATCH_THREADGROUPS.send(open, groups, threads);
+        }
+        return true;
+    }
+
     /** The native encoder, for the dispatch that will be encoded into it. */
     public MemorySegment encoder() {
         return this.encoder == null ? MemorySegment.NULL : this.encoder;
