@@ -2004,6 +2004,42 @@ the cleared 0.5, so it reads 128. It was there to catch a shader that smeared on
 two readings that disagree by half the depth range already catch that; widening it would have kept a reading
 that can only fail a correct implementation.
 
+### A mip chain on the copy encoder, and the residency a copy actually needs
+
+`generateMipmaps` was the last frame-resource operation this path answered false to, and it was not a missing API:
+`MTL4ComputeCommandEncoder.h:543` declares `generateMipmapsForTexture:`, and the compute encoder is where Metal 3's
+blit commands went - so the frame's own copy encoder is the road. `canGenerateMipmaps` proves it on the device:
+a level-0 checkerboard of 0 and 255 uploaded from a buffer, **the levels above it pre-filled with a third value**,
+the chain generated, and every level read back. The pre-fill is what makes it a measurement - a generation that
+silently did nothing would leave that value there, and a smoke that only checked "level 1 is not level 0" would
+pass on a level nobody wrote. Levels 1 and 2 are compared against the box average of the level below them (127.5,
+so one level either way), and level 0 is read at two neighbouring texels so the two values the average comes from
+are proven to be there. Measured: 50 of 50 probes in 30 cold processes and 20 warm repeats.
+
+**The smoke's first version failed, and what it found is worth more than the smoke.** With neither the source
+buffer nor the destination texture declared resident, the buffer-to-texture copy does **nothing at all** - not a
+fault, not a refusal: the level reads exactly as it was created. One declaration at a time says it takes both
+ends: only the buffer, still nothing; only the texture, still nothing; both, and it lands. That is the "an
+address is not a reference" lesson from the world frame's fault, in a second costume - on this command model an
+undeclared resource makes a command of this kind vanish, and the frame path's own upload road declares both for
+exactly this reason. The smoke was the outlier.
+
+The frame path implements the contract now: the chain is generated on the frame's copy encoder, the texture is
+declared resident first, and a render pass the game still has open ends before it, because only one encoder may
+be open on a command buffer. It still answers false, by name, where there is nothing to generate - a texture of
+one level, a closed one, one that is not this engine's, or a format the native command cannot filter. That format
+list is the Metal 3 encoder's own, and `tools/ci-metal4-provider.py` **compares the two lists** rather than
+trusting memory: one generation generating a chain for a format the other refuses would only ever show up as a
+blurry texture. The comparison caught its own author within the round - a mutation restore had left
+`RG11B10_FLOAT` out of the Metal 4 list.
+
+And the client's mipmaps do go through it. Vitrail's `deferred-mipmap-contract` - a 1-pixel checkerboard in
+`deferred.fsh`, `colortex0MipmapEnabled = true` in `deferred1.fsh` - runs on this path with 105 pipeline
+identities against Metal 3's 105 and no refusal, and under `-Dmetallum.metal4Trace=true` its chain generations
+are visible: **2448 of them over the run, each answering true, for a 2560x1440 target**. That count is also an
+observation for the performance phase rather than a claim: a pack that asks for a chain per sampler use is asking
+for it many times a frame, and nothing here has measured what that costs.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

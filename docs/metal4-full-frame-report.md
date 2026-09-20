@@ -37,15 +37,18 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        288 processes, 1517 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30, the ninth added by
-                  the depth sampling smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      588 in ten processes      failures: 0
-this round:       59 probes (30 cold and 29 warm across the census and the runs on the way to it), the whole of
-                  it after the depth sampling smoke was added: **0 failures** and 50 of 50 on every one of the
-                  sixteen device smokes, the new one included, with 0 crash reports. The smoke this round added
-                  is **depth sampling**: a pass writes depth and ends with the producer barrier, the next samples
-                  that depth texture through a table at each fragment's own position, and both the depth
-                  buffer's values and the colours read from them are compared. The intermittent
+cold runs:        318 processes, 1551 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30 + 30, the tenth added by
+                  the mipmap smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      610 in twelve processes      failures: 0
+this round:       84 probes (30 cold and 54 warm across the census and the runs on the way to it), the whole of
+                  it after the mipmap smoke was added: **0 failures** and 50 of 50 on every one of the seventeen
+                  device smokes, the new one included, with 0 crash reports. The smoke this round added is the
+                  **mip chain**: a level-0 checkerboard, the levels above it pre-filled with a third value so a
+                  generation that did nothing cannot pass, the chain generated, and every level read back against
+                  the box average below it. The depth round's smoke before it was **depth sampling**: a pass
+                  writes depth and ends with the producer barrier, the next samples that depth texture through a
+                  table at each fragment's own position, and both the depth buffer's values and the colours read
+                  from them are compared. The intermittent
                   capability fault did not appear in a third 30-process run, which is its known shape rather
                   than a resolution of it: it has been observed twice in about seventy cold starts and never
                   on demand, and it still blocks AUTO. The smoke the depth round added is the **depth draw**:
@@ -528,7 +531,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | indirect draw   | yes         | yes - the indirect indexed form, one command per draw with `MTLDrawIndexedPrimitivesIndirectArguments` (twenty bytes) in a buffer the GPU reads and the frame path declares resident; the arguments' own `indexStart` selects which of two triangles is drawn, so arguments that are ignored draw the first one twice (50 of 50) | n/a - a no-pack frame draws directly | yes |
 | residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a - a no-pack frame needs no copy, and the window reports `blits 0` | yes |
-| mipmap          | yes         | no                                | n/a           | no          |
+| mipmap          | yes         | yes - `canGenerateMipmaps`: a level-0 checkerboard uploaded, the levels above it pre-filled with a third value, the chain generated, and every level read back against the box average of the one below (50 of 50) | **executes** - Vitrail's `deferred-mipmap-contract` runs on this path (105 pipeline identities against Metal 3's 105, no refusal) and its chain generations are visible under the trace switch: 2448 over the run, each true, for a 2560x1440 target; correctness NOT MEASURED, because no picture of it exists | yes |
 | compute         | yes         | no                                | n/a           | no          |
 | storage buffer  | yes         | no                                | n/a           | no          |
 | storage image   | yes         | no                                | n/a           | no          |
@@ -587,9 +590,10 @@ answered rather than only what is left.
    AUTO, does not block implementation.
 6. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
-   the three frame-resource operations the Metal 4 encoder now carries and answers false to (`generateMipmaps`,
-   `clearStorageTexture`, `copyStorageTextureRegion`) - carried so that the capability dispatch installs at all,
-   refused so that no caller is told work was done.
+   the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,
+   `copyStorageTextureRegion`) - carried so that the capability dispatch installs at all, refused so that no
+   caller is told work was done. `generateMipmaps` left that list when the frame's copy encoder learned the
+   command, which this SDK declares on `MTL4ComputeCommandEncoder`.
 7. **Everything the Definition of Done asks for beyond the no-pack frame** - the rest of the Vitrail smoke-pack
    staircase, MRT and depth draws, blit and compute fixtures, the synchronization matrix, resize, reload,
    dimension, shutdown, the real packs, and the lifecycle gate. None of them is claimed; each is its own
