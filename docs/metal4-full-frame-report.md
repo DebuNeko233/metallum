@@ -37,15 +37,19 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
-                  failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All twelve device smokes
-                  passed in every one of them - the drawn sampled texture, the allocator-slot ring, the four
-                  colour attachments, the bound layout, the texture copies, the depth clear, the fence wait,
-                  the indexed draw and the new **residency set** - and the compilation chain compiled a
-                  pipeline in every process (`compile=ok(valid=true)`). The residency smoke is the new one:
-                  a set is made, two allocations (a buffer and a texture) go in, it commits and requests
+cold runs:        228 processes, 1378 probes (50 + 50 + 60 + 60 + 10 + 3 + 5, the sixth and seventh added
+                  by the MRT smoke's own runs); failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      548 in five processes      failures: 0
+this round:       118 probes (30 + 30 + 5 + 3 cold with 20 + 20 + 5 + 3 warm, `--mode raw`), the last 100 of
+                  them after the multi-target draw smoke and the unused-slot pass were added: **0 failures**,
+                  and 50 of 50 on every one of the fourteen device smokes, the two new ones included. The
+                  intermittent capability fault did not appear in either 30-process run, which is its known
+                  shape rather than a resolution of it: it has been observed twice in about seventy cold
+                  starts and never on demand, and it still blocks AUTO. The smoke the MRT round added is the
+                  **multi-target draw**: a four-output fragment stage, one fullscreen triangle and every
+                  attachment read back against that slot's own value; the pass smoke gained an unfilled slot
+                  between two filled ones. The previous round's residency smoke was: a set is made, two
+                  allocations (a buffer and a texture) go in, it commits and requests
                   residency, it reports two allocations, and the queue answers `addResidencySet:` (50 of 50) -
                   and it is the model the frame path's own run proved necessary, since without those
                   declarations the GPU faulted and with them it renders terrain. The fence wait and the depth clear are the round before it: two empty frames with
@@ -287,11 +291,18 @@ basic:   PARTLY - the pass exists end to end: `createRenderPass` resolves the ga
          pipeline's own stride, setIndexBuffer is an address the draw offsets, the scissor is set and cleared,
          and draw/drawIndexed assign the tables, set the state and draw. The pass object is still NOT run
          (it needs the engine's device), and the multi-draw, indirect and timestamp forms still refuse by name
-MRT:     PROVEN for the pass's half, and only that half - one pass carries four colour attachments cleared
-         to red, green, blue and white and each slot is read back against the colour that slot was asked
-         for; a second pass loads slot 0's existing contents and re-clears slot 1, so the load, the clear
-         on a reused attachment and the store across a pass boundary are all measured. What is NOT proven
-         is a pipeline writing several targets at once: no draw is encoded yet
+MRT:     PROVEN, both halves. The pass half: one pass carries four colour attachments cleared to red,
+         green, blue and white and each slot is read back against the colour that slot was asked for; a
+         second pass loads slot 0's existing contents and re-clears slot 1, so the load, the clear on a
+         reused attachment and the store across a pass boundary are all measured; a third describes a slot
+         the caller left unfilled between two it filled, which is the MRT shape a program with fewer outputs
+         than the pass produces. The drawn half (`canDrawMultipleTargets`): one pipeline with four
+         `[[color(n)]]` outputs, one fullscreen triangle from `[[vertex_id]]` alone, and every attachment
+         read back against the value that slot's own output writes - at both corners, so a draw that covered
+         part of a target fails rather than passing on one pixel. Measured on Apple Silicon: 50 of 50 probes
+         (30 cold + 20 warm). What is NOT MEASURED is the image: the frame path runs Vitrail's MRT fixture
+         end to end (134 pipeline identities against Metal 3's 134, 30 presents a window, no fault), and no
+         picture of it exists - see the picture-column blocker.
 clear:   PROVEN as a pass of its own, and it is a decision with a cost. On this API a clear is a **load
          action**, and a load action belongs to a pass, so `Metal4FrameEncoder.clearColorTexture`,
          `clearColorAndDepthTextures` (unscissored) and `clearDepthTexture` each open a one-attachment pass
@@ -486,7 +497,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - the no-pack world frame renders and presents, 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's four fullscreen passes run through it (20 logical passes a frame, `pipelineIdentities 105` against Metal 3's 105, no `GPURestart`); **the picture is NOT MEASURED** - every screenshot was a black display, so the image is unverified | yes |
-| MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a - a no-pack frame needs one target | yes |
+| MRT             | yes         | **both halves** - four colour attachments in one pass, cleared per slot and read back slot by slot, plus one pipeline with four `[[color(n)]]` outputs drawing into all four and every slot read back at both corners (50 of 50); a slot the caller left unfilled is carried at its own index | **executes, correctness NOT MEASURED** - Vitrail's MRT fixture runs on this path (134 pipeline identities against Metal 3's 134, 19 logical passes a frame against 15, 30 presents, no fault), and the picture column is void so the four quadrants were never looked at | yes |
 | clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | yes - 150 clear encoders a window and 150 of its 480 depth attachments are the clear passes' own; a clear is never a load, which the counter now shows (`depthLoadedMiB` did not move when those 150 were counted) | yes |
 | depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | the window attaches depth 480 times and counts its clear passes' depth traffic; no depth draw and no depth sample yet | yes |
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | yes in the reading the window takes: 775 texture binds a window and the picture is Metal 3's; the pixel-exact proof is the smoke's | yes |

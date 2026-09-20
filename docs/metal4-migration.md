@@ -1870,6 +1870,59 @@ cleared and its facts delivered; they do not say the image is right, and no pict
 acceptance test for exactly that - its negative controls are designed so a wrong elision changes pixels - and it
 has not been run. That is the next rung, and it needs a display that can be photographed.
 
+### The MRT smoke's drawn half, and two faults a fixture found that reading did not
+
+The MRT smoke had a pass half - four attachments, four clears, four readbacks - and no draw. Four clears put
+four values in four slots whatever the pipeline declares, so the pass half cannot tell a four-output fragment
+stage from a one-output one, nor a permuted slot order from a correct one. The drawn half is now the probe's
+`canDrawMultipleTargets`: one pipeline built with one format per slot, one fullscreen triangle from
+`[[vertex_id]]` alone (no vertex buffer, no argument table, so nothing else can fail in the same run), four
+`[[color(n)]]` outputs writing four distinct values, and each attachment read back against the value that
+slot's own output writes - **at both corners**, because a draw that covered part of a target would pass on the
+one pixel a fullscreen triangle happened to reach. Measured on this machine: 50 of 50 probes (30 cold
+processes + 20 warm repeats), with every other smoke green and no failure stage.
+
+**Two faults were found by running things rather than by reading them, and both are recorded in the code.**
+
+The first is this smoke's own: its first version never called `beginCommandBufferWithAllocator:` on the buffer
+its pass was opened on. The machine did not refuse the encoder - it took the process down with a SIGSEGV
+inside `IOGPUDeviceGetNextGlobalTraceID`, with the crash report's own frame reading
+`-[IOGPUMetal4RenderCommandEncoder initWithCommandAllocator:]`. It was attributed by printing one line before
+each smoke and reading which line came last; the fix is one call, and the pin that refuses its absence carries
+the reason.
+
+The second is the frame path's, and Vitrail's MRT fixture found it: a descriptor with a colour slot the caller
+left **unfilled** - which is the shape its opaque coverage path produces, one draw buffer against three
+fragment-output ranks - killed the frame with
+
+```text
+java.lang.NullPointerException: Cannot invoke
+"com.metallum.mtl.metal4.MTL4RenderEncoder$Color.texture()" because "color" is null
+    at MTL4RenderEncoder.open(MTL4RenderEncoder.java:189)
+    at Metal4RenderPass.<init>(Metal4RenderPass.java:242)
+```
+
+`Metal4RenderPass` leaves a null for an unused slot and always has; the encoder's loop dereferenced it. An
+unused slot is now left empty at its own index, which is what the Metal 3 descriptor loop does with the same
+slot, and **not** compacted: compacting would move the attachments that are there to other slots' numbers and
+the picture would be a permutation of the right one. The smoke gained a pass of exactly that shape - a filled
+slot, an unused one, a filled one - and the readback says the filled slots kept their indices.
+
+**With that, the MRT fixture runs on this path.** Same session, both generations, the fixture's own programs
+unchanged:
+
+```text
+m3: renderPasses=450  clearEncoders=0    pipelineIdentities=134  loadedMiB=7278.4   storedMiB=13002.8
+m4: renderPasses=570  clearEncoders=180  pipelineIdentities=134  loadedMiB=11919.1  storedMiB=20174.7
+m3: 8.03 ms a frame, 124.5 fps, gpuP50 5.60    m4: 8.06 ms a frame, 124.1 fps, gpuM4P50 4.64
+```
+
+The same 134 programs, 19 logical passes a frame against Metal 3's 15, 30 presents in the window, no fault
+and no refusal. **What that does not say is that the picture is right**: the fixture's acceptance is four
+coloured quadrants read off a screenshot, and the display cannot be photographed, so its picture column is
+void and the MRT frame's correctness is NOT MEASURED. The execution evidence - the same program set compiled
+into the same number of pipeline identities, the attachments described, the present made - is what exists.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
