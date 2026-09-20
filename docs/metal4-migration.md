@@ -2040,6 +2040,46 @@ are visible: **2448 of them over the run, each answering true, for a 2560x1440 t
 observation for the performance phase rather than a claim: a pack that asks for a chain per sampler use is asking
 for it many times a frame, and nothing here has measured what that costs.
 
+### A compute dispatch, and where the client's compute road stops
+
+The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it
+is now on the device. `canDispatchCompute` builds a pipeline from the probe's own kernel MSL, fills a table with
+two buffers **by address** - the output and the uniform the kernel adds - dispatches one threadgroup of 32
+threads, and reads every word the kernel wrote. Three facts make it a measurement rather than a call count: the
+output buffer is pre-filled with a **sentinel the kernel never writes**, so a dispatch that did nothing leaves it
+there rather than passing on what a fresh buffer holds; every thread's expected value is **its own index's
+formula** (`id * 2 + 7`), so a grid of the wrong shape, one thread's answer repeated over the buffer, and a table
+that carried only one of the two buffers all fail; and both buffers are declared resident first, which the
+mipmap round measured to be load-bearing for this command model's commands. Measured: 50 of 50 probes in 30 cold
+processes and 20 warm repeats.
+
+The three calls are read off this machine's SDK rather than remembered: `setComputePipelineState:`
+(`MTL4ComputeCommandEncoder.h:51`), `setArgumentTable:` (`:661`, and it takes **no stage mask** - a dispatch has
+one stage) and `dispatchThreadgroups:threadsPerThreadgroup:` (`:87`), whose two `MTLSize` structs go over as
+pointers, the convention the copy methods' regions already use.
+
+**The client's compute road was then run to find where it stops, and it stops before any dispatch.** Vitrail's
+`compute-storage-contract` - a kernel that writes a storage buffer and a storage image, and a render pass that
+displays them - reaches this on the Metal 4 arm:
+
+```text
+java.lang.IllegalStateException: storage image phase15Image was allocated by the active backend
+    but that backend could not clear it to zero
+```
+
+That is `MetalFrameResourceCommands.clearStorageTexture`, one of the two frame-resource operations this encoder
+still answers false to, asked for by the client's own allocation of a storage image. So the work list for this
+slice is now measured rather than guessed, in the order the client reaches it:
+
+1. **`clearStorageTexture`** - the zeroing a storage allocation asks for. The road exists: a typed kernel, a table
+   carrying the image, a dispatch, which is what this round proved natively;
+2. **a compute-pipeline compile that does not require the Metal 3 state** - `MetalComputeBridge.compile` calls
+   `Metal3ComputeBridge.compile`, which refuses anything that is not a `Metal3ExecutionState`, so a pack's own
+   compute pipeline cannot be built on this path at all;
+3. **`MetalFrameComputeCommands.dispatchCompute`** on the frame encoder - the dispatch itself, with the client's
+   reflected binding map resolved into a table;
+4. and probably `copyStorageTextureRegion`, the other refusal, when a pack copies storage images.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
