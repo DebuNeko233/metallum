@@ -16,6 +16,7 @@ import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalFrameExtras;
 import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.shared.MetalGpuBuffer;
@@ -48,31 +49,38 @@ import java.util.Set;
 /**
  * The Metal 4 frame encoder: the object the executing generation's frame would be built from.
  * <p>
- * <strong>What exists is the frame's lifetime, and nothing else.</strong> This encoder owns the ring
- * {@code mtl.metal4.MTL4FrameRing} - the allocator slots, one command buffer and the shared event whose values
- * prove a slot free - and it owns the resources a frame cannot release yet, filed against the slot that will
- * prove them free. That is the half of the frame path where being wrong is a use-after-free, and it is the half
- * the migration's sections 30 to 32 ask for first: begin a frame, choose a slot, wait for it, reset it, begin,
- * encode, end, commit <em>once</em>, retire.
+ * <strong>What exists is the frame's lifetime and the work a client frame encodes into it.</strong> This encoder
+ * owns the ring {@code mtl.metal4.MTL4FrameRing} - the allocator slots, one command buffer and the shared event
+ * whose values prove a slot free - the resources a frame cannot release yet, filed against the slot that will
+ * prove them free, the render passes the game opens on the frame's command buffer, the clears and the copies,
+ * and the present triangle drawn into the layer's next drawable. That is the migration's sections 30 to 32 asked
+ * for in one object: begin a frame, choose a slot, wait for it, reset it, begin, encode, end, commit
+ * <em>once</em>, retire.
  * <p>
- * <strong>What does not exist refuses by name.</strong> Every operation that would render, copy, clear or
- * measure raises {@link Metal4ExecutionProvider.Unimplemented} named for itself - section 35's rule, and the
- * same reason the provider's own refusals carry a stage: an operation dropped in silence is a half frame, and a
- * half frame is worse than a frame that says it cannot run yet. The refusals are the work list, one per line,
- * which is what a migration wants its gaps to look like.
+ * <strong>What does not exist refuses by name.</strong> Every operation this path has not encoded - a compute
+ * dispatch, a timestamp, a multi-draw, a clear of one colour and depth texture in one call - raises
+ * {@link Metal4ExecutionProvider.Unimplemented} named for itself, or is answered by an absent contract a bridge
+ * finds missing and falls back from. That is section 35's rule, and the same reason the provider's own refusals
+ * carry a stage: an operation dropped in silence is a half frame, and a half frame is worse than a frame that
+ * says it cannot run yet. The refusals are the work list, one per line, which is what a migration wants its gaps
+ * to look like.
  * <p>
- * <strong>Nothing reaches this class yet.</strong> The services hand out the provider of the generation that is
- * <em>executing</em>, and the device states that generation as Metal 3 until a Metal 4 frame path is ready - so
- * this encoder is constructed only by a build that says Metal 4 executes, and today it is the object that would
- * own the frame rather than the object that owns one. Its classes are package-private for the same reason: the
- * provider is the generation's public seam and the neutral interfaces are what a caller holds.
+ * <strong>This class is reached only by a build that asks for it.</strong> The services hand out the provider of
+ * the generation that is <em>executing</em>, and the device still states that generation as Metal 3 by default -
+ * the cold capability probe has failed intermittently, which is what keeps AUTO off Metal 4 - so this encoder is
+ * constructed by a forced {@code -Dmetallum.execution=metal4} session and is EXPERIMENTAL there. Its classes are
+ * package-private for the same reason: the provider is the generation's public seam and the neutral interfaces
+ * are what a caller holds.
  * <p>
- * <strong>What it deliberately does not do</strong>: it does not implement the bridges' remaining optional
- * contracts ({@code MetalFrameExtras}, {@code MetalFrameResourceCommands}), because each of them is an operation
- * this path cannot perform yet - a bridged caller finds the contract missing and takes its own fallback, which
- * is the explicit answer, and implementing them with do-nothing bodies would be the silent drop the plan
- * forbids. {@link MetalFramePresentation} is implemented, because the surface asked for it by name and because
- * the frame already owns everything a present needs: the queue, the one command buffer, and the commit.
+ * <strong>Which optional contracts it carries.</strong> {@link MetalFramePresentation} is implemented, because
+ * the surface asked for it by name and because the frame already owns everything a present needs: the queue, the
+ * one command buffer, and the commit. {@link MetalFrameExtras} is implemented for the one question this path can
+ * answer - what a pass said about its colour attachments' contents, which reaches the pass descriptor as a load
+ * and a store action - and its other three members answer what is true of this generation rather than pretending:
+ * the storage-image boundary it asks for is already encoded after every pass, and the scaler it asks about does
+ * not exist until the Metal 4 MetalFX milestone. {@code MetalFrameResourceCommands} stays absent, because it is
+ * an operation this path cannot perform yet and a bridged caller must find it missing and take its own fallback
+ * rather than receive a do-nothing body.
  * <p>
  * <strong>The present is the frame's own.</strong> The picture is drawn into the layer's next drawable by a
  * present triangle encoded into <em>this frame's</em> command buffer, before {@link #submit()} commits it, and
@@ -82,7 +90,7 @@ import java.util.Set;
  * one itself.
  */
 @Environment(EnvType.CLIENT)
-final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation {
+final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras {
 
     /**
      * The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth.
@@ -223,6 +231,17 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @org.jspecify.annotations.Nullable
     private Metal4RenderPass currentPass;
+
+    /**
+     * What the next pass was told about its colour attachments' contents, or null where it was told nothing.
+     * <p>
+     * The game's descriptor carries only clears, so these two facts arrive beside it through
+     * {@link MetalFrameExtras} and are spent by the pass they were said for. Held rather than read once for the
+     * same reason the Metal 3 encoder holds them: the caller states them <em>before</em> the pass exists, and
+     * {@code createRenderPass} is where the statement becomes the pass's own.
+     */
+    @Nullable
+    private AttachmentContents[] nextPassContents;
 
     /**
      * @param device             the engine's device, which is where the queue address comes from
@@ -625,7 +644,12 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
         beginFrameIfNeeded();
 
-        Metal4RenderPass pass = new Metal4RenderPass(this, descriptor);
+        // Taken before the pass is built, so what this pass was told cannot be read by the next one: a caller
+        // that says nothing about a pass must get the pass it would have had, not the last one's answers.
+        AttachmentContents[] passContents = this.nextPassContents;
+        this.nextPassContents = null;
+
+        Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents);
         this.currentPass = pass;
         return pass;
     }
@@ -645,6 +669,68 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
         this.currentPass = null;
         pass.finish();
+    }
+
+    // ---------------------------------------------------- what the bridges ask beyond the frame contract
+
+    /**
+     * What the pass about to be created needs of each colour attachment's contents, one answer per slot.
+     * <p>
+     * These are the two facts the public render-pass descriptor does not carry and a tile-based GPU pays for: a
+     * pass that writes every pixel of an attachment need not have it loaded, and one whose contents nothing
+     * reads afterwards need not have it stored. Only the pack side knows either, so they arrive here and are
+     * spent by the pass they were said for - see {@code Metal4RenderPass}, which asks the one mapping in
+     * {@code mtl.metal4.MTL4RenderEncoder} that turns them into load and store actions.
+     * <p>
+     * A caller that says nothing - no array, a short array, a null slot - leaves every slot {@code CARRIED},
+     * the answer that changes nothing, because a wrong {@code DontCare} is a wrong image rather than a slower
+     * frame.
+     */
+    @Override
+    public void setNextPassContents(final @Nullable AttachmentContents[] contents) {
+        this.nextPassContents = contents == null ? null : contents.clone();
+    }
+
+    /**
+     * Whether the next pass may read a storage image written since the live encoder opened.
+     * <p>
+     * Accepted and already answered by construction rather than stored: every logical pass on this path ends by
+     * encoding {@code barrierAfterStages:beforeQueueStages:} with the all-stages masks before its own native
+     * encoder is ended, so the boundary this asks for has been encoded unconditionally by the time the next pass
+     * exists. It is here because the interface asks it and a caller must not find the contract missing on the
+     * road that does answer it; what it can still buy on this model is a <em>narrower</em> barrier, which is the
+     * optimisation section 62 postpones until a counter says what the narrowing buys.
+     */
+    @Override
+    public void setNextPassReadsStorageImage(final boolean reads) {
+        // Deliberately empty, and not a forgotten body: the boundary this asks for is already encoded after every
+        // pass by construction, so there is no state a later pass could read and no case where accepting the
+        // statement changes what this path encodes.
+    }
+
+    /**
+     * Whether this generation can scale with MetalFX, which it cannot yet: the Metal 4 spatial scaler is the
+     * migration's own later milestone (section 77). The honest answer is the one that sends the caller to its
+     * own scale path; the answer that claimed a picture had been scaled would be a wrong image.
+     *
+     * @see #scaleWithMetalFx(GpuTextureView, GpuTextureView, int, int)
+     */
+    @Override
+    public boolean metalFxAvailable() {
+        return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * False rather than a scale, and false is what this encoder answered before it carried
+     * {@link MetalFrameExtras} at all: a Metal 4 scaler does not exist to answer with, and the caller's own
+     * fallback is the road it already took.
+     */
+    @Override
+    public boolean scaleWithMetalFx(final @Nullable GpuTextureView from, final GpuTextureView to,
+                                    final int contentWidth, final int contentHeight) {
+        return false;
     }
 
     /** The generation state this encoder compiles through, for the pass that sets a pipeline. */
@@ -743,9 +829,14 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
 
         MTL4RenderEncoder pass;
         try {
+            // The present's drawable is an attachment like any other and this pass overwrites every pixel of it,
+            // so it is counted with the same two facts it is opened with - the frame's attachment traffic is the
+            // sum over the passes that cost it, and the present is one of them.
+            MTL4RenderEncoder.Color presentAttachment = new MTL4RenderEncoder.Color(drawableTexture,
+                    new AttachmentContents(true, true), null);
+            MTL4RenderEncoder.countAttachment(presentAttachment, picture.pixelSize());
             pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,
-                    new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(drawableTexture,
-                            new AttachmentContents(true, true), null)},
+                    new MTL4RenderEncoder.Color[]{presentAttachment},
                     null, "the present");
         } catch (MTL4RenderEncoder.Refused refused) {
             throw new IllegalStateException("the Metal 4 present pass could not be opened at stage "
@@ -828,7 +919,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         encodeClear("clearColorTexture",
                 new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
                         AttachmentContents.CARRIED, components(clearColor))},
-                null, colorTexture.getWidth(0), colorTexture.getHeight(0));
+                null, new int[]{color.pixelSize()}, 0,
+                colorTexture.getWidth(0), colorTexture.getHeight(0));
     }
 
     /** Clears a colour attachment and a depth attachment in one pass, which is one pass and not two. */
@@ -841,6 +933,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                 new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
                         AttachmentContents.CARRIED, components(clearColor))},
                 new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
+                new int[]{color.pixelSize()}, depth.pixelSize(),
                 colorTexture.getWidth(0), colorTexture.getHeight(0));
     }
 
@@ -858,6 +951,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         MetalGpuTexture depth = textureOf(depthTexture);
         encodeClear("clearDepthTexture", new MTL4RenderEncoder.Color[0],
                 new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
+                new int[0], depth.pixelSize(),
                 depthTexture.getWidth(0), depthTexture.getHeight(0));
     }
 
@@ -886,7 +980,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      * attachment afterwards has an encoded dependency on it.
      */
     private void encodeClear(final String operation, final MTL4RenderEncoder.Color[] colors,
-                             final MTL4RenderEncoder.Depth depth, final long width, final long height) {
+                             final MTL4RenderEncoder.Depth depth, final int[] colorPixelSizes,
+                             final int depthPixelSize, final long width, final long height) {
         for (MTL4RenderEncoder.Color color : colors) {
             useResource(color.texture());
         }
@@ -903,6 +998,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
 
         MetalFrameProbe.encoderOpened(3);
+        // A clear's pass is attachment traffic like any other, and a counter that left it out would make a frame
+        // which clears in five passes of its own look cheaper than one that folds those clears into the passes
+        // that use the attachments - which is exactly the comparison these counters exist for. Counted through
+        // the same mapping that opens the descriptor: a clear asks for no load, and what it wrote is stored.
+        for (int index = 0; index < colors.length; index++) {
+            MTL4RenderEncoder.countAttachment(colors[index], colorPixelSizes[index]);
+        }
+        if (depth != null) {
+            MTL4RenderEncoder.countDepthAttachment(depth, depthPixelSize);
+        }
         MTL4RenderEncoder pass;
         try {
             pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,

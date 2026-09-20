@@ -46,23 +46,29 @@ import java.util.function.Supplier;
  * One Metal 4 render pass as the game's own render path sees it: the descriptor's attachments turned into a
  * Metal 4 pass descriptor, and the encoder that pass is encoded into.
  * <p>
- * <strong>What it does is the pass itself.</strong> It resolves the descriptor's colour and depth attachments,
- * checks that they agree on an extent and that the render area lies inside it - the same two rules the Metal 3
- * pass applies, because a pass that lied about either would be a wrong image rather than an error message - and
- * opens the pass through {@link MTL4RenderEncoder}, which is where the load and store actions are decided and
- * where the attachment mapping is already measured on the device.
+ * <strong>What it does is the pass itself and the work encoded into it.</strong> It resolves the descriptor's
+ * colour and depth attachments - including the two facts the descriptor does not carry, which arrive from the
+ * frame encoder through {@code MetalFrameExtras} and become this pass's load and store actions - checks that the
+ * attachments agree on an extent and that the render area lies inside it, the same two rules the Metal 3 pass
+ * applies because a pass that lied about either would be a wrong image rather than an error message, and opens
+ * the pass through {@link MTL4RenderEncoder}, where the attachment mapping is already measured on the device.
+ * The pipeline, the bindings, the scissor rectangle and the draws - direct, indexed and indexed-indirect - are
+ * encoded into that encoder through the frame's binding plan and the argument tables it sizes.
  * <p>
- * <strong>What it does not do is draw.</strong> Every command that would bind a resource or issue work refuses
- * by name, so a pack that reached this pass would be told which operation the Metal 4 path does not have rather
- * than being handed a pass that drew nothing. The one exception is the debug group: it is a capture label and
- * not work, so pushing and popping it is a no-op rather than a refusal - dropping a label costs a reader
- * nothing, while dropping a draw would be the half frame the plan forbids.
+ * <strong>What it cannot encode refuses by name.</strong> The shapes this path has not reached - a multi-draw, an
+ * indirect draw whose arguments are several commands in one buffer, a storage-image bind - raise
+ * {@link Metal4ExecutionProvider.Unimplemented} named for the operation, so a pack that reached one is told which
+ * operation the Metal 4 path does not have rather than being handed a pass that drew nothing. The debug group is
+ * the deliberate exception: it is a capture label and not work, so pushing and popping it is a no-op rather than
+ * a refusal - dropping a label costs a reader nothing, while dropping a draw would be the half frame the plan
+ * forbids.
  * <p>
  * <strong>The barrier is encoded at the end of every pass</strong> and before the encoder is ended. Only the
- * pass that *reads* an attachment knows whether a dependency exists, and that fact does not reach this class
- * yet (the Metal 3 pass learns it through {@code MetalFrameExtras}, which this generation does not implement),
- * so the migration's rule for this stage applies: over-synchronise while the path is being built, and narrow it
- * when a counter says what the narrowing buys.
+ * pass that <em>reads</em> an attachment knows whether a dependency exists, and each logical pass on this path is
+ * its own native encoder, so the boundary a caller states through {@code MetalFrameExtras} - "the next pass reads
+ * a storage image written since the live encoder opened" - is one this path encodes unconditionally for every
+ * pass. That is the migration's rule for this stage: over-synchronise while the path is being built, and narrow
+ * it when a counter says what the narrowing buys.
  */
 @Environment(EnvType.CLIENT)
 final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWriter {
@@ -139,7 +145,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private long scissorWidth;
     private long scissorHeight;
 
-    Metal4RenderPass(final Metal4FrameEncoder owner, final RenderPassDescriptor descriptor) {
+    Metal4RenderPass(final Metal4FrameEncoder owner, final RenderPassDescriptor descriptor,
+                     final @Nullable AttachmentContents[] contents) {
         this.owner = owner;
         this.descriptor = descriptor;
 
@@ -148,6 +155,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             throw new IllegalArgumentException("Render pass declares " + attachments.size() + " colour attachment"
                     + " slots, Metal supports at most " + MAX_COLOR_ATTACHMENTS);
         }
+        // One answer per slot with the default filled in, so the loop below reads a fact rather than a null it
+        // has to interpret - and the same defaulting the Metal 3 path applies, because the two generations have
+        // to agree about what a pass that said nothing gets.
+        AttachmentContents[] stated = AttachmentContents.resolve(contents, attachments.size());
 
         int width = -1;
         int height = -1;
@@ -173,9 +184,14 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             // names by object: this is the half of residency that is not about addresses, and the frame path
             // declares both from the same place.
             this.owner.useResource(attachmentTexture);
-            MetalFrameProbe.attachment(attachmentTexture, pixelSize(view), true, true);
-            colors[index] = new MTL4RenderEncoder.Color(attachmentTexture, AttachmentContents.CARRIED,
+            // What this pass was told about the slot, whose two facts become the descriptor's load and store
+            // actions inside the layer that opens it - and the byte counter reads the same decision there, so a
+            // reading of what a frame costs cannot drift from what Metal was asked for.
+            AttachmentContents slotContents = stated[index];
+            MTL4RenderEncoder.Color color = new MTL4RenderEncoder.Color(attachmentTexture, slotContents,
                     clear == null ? null : new float[]{clear.x(), clear.y(), clear.z(), clear.w()});
+            MTL4RenderEncoder.countAttachment(color, pixelSize(view));
+            colors[index] = color;
         }
 
         RenderPassDescriptor.Attachment<OptionalDouble> depthAttachment = descriptor.depthAttachment();
@@ -191,9 +207,14 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             }
             MemorySegment depthTexture = nativeHandle(view);
             this.owner.useResource(depthTexture);
-            MetalFrameProbe.depthAttachment(depthTexture, pixelSize(view), true, true);
-            depth = new MTL4RenderEncoder.Depth(depthTexture,
-                    depthAttachment.clearValue().isPresent() ? depthAttachment.clearValue().getAsDouble() : null);
+            // A cleared depth attachment is handed the clear value rather than what stood there, which is the
+            // one slot the pack side cannot answer for and therefore the one whose traffic has to be counted
+            // from what this pass actually asked for.
+            boolean depthCleared = depthAttachment.clearValue().isPresent();
+            MTL4RenderEncoder.Depth depthAttachmentValue = new MTL4RenderEncoder.Depth(depthTexture,
+                    depthCleared ? depthAttachment.clearValue().getAsDouble() : null);
+            MTL4RenderEncoder.countDepthAttachment(depthAttachmentValue, pixelSize(view));
+            depth = depthAttachmentValue;
         }
 
         if (width <= 0 || height <= 0) {

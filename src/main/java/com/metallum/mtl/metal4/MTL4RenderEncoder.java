@@ -7,6 +7,7 @@ import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
 import com.metallum.render.shared.AttachmentContents;
+import com.metallum.render.shared.MetalFrameProbe;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
@@ -250,6 +251,39 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     /** The store action an attachment's contents ask for: stored where something reads it, discarded otherwise. */
     public static long storeAction(final AttachmentContents contents) {
         return contents.readAfterwards() ? STORE_STORE : STORE_DONT_CARE;
+    }
+
+    /**
+     * Counts one colour attachment's traffic against the frame probe, with the actions this descriptor will be
+     * opened with.
+     * <p>
+     * Beside {@link #loadAction} and {@link #storeAction} on purpose: a counter fed by its caller's own
+     * restatement of the mapping is a reading that can drift from what Metal was actually asked for, and these
+     * numbers are what the migration's attachment traffic is judged by. Every pass this path opens - the game's
+     * passes, a clear's pass of its own, the present - counts through here, so the total is the frame's and not
+     * a subset's.
+     *
+     * @param pixelSize the attachment's bytes per pixel, which lives with the texture's format and not in this
+     *                  handle layer
+     */
+    public static void countAttachment(final Color color, final int pixelSize) {
+        MetalFrameProbe.attachment(
+                color.texture(),
+                pixelSize,
+                loadAction(color.contents(), color.clear() != null) == LOAD_LOAD,
+                storeAction(color.contents()) == STORE_STORE
+        );
+    }
+
+    /**
+     * The depth half of {@link #countAttachment(Color, int)}.
+     * <p>
+     * The depth slot is the one the pack side cannot answer for, so it is counted apart from the colour totals as
+     * well as inside them, and its store is always a store: a later pass reads depth, and this engine has always
+     * stored it.
+     */
+    public static void countDepthAttachment(final Depth depth, final int pixelSize) {
+        MetalFrameProbe.depthAttachment(depth.texture(), pixelSize, depth.clearDepth() == null, true);
     }
 
     /** The native encoder, for the commands that will be encoded into it. */

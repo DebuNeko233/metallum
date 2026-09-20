@@ -113,18 +113,62 @@ for needle, why in (
         raise SystemExit("metal 4 provider: " + why)
 
 # The encoder: the neutral contract, the ring it owns, and a named refusal for every operation it lacks.
-if "implements MetalFrameEncoder, MetalFramePresentation {" not in encoder:
+if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras {" not in encoder:
     raise SystemExit("metal 4 provider: the encoder does not implement the neutral frame contract, so the "
                      "device cannot hold it")
-# Presentation is the one optional contract this path now performs, because the surface asks for it by name and
-# the frame owns everything it needs (the queue, the one command buffer, the commit). The rest stay missing on
-# purpose: each is an operation this path cannot perform yet, and a bridged caller must find it absent and take
-# its own fallback rather than receive a do-nothing body.
-for absent in ("MetalFrameExtras", "MetalFrameResourceCommands"):
-    if absent in encoder.split("implements", 1)[1].split("{", 1)[0]:
-        raise SystemExit("metal 4 provider: the encoder claims " + absent + ", which this path cannot perform "
-                         "yet - a bridged caller must find it missing and take its own fallback rather than "
-                         "receive a do-nothing body")
+# Which optional contracts this path carries, and why each one it does not. Presentation is the surface's own
+# request. MetalFrameExtras now carries the attachment-contents question, which the pack side asks before every
+# pass and which this path can answer in full. MetalFrameResourceCommands stays missing on purpose: it is an
+# operation this path cannot perform yet, and a bridged caller must find it absent and take its own fallback
+# rather than receive a do-nothing body.
+if "MetalFrameResourceCommands" in encoder.split("implements", 1)[1].split("{", 1)[0]:
+    raise SystemExit("metal 4 provider: the encoder claims MetalFrameResourceCommands, which this path cannot "
+                     "perform yet - a bridged caller must find it missing and take its own fallback rather than "
+                     "receive a do-nothing body")
+# What a pass said about its attachments reaches the pass and not the encoder that outlives it: the statement is
+# taken and cleared before the pass is built, exactly as the Metal 3 encoder takes it, so a pass nobody described
+# cannot inherit the last described pass's answers. A wrong DontCare is a wrong image rather than a slower frame,
+# which is why this half is pinned with its order and not only its presence.
+if "private AttachmentContents[] nextPassContents;" not in encoder:
+    raise SystemExit("metal 4 provider: the frame encoder has nowhere to keep what the next pass was told about "
+                     "its attachments, so every pass keeps the load and store actions it would have had and the "
+                     "measurement is of nothing")
+for needle, why in (
+    ("public void setNextPassContents(final @Nullable AttachmentContents[] contents) {",
+     "the encoder does not accept the attachment-contents statement the pack side makes before every pass"),
+    ("this.nextPassContents = contents == null ? null : contents.clone();",
+     "the statement is kept by reference, so a caller that reuses its arrays would rewrite a pass's answers"),
+    ("Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents);",
+     "the pass is still created without the facts stated for it, so the descriptor's load and store actions "
+     "ignore what the pack side knows"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+read_facts = encoder.index("AttachmentContents[] passContents = this.nextPassContents;")
+# Presence before position, so a line an edit deleted is reported as the defect it is instead of as a traceback
+# from this file - the same rule the other contracts here follow.
+if "this.nextPassContents = null;" not in encoder[read_facts:]:
+    raise SystemExit("metal 4 provider: what the next pass was told is never cleared when it is taken, so a pass "
+                     "nobody described would inherit the last described pass's answers")
+cleared = encoder.index("this.nextPassContents = null;", read_facts)
+built = encoder.index("new Metal4RenderPass(", read_facts)
+if not read_facts < cleared < built:
+    raise SystemExit("metal 4 provider: what one pass was told is read and cleared after that pass is built, so it "
+                     "would leak onto the next")
+# The other three members of the contract answer what is true of this generation rather than pretending. The
+# storage-image boundary is already encoded after every pass on this path, so accepting the flag is not a silent
+# drop; the scaler does not exist until the Metal 4 MetalFX milestone, and false is the answer that sends the
+# caller to its own fallback instead of claiming a picture was scaled.
+if "public void setNextPassReadsStorageImage(final boolean reads) {" not in encoder:
+    raise SystemExit("metal 4 provider: the encoder does not accept the storage-image boundary statement, so a "
+                     "caller finds the contract incomplete on the road that does answer the attachment half of "
+                     "it and falls back from both")
+if "return false;" not in body_of(encoder, "public boolean metalFxAvailable() {"):
+    raise SystemExit("metal 4 provider: the encoder no longer answers that this generation has no MetalFX scaler "
+                     "yet, and a caller told otherwise would take a scaled road that does not exist")
+if "return false;" not in body_of(encoder, "public boolean scaleWithMetalFx("):
+    raise SystemExit("metal 4 provider: the encoder no longer answers the scale request with the fallback it took "
+                     "before it carried this contract, so a caller would be told a picture was scaled")
 for needle, why in (
     ("MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,",
      "the encoder does not make the frame's ring, so the frame's allocator lifetime has no owner"),
@@ -176,6 +220,35 @@ for needle, why in (
 ):
     if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
+
+# The pass spends the facts the frame path stated for it. The one thing that may not drift is the agreement
+# between the two readers of those facts: the descriptor that is opened and the probe that counts the traffic.
+# They are pinned through the single mapping that decides them, so a pass that counted a load it did not ask for
+# (or a store it discarded) fails here rather than turning into a wrong reading of what a frame costs.
+for needle, why in (
+    ("final @Nullable AttachmentContents[] contents) {",
+     "the pass constructor no longer takes what the frame path stated for it, so nothing can reach the "
+     "descriptor's load and store actions"),
+    ("AttachmentContents[] stated = AttachmentContents.resolve(contents, attachments.size());",
+     "the pass does not default the statement per slot, so a caller that said nothing about a slot is not "
+     "answered with the answer that changes nothing"),
+    ("AttachmentContents slotContents = stated[index];",
+     "the statement is not read per slot, so every attachment would be opened with the same answer"),
+    ("MTL4RenderEncoder.Color color = new MTL4RenderEncoder.Color(attachmentTexture, slotContents,",
+     "the pass no longer builds the attachment from the slot's own facts, so what the descriptor is opened "
+     "with is not what the counter is given"),
+    ("MTL4RenderEncoder.countAttachment(color, pixelSize(view));",
+     "the pass states one set of facts to the counter and another to the descriptor, which makes the two "
+     "readings incomparable"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+if "boolean depthCleared = depthAttachment.clearValue().isPresent();" not in pass_source:
+    raise SystemExit("metal 4 provider: the depth load the pass asks for is not read from the descriptor, so the "
+                     "counted depth load is a guess")
+if "MTL4RenderEncoder.countDepthAttachment(depthAttachmentValue, pixelSize(view));" not in pass_source:
+    raise SystemExit("metal 4 provider: the pass counts no depth traffic, or counts it from a restatement of the "
+                     "descriptor rather than from the attachment it opens")
 
 # The no-pack subset is implemented now, so this list is what a no-pack frame does NOT need yet - the multi
 # and indirect draw forms, and the counters. They refuse by name rather than disappearing, which is what keeps
@@ -858,10 +931,9 @@ for needle, why in (
     ("MetalFrameProbe.encoderOpened(0);", "a render pass the full-frame path opened is not counted"),
     ("MetalFrameProbe.encoderOpened(1);", "a copy encoder is not counted"),
     ("MetalFrameProbe.encoderOpened(3);", "a clear pass is not counted"),
-    ("MetalFrameProbe.attachment(attachmentTexture, pixelSize(view), true, true);",
+    ("MetalFrameProbe.attachment(",
      "a colour attachment is not counted, so the probe's load and store traffic reports nothing"),
-    ("MetalFrameProbe.depthAttachment(depthTexture, pixelSize(view), true, true);",
-     "a depth attachment is not counted"),
+    ("MetalFrameProbe.depthAttachment(", "a depth attachment is not counted"),
     ("MetalFrameProbe.pipelineBound();", "a pipeline bind is not counted"),
     ("MetalFrameProbe.textureBound();", "a texture bind is not counted"),
     ("MetalFrameProbe.samplerBound();", "a sampler bind is not counted"),
@@ -875,11 +947,51 @@ for needle, why in (
     ("MetalFrameProbe.gpuFrameMetal4(millis);", "the queue's per-commit GPU time is read but not reported to the"
      " probe, so a Metal 4 frame has no GPU time at all"),
 ):
-    if needle not in encoder and needle not in pass_source and needle not in ring:
+    if needle not in encoder and needle not in pass_source and needle not in ring \
+            and needle not in encoder_source:
         raise SystemExit("metal 4 provider: " + why)
 if "private static int pixelSize(final GpuTextureView view) {" not in pass_source:
     raise SystemExit("metal 4 provider: the pass cannot say how large an attachment's pixels are, so the probe's"
                      " attachment accounting would count nothing")
+
+# Which passes that traffic is counted for. The counter has to cover every pass this path opens, or a frame that
+# clears in passes of its own reads as cheaper than one that folds those clears into the passes that use the
+# attachments - a comparison of two designs on a number that only one of them is paying into. The counter is
+# also fed from the mapping that opens the descriptor and not from a caller's restatement of it, so the two
+# cannot drift.
+for needle, why in (
+    ("public static void countAttachment(final Color color, final int pixelSize) {",
+     "the attachment counter is not a function of the attachment the descriptor is opened with, so a caller "
+     "restating the mapping could count traffic Metal was never asked for"),
+    ("loadAction(color.contents(), color.clear() != null) == LOAD_LOAD",
+     "the counter no longer asks the load mapping, so a cleared or discarded load would still be counted"),
+    ("storeAction(color.contents()) == STORE_STORE",
+     "the counter no longer asks the store mapping, so a discarded store would still be counted"),
+    ("public static void countDepthAttachment(final Depth depth, final int pixelSize) {",
+     "the depth attachment has no counter of its own, so the slot the pack side cannot answer for is uncounted"),
+    ("depth.clearDepth() == null", "the counted depth load is not read from the attachment the pass is opened "
+                                   "with"),
+):
+    if needle not in encoder_source:
+        raise SystemExit("metal 4 provider: " + why)
+if encoder_source.count("MetalFrameProbe.attachment(") != 1 \
+        or encoder_source.count("MetalFrameProbe.depthAttachment(") != 1:
+    raise SystemExit("metal 4 provider: the counter no longer has exactly one colour and one depth entry point, "
+                     "so some attachment traffic is counted somewhere the mapping does not reach")
+for needle, why in (
+    ("MTL4RenderEncoder.countAttachment(color, pixelSize(view));",
+     "the game's own passes are no longer counted, so the frame's traffic has a hole in it"),
+    ("MTL4RenderEncoder.countDepthAttachment(depthAttachmentValue, pixelSize(view));",
+     "the game's own passes count no depth traffic"),
+    ("MTL4RenderEncoder.countAttachment(colors[index], colorPixelSizes[index]);",
+     "a clear's pass of its own is not counted, so clearing the way this path does reads as free"),
+    ("MTL4RenderEncoder.countDepthAttachment(depth, depthPixelSize);",
+     "a clear's depth attachment is not counted"),
+    ("MTL4RenderEncoder.countAttachment(presentAttachment, picture.pixelSize());",
+     "the present pass is not counted, so the drawable it overwrites is missing from the frame's traffic"),
+):
+    if needle not in pass_source and needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two
