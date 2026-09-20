@@ -706,7 +706,7 @@ answered rather than only what is left.
    counters, so a pass that draws the world through Sodium's indirect batches read as an empty pass (`draws=0`);
    pinned now, and the same trace reads 337, 678 and 584 draws per terrain ending.
 
-11. **The history rung fails on this path: a pass does not see what the pass before it wrote.** Vitrail's
+11. ~~The history rung fails on this path~~ - **fixed, and the fault was one parameter order.** Vitrail's
    `composite-history-contract` is a chain of three passes over one target declared `colortex2Clear = false`, and
    its verdict is legible in the presented frame - cyan when the chain is in its steady state, magenta whenever it
    is not. Metal 3 presents cyan (with red only while the chain settles); Metal 4 presents **magenta for 119975 of
@@ -729,7 +729,19 @@ answered rather than only what is left.
    this path implements with both textures declared resident, the right selector and the right argument order,
    and throws rather than returning quietly. So the question narrows to **where in the frame that copy is
    encoded**: after this frame's commit it would land in the next frame, behind the pass that needed it.
-   Section 67 stops the staircase here.
+   **And the copy was zero-sized.** The next instrument printed the rectangle each swap-back copy was given
+   and every one of them read `0x0`: the shared contract is
+   `copyTextureToTexture(source, destination, mipLevel, destX, destY, sourceX, sourceY, width, height)`,
+   while this path's override declared `(source, destination, mipLevel, x, y, width, height, destinationX,
+   destinationY)` - the same nine parameters in a different order - so a correct caller's rectangle was read as
+   width 0, height 0 at destination (width, height). Metal accepts that without complaint, so **every
+   texture-to-texture copy on this path moved nothing and said nothing**. The override now reads the contract's
+   order, and the fixture passes on both arms: 4926 and 4969 readbacks, Metal 4 `(3, 248, 248, 224)` - the steady
+   state, cyan, with 1600 settling samples and **no magenta** - against Metal 3's `(5, 241, 241, 254)`, unchanged.
+   Two pins hold the order and are mutation-proved, one of them by swapping the two origins, which is the shape
+   of the fault. What the same bug reached beyond this fixture: Vitrail's shadow target copy
+   (`ShadowTargets`, `copyTextureToTexture(depth, noTranslucents, ...)`) is the next candidate to read under the
+   same instrument, and any pack that copies one target over another had been silently doing nothing on this path.
 
 ## Metal 4 full-frame implementation complete?
 

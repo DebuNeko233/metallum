@@ -1618,4 +1618,26 @@ for needle, why in (
     if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and a copy's rectangle is read in the contract's order, not the implementation's ----------------------
+# Measured as a failing history chain and found in one trace line. The shared contract is
+# `copyTextureToTexture(source, destination, mipLevel, destX, destY, sourceX, sourceY, width, height)`; this path's
+# override declared `(source, destination, mipLevel, x, y, width, height, destinationX, destinationY)`, so a correct
+# caller - Vitrail's history swap-back passes zero offsets and the target's width and height, as the contract asks -
+# was read as a rectangle of **0 by 0** at destination (width, height). Metal accepts a zero-sized copy without
+# complaint, so every texture-to-texture copy on this path moved nothing and said nothing: the trace line printed
+# `texture copy 0x.. -> 0x.. 0x0 level 0`, and the history fixture's chain, which depends on that copy bringing the
+# alternate half back over the main one, latched to magenta on its first frame and stayed there for the whole run.
+# The override now reads the contract's order and passes the two origins where the native selector wants them.
+for needle, why in (
+    ("final int destX, final int destY, final int sourceX,\n                                     final int sourceY,"
+     " final int width, final int height) {",
+     "the override's parameters are not in the shared contract's order, so a correct caller's rectangle is read as"
+     " the wrong region - measured as a zero-sized copy that moved nothing"),
+    ("copyTextureRegion(textureOf(source).nativeHandle(), 0L, mipLevel, sourceX, sourceY, 0L,\n"
+     "                width, height, 1L, textureOf(destination).nativeHandle(), 0L, mipLevel, destX, destY, 0L)",
+     "the source origin is not the caller's source origin, or the destination origin is not the caller's"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

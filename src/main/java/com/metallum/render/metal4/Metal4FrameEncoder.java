@@ -280,6 +280,17 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     private boolean closed;
 
     /**
+     * Whether this frame has already been committed, for the trace's frame-relative lines.
+     * <p>
+     * A copy that Vitrail asks for between frames - its contract for the history swap-back is "after the last
+     * render pass of the frame" - lands in whichever command buffer is open when it is encoded, and the difference
+     * between "inside the frame that needs it" and "inside the next one" is invisible in the copy itself. This flag
+     * is set where the frame is committed and cleared where the next one begins, so a copy's trace line can say
+     * which side of that boundary it fell on.
+     */
+    private boolean frameCommitted;
+
+    /**
      * The pass currently open, so that a second {@code createRenderPass} before a {@code submitRenderPass} is a
      * named fault rather than two encoders writing into one command buffer with no order between them.
      */
@@ -373,6 +384,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (!this.ring.endAndSubmit()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: a frame could not be submitted - {}", this.ring.refusal());
         }
+        this.frameCommitted = true;
         // The frame boundary, reported to the frame probe so that a forced Metal 4 session produces the same
         // window line a Metal 3 session does - which is what makes the two generations comparable in the
         // standard harness at all. Every counter the probe prints is fed from the places below.
@@ -555,6 +567,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (!this.ring.beginFrame()) {
             throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
         }
+        this.frameCommitted = false;
         // The slot's previous submission is complete as of the wait inside beginFrame, so a drawable copied out
         // of that submission can be read now - the same fact the retire below is allowed to run on.
         reportDrawableReadback(this.ring.slot());
@@ -678,12 +691,19 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /** Copies a region of one texture into another, which is the copy a frame makes most of. */
     @Override
     public void copyTextureToTexture(final @NonNull GpuTexture source, final @NonNull GpuTexture destination,
-                                     final int mipLevel, final int x, final int y, final int width, final int height,
-                                     final int destinationX, final int destinationY) {
+                                     final int mipLevel, final int destX, final int destY, final int sourceX,
+                                     final int sourceY, final int width, final int height) {
         useResource(textureOf(source).nativeHandle());
         useResource(textureOf(destination).nativeHandle());
-        if (!copyEncoder().copyTextureRegion(textureOf(source).nativeHandle(), 0L, mipLevel, x, y, 0L, width,
-                height, 1L, textureOf(destination).nativeHandle(), 0L, mipLevel, destinationX, destinationY, 0L)) {
+        if (TRACE) {
+            Metallum.LOGGER.info("Metal 4 trace: texture copy 0x{} -> 0x{} {}x{} level {} from ({}, {}) to ({}, {})"
+                            + " at frameBegun={} frameCommitted={}",
+                    Long.toHexString(textureOf(source).nativeHandle().address()),
+                    Long.toHexString(textureOf(destination).nativeHandle().address()), width, height, mipLevel,
+                    sourceX, sourceY, destX, destY, this.ring.begun(), this.frameCommitted);
+        }
+        if (!copyEncoder().copyTextureRegion(textureOf(source).nativeHandle(), 0L, mipLevel, sourceX, sourceY, 0L,
+                width, height, 1L, textureOf(destination).nativeHandle(), 0L, mipLevel, destX, destY, 0L)) {
             throw new IllegalStateException("the Metal 4 copy pass refused a " + width + "x" + height
                     + " texture-to-texture copy");
         }

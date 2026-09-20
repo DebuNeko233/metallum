@@ -2317,6 +2317,49 @@ frame's commit would land in the next frame - after the pass that needed it had 
 is exactly the stale read the fixture reports. Putting the copy's frame-relative position on the trace is the next
 instrument.
 
+### And the copy was zero-sized: one parameter order, and the history rung passes
+
+The instrument named above printed its answer on the first line it produced. Every swap-back copy on this path was
+being asked for as a rectangle of **0 by 0**:
+
+```text
+Metal 4 trace: texture copy 0x79aabb9e00 -> 0x79aabb9b80 0x0 level 0 at frameBegun=true frameCommitted=false
+```
+
+Inside the frame, then, and with the two halves named correctly - and with no area. The shared contract is
+
+```java
+copyTextureToTexture(GpuTexture source, GpuTexture destination, int mipLevel,
+                     int destX, int destY, int sourceX, int sourceY, int width, int height)
+```
+
+and this path's override declared
+
+```java
+copyTextureToTexture(GpuTexture source, GpuTexture destination, int mipLevel,
+                     int x, int y, int width, int height, int destinationX, int destinationY)
+```
+
+- the same nine parameters in a different order. A caller that follows the contract, as Vitrail's `copyBack` does
+(`(from, to, 0, 0, 0, 0, 0, width, height)`), was therefore read as: source origin (0, 0) - harmless - then width
+`sourceX` = 0 and height `sourceY` = 0, then destination origin `width, height`. Metal accepts a zero-sized copy
+without complaint, so **every texture-to-texture copy on this path moved nothing and said nothing**, and the trace
+line is what made it visible: the rectangle it printed was the rectangle the copy was given.
+
+The override now reads the contract's order and hands the two origins to the selector where it wants them, and the
+fixture the rung was named for passes on both arms: forty seconds of settle, 4926 and 4969 readbacks, Metal 4
+reading `(3, 248, 248, 224)` - the steady state, cyan - with 1600 samples of the chain still settling and **no
+magenta anywhere**, against Metal 3's `(5, 241, 241, 254)` and 2471, unchanged. Two pins hold the order - the
+override's parameter list and the two origins in the selector call - and both are mutation-proved; one of them was
+mutation-proved by swapping the two origins, which is the shape of the fault itself. The fix is one signature and
+one call, and it is in the frame path rather than in Vitrail, which was right all along and is untouched.
+
+What the same bug reached beyond the fixture is worth stating rather than guessing: every `copyTextureToTexture`
+this path made was a no-op, so any pack or engine feature that copies one target over another has been silently
+doing nothing - Vitrail's history swap-back is the one that has a fixture, and its shadow target's copy
+(`ShadowTargets`, `copyTextureToTexture(depth, noTranslucents, ...)`) is the next candidate to read under the same
+instrument.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it
