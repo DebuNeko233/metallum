@@ -3813,9 +3813,58 @@ above is 2560x1440 throughout on both arms. It is written down because section 1
 differs is an arm to discard, and that is what happened to it; the lesson is that a render-scale session has one
 more scene fact to check than a native-scale one.
 
-**What is not measured** is registered with the readings: output orientation for the scaler (no asymmetric scaled
-fixture has been run), the configuration switch and resize behaviours of section 82, and any performance
-comparison - the two arms above were display-paced and section 84's fixed 1920x1200 target has not been run.
+**What is not measured** is registered with the readings: output orientation *through the frame path* - see the
+smoke below, which proves it on the device - the configuration switch and resize behaviours of section 82 in a
+session, and any performance comparison: the two arms above were display-paced and section 84's fixed 1920x1200
+target has not been run.
+
+### The scaler smoke, and the census that re-opened a blocker
+
+The MetalFX milestone left one thing a live frame cannot answer: the scaler's **orientation**. This engine never
+reads the scaler's output back at its own size, and a scaled frame's picture is not compared across launches
+(section 116) - so the question went to the instrument that has no window in it. `canScaleWithMetalFx` uploads a
+four-quadrant pattern of four different colours at 64x64, upscales it to 256x256 with this generation's scaler,
+and reads the four quadrant interiors back on the CPU. Four colours and not two, read at the interiors: the
+closest pair is 204 levels apart while the tolerance is 32, so a flip on either axis moves at least two quadrants
+out of tolerance and an upscaler's ringing at an edge cannot. **40 of 40 probes** in a 20-cold/20-warm census,
+with a 1:1 configuration and an odd 101x57 to 320x181 one asked for beside the verdict's, because a scaler is
+cached per configuration and section 81's identity is what separates them.
+
+**Getting there found three defects in the smoke rather than in the scaler**, which is worth writing down
+because a smoke that fails is not evidence until it is read:
+
+- the second and third configurations' textures were released where they stood, with the command buffer that
+  names them not yet committed. The run before that fix failed **2 of 80** probes reading a quadrant colour that
+  belonged to its neighbour - precisely the shape a released-and-reused allocation takes;
+- the first version also encoded a copy of the output into a buffer with a `bytesPerRow` of four for a 256-wide
+  texture: a malformed copy whose result nothing read, because the verdict is the CPU read beside it;
+- the verdict had to be the four interiors rather than a brightness, or it would have measured "the scaler ran"
+  instead of "the picture is the right way up".
+
+**And the same five censuses turned up something the milestone was not looking for.** `canWriteStorageImage`
+still loses its second dispatch. The earlier round closed it at "50 of 50 and 124 of 124"; five 40-probe
+censuses this round read **21 of 200 (10.5%)**, with the fault's own reason string and no other smoke failing
+beside it:
+
+```text
+census            cold      warm     total
+metalFx smoke in   0/20      2/20     2/40
+metalFx smoke out  6/20      4/20    10/40
+metalFx smoke out  1/20      0/20     1/40
+metalFx smoke in   1/20      0/20     1/40
+metalFx smoke in   3/20      4/20     7/40
+---------------------------------------------
+all five                              21/200
+```
+
+So the fix narrowed the fault and did not remove it, and the clean census was the low end of a variable rate
+rather than the rate. **The order effect is not established**: the arms above differ by whether the MetalFX smoke
+runs first, and they total 3 of 80 against 11 of 80 - but the spread *within* one arm is 1 to 10, which is wider
+than the difference between the arms, so the pooled 10.5% is the honest number and separating a 4% arm from a
+14% arm needs a few hundred probes each. This is the same table-and-encoder shape the engine's own
+`clearStorageTexture` uses, so a fault at this rate in the probe is one the frame path can reach, and it is the
+strongest argument the migration has produced for section 88's counters: what changes the rate is not something
+this instrument can see.
 
 ## Risks
 
