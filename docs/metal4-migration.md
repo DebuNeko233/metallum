@@ -1098,6 +1098,82 @@ one thing a smoke may not be:
   is the colour-attachment smoke's - so the harness line would have said the attachments smoke failed while
   the same line said `attachments=true`. The smoke now opens its own pass and reports under `depth`.
 
+### The fence: a promise about a submission, and the same three answers
+
+The clears moved the client into the render loop, and the next thing it stopped on was `createFence`, raised
+from `MappableRingBuffer.rotate` inside `FogRenderer.endFrame`. **On Metal 3 a fence is not an `MTLFence`**:
+`MetalFence` holds the encoder and the submit index that was current when it was made, and `awaitCompletion`
+asks the encoder whether *that submission* has completed. The `updateFence`/`waitForFence` calls in the Metal 3
+encoder are a different mechanism - the intra-frame dependency chain between encoders - and they are already
+replaced on this path by the producer barrier.
+
+**What the two callers actually do** was read off the client's own bytecode rather than assumed, because the
+fence's meaning is theirs:
+
+- `MappableRingBuffer` keeps three mapped buffers and three fence slots. `rotate()` closes the current slot's
+  fence and makes a new one for that slot - from inside the frame, after the frame's work is encoded and before
+  it is submitted - then advances. `currentBuffer()` finds the fence three frames later and calls
+  `awaitCompletion(Long.MAX_VALUE)`, i.e. it blocks until the frame that used that buffer has completed, then
+  hands the buffer to the CPU. The fence is what stands between a CPU write and a GPU read.
+- `StagedVertexBuffer`'s `GpuBufferPool.endFrame` makes one fence for the frame's used buffers, and
+  `PendingRecycle.tryRecycle` calls `awaitCompletion(0)` - a **poll** - recycling only when it answers true.
+
+So a fence is one question about one submission, and there are three answers to get right. Metal 4 has no fence
+object to wrap, and it does not need one: `MTL4FrameRing` already signals one monotonic value per commit on the
+shared event, so this generation's fence is that value plus the ring, and `MTL4FrameRing.awaitSubmission` asks
+the event. The answers mirror the Metal 3 encoder's own fence wait **exactly**, because the same callers read
+both generations and a fence that means something else on one path is a bug the caller cannot see:
+
+| the submission | poll (`timeout 0`) | wait |
+| --- | --- | --- |
+| committed (`value <= signalled`) | has the event reached that value? | wait the event up to the timeout |
+| not committed (`value > signalled`) | `false` | refused by name: `Cannot wait on a fence for the current submit` |
+| no submission at all (`value == 0`) | `true` | `true` |
+| the ring is closed | `true` | `true` |
+
+The middle row is the load-bearing one: a poll that answered true for a submission no commit has promised is a
+pool handing a buffer back to the CPU while the GPU is still reading it, and Metal 3 answers the same way for
+the submit it is recording.
+
+**Which submission a fence is about** is the one decision this generation has to make, and it is the caller's
+question read back: a fence made while a frame is open is about that frame - the ring's `nextSubmission()` -
+because that frame is what will be committed; a fence made between frames is about the work already submitted,
+`submissions()` - there is no open frame for it to be about. Both of the callers above make their fence from
+inside a frame, so the first case is the one that runs; the second is what a fence made from a submission
+callback or an idle path means.
+
+**Measured on Apple Silicon**: the new smoke `MTL4Probe.canAwaitSubmissions` submits two empty frames and then
+checks the contract - both committed values reach completion, the next value polls false, asking to wait for it
+raises the same refusal Metal 3 raises, and a value of zero answers complete. It passed **50 of 50 probes (30
+cold + 20 warm, `--mode raw`)**, with all nine of the other device smokes passing in the same processes and the
+compilation chain compiling in every one.
+
+**Then the client ran again, and it is inside a frame's draw path.** The forced Metal 4 launch walked past
+`createFence` and stopped at the pass's own binding contract, which the GUI reaches first:
+
+```
+java.lang.IllegalStateException: the Metal 4 pass was asked to bind a resource with no pipeline set,
+so which slot it belongs in is not known
+  at com.metallum.render.metal4.Metal4RenderPass.requirePlan
+  at com.metallum.render.metal4.Metal4RenderPass.setUniform
+  at com.mojang.blaze3d.systems.RenderPass.setUniform
+  at com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms
+  at net.minecraft.client.gui.render.GuiRenderer.executeDrawRange
+  at net.minecraft.client.renderer.GameRenderer.render
+```
+
+`GuiRenderer.executeDrawRange` creates the pass, calls `RenderSystem.bindDefaultUniforms(pass)` and binds more
+uniforms by name, and only then sets a pipeline per draw. That is the game's own contract - names are bound
+first, the layout that turns them into slots arrives with the pipeline - and it is the next milestone, not a
+defect in this one: the pass's plan exists to answer *where* a name goes, so a binding that arrives before the
+plan is a binding that has to be remembered and applied when the pipeline arrives.
+
+`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the fence and the ring wait under it: the
+class and the interface it implements, the timeout conversion, the closed answer, the three-answer table, the
+event the wait goes through, the submission the frame encoder promises, the smoke's five assertions (with the
+refusal caught as `IllegalStateException` and not as any runtime fault, which would let a real defect read as
+the contract holding), the harness's field and the driver's failure exit - **22 mutations run, 22 caught**.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

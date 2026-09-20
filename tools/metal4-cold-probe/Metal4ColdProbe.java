@@ -190,6 +190,8 @@ public final class Metal4ColdProbe {
         String layoutReason = "-";
         String copyReason = "-";
         String depthReason = "-";
+        boolean fence = false;
+        String fenceReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -234,6 +236,13 @@ public final class Metal4ColdProbe {
             boolean depth = makeAndSubmit && MTL4Probe.canClearDepth(device);
             if (!depth) {
                 depthReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // A fence, which the client asked for by stopping at createFence: a submission's value can be
+            // waited for, a value no commit has promised is not reported complete, and waiting for it is
+            // refused rather than blocking.
+            fence = makeAndSubmit && MTL4Probe.canAwaitSubmissions(device);
+            if (!fence) {
+                fenceReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -295,7 +304,9 @@ public final class Metal4ColdProbe {
                     + " copy=" + copy
                     + " copyReason=" + copyReason.replace(' ', '_')
                     + " depth=" + depth
-                    + " depthReason=" + depthReason.replace(' ', '_')
+                    + " fence=" + fence
+                    + " depthReason=" + depthReason
+                    + " fenceReason=" + fenceReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was

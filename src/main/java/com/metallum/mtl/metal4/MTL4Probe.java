@@ -814,6 +814,95 @@ public final class MTL4Probe {
         }
     }
 
+    /**
+     * Whether a submission can be waited for by its value, which is the whole of what a fence promises.
+     * <p>
+     * The client asked for this by stopping at {@code createFence} from {@code MappableRingBuffer.rotate}, so
+     * what has to be answered is the contract that caller relies on: a value a commit has signalled can be
+     * waited for, a value no commit has promised is <em>not</em> reported complete (a pool that believed it
+     * would hand a buffer back to the CPU while the GPU was still reading it), and asking to wait for that
+     * value is refused rather than blocking on a signal nothing has promised.
+     */
+    public static boolean canAwaitSubmissions(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("fence", "the device does not answer one of the factories the ring's allocators,"
+                    + " command buffer or shared event would come from, so no submission can be waited for");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MTL4FrameRing ring = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            if (ObjC.isNil(queue)) {
+                return failed("fence", "newMTL4CommandQueue answered nil, so there is no queue for a submission"
+                        + " to complete on");
+            }
+            try {
+                ring = MTL4FrameRing.create(device, queue, MTL4FrameRing.FRAMES_IN_FLIGHT,
+                        "the submission proof");
+            } catch (MTL4FrameRing.Refused refused) {
+                return failed("fence", "the ring could not be made at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            // Two empty frames: one submission whose value is a committed fact, and a next value that no commit
+            // has promised yet.
+            for (int frame = 0; frame < 2; frame++) {
+                if (!ring.beginFrame()) {
+                    return failed("fence", "frame " + frame + " could not begin on the ring: " + ring.refusal());
+                }
+                if (!ring.endAndSubmit()) {
+                    return failed("fence", "frame " + frame + " could not be submitted: " + ring.refusal());
+                }
+            }
+            if (ring.submissions() != 2L) {
+                return failed("fence", "two frames were submitted and the ring counts " + ring.submissions()
+                        + " submissions, so a fence's value would name the wrong submission");
+            }
+            if (ring.nextSubmission() != 3L) {
+                return failed("fence", "the ring says the next commit signals " + ring.nextSubmission()
+                        + " after two submissions, so a fence made inside a frame would promise the wrong value");
+            }
+
+            if (!ring.awaitSubmission(1L, 2000L)) {
+                return failed("fence", "the first submission was not complete 2000 ms after it was submitted: "
+                        + ring.refusal());
+            }
+            if (!ring.awaitSubmission(2L, 2000L)) {
+                return failed("fence", "the second submission was not complete 2000 ms after it was submitted: "
+                        + ring.refusal());
+            }
+
+            if (ring.awaitSubmission(3L, 0L)) {
+                return failed("fence", "a submission no commit has promised was reported complete, which is a"
+                        + " fence a pool would recycle a buffer on while the GPU was still reading it");
+            }
+            try {
+                ring.awaitSubmission(3L, 50L);
+                return failed("fence", "waiting for a submission no commit has promised returned instead of"
+                        + " refusing, so the answer is not the one the Metal 3 fence gives for the submit it is"
+                        + " recording");
+            } catch (IllegalStateException refused) {
+                // The answer the Metal 3 fence gives for the submission currently being recorded: a poll says
+                // no, and a wait says why it cannot be asked.
+            }
+
+            // Zero is "nothing has been submitted", which is complete by definition: a resource held from
+            // before the first frame is free.
+            return ring.awaitSubmission(0L, 0L);
+        } catch (RuntimeException threw) {
+            return failed("fence", "the submission proof threw " + threw);
+        } finally {
+            if (ring != null) {
+                ring.close();
+            }
+            releaseIfPresent(queue);
+        }
+    }
+
     /** What the layout smoke's draw produces where the scissor lets it through: texture + tint + bias. */
     private static final int[] EXPECTED_LAYOUT_PIXEL = {191, 128, 191, 255};
 

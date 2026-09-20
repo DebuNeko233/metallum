@@ -561,4 +561,38 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- a fence is a promise about one submission, and the client asked for it by stopping at createFence -------
+# The contract of a fence is three answers, because that is what the Metal 3 fence answers and the same callers
+# read both: a committed submission can be waited for, a submission no commit has promised is not complete (a
+# pool that believed otherwise would hand a buffer back to the CPU while the GPU read it), and asking to wait
+# for it says so rather than blocking on a signal nothing promised.
+for needle, why in (
+    ("public static boolean canAwaitSubmissions(", "nothing measures whether a submission's value can be waited for"),
+    ("if (!ring.awaitSubmission(1L, 2000L)) {", "the smoke never waits for a submission that was committed"),
+    ("if (!ring.awaitSubmission(2L, 2000L)) {", "the smoke never waits for the newest committed submission"),
+    ("if (ring.awaitSubmission(3L, 0L)) {", "the smoke never polls the value no commit has promised, or polls "
+     "it in a way a true answer would not fail"),
+    ("ring.awaitSubmission(3L, 50L);", "the smoke never asks to wait for a submission no commit has promised"),
+    ("} catch (IllegalStateException refused) {",
+     "the smoke catches every runtime fault as the expected refusal, so a real defect inside the wait would be "
+     "reported as the contract holding"),
+    ("return ring.awaitSubmission(0L, 0L);",
+     "the smoke does not check that a fence for no submission at all is complete"),
+    ("ring.nextSubmission() != 3L",
+     "the smoke does not check that the next commit's value is the one a fence made inside a frame would promise"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " fence=" + fence', "the harness does not print the fence smoke's answer"),
+    ('+ " fenceReason=" + fenceReason', "the harness does not print why the fence smoke failed"),
+    ("MTL4Probe.canAwaitSubmissions(device)", "the harness never asks the fence smoke"),
+    ("fence_failures=\"$(grep -c ' fence=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the fence smoke's failures"),
+    ("if (( fence_failures > 0 )); then", "the driver counts the fence smoke's failures and does not fail the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

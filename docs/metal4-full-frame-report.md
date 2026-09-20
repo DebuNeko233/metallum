@@ -40,18 +40,21 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All nine device smokes passed
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All ten device smokes passed
                   in every one of them - the drawn sampled texture, the allocator-slot ring, the four
-                  colour attachments, the bound layout, the texture copies and the new **depth clear** - and
-                  the compilation chain compiled a pipeline in every process (`compile=ok(valid=true)`). The
-                  depth clear is the new one: a colour target and a `Depth32Float` depth target in one pass,
-                  the depth cleared to 0.25 and read back through `MTLTexture.bytes` (50 of 50). The bound
+                  colour attachments, the bound layout, the texture copies, the depth clear and the new
+                  **fence wait** - and the compilation chain compiled a pipeline in every process
+                  (`compile=ok(valid=true)`). The fence wait is the new one: two empty frames submitted, both
+                  committed values waited for on the shared event, the next value polling false, asking to
+                  wait for it refused by name, and a value of zero answering complete (50 of 50). The depth
+                  clear, added the same round as the fence, is a colour target and a `Depth32Float` depth
+                  target in one pass, the depth cleared to 0.25 and read back (also 50 of 50). The bound
                   layout smoke still builds its tables from the production `Metal4BindingPlan`, so the plan
                   itself is what those 50 probes measured. The pass object is still NOT reachable here - it
                   needs the engine's device and real texture views - so its evidence remains the structural
                   contract plus the measured layers underneath (the attachment smoke's own evidence: 50 of 50
                   in the round that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100). Cold
-                  processes this round: 487-966 ms wall, 330-367 ms of probing in them; warm probes 21-29 ms
+                  processes this round: 564-1211 ms wall, 380-456 ms of probing in them; warm probes 28-36 ms
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -190,11 +193,16 @@ frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` 
                      `clearColorAndDepthTextures` and `clearDepthTexture` each open a pass of their own over
                      the attachment they clear, ordered against any copy the frame encoded first and closed
                      with the producer barrier (Render below says why a pass, and what it costs).
+                     It also owns the fence: `createFence` returns a `Metal4Fence`, a promise about one of
+                     the ring's submissions, waited for on the ring's own shared event with the three answers
+                     the Metal 3 fence gives (see Synchronization below).
                      MEASURED: a forced Metal 4 launch now walks past its own texture-manager upload, past
-                     `Lightmap.<init>`'s clear, into the render loop itself, and stops at the next gap -
-                     `Unimplemented: createFence`, from `MappableRingBuffer.rotate -> FogRenderer.endFrame ->
-                     GameRenderer.render -> Minecraft.renderFrame -> runTick`. What still refuses by name: the
-                     scissored `clearColorAndDepthTextures`, createFence, writeTimestamp - three names.
+                     `Lightmap.<init>`'s clear, past `createFence` in `FogRenderer.endFrame`, and into the
+                     drawn frame itself - it stops at the pass's own binding contract, raised from
+                     `RenderSystem.bindDefaultUniforms -> GuiRenderer.executeDrawRange ->
+                     GameRenderer.render`: the game binds uniforms **by name before a pipeline is set**, and
+                     this pass resolves a name through the pipeline's plan. What still refuses by name: the
+                     scissored `clearColorAndDepthTextures` and writeTimestamp - two names.
                      NOT PROVEN: no frame has been submitted through it; its evidence is the ring's device
                      proof plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
@@ -329,9 +337,23 @@ compute->render: NOT STARTED
 
 ## Synchronization
 
-No dependency fixture exists yet. The probe's own ordering (two render encoders in one command buffer, one
-commit, one shared-event wait) is exercised on every attempt and has never failed at `commit`, `completion` or
-`encoder` in 70 attempts - which is evidence about the probe's two-pass shape and not a matrix.
+```
+fence:    PROVEN on the device - `MTL4Probe.canAwaitSubmissions` submits two empty frames on a ring and checks
+          the whole contract of a fence: a committed submission's value is waited for on the shared event, the
+          value no commit has promised polls false, asking to **wait** for it is refused by name (the same
+          refusal the Metal 3 fence gives for the submit it is recording), and a value of zero - nothing
+          submitted - is complete. 50 of 50 probes (30 cold + 20 warm, `--mode raw`). This is the object
+          `MappableRingBuffer` (await before a CPU write) and `StagedVertexBuffer`'s pool (poll before
+          recycling) are built on; both call sites' behaviour was read off the client's own bytecode
+fence in a frame: MEASURED as far as the client reaches - a forced Metal 4 launch creates a fence from
+          `MappableRingBuffer.rotate`, inside `FogRenderer.endFrame`, and the run walks past it into the drawn
+          frame; no fence has yet been observed completing and then gating a CPU write in a live client
+          (that needs the client to run more than three frames, which it does not get to yet)
+matrix:   NOT STARTED - the read/write dependency matrix the plan's section 60 lists
+```
+
+The probe's own ordering (two render encoders in one command buffer, one commit, one shared-event wait) is
+exercised on every attempt and has never failed at `commit`, `completion` or `encoder`.
 
 ## Lifecycle
 
@@ -389,7 +411,8 @@ CI, which is where every smoke here was run.
 | compute         | yes         | no                                | n/a           | no          |
 | storage buffer  | yes         | no                                | n/a           | no          |
 | storage image   | yes         | no                                | n/a           | no          |
-| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; and one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them), but not the read/write matrix the plan's section 60 lists | n/a | yes |
+| synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | n/a | yes |
+| fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | n/a | yes |
 | presentation    | yes         | EXPERIMENTAL - the `Metal4Path` sidecar behind `-Dmetallum.metal4Present`, not the frame's road | n/a | yes (sidecar) |
 | MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | n/a | no          |
 | counters        | whole frame | no                                | n/a           | no          |
@@ -405,14 +428,15 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The fence is the next gap** - the clears are now implemented (colour, colour+depth, depth-only, each as
-   a pass of its own) and measured, so the client's ladder advanced twice in one round: a forced Metal 4
-   launch walks past `Lightmap.<init>`'s clear and **into the render loop**, stopping at `createFence`, raised
-   from `MappableRingBuffer.rotate -> FogRenderer.endFrame -> GameRenderer.render -> Minecraft.renderFrame ->
-   runTick`. A fence is a Metal 3 dependency object and this command model orders work with barriers and
-   queue events, so the honest answer is a decision rather than a wrapper: what the game waits on, and what
-   the Metal 4 equivalent of that wait is. The scissored `clearColorAndDepthTextures` and `writeTimestamp`
-   still refuse by name, and each forced run names the one after that.
+3. **Bindings that arrive before the pipeline are the next gap** - the clears and the fence are implemented
+   and measured, so a forced Metal 4 launch now walks past `Lightmap.<init>`'s clear, past `createFence` in
+   `FogRenderer.endFrame`, and **into a drawn frame**: it stops at the pass's own binding contract, raised from
+   `RenderSystem.bindDefaultUniforms -> GuiRenderer.executeDrawRange -> GameRenderer.render`. The game creates
+   a pass, binds its default uniforms **by name**, and only then sets a pipeline per draw - so a binding has to
+   be remembered and applied when the plan arrives, where this pass currently resolves every name through the
+   plan immediately. That is the game's own contract and not a defect in the fence. The scissored
+   `clearColorAndDepthTextures` and `writeTimestamp` still refuse by name, and each forced run names the one
+   after that.
 4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
@@ -434,11 +458,12 @@ process with no window is not the same claim as a capability proven through the 
 
 **NO.** Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
 bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
-frame encoder's lifetime - the ring - proven on the device, its copies wired, and its clears implemented and
-measured. A forced Metal 4 client launch now gets past startup and **into the render loop** - it clears, it
-copies, it encodes passes through the game's own descriptors - and stops on the first operation the new path
-does not own (`createFence`), which is what is left of the frame path. Everything the Definition of Done asks
-for that needs a frame the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack,
-MRT, depth writes, argument-table binding through the frame, blit in a live frame, compute, the synchronization
-fixtures, presentation owned by the full path, resize, reload, dimension, shutdown, and the real-pack and
-performance validation. The next item is the fence decision, then the first no-pack frame.
+frame encoder's lifetime - the ring - proven on the device, its copies wired, its clears implemented and
+measured, and its fence answering the Metal 3 fence's three ways. A forced Metal 4 client launch now gets past
+startup and **into a drawn frame** - it clears, it copies, it fences, it encodes passes through the game's own
+descriptors, and it reaches the GUI's draw path - where it stops on the pass's binding contract: names are
+bound before the pipeline that gives them slots. Everything the Definition of Done asks for that needs a frame
+the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT, depth writes,
+argument-table binding through the frame, blit in a live frame, compute, the synchronization matrix,
+presentation owned by the full path, resize, reload, dimension, shutdown, and the real-pack and performance
+validation. The next item is binding-before-pipeline, then the first no-pack frame.

@@ -250,6 +250,57 @@ public final class MTL4FrameRing implements AutoCloseable {
         return signalled;
     }
 
+    /**
+     * The value the next commit will signal, which is the submission a fence made while a frame is open is
+     * about.
+     */
+    public long nextSubmission() {
+        return signalled + 1L;
+    }
+
+    /**
+     * Waits for the submission with this value to complete, which is what a fence promises.
+     * <p>
+     * The three answers mirror the Metal 3 encoder's own fence wait, because the two generations hand the same
+     * object to the same callers and a fence that means something else on one path is a bug the caller cannot
+     * see:
+     * <ul>
+     *   <li>a submission that has been committed ({@code value <= signalled}) is waited for on the shared event,
+     *       with {@code timeoutMs == 0} asking the question without waiting - that is the poll
+     *       {@code MappableRingBuffer} and {@code StagedVertexBuffer}'s pool both use;</li>
+     *   <li>a submission that has <em>not</em> been committed is the submit being recorded, and Metal 3 answers
+     *       it the same way: {@code false} for a poll, and a named refusal for a wait, because a wait would
+     *       block on a signal no commit has promised yet;</li>
+     *   <li>a value of zero is "nothing has been submitted", which is complete by definition.</li>
+     * </ul>
+     * A closed ring answers true for everything: {@link #close()} released the event, and what a teardown can
+     * still be waiting for is nothing.
+     *
+     * @param submission the value {@code signalEvent:value:} carried for the submission being waited for
+     * @param timeoutMs  how long to wait; zero asks without waiting
+     * @return whether the submission has completed
+     */
+    public boolean awaitSubmission(final long submission, final long timeoutMs) {
+        refusal = null;
+        if (closed) {
+            return true;
+        }
+        if (submission <= 0L) {
+            return true;
+        }
+        if (submission > signalled) {
+            if (timeoutMs == 0L) {
+                return false;
+            }
+            throw new IllegalStateException("Cannot wait on a fence for the current submit");
+        }
+        if (WAIT_UNTIL_SIGNALED.sendLong(event, submission, timeoutMs) == 0L) {
+            refusal = "submission " + submission + " had not completed within " + timeoutMs + " ms";
+            return false;
+        }
+        return true;
+    }
+
     /** How many times a slot was found still in flight and waited for before it was reset. */
     public long waits() {
         return waits;

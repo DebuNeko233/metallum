@@ -395,12 +395,13 @@ for implementation in ("public void writeToBuffer(final @NonNull GpuBufferSlice 
 
 # What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence; and the
 # copies are no longer in that list, because the client asked for them by stopping there.
-for operation in ("clearColorAndDepthTextures", "createFence", "writeTimestamp"):
+for operation in ("clearColorAndDepthTextures", "writeTimestamp"):
     if f'throw unimplemented("{operation}")' not in encoder:
         raise SystemExit(f"metal 4 provider: the frame encoder does not refuse {operation} by name, so an "
                          "operation it cannot encode would be dropped into a half frame")
 for operation in ("writeToBuffer", "copyToBuffer", "writeToTexture", "copyBufferToTexture", "copyTextureToBuffer",
-                  "copyTextureToTexture", "transientMemory", "clearColorTexture", "clearDepthTexture"):
+                  "copyTextureToTexture", "transientMemory", "clearColorTexture", "clearDepthTexture",
+                  "createFence"):
     if f'throw unimplemented("{operation}")' in encoder:
         raise SystemExit(f"metal 4 provider: the frame encoder still refuses {operation}, which the client asked "
                          "for by stopping there")
@@ -492,6 +493,56 @@ for name, (body, needles) in CLEARS.items():
     for needle, why in needles:
         if needle not in body:
             raise SystemExit(f"metal 4 provider: {why} ({name})")
+
+# The fence: Metal 3's fence is not an MTLFence, it is a promise about the submit index that was current when it
+# was made, and the same callers read both generations. So what is pinned is that this generation answers the
+# same three ways - a committed submission is waited for on the ring's event, one no commit has promised is not
+# complete for a poll and is refused for a wait, and a fence between frames promises the work already submitted
+# rather than a frame that does not exist.
+FENCE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4Fence.java"
+if not FENCE.is_file():
+    raise SystemExit("metal 4 provider: Metal4Fence.java is gone, so createFence has nothing to hand back")
+fence = FENCE.read_text(encoding="utf-8")
+for needle, why in (
+    ("public final class Metal4Fence implements GpuFence {",
+     "the fence does not implement the interface the game waits on"),
+    ("return this.ring.awaitSubmission(this.submission, timeoutNS / 1_000_000L);",
+     "the fence does not ask the ring whether its own submission completed, which is the whole promise"),
+    ("if (this.closed) {", "a closed fence would still be waited on"),
+):
+    if needle not in fence:
+        raise SystemExit("metal 4 provider: " + why)
+
+RING = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4FrameRing.java"
+ring = RING.read_text(encoding="utf-8")
+for needle, why in (
+    ("public long nextSubmission() {\n        return signalled + 1L;",
+     "the ring cannot say which submission the next commit will signal, or says the wrong one"),
+    ("public boolean awaitSubmission(final long submission, final long timeoutMs) {",
+     "the ring cannot be asked whether a submission completed, so a fence has nothing to ask"),
+    ("if (submission > signalled) {\n            if (timeoutMs == 0L) {\n                return false;\n            }\n"
+     "            throw new IllegalStateException(\"Cannot wait on a fence for the current submit\");",
+     "a submission no commit has promised is reported complete, or a wait for it blocks instead of being "
+     "refused by name - which is how a pool recycles a buffer the GPU is still reading"),
+    ("if (submission <= 0L) {\n            return true;\n        }",
+     "a fence about no submission at all is reported incomplete, so a resource held from before the first "
+     "frame would never be handed back"),
+    ("WAIT_UNTIL_SIGNALED.sendLong(event, submission, timeoutMs)",
+     "the wait does not go through the shared event the commits signal on"),
+):
+    if needle not in ring:
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ("long submission = this.ring.begun() ? this.ring.nextSubmission() : this.ring.submissions();",
+     "createFence does not promise the frame being encoded when one is open, or the work already submitted "
+     "when none is"),
+    ("return new Metal4Fence(this.ring, submission);", "createFence does not hand back this generation's fence"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+if 'throw unimplemented("createFence")' in encoder:
+    raise SystemExit("metal 4 provider: the frame encoder still refuses createFence, which the client asked for "
+                     "by stopping there")
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two

@@ -568,12 +568,19 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     }
 
     /**
-     * A fence is a Metal 3 dependency object; the new command model orders work with barriers and queue events,
-     * so this refuses rather than handing back something the caller would wait on for the wrong reason.
+     * A fence promised about a submission, which on this command model is the ring's own completion value.
+     * <p>
+     * Which submission is the only decision here, and it is the caller's question read back: the game makes a
+     * fence from inside a frame ({@code MappableRingBuffer.rotate}, at the end of a frame's encoding, and
+     * {@code StagedVertexBuffer}'s pool at the end of a frame) and waits on it a few frames later before it
+     * hands the buffer back to the CPU. A frame that is open will be committed as the ring's next submission, so
+     * that is what the fence promises; made between frames there is no open frame to be about, so it promises
+     * the work already submitted - the frame that just ended.
      */
     @Override
     public @NonNull GpuFence createFence() {
-        throw unimplemented("createFence");
+        long submission = this.ring.begun() ? this.ring.nextSubmission() : this.ring.submissions();
+        return new Metal4Fence(this.ring, submission);
     }
 
     /**
