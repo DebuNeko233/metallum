@@ -111,7 +111,16 @@ multi-pass:       NOT STARTED
 ## M4 Frame
 
 ```
-queue:               NOT STARTED   (the probe makes one and proves it takes a submit; no frame encoder exists)
+provider:            PROVEN as a skeleton - Metal4ExecutionProvider implements the neutral
+                     MetalExecutionProvider, its queue factory is real on this device
+                     (`newMTL4CommandQueue` returns a non-nil queue), and its two frame halves refuse by
+                     name: `queue=ok,state=refused(createExecutionState),encoder=refused(createFrameEncoder)`
+                     measured in the cold-probe harness, per process, on Apple Silicon
+reached by:          the services now hand out the provider of the EXECUTING generation rather than a
+                     constant `new Metal3ExecutionProvider()`, so selected=Metal4 with executing=Metal3
+                     still builds the frame from Metal 3 objects, exactly as section 19 requires - the day a
+                     Metal 4 frame path is ready, the device constructor's one line changes
+queue:               PROVEN for the provider skeleton; no frame is submitted through it yet
 allocators:          NOT STARTED
 command buffers/frame: NOT STARTED
 commits/frame:       NOT STARTED
@@ -200,8 +209,8 @@ No Metal 4 frame exists to time. The Metal 3 reference on the pinned scene is
 
 1. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
-2. **No Metal 4 execution provider**: Metal 4 is a present sidecar today, and the provider boundary the plan's
-   Phase 2 asks for does not exist yet.
+2. ~~No Metal 4 execution provider~~ - **the skeleton exists**: `Metal4ExecutionProvider` owns the queue and
+   refuses the two halves it does not have. What is missing is the frame encoder itself, which is Phase 4.
 3. **No Metal 4 frame encoder, render smoke, blit, compute or synchronization fixture** - all of the
    implementation milestones are ahead.
 

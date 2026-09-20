@@ -114,8 +114,17 @@ public interface MetalExecutionServices {
     static MetalExecutionServices of(final MetalApiGeneration selected, final MetalApiGeneration executing) {
         return new MetalExecutionServices() {
 
-            private final MetalExecutionProvider provider =
-                    new com.metallum.render.metal3.Metal3ExecutionProvider();
+            /**
+             * The provider of the generation that EXECUTES, which is not always the one selected: a session
+             * that selected Metal 4 while a Metal 3 path stands in for it executes Metal 3, and the objects a
+             * frame is built from must come from the generation that is really encoding it. The two names are
+             * the selector's decision and the device constructor's choice, and this is where the second one
+             * turns into an object.
+             */
+            private final MetalExecutionProvider provider = switch (executing) {
+                case METAL3 -> new com.metallum.render.metal3.Metal3ExecutionProvider();
+                case METAL4 -> new com.metallum.render.metal4.Metal4ExecutionProvider();
+            };
 
             @Override
             public MetalApiGeneration selected() {

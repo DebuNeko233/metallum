@@ -575,6 +575,38 @@ typed `MetalExecutionState`, naming no generation - and the contract records tha
 Phase D's condition ("delete it if no neutral caller needs it") is therefore not met, and the accessor is the
 seam the moved `Metal3ComputeBridge.compile` will use.
 
+### The Metal 4 provider exists, and it refuses what it does not have
+
+Phase 2 asks for a generation-specific execution provider rather than more present-sidecar code, and the seam
+for it was already there: `MetalExecutionProvider` with `Metal3ExecutionProvider` behind it, chosen in
+`MetalExecutionServices.of(selected, executing)`. What was missing is the Metal 4 side, and what it is is a
+skeleton with one real method and two named refusals:
+
+```
+Metal4ExecutionProvider implements MetalExecutionProvider
+    commandQueue(MTLDevice)            newMTL4CommandQueue, real, nil refused by name
+    createExecutionState(MTLDevice)    throws Unimplemented("createExecutionState")
+    createFrameEncoder(...)            throws Unimplemented("createFrameEncoder")
+measured in the cold-probe harness, per process, on Apple Silicon:
+    provider queue=ok,state=refused(createExecutionState),encoder=refused(createFrameEncoder)
+```
+
+**It refuses rather than returning nothing** because section 35 forbids an unknown operation being silently
+dropped: a provider that answered null would move the failure into whatever first used the state, twenty calls
+later, which is the distortion the capability probe was rebuilt to remove. The refusal carries its stage for the
+same reason `lastFailureStage()` does - "not implemented" cannot be told from "the whole provider is missing".
+
+**And the services now choose the provider by the EXECUTING generation**, not by a constant: the switch reads
+`executing`, so a session that selected Metal 4 while a Metal 3 path stands in for it still builds its frame
+from Metal 3 objects with `referenceShell` true, exactly as section 19 requires. Today that is every session -
+the device constructor passes `METAL3` - so nothing about which road a frame takes has changed; what changed is
+which object would own it, which is one line in that constructor when the Metal 4 frame encoder exists.
+
+`tools/ci-metal4-provider.py` pins the neutral interface, the real queue factory and its nil check, both
+refusals by name, the stage the refusal carries, that no Metal 3 package is imported by a Metal 4
+implementation, that the services choose by `executing`, and that the harness asks the provider on a real
+device - six mutations, each failing for its own reason.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

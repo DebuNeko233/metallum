@@ -232,9 +232,13 @@ def undelivered_delegations(root: Path) -> list[str]:
 # already counts it, in the direction the design allows, and two ledgers would count one coupling twice.
 GENERATION_REACH: dict[str, tuple[str, ...]] = {
     # The composition root. Choosing a generation means naming one; this is the seam the choice is made at,
-    # and it is the only place a provider is constructed.
+    # and it is the only place a provider is constructed. Two names since the Metal 4 provider skeleton
+    # landed: the switch reads the EXECUTING generation, so both cases have to be written here, and this
+    # ledger is what makes that growth a decision with a count rather than a drift. The neutral interface is
+    # still the only type either arm is used as.
     "com/metallum/render/execution/MetalExecutionServices.java": (
         "com.metallum.render.metal3.Metal3ExecutionProvider",
+        "com.metallum.render.metal4.Metal4ExecutionProvider",
     ),
     # The device's own capability question, which is what the selector asks before a generation is chosen.
     "com/metallum/render/execution/MetalDeviceCapabilities.java": ("com.metallum.mtl.metal4.MTL4Probe",),

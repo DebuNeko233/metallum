@@ -1,6 +1,7 @@
 import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.metal4.MTL4Probe;
+import com.metallum.render.metal4.Metal4ExecutionProvider;
 
 /**
  * One Metal 4 capability probe, in a process with nothing else in it.
@@ -80,6 +81,24 @@ public final class Metal4ColdProbe {
                 MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:error:")
                         || MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:");
 
+        // The provider skeleton, asked on the real device and reported once per process: its queue factory is
+        // real, and its two frame halves must refuse by name rather than return something a caller would use.
+        // This is section 110's "native smoke passed + real Apple Silicon passed" for the skeleton, and it
+        // costs one queue and three calls.
+        String provider;
+        try {
+            Metal4ExecutionProvider metal4 = new Metal4ExecutionProvider();
+            // Held in a final local because the device is assigned inside a try above, so it is not
+            // effectively final and cannot be captured by the two lambdas below.
+            MTLDevice probeDevice = device;
+            long queue = metal4.commandQueue(probeDevice);
+            provider = "queue=" + (queue != 0L ? "ok" : "nil")
+                    + ",state=" + refusal(() -> metal4.createExecutionState(probeDevice))
+                    + ",encoder=" + refusal(() -> metal4.createFrameEncoder(null, null, null));
+        } catch (Throwable throwable) {
+            provider = "queue=exception(" + throwable.getClass().getSimpleName() + ")";
+        }
+
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -109,6 +128,7 @@ public final class Metal4ColdProbe {
                     + " argumentTableSelector=" + argumentTableSelector
                     + " deviceCreation=" + deviceCreation
                     + " deviceName=" + deviceName
+                    + " provider=" + provider.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the
                     // environment as much as about the probe, and a per-process duration cannot show that.
@@ -126,6 +146,22 @@ public final class Metal4ColdProbe {
         // attempt would be measuring something else. Said here rather than left to be inferred.
         System.out.flush();
         System.exit(allPassed ? 0 : 1);
+    }
+
+    /**
+     * What one provider entry point did: refused by name, returned something, or failed some other way. A
+     * provider that answered where it has no implementation would be a silent half-frame, so "returned" is
+     * reported as loudly as a wrong exception.
+     */
+    private static String refusal(final java.util.function.Supplier<?> call) {
+        try {
+            call.get();
+            return "returned";
+        } catch (Metal4ExecutionProvider.Unimplemented refused) {
+            return "refused(" + refused.stage() + ")";
+        } catch (Throwable other) {
+            return "wrong(" + other.getClass().getSimpleName() + ")";
+        }
     }
 
     private static String millis(final long sinceNanos) {
