@@ -858,13 +858,15 @@ Unimplemented: clearColorTexture
   at net.minecraft.client.Minecraft.<init>
 ```
 
-so the clears are the next milestone - and the method is still the measured way to find them.
+so the clears were the next milestone - and the method is still the measured way to find them. (They are
+implemented now, in "The clears: a load action needs a pass"; that section also has the client's next stop,
+`createFence`, which is where the ladder stands today.)
 
-**What is still refused, and therefore still unproven through a frame**: the pass object does not call any of
-this yet. `Metal4RenderPass.setPipeline`/`bindTexture`/`setUniform`/`setVertexBuffer`/`setIndexBuffer`/`draw*`
-still refuse by name, so the encoder's commands have a device proof and the pass's use of them does not. Wiring
-the pass - pipeline lookup through the artifact, the binding plan that maps a layout to table slots, and the
-draws - is the next milestone, and the fixture that would prove it needs the engine's device.
+**What was still refused at that point**: the pass object did not call any of this yet.
+`Metal4RenderPass.setPipeline`/`bindTexture`/`setUniform`/`setVertexBuffer`/`setIndexBuffer`/`draw*` still
+refused by name, so the encoder's commands had a device proof and the pass's use of them did not. (The next two
+subsections are that milestone: the plan and the pass's use of it. This paragraph is the state of the migration
+when the client first walked past its upload, not the state now.)
 
 `tools/ci-metal4-cold-probe.py` pins the encoder's commands, the address form of the indexed draw, the tables'
 shapes, the stride, the stage each table is assigned to, the scissor and its two readings, and the harness's
@@ -1019,6 +1021,83 @@ selector problem and is a declaration problem. The contract now refuses that sha
 the barrier, and the smoke's own two readings plus its whole-quadrant comparison - seventeen mutations run, all
 caught after three pins were strengthened for exactly that reason.
 
+### The clears: a load action needs a pass, and that is the whole cost
+
+The client's next stop after the copies was `clearColorTexture`, raised from `Lightmap.<init>`: the game clears
+a lightmap as it constructs the renderer, which is before any draw. On Metal 3 that call is recorded and folded
+into the next pass that uses the attachment - `MTLLoadActionClear` is applied where the attachment is first
+bound, and the attachment is never loaded at all. On Metal 4 the load action still exists and still belongs to a
+pass, so the first version is the simple one: **a clear is a pass of its own** that loads the attachment cleared
+and stores it, with no draw in it.
+
+That is a decision with a price and not a free translation, and the price is stated rather than implied: one
+extra pass per clear, one more encoder begin/end on the frame's command buffer, and the attachment load the
+folded form avoids. The migration keeps the simple form while the question is whether the path runs at all;
+folding a clear into the following pass is a lifetime model of its own (the clear's value has to survive until
+the pass that would carry it, and a pass that does not come means the clear must still happen), so it is a later
+optimisation with its own measurement - not something to assume now and not a correctness gap today.
+
+The three implemented forms are the client's own calls, and the fourth is left refusing:
+
+- `clearColorTexture(texture, colour)` - one colour attachment, `CARRIED` contents cleared to the colour;
+- `clearColorAndDepthTextures(texture, colour, depth, value)` - one pass, two attachments, so a colour+depth
+  clear is one pass and not two;
+- `clearDepthTexture(depth, value)` - a pass whose only attachment is the depth one;
+- `clearColorAndDepthTextures(..., scissorX, scissorY, width, height)` - **still refuses by name**. A scissored
+  clear is not the same operation: a load action holds for the whole attachment, so a partial clear has to be a
+  draw over that rectangle, and that is a different mechanism (a clearing pipeline) rather than a rectangle
+  passed to the same one. Nothing the no-pack frame needs asks for it yet.
+
+**Ordering is encoded, not assumed.** A clear that lands before the copy or pass that wrote what it overwrites
+is a wrong picture with no error, so `encodeClear` ends any pass the game still has open (only one encoder may
+be open on a command buffer), begins the frame if none is, orders and ends an open copy encoder, opens the
+clear's own pass, encodes the producer barrier in it, and closes it. The pass-follows-copy ordering is now
+pinned **inside `createRenderPass`'s body and inside `encodeClear`'s body separately**: the same three lines
+appear at both sites, so a file-wide pin would have stayed green while one of them lost its barrier, which is
+exactly what a mutation showed before the pins were scoped to a method body.
+
+**Then the client ran again, and it is in the render loop.** A forced Metal 4 launch walks past the texture
+upload, past the lightmap clear, through `GameRenderer`'s construction and into the frame:
+
+```
+Unimplemented: createFence
+  at Metal4FrameEncoder.createFence
+  at CommandEncoder.createFence
+  at com.mojang.blaze3d.buffers.MappableRingBuffer.rotate
+  at net.minecraft.client.renderer.FogRenderer.endFrame
+  at net.minecraft.client.renderer.GameRenderer.render
+  at net.minecraft.client.Minecraft.renderFrame
+  at net.minecraft.client.Minecraft.runTick
+```
+
+That is the first time a forced Metal 4 session has reached a rendered frame's own code path, and the gap it
+names is a **dependency object, not a command**: a fence is how Metal 3 expresses "this wrote, that may read",
+and this command model expresses the same thing with barriers and queue events. What the game waits on through
+that fence, and what the Metal 4 equivalent of that wait is, is the next decision - it is not a wrapper.
+
+**Measured on Apple Silicon**: the depth-clear smoke passes 50 of 50 probes (30 cold + 20 warm, `--mode raw`),
+with all eight of the other device smokes passing in the same processes and the compilation chain compiling a
+pipeline in every one of them - and 5 of 5 again after the comparison below was tightened. The depth attachment
+is `Depth32Float`, cleared to 0.25 and read back through `MTLTexture.bytes` at a chosen pixel - a clear that
+silently did nothing reads as the depth target's own contents and fails the comparison.
+
+`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the clear encoder, each clear's own
+attachment, colour and depth value, each one's pass extent taken from the attachment rather than a literal, the
+barrier, the two copy-ordering sites, the depth smoke's format/value/readback, the harness's field and count,
+and the driver's failure exit - **30 mutations run against them this round, 30 caught**, four of them only
+after the pins were moved inside method bodies (the duplicate-anchor weakness above).
+
+**Two of the depth smoke's own lines were strengthened after a review pass**, and neither is a finding anyone
+confirmed - they are the two places where the check could not have failed for the fault it names, which is the
+one thing a smoke may not be:
+
+- the depth comparison is written as *inside the tolerance*, negated, rather than as *outside it*:
+  `Math.abs(read - clear) > 0.0001f` is false for NaN, so a NaN readback would have counted as the value that
+  was asked for. `!(Math.abs(read - clear) <= 0.0001f)` cannot pass that way;
+- a depth pass that could not be opened used to be reported through the shared `openPass` helper, whose stage
+  is the colour-attachment smoke's - so the harness line would have said the attachments smoke failed while
+  the same line said `attachments=true`. The smoke now opens its own pass and reports under `depth`.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
@@ -1158,10 +1237,11 @@ half that needs a pipeline writing several targets is the next one.
 
 ## The frame encoder, and the list its refusals draw
 
-Phase 4's other half is `render.metal4.Metal4FrameEncoder`, and what it is now is a frame's lifetime with an
-empty encode path inside it. It implements the neutral `MetalFrameEncoder` - the contract the device holds - and
-owns exactly three things: the ring above, the resources a frame cannot release yet, and the release order
-between them.
+Phase 4's other half is `render.metal4.Metal4FrameEncoder`. It was written as a frame's lifetime with an empty
+encode path inside it; the encode path has since been filled in (the passes, the copies and the clears, each in
+its own section), so what is described here is the lifetime half. It implements the neutral `MetalFrameEncoder` -
+the contract the device holds - and owns exactly three things: the ring above, the resources a frame cannot
+release yet, and the release order between them.
 
 - **The ring.** One per encoder, made from the queue the execution services answer with, so no generation owns
   the device's queue factory and no second lifetime model grows beside the sidecar's (§31).
@@ -1172,18 +1252,21 @@ between them.
 - **The wait.** `waitForSubmittedGpuWork` waits the ring and *then* runs the releases, in that order, and `close`
   does the same before letting the ring go. The order is the method.
 
-**Everything else refuses, by name, one line per operation**: `transientMemory`, `createRenderPass`,
-`submitRenderPass`, `clearColorTexture`, `clearColorAndDepthTextures` (both forms), `clearDepthTexture`,
-`writeToBuffer`, `copyToBuffer`, `writeToTexture`, `copyBufferToTexture`, `copyTextureToBuffer` (both forms),
-`copyTextureToTexture`, `createFence` and `writeTimestamp`. Each raises the provider's `Unimplemented` carrying
-the operation's own name, so the refusals *are* the migration's remaining work list and a log line can be read
-against the plan. Section 35 is the rule they follow: an operation this path cannot encode is never dropped
-into a half frame - and a frame that says it cannot run is worth more than one that runs half of itself.
+**What refused at this point, and what refuses now.** When this section was written every other operation
+refused by name: `transientMemory`, `createRenderPass`, `submitRenderPass`, the clears, the five copies,
+`createFence` and `writeTimestamp`, each raising the provider's `Unimplemented` with the operation's own name,
+so the refusals *were* the migration's remaining work list and a log line could be read against the plan.
+Section 35 is the rule they follow: an operation this path cannot encode is never dropped into a half frame -
+and a frame that says it cannot run is worth more than one that runs half of itself. Most of that list is now
+implemented (the copies in "The copies", the render path in "The pass object" and "The binding plan", the clears
+in "The clears"); what still refuses **by name today** is the scissored `clearColorAndDepthTextures`,
+`createFence` and `writeTimestamp`, and that shorter list is what a forced client run walks into next.
 
 `submit()` is the one method that is neither: it ends and commits the frame **once** where a frame is begun, and
-does nothing where none is. Nothing begins one yet, because a frame's begin belongs to whatever first encodes
-into it and that is the render-pass path this class does not have - so `submit()` today finds no frame, which is
-a fact about the migration's stage rather than a licence to skip the commit.
+does nothing where none is. When this section was written nothing began one, because a frame's begin belongs to
+whatever first encodes into it and there was no encode path; today `beginFrameIfNeeded` is called by the first
+pass, the first copy and the first clear, so a forced client frame begins its own frame - and a `submit()` that
+found no frame is now a fact about a frame that encoded nothing rather than about the migration's stage.
 
 **What it deliberately does not implement** are the bridges' optional contracts - `MetalFrameExtras`,
 `MetalFrameResourceCommands`, `MetalFramePresentation` and the rest. Each of them is an operation this path

@@ -40,19 +40,18 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All six device smokes passed
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All nine device smokes passed
                   in every one of them - the drawn sampled texture, the allocator-slot ring, the four
-                  colour attachments and the new bound layout - and the compilation chain compiled a pipeline
-                  in every process (`compile=ok(valid=true)`). The layout smoke is the new one: two argument
-                  tables in one pass, one per stage, carrying a vertex buffer with its stride, two uniforms,
-                  a texture and a sampler, drawn with a scissor and read back on both sides of it (50 of 50).
-                  The new one is the copy smoke: a region copy and a whole copy, both read back (50 of 50).
-                  Since the round that added it the layout smoke builds its tables from the production
-                  `Metal4BindingPlan`,
-                  so the plan itself is what those 50 probes measured. The pass object is still NOT reachable
-                  here - it needs the engine's device and real texture views - so its evidence remains the
-                  structural contract plus the measured layers underneath (the attachment smoke's own evidence:
-                  50 of 50 in the round that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100)
+                  colour attachments, the bound layout, the texture copies and the new **depth clear** - and
+                  the compilation chain compiled a pipeline in every process (`compile=ok(valid=true)`). The
+                  depth clear is the new one: a colour target and a `Depth32Float` depth target in one pass,
+                  the depth cleared to 0.25 and read back through `MTLTexture.bytes` (50 of 50). The bound
+                  layout smoke still builds its tables from the production `Metal4BindingPlan`, so the plan
+                  itself is what those 50 probes measured. The pass object is still NOT reachable here - it
+                  needs the engine's device and real texture views - so its evidence remains the structural
+                  contract plus the measured layers underneath (the attachment smoke's own evidence: 50 of 50
+                  in the round that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100). Cold
+                  processes this round: 487-966 ms wall, 330-367 ms of probing in them; warm probes 21-29 ms
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -187,11 +186,15 @@ frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` 
                      It also owns the copies: a `MetalTransientMemory` on the frame's own rotation, a
                      `MTL4ComputeEncoder` opened on demand, and `writeToBuffer`/`writeToTexture`/
                      `copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture`/`transientMemory`
-                     implemented over them. MEASURED: a forced Metal 4 launch now walks past its own
-                     texture-manager upload and stops at the next gap -
-                     `Unimplemented: clearColorTexture`, from `Lightmap.<init> -> GameRenderer.<init> ->
-                     Minecraft.<init>`. What still refuses by name: clearColorTexture,
-                     clearColorAndDepthTextures, clearDepthTexture, createFence, writeTimestamp - five names.
+                     implemented over them. It also owns the clears: `clearColorTexture`, the unscissored
+                     `clearColorAndDepthTextures` and `clearDepthTexture` each open a pass of their own over
+                     the attachment they clear, ordered against any copy the frame encoded first and closed
+                     with the producer barrier (Render below says why a pass, and what it costs).
+                     MEASURED: a forced Metal 4 launch now walks past its own texture-manager upload, past
+                     `Lightmap.<init>`'s clear, into the render loop itself, and stops at the next gap -
+                     `Unimplemented: createFence`, from `MappableRingBuffer.rotate -> FogRenderer.endFrame ->
+                     GameRenderer.render -> Minecraft.renderFrame -> runTick`. What still refuses by name: the
+                     scissored `clearColorAndDepthTextures`, createFence, writeTimestamp - three names.
                      NOT PROVEN: no frame has been submitted through it; its evidence is the ring's device
                      proof plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
@@ -261,9 +264,24 @@ MRT:     PROVEN for the pass's half, and only that half - one pass carries four 
          for; a second pass loads slot 0's existing contents and re-clears slot 1, so the load, the clear
          on a reused attachment and the store across a pass boundary are all measured. What is NOT proven
          is a pipeline writing several targets at once: no draw is encoded yet
-depth:   NOT STARTED - the descriptor path takes a depth attachment and its clear, but no smoke binds one
+clear:   PROVEN as a pass of its own, and it is a decision with a cost. On this API a clear is a **load
+         action**, and a load action belongs to a pass, so `Metal4FrameEncoder.clearColorTexture`,
+         `clearColorAndDepthTextures` (unscissored) and `clearDepthTexture` each open a one-attachment pass
+         that loads cleared and stores, with no draw in it - the honest first version while the question is
+         whether the path runs at all. Metal 3's encoder records the clear and folds it into the next pass
+         that uses the attachment, which is cheaper (no extra pass, and the attachment is never loaded) and
+         is a lifetime model of its own; that is a later optimisation, not a correctness gap, and it is not
+         claimed to be free. The clear's pass ends with the producer barrier, and it is opened only after
+         any copy the frame encoded is ordered, so the clear cannot land before what it overwrites
+depth:   PARTLY - the descriptor path takes a depth attachment and its clear, and a smoke now proves the
+         load action itself: a colour target and a `Depth32Float` target in one pass, the depth cleared to
+         0.25, read back through `MTLTexture.bytes` and compared (50 of 50 probes). What is NOT proven is a
+         draw that tests or writes depth - no pipeline is bound with a depth-stencil state yet
 blend:   NOT STARTED
-scissor: NOT STARTED
+scissor: PARTLY - the pass's own scissor is set, cleared and measured on the device through the layout
+         smoke (a pixel inside the rectangle and a pixel outside it), but the scissored form of
+         `clearColorAndDepthTextures` still refuses by name, because clearing part of an attachment is a
+         load action that only holds for the whole attachment
 ```
 
 ## Resource Binding
@@ -288,13 +306,14 @@ residency:        NOT STARTED - nothing declares residency yet; the argument tab
 ## Blit
 
 ```
-full:   PROVEN as a native smoke, NOT through a frame - `MTL4ComputeEncoder.copyTextureToTexture` copies a
-        64x64 four-quadrant pattern into a second texture and every quadrant is read back, 50 of 50 probes.
-        The engine's own `copyTextureToTexture` still refuses
-region: PROVEN as a native smoke, NOT through a frame - a 32x32 region at the origin is copied into the
-        destination's other half, and both a pixel inside where it landed and a pixel outside it are read (the
-        first is the source's top-left quadrant, the second is still the clear). The engine's own
-        `copyBufferToTexture`/`copyTextureToBuffer`/`writeToTexture` still refuse
+full:   PROVEN as a native smoke and wired INTO the frame encoder - `MTL4ComputeEncoder.copyTextureToTexture`
+        copies a 64x64 four-quadrant pattern into a second texture and every quadrant is read back (50 of 50
+        probes); `Metal4FrameEncoder.copyTextureToTexture` is the engine's own form of it, and the client has
+        walked past the uploads that use the other copies. NOT through a frame: no live frame has encoded one
+region: PROVEN as a native smoke and wired INTO the frame encoder - a 32x32 region at the origin is copied
+        into the destination's other half, and both a pixel inside where it landed and a pixel outside it are
+        read (the first is the source's top-left quadrant, the second is still the clear). The engine's
+        `copyBufferToTexture`/`copyTextureToBuffer`/`writeToTexture` are implemented over the same encoder
 mipmap: NOT STARTED - no mip chain has been copied on the new path
 ```
 
@@ -358,13 +377,14 @@ CI, which is where every smoke here was run.
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
 | MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a | yes |
-| depth           | yes         | no                                | n/a           | no          |
+| clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | n/a | yes |
+| depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | n/a | yes |
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | n/a | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | n/a | yes |
 | vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index PARTLY - the pass turns the engine's first index into an address offset for the draw selector, and no probe has drawn indexed geometry yet | n/a | yes (vertex) |
 | argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
-| blit            | yes         | no                                | n/a           | no          |
+| blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a | yes |
 | mipmap          | yes         | no                                | n/a           | no          |
 | compute         | yes         | no                                | n/a           | no          |
 | storage buffer  | yes         | no                                | n/a           | no          |
@@ -385,11 +405,14 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The clears are the next gap** - the copies are now native-measured *and* wired (the client walks past its
-   texture upload), and a forced Metal 4 launch stops at `clearColorTexture`, raised from
-   `Lightmap.<init> -> GameRenderer.<init>`. The clears (`clearColorTexture`,
-   `clearColorAndDepthTextures`, `clearDepthTexture`) plus `createFence` and `writeTimestamp` still refuse by
-   name; the clears are what the client asks for next, and each run names the one after that.
+3. **The fence is the next gap** - the clears are now implemented (colour, colour+depth, depth-only, each as
+   a pass of its own) and measured, so the client's ladder advanced twice in one round: a forced Metal 4
+   launch walks past `Lightmap.<init>`'s clear and **into the render loop**, stopping at `createFence`, raised
+   from `MappableRingBuffer.rotate -> FogRenderer.endFrame -> GameRenderer.render -> Minecraft.renderFrame ->
+   runTick`. A fence is a Metal 3 dependency object and this command model orders work with barriers and
+   queue events, so the honest answer is a decision rather than a wrapper: what the game waits on, and what
+   the Metal 4 equivalent of that wait is. The scissored `clearColorAndDepthTextures` and `writeTimestamp`
+   still refuse by name, and each forced run names the one after that.
 4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
@@ -410,9 +433,12 @@ process with no window is not the same claim as a capability proven through the 
 ## Metal 4 full-frame implementation complete?
 
 **NO.** Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
-bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, and
-the frame encoder's lifetime - the ring - proven on the device. Everything the Definition of Done asks for that
-needs a frame the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT,
-depth, argument-table binding through the frame, blit, compute, the synchronization fixtures, presentation owned
-by the full path, resize, reload, dimension, shutdown, and the real-pack and performance validation. The next
-item is the frame encoder's render-pass path, and then the first no-pack frame.
+bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
+frame encoder's lifetime - the ring - proven on the device, its copies wired, and its clears implemented and
+measured. A forced Metal 4 client launch now gets past startup and **into the render loop** - it clears, it
+copies, it encodes passes through the game's own descriptors - and stops on the first operation the new path
+does not own (`createFence`), which is what is left of the frame path. Everything the Definition of Done asks
+for that needs a frame the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack,
+MRT, depth writes, argument-table binding through the frame, blit in a live frame, compute, the synchronization
+fixtures, presentation owned by the full path, resize, reload, dimension, shutdown, and the real-pack and
+performance validation. The next item is the fence decision, then the first no-pack frame.

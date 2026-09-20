@@ -66,6 +66,26 @@ for path in (STATE, ENCODER):
 state = STATE.read_text(encoding="utf-8")
 encoder = ENCODER.read_text(encoding="utf-8")
 
+
+def body_of(source, signature):
+    """The body of one Java method, from its signature to its matching closing brace.
+
+    Several of the facts pinned below are statements whose text appears at more than one call site - a pass that
+    ends a copy encoder, a depth attachment built from a caller's value - so a file-wide search would stay green
+    while the one site that matters lost it. Reading a method body is what makes those pins pins.
+    """
+    start = source.index(signature)
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise SystemExit(f"metal 4 provider: {signature[:40]}... has no closing brace, so its body cannot be read")
+
+
 if "return new Metal4ExecutionState(device);" not in provider:
     raise SystemExit("metal 4 provider: createExecutionState no longer returns this generation's state")
 if "return new Metal4FrameEncoder(device, metal4, defaultShaderSource);" not in provider:
@@ -344,6 +364,23 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# The copy a frame encoded before a pass wrote something that pass may read, so the dependency is encoded in the
+# pass's own opening; the same three lines appear in the clear encoder, which is a second reader of this frame's
+# copies, so each site is pinned in its own body rather than once for the file.
+COPY_THEN_PASS = ("if (this.copyEncoder != null && this.copyEncoder.open()) {\n"
+                  "            this.copyEncoder.barrierForSubsequentEncoders();\n"
+                  "            this.copyEncoder.endEncoding();")
+for method, why in (
+    ("public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {",
+     "a render pass is opened without ordering the copies the frame encoded before it, so the pass may read what "
+     "a copy has not finished writing"),
+    ("private void encodeClear(final String operation,",
+     "a clear is encoded without ordering the copies the frame encoded before it, so it may clear over what a "
+     "copy has not finished writing"),
+):
+    if COPY_THEN_PASS not in body_of(encoder, method):
+        raise SystemExit("metal 4 provider: " + why)
+
 # The copies have to be there as implementations and not only absent from the refusal list: a method that was
 # renamed away would leave the refusal check passing and the frame path with nowhere to upload a texture.
 for implementation in ("public void writeToBuffer(final @NonNull GpuBufferSlice destination",
@@ -358,13 +395,12 @@ for implementation in ("public void writeToBuffer(final @NonNull GpuBufferSlice 
 
 # What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence; and the
 # copies are no longer in that list, because the client asked for them by stopping there.
-for operation in ("clearColorTexture", "clearColorAndDepthTextures", "clearDepthTexture", "createFence",
-                  "writeTimestamp"):
+for operation in ("clearColorAndDepthTextures", "createFence", "writeTimestamp"):
     if f'throw unimplemented("{operation}")' not in encoder:
         raise SystemExit(f"metal 4 provider: the frame encoder does not refuse {operation} by name, so an "
                          "operation it cannot encode would be dropped into a half frame")
 for operation in ("writeToBuffer", "copyToBuffer", "writeToTexture", "copyBufferToTexture", "copyTextureToBuffer",
-                  "copyTextureToTexture", "transientMemory"):
+                  "copyTextureToTexture", "transientMemory", "clearColorTexture", "clearDepthTexture"):
     if f'throw unimplemented("{operation}")' in encoder:
         raise SystemExit(f"metal 4 provider: the frame encoder still refuses {operation}, which the client asked "
                          "for by stopping there")
@@ -399,6 +435,63 @@ for needle, why in (
 ):
     if needle not in probe_source:
         raise SystemExit("metal 4 provider: " + why)
+
+# The clears: a clear is a load action, a load action belongs to a pass, so the first version opens a pass of its
+# own and encodes the clear as that pass's loading. It is a real cost (one pass per clear) and it is the honest
+# answer while the question is whether the path runs at all; the Metal 3 encoder folds the clear into the next
+# pass that uses the attachment instead, which is a lifetime model of its own.
+#
+# Every needle below is looked for inside one method body and not in the file: "if (this.currentPass != null)"
+# and the depth attachment's construction each appear at several call sites, so a file-wide search would be
+# satisfied by a clear that lost its own ordering or its own value and stayed green.
+CLEAR_ENCODER = body_of(encoder, "private void encodeClear(final String operation,")
+for needle, why in (
+    ("pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,\n"
+     "                    colors, depth, operation);",
+     "a clear is not encoded as a pass over the attachment it clears"),
+    ("if (this.currentPass != null) {\n            submitRenderPass();",
+     "a clear can be encoded while a pass the game owns is still open, which is two encoders on one command "
+     "buffer"),
+    ("pass.barrierForSubsequentEncoders()",
+     "a pass that follows a clear is not ordered against it, which section 61 forbids"),
+):
+    if needle not in CLEAR_ENCODER:
+        raise SystemExit("metal 4 provider: " + why)
+
+CLEARS = {
+    "clearColorTexture": (
+        body_of(encoder, "public void clearColorTexture(final @NonNull GpuTexture colorTexture,"),
+        (('encodeClear("clearColorTexture"', "the colour clear does not run through the clear encoder"),
+         ("CARRIED, components(clearColor)", "the colour clear does not carry its colour and its contents"),
+         ("colorTexture.getWidth(0), colorTexture.getHeight(0)",
+          "the colour clear's pass is not described at the attachment's own extent, which is a wrongly-sized "
+          "pass")),
+    ),
+    "clearColorAndDepthTextures": (
+        body_of(encoder, "public void clearColorAndDepthTextures(final @NonNull GpuTexture colorTexture, final "
+                         "@NonNull Vector4fc clearColor,\n                                           final "
+                         "@NonNull GpuTexture depthTexture, final double clearDepth) {"),
+        (('encodeClear("clearColorAndDepthTextures"',
+          "the colour-and-depth clear does not run through the clear encoder"),
+         ("new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth)",
+          "the colour-and-depth clear does not carry the depth attachment and its value, so the depth attachment "
+          "would load whatever it held"),
+         ("colorTexture.getWidth(0), colorTexture.getHeight(0)",
+          "the colour-and-depth clear's pass is not described at the attachment's own extent")),
+    ),
+    "clearDepthTexture": (
+        body_of(encoder, "public void clearDepthTexture(final @NonNull GpuTexture depthTexture,"),
+        (('encodeClear("clearDepthTexture"', "the depth-only clear does not run through the clear encoder"),
+         ("new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth)",
+          "the depth-only clear does not carry the depth attachment and its value"),
+         ("depthTexture.getWidth(0), depthTexture.getHeight(0)",
+          "the depth-only clear's pass is not described at the attachment's own extent")),
+    ),
+}
+for name, (body, needles) in CLEARS.items():
+    for needle, why in needles:
+        if needle not in body:
+            raise SystemExit(f"metal 4 provider: {why} ({name})")
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two

@@ -523,4 +523,42 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the depth attachment, which is the half of a frame's clears the attachments smoke does not reach -------
+# The plan's depth phase is two overlapping triangles with a known winner; that needs a pipeline and a draw.
+# What is pinned here is the step before it: a pass whose attachments are a colour target and a depth target,
+# both loaded as cleared and both stored, and the depth texture read back as the number it was given.
+for needle, why in (
+    ("public static boolean canClearDepth(",
+     "the depth attachment and its clear are measured nowhere, so the first thing a depth pass needs has no run"),
+    ("descriptor.pixelFormat(MTLPixelFormat.Depth32Float);",
+     "the smoke's depth target is not the format a frame's depth attachment is"),
+    ("new MTL4RenderEncoder.Depth(depth, CLEAR_DEPTH)",
+     "the smoke does not clear the depth attachment to a known value"),
+    ("MTLTexture.bytes(depth, pixel, 4L, 0L, 0L, 1L, 1L);",
+     "the depth texture is never read back, so the clear is asserted nowhere"),
+    ("if (!(Math.abs(read - (float) CLEAR_DEPTH) <= 0.0001f)) {",
+     "the depth comparison is written so that a NaN readback counts as the value that was asked for, which is a "
+     "check a broken clear could pass"),
+    ("the depth attachment reads ", "a depth clear that did not land is not reported as that"),
+    ("return failed(\"depth\", \"a pass carrying a depth attachment could not be opened at stage \"",
+     "a depth pass that could not be opened is reported under the colour-attachment smoke's stage, so the line "
+     "would say the attachments smoke failed while the same line says it passed"),
+    ("return failed(\"depth\", \"the depth-carrying pass did not open and did not say why\");",
+     "a depth pass that came back null fails the smoke without saying anything, which reads as a smoke that "
+     "passed for a reason no one can see"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " depth=" + depth', "the harness does not print the depth smoke's answer"),
+    ('+ " depthReason=" + depthReason', "the harness does not print why the depth smoke failed"),
+    ("MTL4Probe.canClearDepth(device)", "the harness never asks the depth smoke"),
+    ("depth_failures=\"$(grep -c ' depth=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the depth smoke's failures"),
+    ("if (( depth_failures > 0 )); then", "the driver counts the depth smoke's failures and does not fail the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

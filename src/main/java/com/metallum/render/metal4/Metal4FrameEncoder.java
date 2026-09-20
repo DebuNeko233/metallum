@@ -4,7 +4,9 @@ import com.metallum.Metallum;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.metal4.MTL4ComputeEncoder;
 import com.metallum.mtl.metal4.MTL4FrameRing;
+import com.metallum.mtl.metal4.MTL4RenderEncoder;
 import com.metallum.render.MetalDevice;
+import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
 import com.metallum.render.shared.MetalGpuBuffer;
@@ -517,15 +519,35 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         return this.executionState.device();
     }
 
+    /**
+     * Clears a colour attachment by opening a pass that loads it cleared and stores it, with no draw in it.
+     * <p>
+     * A clear is a load action on this API, and a load action belongs to a pass - so the honest first version is
+     * a pass of its own. The Metal 3 encoder instead records the clear and folds it into the next pass that uses
+     * that attachment, which is cheaper (no pass, and the attachment is never loaded) and is a lifetime model of
+     * its own. This one is the simpler answer while the question is whether the path runs at all, and the extra
+     * pass is what it costs.
+     */
     @Override
     public void clearColorTexture(final @NonNull GpuTexture colorTexture, final @NonNull Vector4fc clearColor) {
-        throw unimplemented("clearColorTexture");
+        MetalGpuTexture color = textureOf(colorTexture);
+        encodeClear("clearColorTexture",
+                new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
+                        AttachmentContents.CARRIED, components(clearColor))},
+                null, colorTexture.getWidth(0), colorTexture.getHeight(0));
     }
 
+    /** Clears a colour attachment and a depth attachment in one pass, which is one pass and not two. */
     @Override
     public void clearColorAndDepthTextures(final @NonNull GpuTexture colorTexture, final @NonNull Vector4fc clearColor,
                                            final @NonNull GpuTexture depthTexture, final double clearDepth) {
-        throw unimplemented("clearColorAndDepthTextures");
+        MetalGpuTexture color = textureOf(colorTexture);
+        MetalGpuTexture depth = textureOf(depthTexture);
+        encodeClear("clearColorAndDepthTextures",
+                new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
+                        AttachmentContents.CARRIED, components(clearColor))},
+                new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
+                colorTexture.getWidth(0), colorTexture.getHeight(0));
     }
 
     @Override
@@ -536,9 +558,13 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         throw unimplemented("clearColorAndDepthTextures");
     }
 
+    /** Clears a depth attachment on its own, in a pass whose only attachment is that one. */
     @Override
     public void clearDepthTexture(final @NonNull GpuTexture depthTexture, final double clearDepth) {
-        throw unimplemented("clearDepthTexture");
+        MetalGpuTexture depth = textureOf(depthTexture);
+        encodeClear("clearDepthTexture", new MTL4RenderEncoder.Color[0],
+                new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
+                depthTexture.getWidth(0), depthTexture.getHeight(0));
     }
 
     /**
@@ -548,6 +574,49 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     @Override
     public @NonNull GpuFence createFence() {
         throw unimplemented("createFence");
+    }
+
+    /**
+     * Encodes one clear as a pass of its own.
+     * <p>
+     * Everything it depends on is already in place: a frame is begun if none is, a pass the game still has open
+     * is ended first because only one encoder may be open on a command buffer, a copy pass is ended and ordered
+     * against this one, and the clear's pass ends with the producer barrier so that whatever reads the cleared
+     * attachment afterwards has an encoded dependency on it.
+     */
+    private void encodeClear(final String operation, final MTL4RenderEncoder.Color[] colors,
+                             final MTL4RenderEncoder.Depth depth, final long width, final long height) {
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        beginFrameIfNeeded();
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.barrierForSubsequentEncoders();
+            this.copyEncoder.endEncoding();
+        }
+
+        MTL4RenderEncoder pass;
+        try {
+            pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,
+                    colors, depth, operation);
+        } catch (MTL4RenderEncoder.Refused refused) {
+            throw new IllegalStateException(operation + " could not be encoded at stage " + refused.stage() + ": "
+                    + refused.getMessage(), refused);
+        }
+        try {
+            if (!pass.barrierForSubsequentEncoders()) {
+                Metallum.LOGGER.warn("Metal 4 frame encoder: {}'s pass does not answer the producer barrier, so a"
+                        + " later pass that reads the cleared attachment has no encoded dependency", operation);
+            }
+            pass.endEncoding();
+        } finally {
+            pass.close();
+        }
+    }
+
+    /** A clear colour as the descriptor's four components. */
+    private static float[] components(final Vector4fc color) {
+        return new float[]{color.x(), color.y(), color.z(), color.w()};
     }
 
     /** Timestamps are the counter path, which the migration puts after correctness, not beside it. */

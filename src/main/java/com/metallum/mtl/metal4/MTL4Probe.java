@@ -1041,8 +1041,15 @@ public final class MTL4Probe {
     /** Opens one pass of the attachment smoke, turning its refusal into this probe's stage and reason. */
     private static MTL4RenderEncoder openPass(final MTLDevice device, final MemorySegment buffer,
                                               final MTL4RenderEncoder.Color[] colors, final String which) {
+        return openPass(device, buffer, colors, null, which);
+    }
+
+    /** The same, for a pass that also carries a depth attachment. */
+    private static MTL4RenderEncoder openPass(final MTLDevice device, final MemorySegment buffer,
+                                              final MTL4RenderEncoder.Color[] colors,
+                                              final MTL4RenderEncoder.Depth depth, final String which) {
         try {
-            return MTL4RenderEncoder.open(device, buffer, TARGET_SIZE, TARGET_SIZE, colors, null, which);
+            return MTL4RenderEncoder.open(device, buffer, TARGET_SIZE, TARGET_SIZE, colors, depth, which);
         } catch (MTL4RenderEncoder.Refused refused) {
             failed("attachments", which + " could not be opened at stage " + refused.stage() + ": "
                     + refused.getMessage());
@@ -1539,6 +1546,138 @@ public final class MTL4Probe {
             releaseIfPresent(buffer);
             releaseIfPresent(allocator);
             releaseIfPresent(queue);
+        }
+    }
+
+
+    /** What the depth smoke clears its depth attachment to. */
+    private static final double CLEAR_DEPTH = 0.25;
+
+    /**
+     * Whether a pass can carry a depth attachment and clear it, which is the half of a frame's clears the
+     * attachment smoke does not reach.
+     * <p>
+     * The plan's depth phase is two overlapping triangles with a known winner; that needs a pipeline, a depth
+     * compare state and a draw. What is measured here is the step before it and the one a frame's first clear
+     * needs: a pass whose attachments are a colour target and a depth target, both loaded as cleared and both
+     * stored, and then a readback of the depth texture itself. A clear that landed in the wrong attachment, or
+     * a depth attachment the descriptor dropped, would read as something other than the number it was given.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a depth attachment is cleared and read back as the value it was given
+     */
+    public static boolean canClearDepth(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("depth", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment depth = MemorySegment.NULL;
+        MTL4RenderEncoder clearPass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("depth", "a Metal 4 queue, allocator, command buffer or shared event came back nil");
+            }
+
+            target = newTarget(device);
+            depth = newDepthTarget(device);
+            if (ObjC.isNil(target) || ObjC.isNil(depth)) {
+                return failed("depth", "one of the two " + TARGET_SIZE + "x" + TARGET_SIZE + " attachments came"
+                        + " back nil: colour=" + !ObjC.isNil(target) + " depth=" + !ObjC.isNil(depth));
+            }
+
+            BEGIN.send(buffer, allocator);
+            // Opened here rather than through the shared helper, because that one reports a refused pass under
+            // the colour-attachment smoke's stage: a depth pass that could not be opened would then be printed
+            // as the attachments smoke failing, in the same line that says the attachments smoke passed.
+            try {
+                clearPass = MTL4RenderEncoder.open(device, buffer, TARGET_SIZE, TARGET_SIZE,
+                        new MTL4RenderEncoder.Color[]{
+                                MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                        new MTL4RenderEncoder.Depth(depth, CLEAR_DEPTH), "the depth clear");
+            } catch (MTL4RenderEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("depth", "a pass carrying a depth attachment could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (clearPass == null) {
+                END.send(buffer);
+                return failed("depth", "the depth-carrying pass did not open and did not say why");
+            }
+            clearPass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("depth", "the shared event did not reach 1 within 2000 ms, so the submitted clear"
+                        + " never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // The colour attachment first: a clear that landed in the wrong attachment would show here.
+                MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, CLEAR_PIXEL)) {
+                    return failed("depth", "the colour attachment of a depth-carrying pass reads "
+                            + describe(pixel) + " where its clear " + describe(CLEAR_PIXEL) + " was asked for");
+                }
+
+                // And the depth attachment itself, as the four bytes a Depth32Float texel is. The comparison is
+                // written as "inside the tolerance" and negated rather than as "outside it": NaN is outside no
+                // tolerance, so `Math.abs(read - clear) > 0.0001f` would let a NaN readback pass as the value
+                // that was asked for, and a check that cannot fail is not evidence.
+                MTLTexture.bytes(depth, pixel, 4L, 0L, 0L, 1L, 1L);
+                float read = pixel.get(JAVA_FLOAT, 0L);
+                if (!(Math.abs(read - (float) CLEAR_DEPTH) <= 0.0001f)) {
+                    return failed("depth", "the depth attachment reads " + read + " where its clear "
+                            + CLEAR_DEPTH + " was asked for, so the depth clear did not land - or the descriptor"
+                            + " dropped the depth attachment");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("depth", "clearing and reading back the depth attachment threw " + threw);
+        } finally {
+            if (clearPass != null) {
+                clearPass.close();
+            }
+            releaseIfPresent(depth);
+            releaseIfPresent(target);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** One shared, readback-able depth target: the format a frame's depth attachment is. */
+    private static MemorySegment newDepthTarget(final MTLDevice device) {
+        try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+            descriptor.pixelFormat(MTLPixelFormat.Depth32Float);
+            descriptor.width(TARGET_SIZE);
+            descriptor.height(TARGET_SIZE);
+            descriptor.usage(USAGE_RENDER_TARGET);
+            descriptor.storageMode(MTLStorageMode.Shared);
+            return device.newTexture(descriptor);
         }
     }
 

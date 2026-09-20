@@ -37,6 +37,7 @@ import java.util.Optional;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
+ *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
  *                 provider=&lt;text&gt; epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
@@ -188,6 +189,7 @@ public final class Metal4ColdProbe {
         String attachmentsReason = "-";
         String layoutReason = "-";
         String copyReason = "-";
+        String depthReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -227,6 +229,11 @@ public final class Metal4ColdProbe {
             boolean copy = makeAndSubmit && MTL4Probe.canCopyTextureRegions(device);
             if (!copy) {
                 copyReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The depth attachment and its clear, which is where a pass that a frame's depth work needs begins.
+            boolean depth = makeAndSubmit && MTL4Probe.canClearDepth(device);
+            if (!depth) {
+                depthReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -287,6 +294,8 @@ public final class Metal4ColdProbe {
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy
                     + " copyReason=" + copyReason.replace(' ', '_')
+                    + " depth=" + depth
+                    + " depthReason=" + depthReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
