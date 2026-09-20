@@ -2122,6 +2122,73 @@ reflected binding map resolved into a table), then **`MetalFrameComputeCommands.
 encoder. The session itself runs and falls back while that is missing, which is the designed answer for an
 absent capability rather than a half frame.
 
+### The compute road: one translation for two generations, and a dispatch that is a table
+
+`MetalComputeBridge.compile` answered with the state's own refusal - `Active Metal execution state does not
+support compute` - and that is now the bridge's neutral question answered by this generation. Three pieces, and
+the first is not new code at all.
+
+**One translation, in the shared layer.** SPIR-V in and MSL plus remapped bindings out is not a Metal 3 answer:
+both generations run compute, and what a kernel's resources *mean* does not depend on which command API encodes
+the dispatch. The Metal 3 bridge held that translation in private - 257 lines of SPIRV-Cross, the profile it
+reads, the per-kind argument slot allocator, the binding record - so the Metal 4 road needed either a second copy
+of metadata that has to agree with the first for a pack to run on both generations, or one home for it.
+`render.shared.MetalComputeTranslator` is that home, beside the render translator it already shares an MSL
+profile with, and the Metal 3 bridge now calls it. Behaviour is unchanged: same options, same slot allocation,
+same limits, same error text. The binding kind is the shared `MetalResourceBinding.ResourceKind` rather than a
+private enum saying the same four things.
+
+**The state compiles, the context caches.** `Metal4ExecutionState implements MetalComputeCompiler`: translate,
+`newFunction` for the MSL, `newComputePipelineState` for the function. The function cache already keys a native
+function by (MSL, entry point, profile), so a compute pipeline state is keyed by exactly that and cached beside
+it - which is why two handles to one kernel share one native state on this path, and why the state's lifetime is
+the compilation context's: it is released with the functions in `clearCachesAfterGpuCompletion`, once the caller
+has established GPU completion. `Metal4ComputePipeline` is the handle the caller holds, and it owns the one
+thing Metal 3's handle does not need: **the argument table**. This command model has no per-resource setters, so
+a dispatch is a table and nothing else; the table is made on first use, sized to the argument counts the
+translation gave that kernel, and released by `close()`. The pipeline state deliberately is not - a handle that
+released it would free an object another handle is still dispatching through.
+
+**And the dispatch is that table, filled from the translation's own numbering.** `Metal4FrameEncoder` now carries
+`MetalFrameComputeCommands`: every binding is resolved and declared resident *before* the encoder opens (a
+missing binding has to be a refusal with nothing encoded, and an allocation this frame has not declared reads as
+nothing at all), then the pipeline, then the filled table, then
+`dispatchThreadgroups:threadsPerThreadgroup:` - the same call the Metal 3 bridge makes and not
+`dispatchThreads:`, because the caller's counts are workgroups and the shader declares its own local size. The
+encoder is the frame's own compute encoder, the one the copies and mip generations use, because this command
+model has one encoder for all three and within it program order is the order; the two directions that are not
+program order were already handled where they are encoded. Buffers are bound by the address of their slice, and
+that addition now has one implementation (`Metal4RenderPass.addressOf`) instead of two.
+
+**Measured: the client encodes both of the fixture's dispatches on this path.** A forced Metal 4 session
+(`-Dmetallum.execution=metal4`) with Vitrail's `compute-storage-contract` selected, quick-played into the
+overworld, said so in its own words - the compile is no longer the door it stops at:
+
+```text
+Metal execution: Metal 4 EXECUTES this session because metallum.execution=metal4 was asked for ...
+Metal execution seam: selectedGeneration=metal4 executingGeneration=metal4 mode=own-path framePathReady=true
+Drawing compute-storage-contract from the root for minecraft:overworld, at 2560x1440, 1 full screen passes before the final
+compute programs dispatched before the pass they hang off: [composite, composite_a]
+Dispatched compute composite through the active backend: groups=(1, 1, 1), local=(1, 1, 1)
+Dispatched compute composite_a through the active backend: groups=(1, 1, 1), local=(1, 1, 1)
+composite writes colortex0 alt, 2 uniforms and 1 samplers, 3 descriptors, a fragment stage that writes every pixel
+final writes the game's own target, 2 uniforms and 1 samplers, 3 descriptors, a fragment stage that writes every pixel
+```
+
+No `backend pipeline failed`, no `Vitrail stopped drawing this pack after an error`, and no refusal of either
+kind this path can raise (a missing binding, a resource the table would not take, a dispatch the encoder would
+not encode) - and the storage-image clear that precedes them no longer reports that the backend could not clear
+the image. **What is still NOT MEASURED is the picture**: the fixture's correctness claim is a GREEN image, the
+in-game F2 screenshot is a framebuffer readback and therefore the one picture road this machine has left (the
+display capture is a flat colour), and this session could not press it - macOS refused the automation
+(`execution error: 未获得授权将Apple事件发送给System Events (-1743)`), so a human has to press F2 for that half.
+The dispatch road and the chain's completion are measured; the pixels are not.
+
+Two MSL refusals appear in the same startup, and neither is this round's: `'sampler' attribute parameter is out
+of bounds: must be between 0 and 15` and `'id' attribute only applies to non-static data members` are the
+capability probe's own measurements of the sampler ceiling and the resource-id rule, both already recorded under
+Risks.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

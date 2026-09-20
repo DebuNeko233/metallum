@@ -40,8 +40,11 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        378 processes, 1619 probes (50 + 50 + 60 + 60 + 10 + 3 + 5 + 30 + 30 + 30 + 30 + 30, the twelfth
                   added by the storage-image smoke's census); failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      654 in sixteen processes      failures: 0
-this round:       84 probes (30 cold and 54 warm across the census and the runs on the way to it), the whole of
-                  it after the storage-image smoke was added: **0 failures** and 50 of 50 on every one of the
+this round:       **no new smoke and no new probe**, so the cold record stands exactly as the row above reads -
+                  this round's evidence is a client session, and it needed no new native capability to be asked
+                  (the table dispatch it uses is the compute smoke below, already 50 of 50). The round before this
+                  one: 84 probes (30 cold and 54 warm across the census and the runs on the way to it), the whole
+                  of it after the storage-image smoke was added: **0 failures** and 50 of 50 on every one of the
                   nineteen device smokes, the new one included, with 0 crash reports. The smoke this round added
                   is the **storage image**: a kernel writes a texture through a table, twice, with the table
                   re-pointed between the dispatches, and the texture is read back at both corners and the middle.
@@ -531,9 +534,9 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a - a no-pack frame needs no copy, and the window reports `blits 0` | yes |
 | mipmap          | yes         | yes - `canGenerateMipmaps`: a level-0 checkerboard uploaded, the levels above it pre-filled with a third value, the chain generated, and every level read back against the box average of the one below (50 of 50) | **executes** - Vitrail's `deferred-mipmap-contract` runs on this path (105 pipeline identities against Metal 3's 105, no refusal) and its chain generations are visible under the trace switch: 2448 over the run, each true, for a 2560x1440 target; correctness NOT MEASURED, because no picture of it exists | yes |
-| compute         | yes         | yes - `canDispatchCompute`: a pipeline from the probe's own kernel, a table carrying two buffers by address, one threadgroup of 32 threads, and every output word read back against its own index's formula with a sentinel proving the kernel ran (50 of 50) | **blocked at the pipeline compile**: `MetalComputeBridge.compile` refuses any execution state that is not Metal 3's, which is the door Vitrail's `compute-storage-contract` now reaches (the zeroing before it is done). The dispatch itself is proven natively | yes |
-| storage buffer  | yes         | no - a buffer is bound by address and a kernel writes it (the compute smoke), but no shader in the probe declares an SSBO | blocked with compute, at the pipeline compile rather than at the buffer | no |
-| storage image   | yes         | yes - `canWriteStorageImage`: a kernel writes a texture through a table, **twice**, with the table re-pointed between the dispatches, and the texture is read back at both corners and the middle (50 of 50); the frame path's `clearStorageTexture` dispatches the typed zeroing kernel over the texture's own extent | **past the zeroing, blocked at compute-pipeline compile**: the fixture's own words are `compute composite backend pipeline failed: Active Metal execution state does not support compute`, and the session runs and falls back | yes |
+| compute         | yes         | yes - `canDispatchCompute`: a pipeline from the probe's own kernel, a table carrying two buffers by address, one threadgroup of 32 threads, and every output word read back against its own index's formula with a sentinel proving the kernel ran (50 of 50); and the translation itself is one shared class both generations compile through | **dispatches**: on a forced Metal 4 session Vitrail's `compute-storage-contract` reports `Dispatched compute composite` and `Dispatched compute composite_a ... groups=(1, 1, 1), local=(1, 1, 1)`, the chain runs on to `final writes the game's own target`, and no pipeline, binding or encoding refusal appears. The picture is NOT MEASURED: the fixture's GREEN claim needs the in-game F2 screenshot, which this session could not press (macOS refused the key event) | yes |
+| storage buffer  | yes         | no - a buffer is bound by address and a kernel writes it (the compute smoke), but no shader in the probe declares an SSBO | **binds** - the fixture's `Phase15Buffer` is allocated through the backend, and the dispatch that reads it is encoded with the buffer in its table by address; the shader's own read of it is what the missing GREEN picture would confirm | yes |
+| storage image   | yes         | yes - `canWriteStorageImage`: a kernel writes a texture through a table, **twice**, with the table re-pointed between the dispatches, and the texture is read back at both corners and the middle (50 of 50); the frame path's `clearStorageTexture` dispatches the typed zeroing kernel over the texture's own extent | **cleared and dispatched through**: the fixture allocates `phase15Image` with no complaint about clearing it, and its two dispatches - which write it through tables - are encoded on this path; whether the second dispatch *sees* the first's writes is what the GREEN picture would confirm, and the picture is NOT MEASURED | yes |
 | synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | yes for the frame's own boundaries: every logical pass is its own native encoder and ends with the all-stages producer barrier, which is why the storage-image boundary a pack states is already encoded unconditionally; the read/write matrix is still the plan's fixtures | yes |
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | yes - 30 presents a window; the drawn image is **NOT MEASURED** (the screenshots were a black display) | yes |
@@ -594,9 +597,10 @@ answered rather than only what is left.
    caller is told work was done. `generateMipmaps` left that list when the frame's copy encoder learned the
    command, which this SDK declares on `MTL4ComputeCommandEncoder`.
 7. **Everything the Definition of Done asks for beyond the no-pack frame** - the rest of the Vitrail smoke-pack
-   staircase, MRT and depth draws, blit and compute fixtures, the synchronization matrix, resize, reload,
-   dimension, shutdown, the real packs, and the lifecycle gate. None of them is claimed; each is its own
-   milestone in the plan's order.
+   staircase, MRT and depth draws, the blit fixture inside a live frame, the synchronization matrix, resize,
+   reload, dimension, shutdown, the real packs, and the lifecycle gate. None of them is claimed; each is its own
+   milestone in the plan's order. (The compute fixture's dispatches now run through this path, which is a
+   different sentence from the fixture passing: its pixels are not measured.)
 
 ## Metal 4 full-frame implementation complete?
 
@@ -614,9 +618,11 @@ What has been done, in the plan's order: the Metal 3 bookkeeping, the cold-probe
 frame's own command buffer), all five native render smokes, the binding model through argument tables, the
 per-attachment contents facts delivered to the pass descriptors **and proven on the device through a Vitrail
 fixture pack**, the attachment counter made a function of the descriptor and extended over every pass this path
-opens, and the capability dispatch that had been hiding the contents half. What is **not** done is the rest of the
-Definition of Done: the rest of the smoke-pack staircase, MRT draws, depth writes and depth sampling, blit inside
-a live frame, compute and storage, the read/write synchronization matrix, resize, pack reload, dimension change,
+opens, the capability dispatch that had been hiding the contents half, and the compute road - one shared
+translation, this generation's compile, and a dispatch that is an argument table - which Vitrail's
+`compute-storage-contract` now encodes twice per frame on a forced Metal 4 session. What is **not** done is the
+rest of the Definition of Done: the rest of the smoke-pack staircase, MRT draws, depth writes and depth sampling,
+blit inside a live frame, the read/write synchronization matrix, resize, pack reload, dimension change,
 shutdown, the real-pack ladder, the lifecycle gate - and **any picture verdict at all**, which needs a display
 this machine will let the harness photograph. The remaining blockers above are the list; AUTO stays off this path
 on the intermittent capability probe, and the migration's own success criterion cannot be claimed until the
