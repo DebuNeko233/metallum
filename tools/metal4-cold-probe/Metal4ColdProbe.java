@@ -40,6 +40,7 @@ import java.util.Optional;
  *                 depthSample=&lt;bool&gt; depthSampleReason=&lt;text&gt;
  *                 mipmaps=&lt;bool&gt; mipmapsReason=&lt;text&gt;
  *                 compute=&lt;bool&gt; computeReason=&lt;text&gt;
+ *                 storageImage=&lt;bool&gt; storageImageReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -213,6 +214,8 @@ public final class Metal4ColdProbe {
         String mipmapsReason = "-";
         boolean compute = false;
         String computeReason = "-";
+        boolean storageImage = false;
+        String storageImageReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -274,6 +277,12 @@ public final class Metal4ColdProbe {
             compute = makeAndSubmit && MTL4Probe.canDispatchCompute(device);
             if (!compute) {
                 computeReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And a kernel writing a texture, which is what a storage clear is made of: two dispatches through
+            // one table re-pointed between them, so the table's snapshot is measured and not assumed.
+            storageImage = makeAndSubmit && MTL4Probe.canWriteStorageImage(device);
+            if (!storageImage) {
+                storageImageReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -386,6 +395,8 @@ public final class Metal4ColdProbe {
                     + " mipmapsReason=" + mipmapsReason.replace(' ', '_')
                     + " compute=" + compute
                     + " computeReason=" + computeReason.replace(' ', '_')
+                    + " storageImage=" + storageImage
+                    + " storageImageReason=" + storageImageReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

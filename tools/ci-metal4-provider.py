@@ -144,9 +144,23 @@ for needle, why in (
      " command of this kind do nothing at all - measured"),
     ("private static boolean supportsMipmapGeneration(final com.mojang.blaze3d.GpuFormat format) {",
      "the format list the native mipmap command needs is gone, so a texture it cannot filter would be sent"),
-    ("public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {\n"
-     "        return refuseResourceOperation(\"clearStorageTexture\");",
-     "clearing a storage texture no longer refuses by name, so a caller would be told it was cleared"),
+    # A storage texture is cleared by a typed kernel through a table now, not refused. What is pinned is the
+    # whole road: the shape checks, the table, the residency declaration, and the dispatch the helper encodes.
+    ("|| dimensions < 1 || dimensions > 3) {\n            return false;",
+     "clearing a storage texture no longer refuses a dimensionality this engine does not carry"),
+    ("return this.storagePipelines.clearZero(copies, table, metal.nativeHandle(), zeroingKind(texture.getFormat()),",
+     "the frame path does not dispatch the zeroing kernel, so the operation is still a refusal with a longer body"),
+    ("useResource(metal.nativeHandle());\n        return this.storagePipelines.clearZero(",
+     "the image is not declared resident before it is written by a kernel, and an undeclared resource makes a"
+     " command of this kind do nothing at all - measured"),
+    ("private MTL4ArgumentTable storageTable() {",
+     "there is no table for a storage dispatch to bind its image through, and this command model has no"
+     " per-resource setter on the encoder"),
+    ("MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L)",
+     "the storage table is not made for one texture slot"),
+    ("name.endsWith(\"_UINT\") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.UINT",
+     "the zeroing kernel's scalar type is not read from the texture's own format, so a uint image would be zeroed"
+     " by the float kernel and the pipeline would not build or would write the wrong bits"),
     ("return refuseResourceOperation(\"copyStorageTextureRegion\");",
      "a storage-texture region copy no longer refuses by name, so a caller would be told it was copied"),
     ("private boolean refuseResourceOperation(final String operation) {",
@@ -987,6 +1001,39 @@ m4_formats = mipmap_formats(encoder, "private static boolean supportsMipmapGener
 if not m3_formats or m3_formats != m4_formats:
     raise SystemExit("metal 4 provider: the mipmap formats the two generations will generate a chain for differ:"
                      f" metal 3 {sorted(m3_formats)} against metal 4 {sorted(m4_formats)}")
+
+# The zeroing kernels this generation dispatches, which are its own copy and its own cache.
+storage_pipelines = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                     / "MTL4StorageTexturePipelines.java")
+if not storage_pipelines.is_file():
+    raise SystemExit("metal 4 provider: MTL4StorageTexturePipelines.java is gone, so a storage texture has no"
+                     " kernel to be zeroed by")
+storage_source = storage_pipelines.read_text(encoding="utf-8")
+for needle, why in (
+    ("public enum ScalarKind {", "the kernels are not split by scalar type, so a uint image has no kernel"),
+    ("texture2d<float, access::write> image [[texture(0)]]",
+     "the zeroing kernel does not take a writable 2D image"),
+    ("public boolean clearZero(final MTL4ComputeEncoder encoder, final MTL4ArgumentTable table,",
+     "the zeroing call does not take the table the image is bound through"),
+    ("if (!table.texture(texture, 0L) || !encoder.setArgumentTable(table)) {",
+     "the image is not put in the table and the table is not handed to the encoder, which is the whole difference"
+     " between this generation's clear and Metal 3's"),
+    ("case 2 -> encoder.dispatchThreads(width, height, 1L, 8L, 8L, 1L);",
+     "the 2D clear does not dispatch over the texture's own extent"),
+    ("private final Map<String, MemorySegment> pipelines = new HashMap<>();",
+     "the pipelines are cached statically rather than owned by the encoder that made them, so a second device in"
+     " one process would inherit the first one's"),
+    ("public void close() {", "the pipelines this object made are never released"),
+):
+    if needle not in storage_source:
+        raise SystemExit("metal 4 provider: " + why)
+# An import or a use of the Metal 3 class, and not the class's own prose: the javadoc says in as many words which
+# layer it is not reaching into, and a pin that read the whole file would refuse its own explanation.
+for forbidden in ("import com.metallum.mtl.metal3", "com.metallum.mtl.metal3.MTLStorageTexturePipelines",
+                  "metal3.MTLComputeCommandEncoder"):
+    if forbidden in storage_source:
+        raise SystemExit(f"metal 4 provider: the Metal 4 storage pipelines reach into the Metal 3 layer"
+                         f" ({forbidden}), which is the cross-generation import the architecture law forbids")
 
 # The frame probe, fed by the full-frame path. The probe is how the standard harness collects a run at all - it
 # waits for the probe's window line - and it was fed by the Metal 3 encoder alone, so a forced Metal 4 run was

@@ -435,6 +435,15 @@ for needle, why in (
      "the driver does not count the compute smoke's failures"),
     ("if (( compute_failures > 0 )); then",
      "the driver counts the compute smoke's failures and does not fail the run on them"),
+    # And a kernel writing a texture, counted on its own.
+    ('+ " storageImage=" + storageImage', "the harness does not print the storage-image smoke's answer"),
+    ('+ " storageImageReason=" + storageImageReason',
+     "the harness does not print why the storage-image smoke failed"),
+    ("MTL4Probe.canWriteStorageImage(device)", "the harness never asks the storage-image smoke"),
+    ("storage_image_failures=\"$(grep -c ' storageImage=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the storage-image smoke's failures"),
+    ("if (( storage_image_failures > 0 )); then",
+     "the driver counts the storage-image smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -665,6 +674,38 @@ for needle, why in (
 ):
     if needle not in compute_probe:
         raise SystemExit("cold-probe harness: " + why)
+# --- a kernel writing a texture, where the table's snapshot is the mechanism -----------------------------
+if "public static boolean canWriteStorageImage(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the storage-image smoke is gone, so the harness's storageImage field "
+                     "would report a call that is not there")
+storage_probe = engine_probe_source[engine_probe_source.index("public static boolean canWriteStorageImage("):]
+storage_probe = storage_probe[:storage_probe.index("private static void writeColor(")]
+for needle, why in (
+    ("descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);",
+     "the storage smoke's texture has no shader-write bit, so the driver refuses it as a storage image"),
+    ("table.texture(texture, 0L)", "the image is not bound through the table by resource id"),
+    ("table.address(first.gpuAddress(), 0L)", "the first colour is not bound by address"),
+    ("table.address(second.gpuAddress(), 0L)", "the table is never re-pointed at the second colour"),
+    ("if (!table.address(second.gpuAddress(), 0L) || !dispatch.setArgumentTable(table)) {",
+     "the re-pointed table is not handed to the encoder again, so the second dispatch would read the first"),
+    ("for (long[] at : new long[][]{{0L, 0L}, {STORAGE_EDGE - 1L, STORAGE_EDGE - 1L}, {1L, 3L}})",
+     "the readback does not cover the corners and the middle, so a dispatch that wrote one texel could pass"),
+    ("if (!matches(pixel, STORAGE_SECOND_PIXEL)) {",
+     "the readback is not compared against the colour the second dispatch wrote"),
+):
+    if needle not in storage_probe:
+        raise SystemExit("cold-probe harness: " + why)
+# The kernel itself lives above the method, so it is pinned against the file rather than the slice.
+for needle, why in (
+    ("kernel void metallum_storage_write_probe(texture2d<float, access::write> image [[texture(0)]],",
+     "the storage kernel takes no writable image at the texture slot the table binds"),
+    ("constant float4& colour [[buffer(0)]]",
+     "the storage kernel does not read its colour from a buffer, so the reading cannot say which buffer the table"
+     " held"),
+):
+    if needle not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
 # And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
                    / "MTL4ComputeEncoder.java")
@@ -694,6 +735,11 @@ for needle, why in (
      "a dispatch with an empty grid is sent rather than refused"),
     ("if (!responds(open, DISPATCH_THREADGROUPS.name())) {",
      "the dispatch is sent without asking whether the encoder answers it"),
+    ('Msg.ofVoid("dispatchThreads:threadsPerThreadgroup:", ADDRESS, ADDRESS)',
+     "the open-grid dispatch selector is not the one MTL4ComputeCommandEncoder.h:77 declares, and a texture clear"
+     " whose extent is not a multiple of its threadgroup needs that form"),
+    ("if (!responds(open, DISPATCH_THREADS.name())) {",
+     "the open-grid dispatch is sent without asking whether the encoder answers it"),
 ):
     if needle not in compute_source:
         raise SystemExit("cold-probe harness: " + why)

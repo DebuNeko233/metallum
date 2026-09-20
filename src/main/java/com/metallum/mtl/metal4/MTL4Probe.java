@@ -2150,6 +2150,9 @@ public final class MTL4Probe {
         return true;
     }
 
+    /** {@code MTLTextureUsageShaderWrite}: what makes a texture writable by a kernel at all. */
+    private static final long USAGE_SHADER_WRITE = 2L;
+
     /** How many threads the compute smoke dispatches, the bias its kernel adds, and what it pre-fills with. */
     private static final int COMPUTE_THREADS = 32;
     private static final int COMPUTE_BIAS = 7;
@@ -2333,6 +2336,214 @@ public final class MTL4Probe {
             releaseIfPresent(buffer);
             releaseIfPresent(allocator);
             releaseIfPresent(queue);
+        }
+    }
+
+    /** The edge of the storage-image smoke's texture, and the two colours its two dispatches write. */
+    private static final long STORAGE_EDGE = 8L;
+    private static final int[] STORAGE_FIRST_PIXEL = {255, 0, 0, 255};
+    private static final int[] STORAGE_SECOND_PIXEL = {0, 255, 0, 255};
+
+    /**
+     * The kernel the storage-image smoke dispatches: it writes the colour it is handed to every texel of its grid.
+     * <p>
+     * The colour arrives as a uniform buffer rather than as a literal, so the reading says which buffer the table
+     * held - and two dispatches with two different buffers is what proves a table may be re-pointed between them.
+     */
+    private static final String STORAGE_WRITE_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            kernel void metallum_storage_write_probe(texture2d<float, access::write> image [[texture(0)]],
+                                                     constant float4& colour [[buffer(0)]],
+                                                     uint2 xy [[thread_position_in_grid]]) {
+              image.write(colour, xy);
+            }
+            """;
+
+    /**
+     * A kernel writing a texture, and a table re-pointed between two dispatches.
+     * <p>
+     * This is the mechanism a storage clear is made of, and it is two dispatches rather than one on purpose: the
+     * first writes red through a table holding one colour buffer, the second writes green through the same table
+     * holding another. A table whose contents were read when the GPU runs rather than when the dispatch is encoded
+     * would show the second colour twice, and a texture that was never writable shows nothing at all - so the two
+     * readings together say both that a kernel can write a texture and that this command model's table snapshot is
+     * what the frame path's clears depend on.
+     * <p>
+     * The texture is created with {@code MTLTextureUsageShaderWrite}: a texture without it is refused as a storage
+     * image, by the driver rather than by this engine.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether two dispatches write two colours into one texture through one re-pointed table
+     */
+    public static boolean canWriteStorageImage(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("storageImage", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment texture = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTLBuffer first = null;
+        MTLBuffer second = null;
+        MTL4ArgumentTable table = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder dispatch = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("storageImage", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            first = device.newBuffer(16L, STORAGE_SHARED);
+            second = device.newBuffer(16L, STORAGE_SHARED);
+            if (first == null || second == null || first.gpuAddress() == 0L || second.gpuAddress() == 0L) {
+                return failed("storageImage", "a colour buffer came back nil or without a GPU address");
+            }
+            writeColor(first, STORAGE_FIRST_PIXEL);
+            writeColor(second, STORAGE_SECOND_PIXEL);
+
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(STORAGE_EDGE);
+                descriptor.height(STORAGE_EDGE);
+                descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                texture = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(texture)) {
+                return failed("storageImage", "newTextureWithDescriptor: answered nil for a " + STORAGE_EDGE + "x"
+                        + STORAGE_EDGE + " texture with the shader-write bit");
+            }
+
+            function = device.newFunction(STORAGE_WRITE_MSL, "metallum_storage_write_probe");
+            if (ObjC.isNil(function)) {
+                return failed("storageImage", "the probe's storage-write kernel did not compile into a function");
+            }
+            pipeline = device.newComputePipelineState(function);
+            if (ObjC.isNil(pipeline)) {
+                return failed("storageImage", "newComputePipelineStateWithFunction: answered nil, so a kernel that"
+                        + " writes a texture cannot be dispatched on this device");
+            }
+
+            table = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            if (table == null || !table.texture(texture, 0L)) {
+                return failed("storageImage", "a table made for one buffer and one texture did not take the image"
+                        + " by resource id");
+            }
+            if (!table.address(first.gpuAddress(), 0L)) {
+                return failed("storageImage", "the table did not take the first colour buffer by address");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the storage-image smoke");
+            if (resident == null || !resident.add(first.handle()) || !resident.add(second.handle())
+                    || !resident.add(texture)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("storageImage", "the smoke could not declare its buffers and texture resident");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+            try {
+                dispatch = MTL4ComputeEncoder.open(device, buffer, "the storage-image dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("storageImage", "the storage dispatch's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+
+            if (!dispatch.setComputePipelineState(pipeline) || !dispatch.setArgumentTable(table)) {
+                END.send(buffer);
+                return failed("storageImage", "the encoder did not take the kernel's pipeline and its table");
+            }
+            if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("storageImage", "the encoder did not answer dispatchThreads: for the texture's own"
+                        + " extent");
+            }
+
+            // The table is re-pointed at the second colour and the same dispatch is encoded again: the snapshot is
+            // taken here, when the command is encoded, which is what makes the first dispatch keep red.
+            if (!table.address(second.gpuAddress(), 0L) || !dispatch.setArgumentTable(table)) {
+                END.send(buffer);
+                return failed("storageImage", "the table could not be re-pointed at the second colour");
+            }
+            if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("storageImage", "the second dispatch was not encoded");
+            }
+            dispatch.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("storageImage", "the shared event did not reach 1 within 2000 ms, so the dispatches"
+                        + " never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                // Both corners as well as the middle, so a dispatch that wrote one texel fails here.
+                for (long[] at : new long[][]{{0L, 0L}, {STORAGE_EDGE - 1L, STORAGE_EDGE - 1L}, {1L, 3L}}) {
+                    MTLTexture.bytes(texture, pixel, 4L, at[0], at[1], 1L, 1L);
+                    if (!matches(pixel, STORAGE_SECOND_PIXEL)) {
+                        return failed("storageImage", "the texture at (" + at[0] + "," + at[1] + ") reads "
+                                + describe(pixel) + " where the second dispatch wrote "
+                                + describe(STORAGE_SECOND_PIXEL) + ", so a kernel either did not write the image or"
+                                + " the table it read was the one the first dispatch used");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("storageImage", "dispatching or reading back the storage image threw " + threw);
+        } finally {
+            if (dispatch != null) {
+                dispatch.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            releaseIfPresent(function);
+            releaseIfPresent(texture);
+            releaseIfPresent(first);
+            releaseIfPresent(second);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** Writes one colour into a buffer as four floats, which is what the storage-write kernel reads. */
+    private static void writeColor(final MTLBuffer buffer, final int[] pixel) {
+        MemorySegment colour = buffer.contents().reinterpret(16L);
+        for (int channel = 0; channel < 4; channel++) {
+            colour.set(JAVA_FLOAT, channel * 4L, pixel[channel] / 255.0f);
         }
     }
 

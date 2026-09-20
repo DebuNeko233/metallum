@@ -100,6 +100,16 @@ import java.util.Set;
 final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,
         MetalFrameResourceCommands {
 
+    /** The zeroing kernels this frame dispatches for a storage texture, made once per device by whoever owns it. */
+    private final com.metallum.mtl.metal4.MTL4StorageTexturePipelines storagePipelines;
+    /**
+     * The one-texture table a storage dispatch binds its image through, made on first use and re-pointed at each
+     * dispatch: the table's contents are snapshotted when a dispatch is encoded, so two clears on one encoder may
+     * share it as long as the second is bound after the first was encoded.
+     */
+    @Nullable
+    private MTL4ArgumentTable storageTable;
+
     /**
      * The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth.
      * <p>
@@ -271,6 +281,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         this.ring = MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,
                 "the Metal 4 frame encoder");
         this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
+        // Owned by this encoder and not by a static keyed on a device: section 106's rule, and the reason a
+        // second device in one process would otherwise inherit the first one's pipelines.
+        this.storagePipelines = new com.metallum.mtl.metal4.MTL4StorageTexturePipelines(nativeDevice);
         this.deferred = new ArrayDeque[FRAMES_IN_FLIGHT];
         for (int slot = 0; slot < this.deferred.length; slot++) {
             this.deferred[slot] = new ArrayDeque<>();
@@ -402,6 +415,11 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.presentTable.close();
             this.presentTable = null;
         }
+        if (this.storageTable != null) {
+            this.storageTable.close();
+            this.storageTable = null;
+        }
+        this.storagePipelines.close();
         if (this.residency != null) {
             this.residency.close();
             this.residency = null;
@@ -813,12 +831,68 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /**
      * {@inheritDoc}
      * <p>
-     * No: a storage texture is written by a compute dispatch or a blit fill on this engine, and this path has
-     * neither yet. The caller's fallback is the contract's own answer to a false.
+     * A storage texture has no contents when it is made, and the client's own allocation asks for it to be
+     * zeroed before anything reads it - it refuses to use an image the backend could not clear, which is exactly
+     * where Vitrail's compute-storage fixture stopped on this path. The road is a typed kernel, the image in a
+     * table by resource id, and a dispatch over the texture's extent: this generation has no blit fill and no
+     * per-resource setter, so the dispatch the compute slice proved is what a clear is made of here.
+     * <p>
+     * False rather than a throw where there is nothing to clear: a closed encoder, a texture that is not this
+     * engine's, a dimensionality this engine does not carry, or a kernel this device would not make.
      */
     @Override
     public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {
-        return refuseResourceOperation("clearStorageTexture");
+        if (this.closed || !(texture instanceof MetalGpuTexture metal) || texture.isClosed()
+                || dimensions < 1 || dimensions > 3) {
+            return false;
+        }
+        // A pass the game still has open ends first: one encoder may be open on a command buffer, and the
+        // compute encoder cannot be opened under a render pass that has not ended.
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        beginFrameIfNeeded();
+        MTL4ComputeEncoder copies = copyEncoder();
+        if (copies == null || !copies.open()) {
+            return false;
+        }
+
+        MTL4ArgumentTable table = storageTable();
+        if (table == null) {
+            return false;
+        }
+        long width = texture.getWidth(0);
+        long height = dimensions == 1 ? 1L : texture.getHeight(0);
+        long depth = dimensions == 3 ? texture.getDepthOrLayers() : 1L;
+        // The image is written through an address this frame hands over, so it has to stay resident - the same
+        // declaration every other resource this path touches gets.
+        useResource(metal.nativeHandle());
+        return this.storagePipelines.clearZero(copies, table, metal.nativeHandle(), zeroingKind(texture.getFormat()),
+                dimensions, width, height, depth);
+    }
+
+    /** The one-texture table a storage dispatch binds through, made on first use. */
+    @Nullable
+    private MTL4ArgumentTable storageTable() {
+        if (this.storageTable == null) {
+            this.storageTable = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);
+        }
+        return this.storageTable;
+    }
+
+    /**
+     * Which scalar type a texture's format holds, and therefore which zeroing kernel writes it.
+     * <p>
+     * Read off the format's own name, which is the one place the fact exists: the format is a property of the
+     * texture and not of this path, and the kernel's scalar type has to match it or the write is a type error at
+     * pipeline creation rather than at the call.
+     */
+    private static com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind zeroingKind(
+            final com.mojang.blaze3d.GpuFormat format) {
+        String name = format.name();
+        return name.endsWith("_UINT") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.UINT
+                : name.endsWith("_SINT") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.SINT
+                        : com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.FLOAT;
     }
 
     /**

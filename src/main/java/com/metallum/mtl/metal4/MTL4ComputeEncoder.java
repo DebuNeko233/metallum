@@ -234,6 +234,9 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
     private static final Msg SET_ARGUMENT_TABLE = Msg.ofVoid("setArgumentTable:", ADDRESS);
     private static final Msg DISPATCH_THREADGROUPS =
             Msg.ofVoid("dispatchThreadgroups:threadsPerThreadgroup:", ADDRESS, ADDRESS);
+    /** The open-grid form, {@code MTL4ComputeCommandEncoder.h:77}, which a texture clear's extent wants. */
+    private static final Msg DISPATCH_THREADS =
+            Msg.ofVoid("dispatchThreads:threadsPerThreadgroup:", ADDRESS, ADDRESS);
 
     /** Hands the encoder the pipeline the dispatch runs, answering whether it was accepted. */
     public boolean setComputePipelineState(final MemorySegment pipeline) {
@@ -283,6 +286,28 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
             MemorySegment groups = MTLSize.on(stack, groupsX, groupsY, groupsZ);
             MemorySegment threads = MTLSize.on(stack, localX, localY, localZ);
             DISPATCH_THREADGROUPS.send(open, groups, threads);
+        }
+        return true;
+    }
+
+    /**
+     * Dispatches an arbitrarily-sized grid, which is the form a texture clear takes: the grid is the texture's
+     * extent and may not be a multiple of the threadgroup, so the boundary is not the caller's to round.
+     */
+    public boolean dispatchThreads(final long threadsX, final long threadsY, final long threadsZ,
+                                   final long localX, final long localY, final long localZ) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || threadsX <= 0L || threadsY <= 0L || threadsZ <= 0L
+                || localX <= 0L || localY <= 0L || localZ <= 0L) {
+            return false;
+        }
+        if (!responds(open, DISPATCH_THREADS.name())) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            MemorySegment threads = MTLSize.on(stack, threadsX, threadsY, threadsZ);
+            MemorySegment group = MTLSize.on(stack, localX, localY, localZ);
+            DISPATCH_THREADS.send(open, threads, group);
         }
         return true;
     }
