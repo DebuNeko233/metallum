@@ -93,6 +93,23 @@ public final class MTL4RenderEncoder implements AutoCloseable {
             "drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:"
                     + "baseInstance:",
             JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+    /**
+     * An indirect indexed draw, whose arguments the GPU reads out of a buffer.
+     * <p>
+     * Five 32-bit members - {@code indexCount}, {@code instanceCount}, {@code indexStart}, {@code baseVertex} and
+     * {@code baseInstance} - which is {@code MTLDrawIndexedPrimitivesIndirectArguments} in this machine's
+     * {@code MTLRenderCommandEncoder.h} and twenty bytes. The index buffer is still an <em>address</em> here, and
+     * the header asks for the same treatment as the direct form: "Use an instance of {@code MTLResidencySet} to
+     * mark residency of the indirect buffer that the {@code indirectBuffer} parameter references, and of the
+     * index buffer the {@code indexBuffer} parameter references."
+     * <p>
+     * One command is one draw, so a caller with several arguments in one buffer encodes this once per command -
+     * which is what makes the caller's stride the thing that has to be right.
+     */
+    private static final Msg DRAW_INDEXED_INDIRECT = Msg.ofVoid(
+            "drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:",
+            JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, ADDRESS);
+
     private static final long STAGE_ALL = Long.MAX_VALUE;
     private static final long VISIBILITY_DEVICE = 1L;
 
@@ -414,6 +431,39 @@ public final class MTL4RenderEncoder implements AutoCloseable {
         }
         DRAW_INDEXED.send(open, primitiveType, indexCount, indexType, MemorySegment.ofAddress(indexBufferAddress),
                 indexBufferLength, instanceCount, baseVertex, baseInstance);
+        return true;
+    }
+
+    /**
+     * An indexed draw whose arguments come from a buffer, which is how a chunk renderer asks for many draws
+     * without the CPU knowing what they are.
+     * <p>
+     * Same refusals as the direct form and for the same reason: a zero address is a draw with nothing to read,
+     * and saying so is worth more than a draw that silently did nothing.
+     */
+    public boolean drawIndexedPrimitivesIndirect(final long primitiveType, final long indexType,
+                                                 final long indexBufferAddress, final long indexBufferLength,
+                                                 final long indirectBufferAddress) {
+        this.refusal = null;
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null) {
+            this.refusal = "the pass " + this.which + " is not open, so there is no encoder to draw on";
+            return false;
+        }
+        if (indexBufferAddress == 0L) {
+            this.refusal = "the index buffer has no GPU address, so an indirect draw has no indices to read";
+            return false;
+        }
+        if (indirectBufferAddress == 0L) {
+            this.refusal = "the indirect buffer has no GPU address, so the draw has no arguments to read";
+            return false;
+        }
+        if (!responds(open, DRAW_INDEXED_INDIRECT.name())) {
+            this.refusal = "the encoder does not answer " + DRAW_INDEXED_INDIRECT.name();
+            return false;
+        }
+        DRAW_INDEXED_INDIRECT.send(open, primitiveType, indexType, MemorySegment.ofAddress(indexBufferAddress),
+                indexBufferLength, MemorySegment.ofAddress(indirectBufferAddress));
         return true;
     }
 

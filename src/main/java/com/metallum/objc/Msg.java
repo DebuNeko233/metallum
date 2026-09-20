@@ -167,6 +167,23 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * Five arguments after the receiver: two longs, the pointer, one more long and the second pointer.
+     * <p>
+     * It exists for Metal 4's indirect indexed draw, whose index buffer and arguments buffer are both addresses:
+     * {@code drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:} takes two integers, a
+     * GPU address, an integer and another GPU address - and an Objective-C selector's argument order is fixed,
+     * so the shapes have to be declared in that order rather than in whichever order an overload happens to
+     * exist (asked the other way round, the framework answers {@code objc_msgSend failed}).
+     */
+    public void send(MemorySegment self, long a, long b, MemorySegment c, long d, MemorySegment e) {
+        try {
+            handle.invokeExact(self, sel, a, b, c, d, e);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, long a, long b, MemorySegment c, long d, MemorySegment e, long f) {
         try {
             handle.invokeExact(self, sel, a, b, c, d, e, f);

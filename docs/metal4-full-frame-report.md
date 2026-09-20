@@ -428,6 +428,7 @@ CI, which is where every smoke here was run.
 | vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index yes - see the indexed-draw row | n/a | yes |
 | argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
 | indexed draw    | yes         | yes - an index buffer as an address in the draw, six UInt16 indices, drawn at index 0 and at index 3 with each frame read back against its own triangle; the selector is the eight-argument one this SDK declares | n/a | yes |
+| indirect draw   | yes         | yes - the indirect indexed form, one command per draw with `MTLDrawIndexedPrimitivesIndirectArguments` (twenty bytes) in a buffer the GPU reads and the frame path declares resident; the arguments' own `indexStart` selects which of two triangles is drawn, so arguments that are ignored draw the first one twice (50 of 50) | n/a | yes |
 | residency       | yes         | yes - a `MTL4ResidencySet` takes allocations, commits, requests residency and is handed to the queue; and in the frame path it is what keeps the addresses the frame binds alive, measured as the difference between a GPU fault and a world frame | yes - the forced Metal 4 launch renders terrain with no `GPURestart` | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a | yes |
 | mipmap          | yes         | no                                | n/a           | no          |
@@ -479,17 +480,23 @@ process with no window is not the same claim as a capability proven through the 
    declare, or declares as the other kind, is skipped rather than fatal - the engine's own `Fog` on the panorama
    pipeline and `CloudFaces` on the clouds pipeline are the two measured cases), and the forced Metal 4 launch
    now **renders the world**: the sky passes draw (disc, sun, moon - each with its own indexed draw) and the
-   terrain pass is entered, where the pass now implements `MetalPassUniformWriter` (push constants: a mapped
-   slice of the frame's own transient arena, bound by name) and stops at **`drawIndexedIndirect`**, the indirect
-   indexed form Sodium's terrain draw reaches through `VKIndirectDrawBatch.draw` - a named refusal and the next
-   milestone. Two further findings are recorded rather than papered over: one binding disagrees about its kind
+   terrain pass is entered, where the pass implements `MetalPassUniformWriter` (push constants: a mapped slice of
+   the frame's own transient arena, bound by name) and **`drawIndexedIndirect`** - the indirect indexed form
+   Sodium's terrain draw reaches through `VKIndirectDrawBatch.draw`, one command per draw with the arguments
+   twenty bytes apart in a buffer that is declared resident, proven on the device (50 of 50 cold-probe
+   processes) by a smoke whose arguments' own `indexStart` selects which triangle is drawn. Two further findings are recorded rather than papered over: one binding disagrees about its kind
    in the terrain pass (`u_SectionTimeInfo`, a buffer in the frame path and a texture in the layout - the kind
    comes from the translation's own bind-group metadata, and the Metal 3 pass skips it in exactly the same way,
    which the control run proves by rendering thirty world frames of the same terrain through the same
    translation); and a three-slot run of the same frame still ends in a GPU fault
-   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`) where the one-slot run reaches the refusal - so
-   something the terrain draw reads by address is still not resident in time. The residency smoke passes 50 of
-   50 cold-probe processes (30 cold + 20 warm). AUTO stays blocked on the remaining list below.
+   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`) where the one-slot run reached the refusal - and
+   that fault is **gone** now that the indirect arguments buffer is declared: a forced Metal 4 launch renders
+   for four minutes with no restart, no fault and no refusal. What stands between this and a counted no-pack
+   frame is **speed**: the four-minute run never reached the harness's no-pack arm line (the integrated server's
+   `Time elapsed:`), and the log is dominated by per-pass argument-table creation - about eighty thousand lines
+   a minute. A 120-second trace run reaches the world's own registries and the chunk-builder stage at the end of
+   its window, so the load is slow rather than stuck. The residency smoke passes 50 of 50 cold-probe processes
+   (30 cold + 20 warm), as does the indirect one. AUTO stays blocked on the remaining list below.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

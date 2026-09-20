@@ -41,6 +41,7 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
@@ -978,6 +979,214 @@ public final class MTL4Probe {
             releaseIfPresent(texture);
             releaseIfPresent(buffer);
             releaseIfPresent(queue);
+        }
+    }
+
+    /** One set of {@code MTLDrawIndexedPrimitivesIndirectArguments}: five 32-bit members, twenty bytes. */
+    private static final long INDIRECT_ARGUMENTS_BYTES = 20L;
+
+    /**
+     * Whether an indexed draw whose arguments come from a buffer draws what the buffer says, which is the form a
+     * chunk renderer reaches its terrain through.
+     * <p>
+     * The shape is the indexed smoke's, with the arguments moved into the buffer the GPU reads: two covering
+     * triangles of different flat colour and one index buffer listing all six vertices, and the arguments hold an
+     * {@code indexStart} of 3 for the first frame and of 0 for the second. So the pixel says whether the
+     * arguments' own {@code indexStart} was honoured - a stride or offset that is wrong reads the first triangle
+     * twice, and arguments that are never read at all leave the clear colour.
+     * <p>
+     * The draw goes through {@code MTL4RenderEncoder.drawIndexedPrimitivesIndirect}, so the production encoder's
+     * selector and argument order are what is measured.
+     */
+    public static boolean canDrawIndexedIndirect(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("indirect", "the device does not answer one of the factories the ring's allocators,"
+                    + " command buffer or shared event would come from, so nothing can be drawn indirectly");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MTLBuffer vertices = null;
+        MTLBuffer indices = null;
+        MTLBuffer[] arguments = new MTLBuffer[2];
+        MTL4ArgumentTable table = null;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTL4FrameRing ring = null;
+        MemorySegment[] targets = new MemorySegment[2];
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            if (ObjC.isNil(queue)) {
+                return failed("indirect", "newMTL4CommandQueue answered nil, so there is nothing to submit an"
+                        + " indirect draw on");
+            }
+            try {
+                ring = MTL4FrameRing.create(device, queue, MTL4FrameRing.FRAMES_IN_FLIGHT, "the indirect proof");
+            } catch (MTL4FrameRing.Refused refused) {
+                return failed("indirect", "the ring could not be made at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            vertices = device.newBuffer(VERTEX_LENGTH * 2L, STORAGE_SHARED);
+            if (vertices.gpuAddress() == 0L) {
+                return failed("indirect", "the device gave the vertex buffer no GPU address");
+            }
+            MemorySegment vertexData = vertices.contents().reinterpret(VERTEX_LENGTH * 2L);
+            float[][] corners = {{-1.0f, 1.0f, 0.25f, 0.5f}, {3.0f, 1.0f, 0.25f, 0.5f},
+                                 {-1.0f, -3.0f, 0.25f, 0.5f},
+                                 {-1.0f, 1.0f, 0.5f, 0.25f}, {3.0f, 1.0f, 0.5f, 0.25f},
+                                 {-1.0f, -3.0f, 0.5f, 0.25f}};
+            for (int corner = 0; corner < corners.length; corner++) {
+                for (int part = 0; part < corners[corner].length; part++) {
+                    vertexData.set(JAVA_FLOAT, corner * 16L + part * 4L, corners[corner][part]);
+                }
+            }
+
+            indices = device.newBuffer(INDEX_BUFFER_LENGTH, STORAGE_SHARED);
+            if (indices.gpuAddress() == 0L) {
+                return failed("indirect", "the device gave the index buffer no GPU address");
+            }
+            MemorySegment indexData = indices.contents().reinterpret(INDEX_BUFFER_LENGTH);
+            for (int index = 0; index < 6; index++) {
+                indexData.set(JAVA_SHORT, index * 2L, (short) index);
+            }
+
+            // One arguments buffer per frame, and not one written twice. The first version of this smoke used
+            // a single shared buffer and overwrote its indexStart for the second frame before the first frame's
+            // draw had run - so the first frame read the second frame's arguments and drew the wrong triangle,
+            // which is the measured shape of a CPU write racing a submitted read. A caller with frames in flight
+            // needs one per frame, exactly as this does.
+            MemorySegment[] argumentData = new MemorySegment[2];
+            for (int frame = 0; frame < 2; frame++) {
+                arguments[frame] = device.newBuffer(INDIRECT_ARGUMENTS_BYTES, STORAGE_SHARED);
+                if (arguments[frame].gpuAddress() == 0L) {
+                    return failed("indirect", "the device gave frame " + frame + "'s arguments buffer no GPU"
+                            + " address");
+                }
+                MemorySegment data = arguments[frame].contents().reinterpret(INDIRECT_ARGUMENTS_BYTES);
+                data.set(JAVA_INT, 0L, 3);              // indexCount
+                data.set(JAVA_INT, 4L, 1);              // instanceCount
+                data.set(JAVA_INT, 8L, frame == 0 ? 3 : 0);   // indexStart: the second triangle, then the first
+                data.set(JAVA_INT, 12L, 0);             // baseVertex
+                data.set(JAVA_INT, 16L, 0);             // baseInstance
+                argumentData[frame] = data;
+            }
+
+            table = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+            if (table == null || !table.address(vertices.gpuAddress(), 16L, 0L)) {
+                return failed("indirect", "the vertex table could not be made, or refused the vertex buffer at"
+                        + " stride 16");
+            }
+
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(VERTEX_BUFFER_MSL, "metallum_vb_probe_vs",
+                    "metallum_vb_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(pipeline)) {
+                return failed("indirect", "the vertex-colour pipeline this probe draws with came back nil");
+            }
+
+            for (int frame = 0; frame < 2; frame++) {
+                targets[frame] = newTarget(device);
+                if (ObjC.isNil(targets[frame])) {
+                    return failed("indirect", "frame " + frame + "'s readback target came back nil");
+                }
+            }
+            try {
+                for (int frame = 0; frame < 2; frame++) {
+                    if (!ring.beginFrame()) {
+                        return failed("indirect", "frame " + frame + " could not begin on the ring: "
+                                + ring.refusal());
+                    }
+                    if (!encodeIndirectDraw(device, ring.commandBuffer(), targets[frame], table, pipeline,
+                            indices.gpuAddress(), arguments[frame].gpuAddress())) {
+                        return false;
+                    }
+                    if (!ring.endAndSubmit()) {
+                        return failed("indirect", "frame " + frame + " could not be submitted: " + ring.refusal());
+                    }
+                }
+                if (!ring.awaitAll()) {
+                    return failed("indirect", "the indirect frames did not complete: " + ring.refusal());
+                }
+
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment pixel = arena.allocate(4);
+                    MTLTexture.bytes(targets[0], pixel, 4L, 0L, 0L, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_INDEXED_OFSET_PIXEL)) {
+                        return failed("indirect", "an indirect draw whose arguments say indexStart 3 reads "
+                                + describe(pixel) + " where the second triangle "
+                                + describe(EXPECTED_INDEXED_OFSET_PIXEL) + " was asked for, so the arguments buffer"
+                                + " was not read as the draw's arguments");
+                    }
+                    MTLTexture.bytes(targets[1], pixel, 4L, 0L, 0L, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_INDEXED_PIXEL)) {
+                        return failed("indirect", "an indirect draw whose arguments say indexStart 0 reads "
+                                + describe(pixel) + " where the first triangle " + describe(EXPECTED_INDEXED_PIXEL)
+                                + " was asked for");
+                    }
+                }
+                return true;
+            } finally {
+                for (MemorySegment readback : targets) {
+                    releaseIfPresent(readback);
+                }
+            }
+        } catch (RuntimeException threw) {
+            return failed("indirect", "the indirect proof threw " + threw);
+        } finally {
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            for (MTLBuffer buffer : arguments) {
+                releaseIfPresent(buffer);
+            }
+            releaseIfPresent(indices);
+            releaseIfPresent(vertices);
+            if (ring != null) {
+                ring.close();
+            }
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * One indirect indexed draw into a target of its own, through the pass encoder a frame opens.
+     *
+     * @param indexAddress      the index buffer's address, which the arguments index into
+     * @param argumentAddress   the arguments buffer's address, which the GPU reads the draw from
+     * @return whether the pass was encoded and ended
+     */
+    private static boolean encodeIndirectDraw(final MTLDevice device, final MemorySegment commandBuffer,
+                                              final MemorySegment target, final MTL4ArgumentTable table,
+                                              final MemorySegment pipeline, final long indexAddress,
+                                              final long argumentAddress) {
+        MTL4RenderEncoder pass;
+        try {
+            pass = MTL4RenderEncoder.open(device, commandBuffer, TARGET_SIZE, TARGET_SIZE,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target,
+                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    null, "the indirect pass");
+        } catch (MTL4RenderEncoder.Refused refused) {
+            return failed("indirect", "the indirect pass could not be opened at stage " + refused.stage() + ": "
+                    + refused.getMessage());
+        }
+        try {
+            if (!pass.setArgumentTable(table, STAGE_VERTEX)) {
+                return failed("indirect", "the encoder refused the vertex table the indirect draw reads through");
+            }
+            if (!pass.setRenderPipelineState(pipeline)) {
+                return failed("indirect", "the encoder refused the vertex-colour pipeline");
+            }
+            if (!pass.drawIndexedPrimitivesIndirect(MTLPrimitiveType.Triangle.value, MTLIndexType.UInt16.value,
+                    indexAddress, INDEX_BUFFER_LENGTH, argumentAddress)) {
+                return failed("indirect", "the encoder refused an indirect indexed draw reading its arguments at "
+                        + argumentAddress + ": " + pass.refusal());
+            }
+            return true;
+        } finally {
+            pass.endEncoding();
+            pass.close();
         }
     }
 

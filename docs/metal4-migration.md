@@ -1487,11 +1487,34 @@ twenty-byte camera-translation block reach a shader.
 and `Sky moon` passes with their own indexed draws - and enters the terrain pass, where two things are waiting
 and both are recorded here rather than fixed in passing:
 
-1. **`drawIndexedIndirect`** is the next named refusal. Sodium's terrain draw reaches its pass through
-   `VKIndirectDrawBatch.draw`, which is the indirect indexed form this path does not encode yet: the draw's
-   arguments (`MTLDrawIndexedPrimitivesIndirectArguments`) live in a buffer, and the header declares the
-   selector as `drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:`. That is the next
-   milestone.
+1. ~~`drawIndexedIndirect`~~ - **implemented and proven on the device.** Sodium's terrain draw reaches its pass
+   through `VKIndirectDrawBatch.draw`, which is the indirect indexed form: the arguments
+   (`MTLDrawIndexedPrimitivesIndirectArguments`, five 32-bit members, twenty bytes) live in a buffer, and the
+   header declares the selector as
+   `drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:` - one command per draw, so a
+   caller with several arguments in one buffer encodes this once per command and the caller's stride is what has
+   to be right. The index buffer is still an address, and the header asks for the same treatment as the direct
+   form: "Use an instance of `MTLResidencySet` to mark residency of the indirect buffer that the
+   `indirectBuffer` parameter references, and of the index buffer the `indexBuffer` parameter references" - so
+   the arguments buffer is declared too.
+
+   Two lessons came out of writing it, both written down because both cost a run:
+
+   - **An Objective-C selector's argument order is fixed, so the declaration has to match it** rather than the
+     shape an existing overload happens to have. The first version sent the arguments in an order that fit a
+     `Msg` overload - and got `objc_msgSend failed: drawIndexedPrimitives:indexType:indexBuffer:...`, which is
+     the third time this migration has been reminded that the arity *and* the order are the framework's. The
+     overload was added to `Msg` instead.
+   - **The device smoke raced itself**: it wrote one shared arguments buffer for both frames and the first
+     frame's draw read the *second* frame's `indexStart`, so it drew the wrong triangle - a CPU write racing a
+     submitted read, measured. The smoke now uses one arguments buffer per frame, which is the rule a caller
+     with frames in flight has to keep.
+
+   The proof is the indexed smoke's shape with the arguments moved into the buffer: two covering triangles of
+   different flat colour, one index buffer listing all six vertices, and an `indexStart` of 3 in the first
+   frame and 0 in the second. The pixel says which triangle the arguments selected, so arguments that are
+   ignored draw the first triangle twice and arguments that are never read leave the clear colour. 50 of 50
+   cold-probe processes (30 cold + 20 warm, `--mode raw`).
 2. **One binding disagrees about its kind, and the reference skips it too.** The trace says, in the terrain
    pass: `'u_SectionTimeInfo' is a buffer in the frame path's binding and a texture in the pipeline's layout, so
    it is not encoded`. The kind comes from the translation's own bind-group metadata
@@ -1504,14 +1527,22 @@ and both are recorded here rather than fixed in passing:
    translation's metadata for `sodium:pipeline/solid_terrain`, not as a difference between the two generations,
    and the next milestone does not depend on it.
 
-**And one fault is still open.** In a three-slot run the same terrain frame ended in a GPU fault again -
-`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart` - while the one-slot run reached the
-`drawIndexedIndirect` refusal instead. So something the terrain draw reads **by address** is still not resident
-when the GPU gets there, and the difference between the two runs is when it gets there. The residency model
-declares what the pass binds (attachments, textures, uniforms, vertex layouts, index buffers, the arena blocks)
-and the next step is to find what it misses: the candidates are the indirect arguments buffer the next milestone
-adds, something Sodium binds outside the pass, or the arena's own blocks where their address is reused after a
-rotation. It is not claimed fixed, and the next run's trace is the instrument.
+**And the fault that was open is gone.** A three-slot run of the terrain frame used to end in
+`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`; the candidates included the indirect arguments buffer
+this milestone adds to the residency set. With the indirect draw implemented, a forced Metal 4 launch **renders
+for four minutes with no GPU restart, no fault and no refusal** - so whatever the terrain draw was reading by
+address, it is declared now. That is measured, not assumed: the kernel log is quiet for the whole window.
+
+**What stands between this and a finished no-pack frame is now speed, and the measurement says where it is.**
+The four-minute run never produced the harness's no-pack arm signal - the integrated server's `Time elapsed:`
+line - and its log is dominated by per-pass argument-table creation (about eighty thousand lines a minute,
+`Metal 4 argument table: made for ...`). The frame path makes a table per pipeline change per pass and
+re-resolves every remembered binding into it, which is the correctness-first version section 50 asks for and is
+now the measurable cost between this path and a frame the harness can count. A trace run of 120 seconds reaches
+the world's own registries and the chunk-builder stage at the end of its window, so the load is **slow and not
+stuck** - and the two ways forward are a measurement decision (a longer no-pack window) or understanding that
+per-frame cost. Neither is taken yet: the plan puts performance after correctness, and the honest state is that
+the path is correct enough to render for minutes and too slow to finish a load in the window it is given.
 
 ## The API mapping
 

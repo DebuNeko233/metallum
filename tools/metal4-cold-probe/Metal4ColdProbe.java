@@ -196,6 +196,8 @@ public final class Metal4ColdProbe {
         String indexedReason = "-";
         boolean residency = false;
         String residencyReason = "-";
+        boolean indirect = false;
+        String indirectReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -260,6 +262,13 @@ public final class Metal4ColdProbe {
             residency = makeAndSubmit && MTL4Probe.canDeclareResidency(device);
             if (!residency) {
                 residencyReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The indirect indexed form, which a chunk renderer reaches its terrain through: the draw's
+            // arguments live in a buffer the GPU reads, so what is proven is that the arguments' own indexStart
+            // is honoured and the production encoder's selector is the five-argument one.
+            indirect = makeAndSubmit && MTL4Probe.canDrawIndexedIndirect(device);
+            if (!indirect) {
+                indirectReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -328,6 +337,8 @@ public final class Metal4ColdProbe {
                     + " indexReason=" + indexedReason.replace(' ', '_')
                     + " residency=" + residency
                     + " residencyReason=" + residencyReason.replace(' ', '_')
+                    + " indirect=" + indirect
+                    + " indirectReason=" + indirectReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was

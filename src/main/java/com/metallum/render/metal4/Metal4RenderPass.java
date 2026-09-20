@@ -124,6 +124,12 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private long drawsEncoded;
     private long indexedEncoded;
 
+    /**
+     * How far one indirect indexed draw's arguments are from the next: five 32-bit members, which is
+     * {@code MTLDrawIndexedPrimitivesIndirectArguments} in this machine's {@code MTLRenderCommandEncoder.h}.
+     */
+    private static final long INDIRECT_ARGUMENTS_BYTES = 20L;
+
     /** The scissor rectangle, applied when a draw is encoded rather than when it is asked for. */
     private boolean scissorEnabled;
     private long scissorX;
@@ -594,9 +600,40 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         throw unimplemented("multiDrawIndexed");
     }
 
+    /**
+     * The indirect indexed form: one command per draw, each read out of the arguments buffer.
+     * <p>
+     * The index buffer is bound state in the game's API as it is in Metal 3, so what the arguments name is a
+     * range of it, and what the caller hands over is a slice of a buffer holding one
+     * {@code MTLDrawIndexedPrimitivesIndirectArguments} per draw. Twenty bytes apart, then - the same stride the
+     * Metal 3 pass advances by through {@code VkDrawIndexedIndirectCommand.SIZEOF} - and the arguments buffer is
+     * declared resident, because the header asks for exactly that on this command.
+     * <p>
+     * The index buffer's length is its whole bound length and not a per-draw remainder: {@code indexStart} lives
+     * in the GPU's copy of the arguments, so the CPU does not know where the range begins - which is the point of
+     * an indirect draw. The header is explicit about what happens at the end of it: indices at or beyond the
+     * length are executed with a {@code vertex_id} of 0 rather than faulting.
+     */
     @Override
     public void drawIndexedIndirect(final @NonNull GpuBufferSlice commands, final int drawCount) {
-        throw unimplemented("drawIndexedIndirect");
+        if (!prepareDraw("drawIndexedIndirect")) {
+            return;
+        }
+        if (this.indexBufferAddress == 0L) {
+            throw new IllegalStateException("the Metal 4 pass was asked for an indirect indexed draw with no index"
+                    + " buffer bound, so there is nothing for the arguments to index into");
+        }
+        declare(commands.buffer());
+        long indirect = addressOf(commands.buffer(), commands.offset());
+        for (int draw = 0; draw < drawCount; draw++) {
+            if (!this.encoder.drawIndexedPrimitivesIndirect(this.artifact.topology().value, this.indexTypeValue,
+                    this.indexBufferAddress, this.indexBufferLength, indirect)) {
+                throw new IllegalStateException("the Metal 4 encoder refused an indirect indexed draw at arguments"
+                        + " address " + indirect + " (draw " + draw + " of " + drawCount + "): "
+                        + this.encoder.refusal());
+            }
+            indirect += INDIRECT_ARGUMENTS_BYTES;
+        }
     }
 
     @Override

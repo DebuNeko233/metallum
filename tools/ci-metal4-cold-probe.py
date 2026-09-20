@@ -673,4 +673,41 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the indirect indexed form, which is how a chunk renderer reaches its terrain ---------------------------
+# The arguments live in a buffer the GPU reads, so what the smoke proves is that they are read as arguments: the
+# same two-triangle shape as the indexed smoke, with the arguments' own indexStart choosing the triangle. The
+# smoke also had to learn the lifetime rule the hard way - its first version wrote one shared arguments buffer
+# for both frames and the first frame read the second's arguments - so the pins include one buffer per frame.
+for needle, why in (
+    ("public static boolean canDrawIndexedIndirect(", "nothing measures the indirect indexed draw, which the"
+     " chunk renderer reaches its terrain through"),
+    ("private static final long INDIRECT_ARGUMENTS_BYTES = 20L;",
+     "the smoke does not say how big MTLDrawIndexedPrimitivesIndirectArguments is"),
+    ("data.set(JAVA_INT, 8L, frame == 0 ? 3 : 0);   // indexStart",
+     "the smoke does not vary the arguments' own indexStart, so arguments that are ignored would pass"),
+    ("MemorySegment[] argumentData = new MemorySegment[2];",
+     "the smoke shares one arguments buffer between frames, so a CPU write can race a submitted read - measured,"
+     " and the first version of this smoke drew the wrong triangle because of it"),
+    ("pass.drawIndexedPrimitivesIndirect(MTLPrimitiveType.Triangle.value, MTLIndexType.UInt16.value,",
+     "the smoke does not draw through the production encoder's indirect form, so the proof is of a copy"),
+    ("MTLTexture.bytes(targets[0], pixel, 4L, 0L, 0L, 1L, 1L);\n"
+     "                    if (!matches(pixel, EXPECTED_INDEXED_OFSET_PIXEL)) {",
+     "the first frame's pixel is not read and compared with the triangle its arguments asked for (the read"
+     " appears in the indexed smoke too, which is why the pin is the pair)"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " indirect=" + indirect', "the harness does not print the indirect smoke's answer"),
+    ('+ " indirectReason=" + indirectReason', "the harness does not print why the indirect smoke failed"),
+    ("MTL4Probe.canDrawIndexedIndirect(device)", "the harness never asks the indirect smoke"),
+    ("indirect_failures=\"$(grep -c ' indirect=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the indirect smoke's failures"),
+    ("if (( indirect_failures > 0 )); then", "the driver counts the indirect smoke's failures and does not fail "
+     "the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

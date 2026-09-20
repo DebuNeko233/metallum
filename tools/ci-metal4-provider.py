@@ -373,7 +373,7 @@ for needle, why in (
         raise SystemExit("metal 4 provider: " + why)
 
 # What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence.
-for operation in ("multiDrawIndexed", "drawIndexedIndirect", "drawMultipleIndexed", "multiDraw", "drawIndirect",
+for operation in ("multiDrawIndexed", "drawMultipleIndexed", "multiDraw", "drawIndirect",
                   "writeTimestamp"):
     if f'throw unimplemented("{operation}")' not in pass_source:
         raise SystemExit(f"metal 4 provider: the render pass does not refuse {operation} by name, so an "
@@ -456,14 +456,23 @@ for needle, why in (
      "an index buffer with no GPU address is refused without saying so, so the one fault this milestone found "
      "would read as a draw that was asked for and did not happen"),
     ("if (indexCount <= 0L) {", "an indexed draw of no indices is refused without saying so"),
+    ("public boolean drawIndexedPrimitivesIndirect(final long primitiveType, final long indexType,",
+     "the encoder has no indirect indexed draw for the pass to encode through"),
+    ("if (indirectBufferAddress == 0L) {\n"
+     "            this.refusal = \"the indirect buffer has no GPU address, so the draw has no arguments to read\";",
+     "an indirect draw with no arguments buffer is refused without saying so"),
+    ('"drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:"',
+     "the encoder cannot encode the indirect indexed draw: the selector is the five-argument one this SDK "
+     "declares"),
 ):
     if needle not in encoder_source:
         raise SystemExit("metal 4 provider: " + why)
 # The two draws' "not open" refusal is the same sentence in both methods on purpose, so it is counted rather
 # than searched: a search would be satisfied by the other method's copy while one of them went silent.
 if encoder_source.count('this.refusal = "the pass " + this.which + " is not open, so there is no encoder to draw'
-                        ' on";') != 2:
-    raise SystemExit("metal 4 provider: a closed pass is refused without saying so in one of the two draws")
+                        ' on";') != 3:
+    raise SystemExit("metal 4 provider: a closed pass is refused without saying so in one of the three draws -"
+                     " the direct, the indexed and the indirect one")
 
 if "public boolean drawIndexedPrimitives(final long primitiveType, final long indexCount, final long indexType,\n" \
         "                                         final long indexBufferAddress, final long indexBufferLength,\n" \
@@ -767,6 +776,20 @@ for needle, why in (
 # measured: an attachment, a sampled texture, a uniform, a vertex layout and an index buffer are five different
 # call sites and each one is pinned separately, because a pin on one of them would be satisfied by the others.
 for needle, why in (
+    ("public void drawIndexedIndirect(final @NonNull GpuBufferSlice commands, final int drawCount) {\n"
+     "        if (!prepareDraw(\"drawIndexedIndirect\")) {",
+     "an indirect indexed draw is not implemented - the chunk renderer reaches its terrain through exactly that "
+     "form - or is encoded without the state a draw needs"),
+    ("this.encoder.drawIndexedPrimitivesIndirect(this.artifact.topology().value, this.indexTypeValue,",
+     "the pass does not encode through the encoder's indirect draw, so the form would be a refusal again"),
+    ("indirect += INDIRECT_ARGUMENTS_BYTES;",
+     "the arguments of the next indirect draw are not twenty bytes further on, so every draw after the first "
+     "would read the first one's arguments"),
+    ("private static final long INDIRECT_ARGUMENTS_BYTES = 20L;",
+     "the indirect arguments' stride is not the twenty bytes MTLDrawIndexedPrimitivesIndirectArguments is"),
+    ("declare(commands.buffer());\n        long indirect = addressOf(commands.buffer(), commands.offset());",
+     "the indirect arguments buffer is not declared resident, which is what the header asks for on this command "
+     "by name"),
     ("public GpuBufferSlice.MappedView allocateTransient(final long size, final long alignment, final int usage) {",
      "a draw path that writes its own push constants has nowhere to write them, and the terrain draw asks for "
      "exactly that"),
