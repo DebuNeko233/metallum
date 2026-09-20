@@ -1,5 +1,6 @@
 package com.metallum.mtl.metal4;
 
+import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.mtl.MTLScissorRect;
 import com.metallum.objc.AutoreleasePool;
@@ -414,6 +415,22 @@ public final class MTL4RenderEncoder implements AutoCloseable {
         DRAW_INDEXED.send(open, primitiveType, indexCount, indexType, MemorySegment.ofAddress(indexBufferAddress),
                 indexBufferLength, instanceCount, baseVertex, baseInstance);
         return true;
+    }
+
+    /**
+     * The engine's own present triangle, drawn through this pass: the picture in an argument table.
+     * <p>
+     * The triangle is drawn and not copied because a whole-texture copy has no coordinates to flip and the
+     * engine's present V convention lives in its vertex shader - the copy road put the loading screen on screen
+     * upside down, measured. This is the same builtin the present sidecar draws with, so the two roads cannot
+     * disagree about the convention.
+     */
+    public boolean drawPresent(final MTL4ArgumentTable table, final boolean scaling) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || table == null) {
+            return false;
+        }
+        return MTLBuiltinPipelines.drawPresentWithTable(open, table.handle(), scaling);
     }
 
     /** Whether an object answers a selector, which is the question to ask before reaching for one. */

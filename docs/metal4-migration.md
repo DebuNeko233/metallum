@@ -1287,6 +1287,74 @@ round, 34 caught**, four of them only after the pins were moved to the site that
 also appears in the ring smoke, a refusal branch satisfied by its own guard, a fault message satisfied by the
 branch around it, and a duplicate vertex-slot expression).
 
+### The present is the frame's own, and the first world frame hangs the GPU
+
+The surface asked for presentation by name and refused this encoder for not being a
+`MetalFramePresentation`. That interface is two members - `presentTextureToDrawable(layer, view)` and `submit()` -
+and the frame already owns everything they need: the queue, the one command buffer, the commit. So the present is
+the frame's own: the picture is drawn into the layer's next drawable by the engine's present triangle, encoded
+into **this frame's** command buffer before `submit()` commits it, and the drawable is presented once that work
+has run. One queue, one commit, one presentation path - which is the convergence the migration's section 63 asks
+for. The present-only sidecar stays where it is (section 39): it presents on a second queue, ordered by a shared
+event, which was the honest way to carry a picture before the frame could carry one itself.
+
+**The header's order, read rather than remembered** (`MTL4CommandQueue.h` on this machine):
+
+```text
+waitForDrawable:   "Schedules a wait operation on the command queue to ensure the display is no longer using a
+                    specific Metal drawable ... This method returns immediately and doesn't perform any
+                    synchronization on the current thread. You are responsible for calling this method before
+                    committing any command buffers containing commands that target this drawable."
+signalDrawable:    "... after committing all command buffers that contain commands targeting this drawable, and
+                    before calling MTLDrawable/present ... fails if you call it after any of the present methods,
+                    or if you call it multiple times."
+```
+
+So the two halves go on either side of the commit, and the signal goes before `present` and exactly once per
+drawable. The implementation holds every drawable the frame took in a list and signals and presents them after
+the commit: a present that arrives while another is held must wait for the same commit rather than present the
+first one early - and presenting a drawable *before* the commit that draws its picture is the one order that
+shows a frame nobody drew. The triangle is drawn and not copied for the reason the sidecar already paid for: a
+whole-texture copy has no coordinates to flip and presented the loading screen upside down.
+
+**Measured, and then stopped by the GPU itself.** A forced Metal 4 launch now **presents its own frames**: the
+loading screen came up through this path and the client ran more than thirty presented frames. Then, at the first
+frame of the loaded world, the submission's completion never arrived - and the machine's own log says why:
+
+```text
+kernel: (IOGPUFamily) IOGPUScheduler::hardware_error_interrupt: setting channel 1 restart type to 1
+kernel: (IOGPUFamily) IOGPUScheduler::signalHardwareError(eRestartRequest, ...): GPURestartSignaled
+kernel: (IOGPUFamily) IOGPUCommandQueue::retireCommandBuffer(IOGPUEventFence *):
+        Deny submissions/ignore app[java] with 2 GPURestarts in 86 submissions.
+```
+
+**The GPU hung and restarted.** The failing submission is not slow, it is dead, and the ring's timeout was
+reporting a machine-level fault with a frame-level sentence. The ring's patience was raised to the Metal 3
+encoder's own five seconds while this was being diagnosed - which is the right number anyway, because it is the
+reference path's - but the raise did not fix anything and is not claimed to have: the corrected note in
+`MTL4FrameRing` says so.
+
+**The control that separates the two questions.** The same world, the same machine, the same harness, with a
+Metal 3 frame and the Metal 4 present sidecar:
+
+```text
+frame-probe 30/30 ... metal4Frames=30 metal4Draws=30 metal4Presents=30
+frame-probe waits drawable calls=30 p50=7.02ms p95=14.94ms max=18.00ms total=243.20ms
+9.98 ms a frame, 100.2 frames a second, 3.91 ms of GPU time a frame over 30 answered frames
+```
+
+Thirty world frames, no restart in that window, and the drawable wait is 7-18 ms - so **the drawable road works
+on this machine** (take, wait, signal, present) and the hang is in what the Metal 4 frame encodes for the world,
+not in how it presents. That is the difference the control was run to measure, and it is why the next milestone
+is not "fix the present".
+
+**What is refused and what is not, exactly**: the present is implemented and device-observed on screen; the
+first world frame is **BLOCKED** on a GPU fault whose cause is not known. Candidates, kept as hypotheses: an
+attachment or depth-stencil state the M4 pass describes wrongly for a terrain pass, an argument-table slot the
+frame path fills with an index the shader does not declare, a draw whose address arithmetic is wrong, or a
+barrier/ordering mistake that lets a pass read what a copy is still writing. Nothing is claimed until a
+narrowing says which - and the narrowing is a device capture or Metal API validation, not another guess.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

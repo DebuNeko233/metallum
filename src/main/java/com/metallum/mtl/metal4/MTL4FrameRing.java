@@ -52,8 +52,21 @@ public final class MTL4FrameRing implements AutoCloseable {
      */
     public static final int FRAMES_IN_FLIGHT = 3;
 
-    /** What one slot's reuse may wait for the GPU to finish before the ring gives up on it. */
-    private static final long WAIT_MILLIS = 2000L;
+    /**
+     * What one slot's reuse may wait for the GPU to finish before the ring gives up on it.
+     * <p>
+     * Five seconds, which is the Metal 3 encoder's own patience at the same site ({@code
+     * awaitSubmitCompletion(currentSubmitIndex - MAX_SUBMITS_IN_FLIGHT, 5000L)}). The number is the reference
+     * path's rather than a guess.
+     * <p>
+     * <strong>Why it was looked at.</strong> The first forced Metal 4 client run that presented reached
+     * submission 29 and then waited more than two seconds for it while it loaded a world, so the ring's two
+     * seconds were raised to the Metal 3 five. The raise did not fix that run, and the reason is worth writing
+     * down: the submission never completed because the GPU had stopped - the kernel logged a
+     * {@code GPURestart} for that process's channel at that moment. A wait that times out is not evidence of a
+     * slow path until the machine's own log has been asked.
+     */
+    private static final long WAIT_MILLIS = 5000L;
 
     private static final Msg NEW_ALLOCATOR = Msg.of("newCommandAllocator", ADDRESS);
     private static final Msg NEW_COMMAND_BUFFER = Msg.of("newCommandBuffer", ADDRESS);
@@ -63,6 +76,8 @@ public final class MTL4FrameRing implements AutoCloseable {
     private static final Msg RESET = Msg.ofVoid("reset");
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
+    private static final Msg WAIT_DRAWABLE = Msg.ofVoid("waitForDrawable:", ADDRESS);
+    private static final Msg SIGNAL_DRAWABLE = Msg.ofVoid("signalDrawable:", ADDRESS);
     private static final Msg WAIT_UNTIL_SIGNALED =
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
@@ -256,6 +271,40 @@ public final class MTL4FrameRing implements AutoCloseable {
      */
     public long nextSubmission() {
         return signalled + 1L;
+    }
+
+    /**
+     * Whether this queue answers both halves of the drawable order, which is the whole of what presenting
+     * through a layer needs from the API: the wait says which drawable the work about to be committed targets,
+     * and the signal says the drawable may be shown once that work has run.
+     */
+    public boolean supportsDrawables() {
+        return responds(queue, "waitForDrawable:") && responds(queue, "signalDrawable:");
+    }
+
+    /**
+     * Tells the queue which drawable the command buffer it is about to commit targets.
+     * <p>
+     * Apple's order has this half <em>before</em> the commit and the signal half after it, and a driver that is
+     * given only the signal half says so with
+     * {@code -[AGXG17XFamilyRenderContext_mtlnext signalOnCommandQueue:]: unrecognized selector} - the
+     * framework asking a drawable that was never registered with this queue to register itself on it.
+     */
+    public boolean waitForDrawable(final MemorySegment drawable) {
+        if (closed || ObjC.isNil(drawable) || !responds(queue, "waitForDrawable:")) {
+            return false;
+        }
+        WAIT_DRAWABLE.send(queue, drawable);
+        return true;
+    }
+
+    /** The other half: the drawable may be presented once the committed work has run. */
+    public boolean signalDrawable(final MemorySegment drawable) {
+        if (closed || ObjC.isNil(drawable) || !responds(queue, "signalDrawable:")) {
+            return false;
+        }
+        SIGNAL_DRAWABLE.send(queue, drawable);
+        return true;
     }
 
     /**

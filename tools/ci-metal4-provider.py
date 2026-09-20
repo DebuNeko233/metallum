@@ -113,13 +113,18 @@ for needle, why in (
         raise SystemExit("metal 4 provider: " + why)
 
 # The encoder: the neutral contract, the ring it owns, and a named refusal for every operation it lacks.
-if "implements MetalFrameEncoder {" not in encoder:
+if "implements MetalFrameEncoder, MetalFramePresentation {" not in encoder:
     raise SystemExit("metal 4 provider: the encoder does not implement the neutral frame contract, so the "
                      "device cannot hold it")
-if "implements MetalFrameEncoder, " in encoder:
-    raise SystemExit("metal 4 provider: the encoder claims a second contract, and each of the bridges' optional "
-                     "contracts is an operation this path cannot perform yet - a bridged caller must find it "
-                     "missing and take its own fallback rather than receive a do-nothing body")
+# Presentation is the one optional contract this path now performs, because the surface asks for it by name and
+# the frame owns everything it needs (the queue, the one command buffer, the commit). The rest stay missing on
+# purpose: each is an operation this path cannot perform yet, and a bridged caller must find it absent and take
+# its own fallback rather than receive a do-nothing body.
+for absent in ("MetalFrameExtras", "MetalFrameResourceCommands"):
+    if absent in encoder.split("implements", 1)[1].split("{", 1)[0]:
+        raise SystemExit("metal 4 provider: the encoder claims " + absent + ", which this path cannot perform "
+                         "yet - a bridged caller must find it missing and take its own fallback rather than "
+                         "receive a do-nothing body")
 for needle, why in (
     ("MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,",
      "the encoder does not make the frame's ring, so the frame's allocator lifetime has no owner"),
@@ -430,6 +435,8 @@ for needle, why in (
      "the indexed draw is not sent all eight arguments"),
     ("public String refusal() {", "the encoder cannot say why a draw was refused, so a client log names the "
      "draw and not the reason"),
+    ("public boolean drawPresent(final MTL4ArgumentTable table, final boolean scaling) {",
+     "the encoder cannot draw the engine's present triangle, so the frame's own present has no draw"),
     ("if (indexBufferAddress == 0L) {\n"
      "            this.refusal = \"the index buffer has no GPU address, so there is nothing to read \"",
      "an index buffer with no GPU address is refused without saying so, so the one fault this milestone found "
@@ -462,6 +469,41 @@ for implementation in ("public void writeToBuffer(final @NonNull GpuBufferSlice 
     if implementation not in encoder:
         raise SystemExit(f"metal 4 provider: the frame encoder does not implement {implementation.split()[2]}, "
                          "which the client asked for by stopping there")
+
+# The present, which the surface asks for by name: the picture drawn into the layer's next drawable by the
+# engine's own present triangle, in this frame's command buffer, with Apple's two halves of the drawable order on
+# either side of the commit. The present is the frame's own - one queue, one commit, one presentation path - and
+# the sidecar that presents on a second queue stays where it is until this road is proven on the device.
+for needle, why in (
+    ("public void presentTextureToDrawable(final @NonNull CAMetalLayer layer, final @NonNull GpuTextureView textureView) {",
+     "the encoder cannot be presented through, so the surface refuses it and no Metal 4 frame reaches the screen"),
+    ("CAMetalDrawable drawable = layer.nextDrawable();",
+     "no drawable is taken, so there is nothing to present into"),
+    ("if (!this.ring.waitForDrawable(drawable.handle())) {",
+     "the queue is not told which drawable the command buffer about to be committed targets - the half of "
+     "Apple's order that comes first, without which signalDrawable: is an unrecognised selector"),
+    ("new AttachmentContents(true, true), null)",
+     "the present pass does not say that it stores the drawable and overwrites every pixel of it, so the "
+     "drawable would be loaded before a triangle that covers all of it"),
+    ("pass.drawPresent(table, scalingTo(drawableTexture, picture.nativeHandle()))",
+     "the present is not drawn with the engine's own present triangle, so the V convention would be whatever "
+     "this new road guessed - the copy road presented the loading screen upside down"),
+    ("if (!this.ring.signalDrawable(drawable.handle())) {",
+     "the drawable is never signalled, so nothing presents it"),
+    ("            presentAll();\n            return;",
+     "a drawable taken by a present is dropped when the frame encoded nothing, which leaks it"),
+    ("        // After the commit, which is the half that comes second: the queue is told the drawable may be shown\n"
+     "        // once the work it just committed has run.\n        presentAll();",
+     "the drawable is not presented after the commit, so nothing this frame committed would ever be shown"),
+    ("private final List<CAMetalDrawable> presentDrawables = new ArrayList<>();",
+     "the frame does not hold the drawables it presents into, so a present that arrives before the commit that "
+     "legalises it would have nowhere to wait"),
+    ("this.presentDrawables.add(drawable);",
+     "the drawable taken for a present is not held for the commit that makes presenting it legal"),
+    ("            drawable.present();", "the drawable is never presented"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 
 # What a no-pack frame does not need yet still refuses by name, so the gap is a list and not a silence; and the
 # copies are no longer in that list, because the client asked for them by stopping there.
@@ -586,8 +628,15 @@ for needle, why in (
 RING = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4FrameRing.java"
 ring = RING.read_text(encoding="utf-8")
 for needle, why in (
+    ("private static final long WAIT_MILLIS = 5000L;",
+     "the ring does not wait the Metal 3 encoder's own five seconds for a slot's completion, so a legitimate "
+     "stall would be reported as a lifetime fault"),
     ("public long nextSubmission() {\n        return signalled + 1L;",
      "the ring cannot say which submission the next commit will signal, or says the wrong one"),
+    ("public boolean waitForDrawable(final MemorySegment drawable) {",
+     "the ring cannot register a drawable with its queue, so signalDrawable: would be an unrecognised selector"),
+    ("public boolean signalDrawable(final MemorySegment drawable) {",
+     "the ring cannot signal a drawable, so nothing would present it"),
     ("public boolean awaitSubmission(final long submission, final long timeoutMs) {",
      "the ring cannot be asked whether a submission completed, so a fence has nothing to ask"),
     ("if (submission > signalled) {\n            if (timeoutMs == 0L) {\n                return false;\n            }\n"

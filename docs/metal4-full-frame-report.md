@@ -199,14 +199,14 @@ frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` 
                      It also owns the fence: `createFence` returns a `Metal4Fence`, a promise about one of
                      the ring's submissions, waited for on the ring's own shared event with the three answers
                      the Metal 3 fence gives (see Synchronization below).
-                     MEASURED: a forced Metal 4 launch now encodes a whole frame's worth of work - texture
-                     uploads, the lightmap clear, `createFence` in `FogRenderer.endFrame`, the GUI's passes
-                     with their uniforms bound **by name before a pipeline is set**, and indexed draws - and
-                     stops at the surface: `MetalSurface.blitFromTexture` refuses this encoder because it
-                     implements `MetalFrameEncoder` and not `MetalFramePresentation`. That is the next
-                     milestone (section 38's drawable-and-present ownership), not a missing command. What
-                     still refuses by name: the scissored `clearColorAndDepthTextures` and writeTimestamp -
-                     two names.
+                     It is also what presents: `presentTextureToDrawable` takes the layer's next drawable,
+                     registers it with the queue before the commit, draws the engine's present triangle into
+                     it inside this frame's command buffer, and `submit()` signals and presents it after the
+                     commit. MEASURED: a forced Metal 4 launch encodes and presents its own frames - the
+                     loading screen came up through this path for more than thirty frames - and then **hangs
+                     the GPU on the first frame of the loaded world** (kernel `GPURestart`; see Remaining
+                     blockers). What still refuses by name: the scissored `clearColorAndDepthTextures` and
+                     writeTimestamp - two names.
                      NOT PROVEN: no frame has been submitted through it; its evidence is the ring's device
                      proof plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
@@ -255,7 +255,14 @@ render passes:       PROVEN as an object and NOT run: `createRenderPass` builds 
                      evidence is the structural contract and the measured layer under it - no pass has been
                      encoded inside a client frame yet
 commits/frame:       one, PROVEN in the ring proof and the plan's own target (section 30); no frame yet
-presentation:        EXPERIMENTAL  (the present sidecar, Metal4Path + Metal4PresentGate, still in place)
+presentation:        IMPLEMENTED by the frame encoder and OBSERVED ON SCREEN - Metal4FrameEncoder implements
+                     MetalFramePresentation: the picture is drawn into the layer's next drawable by the engine's
+                     present triangle, encoded into the frame's own command buffer before its one commit, with
+                     waitForDrawable: before that commit and signalDrawable: + present after it. A forced Metal 4
+                     launch presented its loading screen for more than thirty frames. BLOCKED after that: the
+                     first frame of the loaded world hangs the GPU (kernel GPURestart, see Remaining blockers).
+                     The present-only sidecar (Metal4Path + Metal4PresentGate) stays in place, and is the control
+                     that shows the drawable road itself is sound on this machine
 ```
 
 ## Render
@@ -423,7 +430,7 @@ CI, which is where every smoke here was run.
 | storage image   | yes         | no                                | n/a           | no          |
 | synchronization | yes         | **partly** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; one cross-encoder dependency fixture (a render pass that samples what the pass before it wrote, with the producer barrier encoded between them); and fences, see the next row - but not the read/write matrix the plan's section 60 lists | n/a | yes |
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | n/a | yes |
-| presentation    | yes         | EXPERIMENTAL - the `Metal4Path` sidecar behind `-Dmetallum.metal4Present`, not the frame's road | n/a | yes (sidecar) |
+| presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | loading screen yes (30+ frames on screen); the world frame hangs the GPU | yes |
 | MetalFX spatial | yes         | no - the Metal 4 factory capability is probed, no scaler path is implemented | n/a | no          |
 | counters        | whole frame | no                                | n/a           | no          |
 
@@ -434,18 +441,29 @@ process with no window is not the same claim as a capability proven through the 
 
 ## Remaining blockers
 
-1. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
+1. **The first world frame hangs the GPU** - a forced Metal 4 launch presents its own loading screen for
+   more than thirty frames and then, on the first frame of the loaded world, stops with the ring waiting for a
+   submission that never completes. The machine's own log is the finding: the kernel logged a `GPURestart` for
+   that process's channel at that moment (`Deny submissions/ignore app[java] with 2 GPURestarts in 86
+   submissions`). The GPU is dead, not slow, and the frame-level sentence the ring printed was describing a
+   machine-level fault. **How it was narrowed**: the same world and harness with a Metal 3 frame and the Metal 4
+   present sidecar ran thirty world frames with no restart in that window and a drawable wait of 7-18 ms, so the
+   drawable road (take, wait, signal, present) is sound and the fault is in what the Metal 4 frame encodes for
+   the world. Not yet known: which pass or draw. Candidates are hypotheses only (a wrong attachment or
+   depth-stencil description for a terrain pass; a table slot the shader does not declare; wrong address
+   arithmetic in a draw; an ordering mistake between a copy and a pass). The next milestone is a narrowing with
+   Metal API validation or a device capture, not another guess. Blocks the no-pack frame and therefore AUTO.
+2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **Presentation is the next gap** - the clears, the fence, the named-binding model and the indexed draw
-   are all implemented and measured, so a forced Metal 4 launch now **encodes a whole frame** - uploads, the
-   lightmap clear, fences, the GUI's passes with their uniforms bound before their pipelines, and indexed
-   draws - and stops at `MetalSurface.blitFromTexture`, which refuses this encoder because it implements
-   `MetalFrameEncoder` and not `MetalFramePresentation`. Section 38's drawable-and-present ownership is the
-   milestone that follows, and it is where the two present decisions (the frame path's and the sidecar's)
-   become one. The scissored `clearColorAndDepthTextures` and `writeTimestamp` still refuse by name.
-4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
+3. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw
+   over a rectangle, not a load action) and `writeTimestamp` (the counter path, which the plan puts after
+   correctness). Neither is on the no-pack frame's critical path.
+4. ~~The drawable road~~ - **measured sound**: the Metal 3 frame with the Metal 4 present sidecar presents
+   thirty world frames with a 7-18 ms drawable wait and no GPU fault, which is what separates the present from
+   the hang above.
+5. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
    rests on the structural contract plus those measured layers. What is left before a no-pack frame is the
@@ -468,11 +486,11 @@ process with no window is not the same claim as a capability proven through the 
 bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
 frame encoder's lifetime - the ring - proven on the device, its copies wired, its clears implemented and
 measured, its fence answering the Metal 3 fence's three ways, its bindings recorded by name and resolved when
-the layout arrives, and its indexed draw proven on the device. A forced Metal 4 client launch now **encodes a
-whole frame** - clears, copies, fences, passes through the game's own descriptors, uniforms bound before their
-pipelines, indexed draws - and stops at the surface, which asks for `MetalFramePresentation` rather than for a
-class. Everything the Definition of Done asks for that needs a frame the client actually *drew* is still
-unchecked: the no-pack frame (nothing has been presented yet), the Vitrail smoke pack, MRT draws, depth writes,
-blit in a live frame, compute, the synchronization matrix, presentation owned by the full path, resize, reload,
-dimension, shutdown, and the real-pack and performance validation. The next item is presentation, then the first
-no-pack frame.
+the layout arrives, its indexed draw proven on the device, and **its own presentation** - a forced Metal 4 launch
+presents its loading screen through this path for more than thirty frames. It then **hangs the GPU** on the first
+frame of the loaded world, which is a correctness blocker and not a performance one; the control run (Metal 3
+frame, Metal 4 present sidecar) shows the drawable road is sound, so the fault is in what the world frame
+encodes. Everything the Definition of Done asks for that needs a frame the client actually *drew and presented*
+is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT draws, depth writes, blit in a live frame,
+compute, the synchronization matrix, resize, reload, dimension, shutdown, and the real-pack and performance
+validation. The next item is narrowing the GPU fault on the world frame.

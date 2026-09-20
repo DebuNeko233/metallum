@@ -1,7 +1,13 @@
 package com.metallum.render.metal4;
 
 import com.metallum.Metallum;
+import com.metallum.mtl.CAMetalDrawable;
+import com.metallum.mtl.MTLBuiltinPipelines;
+import com.metallum.mtl.CAMetalLayer;
 import com.metallum.mtl.MTLDevice;
+import com.metallum.mtl.MTLTexture;
+import com.metallum.objc.ObjC;
+import com.metallum.mtl.metal4.MTL4ArgumentTable;
 import com.metallum.mtl.metal4.MTL4ComputeEncoder;
 import com.metallum.mtl.metal4.MTL4FrameRing;
 import com.metallum.mtl.metal4.MTL4RenderEncoder;
@@ -9,6 +15,7 @@ import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalTransientMemory;
@@ -20,6 +27,7 @@ import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.TransientMemory;
 import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.buffers.GpuFence;
 import org.jspecify.annotations.Nullable;
 import net.fabricmc.api.EnvType;
@@ -30,6 +38,8 @@ import org.jspecify.annotations.NonNull;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The Metal 4 frame encoder: the object the executing generation's frame would be built from.
@@ -53,14 +63,22 @@ import java.util.ArrayDeque;
  * own the frame rather than the object that owns one. Its classes are package-private for the same reason: the
  * provider is the generation's public seam and the neutral interfaces are what a caller holds.
  * <p>
- * <strong>What it deliberately does not do</strong>: it does not implement the bridges' optional contracts
- * ({@code MetalFrameExtras}, {@code MetalFrameResourceCommands}, {@code MetalFramePresentation}), because each
- * of them is an operation this path cannot perform yet - a bridged caller finds the contract missing and takes
- * its own fallback, which is the explicit answer, and implementing them with do-nothing bodies would be the
- * silent drop the plan forbids.
+ * <strong>What it deliberately does not do</strong>: it does not implement the bridges' remaining optional
+ * contracts ({@code MetalFrameExtras}, {@code MetalFrameResourceCommands}), because each of them is an operation
+ * this path cannot perform yet - a bridged caller finds the contract missing and takes its own fallback, which
+ * is the explicit answer, and implementing them with do-nothing bodies would be the silent drop the plan
+ * forbids. {@link MetalFramePresentation} is implemented, because the surface asked for it by name and because
+ * the frame already owns everything a present needs: the queue, the one command buffer, and the commit.
+ * <p>
+ * <strong>The present is the frame's own.</strong> The picture is drawn into the layer's next drawable by a
+ * present triangle encoded into <em>this frame's</em> command buffer, before {@link #submit()} commits it, and
+ * the drawable is presented when that work has run. That is one queue, one commit and one presentation path,
+ * which is what the migration's section 63 converges on: the present-only sidecar presents on a second queue and
+ * orders the two with a shared event, which was the honest way to carry a picture before the frame could carry
+ * one itself.
  */
 @Environment(EnvType.CLIENT)
-final class Metal4FrameEncoder implements MetalFrameEncoder {
+final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation {
 
     /** The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth. */
     private static final int FRAMES_IN_FLIGHT = MTL4FrameRing.FRAMES_IN_FLIGHT;
@@ -92,6 +110,19 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     /** The compute encoder the copies are encoded into, opened on demand and ended with the frame. */
     @Nullable
     private MTL4ComputeEncoder copyEncoder;
+    /**
+     * The drawables this frame presents into, taken when the surface said what it is presenting and presented by
+     * {@link #submit()} once the frame is committed.
+     * <p>
+     * Taken, so presented: a drawable handed out by the layer and never presented is a drawable the layer cannot
+     * hand out again, so every path out of this class - the commit and a close - presents what it holds. A list
+     * rather than one field because the frame's commit is what makes a present legal, and a second present in one
+     * frame must therefore wait for the same commit rather than present the first one early.
+     */
+    private final List<CAMetalDrawable> presentDrawables = new ArrayList<>();
+    /** The one-texture, one-sampler table the present triangle reads the picture through, made once. */
+    @Nullable
+    private MTL4ArgumentTable presentTable;
 
     private boolean closed;
 
@@ -157,11 +188,17 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
             this.copyEncoder.endEncoding();
         }
         if (!this.ring.begun()) {
+            // Nothing was encoded, so there is nothing to commit - but a drawable may have been taken by a
+            // present, and a drawable that is taken has to be presented whatever the frame did.
+            presentAll();
             return;
         }
         if (!this.ring.endAndSubmit()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: a frame could not be submitted - {}", this.ring.refusal());
         }
+        // After the commit, which is the half that comes second: the queue is told the drawable may be shown
+        // once the work it just committed has run.
+        presentAll();
         // The arena's blocks are rotated here and not earlier: the submission that reads them has just been
         // made, and the slot that owns them is the one the ring will prove complete before reusing it.
         this.transientMemory.rotate();
@@ -234,6 +271,13 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         }
         this.transientMemory.close();
         this.destroyQueue.close();
+        // A drawable taken by a present is presented before the ring goes: the layer cannot hand out a drawable
+        // that was never shown.
+        presentAll();
+        if (this.presentTable != null) {
+            this.presentTable.close();
+            this.presentTable = null;
+        }
         this.ring.close();
     }
 
@@ -517,6 +561,139 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     /** The device this frame's passes are described on. */
     MTLDevice nativeDevice() {
         return this.executionState.device();
+    }
+
+    /**
+     * Records the picture into the layer's next drawable, in this frame's own command buffer.
+     * <p>
+     * The order the API asks for is the whole of it: the drawable is taken, the queue is told which drawable the
+     * command buffer about to be committed targets (<em>before</em> the commit), the present triangle is drawn
+     * into the drawable's own texture, and {@link #submit()} tells the queue to signal it and presents it. A
+     * driver given the signal half without the wait half refuses the signal with an unrecognised selector, which
+     * is the framework saying the drawable was never registered with that queue.
+     * <p>
+     * The triangle is the engine's own present draw and not a copy: a whole-texture copy has no coordinates to
+     * flip, and the copy road put the loading screen on screen upside down - measured, and the reason both
+     * present roads draw.
+     * <p>
+     * A drawable the layer will not hand out leaves the caller's picture unpresented and says so: there is no
+     * frame to present into, and a silent return would be a frame the player never sees with nothing in the log.
+     */
+    @Override
+    public void presentTextureToDrawable(final @NonNull CAMetalLayer layer, final @NonNull GpuTextureView textureView) {
+        if (this.closed) {
+            throw new IllegalStateException("the Metal 4 frame encoder is closed, so it cannot present");
+        }
+        MetalGpuTexture picture = pictureOf(textureView);
+        if (!this.ring.supportsDrawables()) {
+            throw new IllegalStateException("the Metal 4 queue does not answer waitForDrawable: and"
+                    + " signalDrawable:, so a drawable taken from the layer could not be presented - and a"
+                    + " drawable taken and not presented is one the layer cannot hand out again");
+        }
+
+        CAMetalDrawable drawable = layer.nextDrawable();
+        if (drawable == null) {
+            throw new IllegalStateException("the Metal 4 layer would not hand out a drawable, so this frame has"
+                    + " nothing to present into");
+        }
+        MemorySegment drawableTexture = drawable.texture();
+        if (ObjC.isNil(drawableTexture)) {
+            throw new IllegalStateException("the drawable the Metal 4 layer handed out has no texture");
+        }
+
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        beginFrameIfNeeded();
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.barrierForSubsequentEncoders();
+            this.copyEncoder.endEncoding();
+        }
+
+        // Before the commit, which is Apple's half of the order that comes first.
+        if (!this.ring.waitForDrawable(drawable.handle())) {
+            throw new IllegalStateException("the Metal 4 queue refused waitForDrawable:, so the drawable this"
+                    + " frame presents into would not be the one the queue waits for");
+        }
+
+        long width = MTLTexture.width(drawableTexture);
+        long height = MTLTexture.height(drawableTexture);
+        MTL4ArgumentTable table = presentTable();
+        if (table == null || !table.texture(picture.nativeHandle())
+                || !table.sampler(MTLBuiltinPipelines.presentSampler(scalingTo(drawableTexture, picture.nativeHandle())))) {
+            throw new IllegalStateException("the Metal 4 present table would not take the picture and its"
+                    + " sampler, so nothing would be drawn into the drawable");
+        }
+
+        MTL4RenderEncoder pass;
+        try {
+            pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,
+                    new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(drawableTexture,
+                            new AttachmentContents(true, true), null)},
+                    null, "the present");
+        } catch (MTL4RenderEncoder.Refused refused) {
+            throw new IllegalStateException("the Metal 4 present pass could not be opened at stage "
+                    + refused.stage() + ": " + refused.getMessage(), refused);
+        }
+        try {
+            if (!pass.drawPresent(table, scalingTo(drawableTexture, picture.nativeHandle()))) {
+                throw new IllegalStateException("the Metal 4 present triangle could not be drawn into the"
+                        + " drawable");
+            }
+            pass.barrierForSubsequentEncoders();
+            pass.endEncoding();
+        } finally {
+            pass.close();
+        }
+        this.presentDrawables.add(drawable);
+    }
+
+    /**
+     * Presents every drawable this frame took: the signal half of the order for each, then the presentation.
+     * <p>
+     * Called by {@link #submit()} after the commit and by {@link #close()} before the ring goes, because a
+     * drawable that is taken and never presented is one the layer will not hand out again. The signal comes
+     * first because the header says so in as many words: it "fails if you call it after any of the present
+     * methods, or if you call it multiple times".
+     */
+    private void presentAll() {
+        if (this.presentDrawables.isEmpty()) {
+            return;
+        }
+        List<CAMetalDrawable> drawables = List.copyOf(this.presentDrawables);
+        this.presentDrawables.clear();
+        for (CAMetalDrawable drawable : drawables) {
+            // The drawable has already been waited for, at the moment it was taken: this is the other half, and
+            // it has to be sent after the commit that carries the picture and before the presentation.
+            if (!this.ring.signalDrawable(drawable.handle())) {
+                Metallum.LOGGER.warn("Metal 4 frame encoder: the queue would not signal a drawable, so the frame"
+                        + " just committed may not be shown");
+            }
+            drawable.present();
+        }
+    }
+
+    /** The one-texture, one-sampler table the present triangle reads through, made on first use. */
+    private MTL4ArgumentTable presentTable() {
+        if (this.presentTable == null) {
+            this.presentTable = MTL4ArgumentTable.create(this.executionState.device());
+        }
+        return this.presentTable;
+    }
+
+    /** The picture a texture view names, as the texture the present triangle samples. */
+    private static MetalGpuTexture pictureOf(final GpuTextureView textureView) {
+        if (!(textureView.texture() instanceof MetalGpuTexture picture)) {
+            throw new IllegalStateException("the Metal 4 pass was handed a texture that is not this engine's: "
+                    + textureView.texture().getClass().getName());
+        }
+        return picture;
+    }
+
+    /** Whether the drawable and the picture differ in size, which is what chooses the present filter. */
+    private static boolean scalingTo(final MemorySegment drawableTexture, final MemorySegment picture) {
+        return MTLTexture.width(drawableTexture) != MTLTexture.width(picture)
+                || MTLTexture.height(drawableTexture) != MTLTexture.height(picture);
     }
 
     /**
