@@ -877,7 +877,7 @@ require("both translators read the session's profile",
     "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
 ))
 require("the compute translator reads the same one",
-        "src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java", (
+        "src/main/java/com/metallum/render/shared/MetalComputeTranslator.java", (
     "MetalShaderLanguageProfile.selected().spirvCrossMslVersion()",
 ))
 require("the library is compiled for the profile the translator emitted",
@@ -1146,6 +1146,14 @@ require("the Metal 3 encoder answers the resource capabilities it owns",
     "public boolean dispatchCompute(final Object pipeline,",
     "Metal3ComputeBridge.dispatch(this, pipeline, buffers, textures, samplers,",
 ))
+
+# One compute translation, not one per generation: the bridge that dispatches keeps the encoder half and the
+# shared layer keeps the SPIR-V half, so a second copy of the reflection growing back here is the fault. The
+# needle is the SPIRV-Cross entry point every copy of that code has to call, and comments cannot satisfy it
+# because the scan reads the source with them stripped.
+_compute_bridge_source = _code7("src/main/java/com/metallum/render/metal3/Metal3ComputeBridge.java")
+if "spvc_context_create" in _compute_bridge_source:
+    raise SystemExit("the Metal 3 compute bridge has grown its own SPIRV-Cross reflection back")
 
 require("the flat compute facade is neutral and forwards",
         "src/main/java/com/metallum/render/MetalComputeBridge.java", (

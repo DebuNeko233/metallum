@@ -35,7 +35,7 @@ require("Metal compute pipeline", "src/main/java/com/metallum/render/metal3/Meta
     "case UNIFORM_BUFFER, STORAGE_BUFFER -> bindBuffer(compute, binding, buffers);",
     "case STORAGE_IMAGE -> bindStorageImage(compute, binding, textures);",
     "((MetalGpuTexture) view.texture()).markContentsDirty();",
-    "compute.setTexture(view.nativeHandle(), binding.textureIndex);",
+    "compute.setTexture(view.nativeHandle(), binding.textureIndex());",
     "commandEncoder.flushPendingClear((MetalGpuTexture) view.texture());",
     "finally {",
     "commandEncoder.endEncoder();",
