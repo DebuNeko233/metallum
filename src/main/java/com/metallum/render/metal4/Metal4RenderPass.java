@@ -110,6 +110,19 @@ final class Metal4RenderPass implements RenderPassBackend {
     private long indexBufferLength;
     private long indexTypeValue = MTLIndexType.UInt16.value;
     private int indexTypeBytes = MTLIndexType.UInt16.bytes;
+    /**
+     * Whether this pass says what it encodes, one line per draw.
+     * <p>
+     * Off unless {@code -Dmetallum.metal4Trace=true} is set, because a session's log is a session's and a
+     * per-draw line is a diagnostic. It exists because the first world frame this path encoded stopped the GPU
+     * dead, and a frame-level sentence is not enough to find out which command did it: the last line this prints
+     * before the machine's log says the GPU restarted is the pass and the draw to look at.
+     */
+    private static final boolean TRACE = Boolean.getBoolean("metallum.metal4Trace");
+    /** How many draws this pass encoded, which the trace reports and nothing else reads. */
+    private long drawsEncoded;
+    private long indexedEncoded;
+
     /** The scissor rectangle, applied when a draw is encoded rather than when it is asked for. */
     private boolean scissorEnabled;
     private long scissorX;
@@ -221,6 +234,10 @@ final class Metal4RenderPass implements RenderPassBackend {
      * command buffer may be ended once and a caller may reach this on more than one path.
      */
     void finish() {
+        if (TRACE) {
+            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={}",
+                    label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled);
+        }
         releaseTables();
         if (!this.encoder.open()) {
             return;
@@ -311,6 +328,9 @@ final class Metal4RenderPass implements RenderPassBackend {
                     + " made, so nothing this pass binds would reach a shader");
         }
         this.tablesAssigned = false;
+        if (TRACE) {
+            Metallum.LOGGER.info("Metal 4 trace: pipeline {} in '{}'", pipeline.getLocation(), label());
+        }
         // The tables are new, so everything this pass has been told to bind is resolved against them: the
         // bindings that arrived before this pipeline - the game's default uniforms, a vertex layout - are
         // applied here, and the ones already filled above are filled again into these tables.
@@ -525,6 +545,13 @@ final class Metal4RenderPass implements RenderPassBackend {
         }
         long address = this.indexBufferAddress + (long) firstIndex * this.indexTypeBytes;
         long length = Math.max(0L, this.indexBufferLength - (long) firstIndex * this.indexTypeBytes);
+        this.indexedEncoded++;
+        this.drawsEncoded++;
+        if (TRACE) {
+            Metallum.LOGGER.info("Metal 4 trace: indexed draw {} of {} indices at {} of {} bytes, type {},"
+                            + " instance {} base vertex {} in '{}'", this.indexedEncoded, indexCount, address,
+                    length, this.indexTypeValue, instanceCount, vertexOffset, label());
+        }
         if (!this.encoder.drawIndexedPrimitives(this.artifact.topology().value, indexCount, this.indexTypeValue,
                 address, length, instanceCount, vertexOffset, firstInstance)) {
             throw new IllegalStateException("the Metal 4 encoder refused an indexed draw of " + indexCount
@@ -563,6 +590,11 @@ final class Metal4RenderPass implements RenderPassBackend {
                      final int firstInstance) {
         if (!prepareDraw("draw")) {
             return;
+        }
+        this.drawsEncoded++;
+        if (TRACE) {
+            Metallum.LOGGER.info("Metal 4 trace: draw {} of {} vertices from {}, instance {}, in '{}'",
+                    this.drawsEncoded, vertexCount, firstVertex, instanceCount, label());
         }
         if (!this.encoder.drawPrimitives(this.artifact.topology().value, firstVertex, vertexCount, instanceCount,
                 firstInstance)) {
@@ -631,13 +663,20 @@ final class Metal4RenderPass implements RenderPassBackend {
 
     /** Releases the tables a replaced pipeline filled, so a stale plan cannot be read through a new pipeline. */
     private void releaseTables() {
-        if (this.vertexTable != null) {
-            this.vertexTable.close();
-            this.vertexTable = null;
+        MTL4ArgumentTable vertex = this.vertexTable;
+        MTL4ArgumentTable fragment = this.fragmentTable;
+        this.vertexTable = null;
+        this.fragmentTable = null;
+        // Filed with the frame rather than closed here. A table's contents are what the GPU reads when it runs
+        // the command buffer, and at the moment a pass ends this path does not know the frame has even been
+        // committed - so the honest lifetime is the frame's, which is the one the frame encoder can prove: a
+        // slot's releases run only once that slot's submission has been observed complete. Closing a table here
+        // was releasing it between encoding and execution.
+        if (vertex != null) {
+            this.owner.queueForDestroy(vertex::close);
         }
-        if (this.fragmentTable != null) {
-            this.fragmentTable.close();
-            this.fragmentTable = null;
+        if (fragment != null) {
+            this.owner.queueForDestroy(fragment::close);
         }
     }
 

@@ -451,8 +451,14 @@ process with no window is not the same claim as a capability proven through the 
    drawable road (take, wait, signal, present) is sound and the fault is in what the Metal 4 frame encodes for
    the world. Not yet known: which pass or draw. Candidates are hypotheses only (a wrong attachment or
    depth-stencil description for a terrain pass; a table slot the shader does not declare; wrong address
-   arithmetic in a draw; an ordering mistake between a copy and a pass). The next milestone is a narrowing with
-   Metal API validation or a device capture, not another guess. Blocks the no-pack frame and therefore AUTO.
+   arithmetic in a draw; an ordering mistake between a copy and a pass). **Instruments tried**: Metal API
+   validation is unusable on this client (with `MTL_DEBUG_LAYER=1` the engine's own Metal 4 probe fails and the
+   game falls back to OpenGL); a pass-and-draw trace (`-Dmetallum.metal4Trace=true`, off by default) localized
+   the last commands to the loading-screen GUI pass and the present; the argument tables' lifetime was the first
+   candidate and is **refuted** - releasing them with the frame instead of at pass end changes nothing about this
+   fault (same value 31, same `GPURestart`), so the deferred release is kept on its own merits and not as a fix.
+   The next milestone is a device capture of the failing frame or a bisection that refuses command classes one at
+   a time. Blocks the no-pack frame and therefore AUTO.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

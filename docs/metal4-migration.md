@@ -1348,12 +1348,32 @@ on this machine** (take, wait, signal, present) and the hang is in what the Meta
 not in how it presents. That is the difference the control was run to measure, and it is why the next milestone
 is not "fix the present".
 
-**What is refused and what is not, exactly**: the present is implemented and device-observed on screen; the
-first world frame is **BLOCKED** on a GPU fault whose cause is not known. Candidates, kept as hypotheses: an
-attachment or depth-stencil state the M4 pass describes wrongly for a terrain pass, an argument-table slot the
-frame path fills with an index the shader does not declare, a draw whose address arithmetic is wrong, or a
-barrier/ordering mistake that lets a pass read what a copy is still writing. Nothing is claimed until a
-narrowing says which - and the narrowing is a device capture or Metal API validation, not another guess.
+**What is refused and what is not, exactly**: the present is implemented and device-observed on screen, and the
+first world frame is **BLOCKED** on a GPU fault whose cause is not known yet.
+
+**The instruments that were tried, and what each answered.**
+
+- **Metal API validation** cannot be used on this client: with `MTL_DEBUG_LAYER=1` the engine's own Metal 4
+  capability probe fails (`the uniform pass drew (0, 0, 0, 0) where (64, 128, 191, 255) was asked for`), the
+  device is then judged not to satisfy the Metal 4 contract, and the game falls back to OpenGL. That is worth
+  knowing for its own sake - it is the intermittent probe failure's exact shape, reproducible on demand under
+  the validation layer - but it makes validation useless as a lens on the frame.
+- **A pass-and-draw trace** was added for exactly this: `-Dmetallum.metal4Trace=true` logs the pipeline each pass
+  sets and every draw or indexed draw it encodes, and it is off unless a session asks for it. It localized what
+  the frame was doing when the GPU died - the last commands encoded are a loading-screen frame's `GUI before
+  blur` pass (two indexed draws, `pipeline/gui` then `pipeline/mojang_logo`, `base vertex 14`, 30 then 12
+  indices from the GUI index buffer) and then the present - which is one frame's worth of certainty and not yet
+  a culprit.
+- **The argument tables' lifetime was the first candidate, and it is refuted.** A table's contents are what the
+  GPU reads when it runs the command buffer, and the pass was closing its tables when the pass ended - a release
+  between encoding and execution. The fix is right on its own terms (a table's release is now filed with the
+  frame's deferred queue, which runs only once that slot's completion has been observed), so it is kept - but
+  the A/B says it is not this fault: with the release deferred, the same run stops at the same place
+  (`slot 0's completion value 31 did not arrive within 5000 ms`) and the kernel logs the same `GPURestart`.
+
+So the fault is still open, and the next narrowing has to be a device capture of the failing frame (or a
+bisection that refuses command classes one at a time). Nothing is claimed until one of those says which command;
+the list above is hypotheses, not a diagnosis.
 
 ## The API mapping
 

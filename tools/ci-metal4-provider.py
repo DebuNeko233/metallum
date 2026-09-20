@@ -296,6 +296,17 @@ for needle, why in (
     ("if (slot == null) {\n            throw new IllegalStateException(\"the Metal 4 pipeline \"",
      "a name the pipeline does not declare is not refused, so a layout mismatch would be a silently dropped "
      "binding - the half frame section 35 forbids"),
+    ("private static final boolean TRACE = Boolean.getBoolean(\"metallum.metal4Trace\");",
+     "the pass trace is not off unless a session asks for it, so every session would log a line per draw"),
+    ('Metallum.LOGGER.info("Metal 4 trace: indexed draw {} of {} indices at {} of {} bytes, type {},"',
+     "an indexed draw is not traced, so the command a GPU fault follows cannot be named"),
+    ('Metallum.LOGGER.info("Metal 4 trace: draw {} of {} vertices from {}, instance {}, in \'{}\'",',
+     "a draw is not traced"),
+    ("this.owner.queueForDestroy(vertex::close);",
+     "the vertex table is closed when the pass ends rather than when the frame that bound through it has "
+     "completed, which is a release between encoding and execution"),
+    ("this.owner.queueForDestroy(fragment::close);",
+     "the fragment table is closed when the pass ends rather than with the frame"),
     ("this.encoder.drawIndexedPrimitives(this.artifact.topology().value, indexCount, this.indexTypeValue,\n"
      "                address, length, instanceCount, vertexOffset, firstInstance)",
      "the indexed draw does not carry the draw's own base instance, or does not pass the offset arithmetic's "
