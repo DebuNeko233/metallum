@@ -700,8 +700,16 @@ answered rather than only what is left.
    leaves is three candidates, and the evidence leans on the first two: no chunk mesh is built at all; meshes are
    built and the upload never runs or lands nowhere; or meshes are in the arena and nothing is visible to the
    culling (which cannot be the whole of it, since geometry that never reached a buffer cannot be culled into
-   view). The instrument that separates them is a log at the upload boundary, a game-side call this engine cannot
-   see yet. `drawMultipleIndexed` is **not** one of the candidates for the *missing* draws even though this path
+   view). **The draw side is ruled out by measurement, not by argument**: the empty pass the trace shows is
+   Sodium's own (`DefaultChunkRenderer` carries the label `Terrain`), Sodium's draw path here is not its OpenGL
+   one - two Metallum mixins answer `DrawBackend.VK_INDIRECT` and `MetalDrawContext extends VKIndirectContext`
+   when the device reports a Metal backend - so the draw it would ask for is the *indirect* one, which this path
+   implements, and vanilla's feature-gated `multiDrawIndexed` road (whose gate Metallum passes) would be logged
+   by the refusal line if it were taken, and is not. What is missing is geometry: Sodium's indirect rings, its
+   two 32 MB staging buffers and its terrain uniforms are all allocated once at startup, and the *one* allocation
+   that would mean a mesh arrived - `ArenaAggregator`'s `Arena buffer`, 268 MB and up on the Metal 3 arm as
+   sections upload - never happens. The instrument that separates the remaining candidates is a diagnostic mixin
+   on Sodium's build/upload boundary, which is the next round's work. `drawMultipleIndexed` is **not** one of the candidates for the *missing* draws even though this path
    still refuses it, because a refused call would now be in the log and there is nothing in the log - what that
    refusal will need is its own implementation (its own milestone, section 42/54's family), which cannot be the
    fix for a call that is never made.

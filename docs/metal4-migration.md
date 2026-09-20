@@ -2048,6 +2048,28 @@ So the frame is not empty of draws: the sky, the clouds, the particles, the GUI,
 and the atlas animations all encode theirs, and it is **the world's terrain that encodes none**, in every one of
 22836 pass endings over a ninety second run.
 
+**Which renderer's pass that is, and which draw path it would take.** Two facts had to be read rather than
+guessed, and both are in the sources rather than in the frame. Sodium's own `DefaultChunkRenderer` carries the
+label `Terrain`, so the pass the trace shows ending with zero draws is **Sodium's** terrain pass, not vanilla's -
+and vanilla's `ChunkSectionsToRender` path is not the one in play at all. And Sodium's draw path on this backend
+is not its OpenGL one: `com.metallum.mixin.sodium.DrawBackendMixin` and `DrawContextMixin` intercept Sodium's
+backend choice and its draw-context factory when `getDeviceInfo().backendName()` is `Metal`, answering
+`DrawBackend.VK_INDIRECT` and Metallum's own `MetalDrawContext extends VKIndirectContext`. So the draw the frame
+would ask for is the indirect one - which this path **does** implement - while the multi-draw it still refuses is
+on Sodium's OpenGL road, which is not taken here. Vanilla's `RenderPass.multiDrawIndexed` is also gated on
+`DeviceFeatures.multiDrawDirectSeparate` *before* it reaches any backend, and Metallum advertises that flag true
+(`new DeviceFeatures(false, false, true, true, true, false, true)`), so a call down that road would reach the
+Metal 4 pass and be logged by the refusal line - and none is. The draw side is therefore not what is missing.
+
+**And Sodium's own machinery is all there, allocated once, at startup.** The buffer log shows its indirect rings,
+its two 32 MB staging buffers and its terrain uniforms created within the same second the session came up, and
+its terrain pass is opened every frame afterwards; what never appears is the one allocation that would mean
+geometry had arrived - `ArenaAggregator`'s `Arena buffer`, created on the Metal 3 arm at 268435456, 134217728,
+33554432 and 16777216 bytes as sections are uploaded. So the world's chunk meshes are never handed to the upload
+step on this path, and the pass that would draw them is opened, frame after frame, empty. A diagnostic mixin on
+Sodium's build/upload boundary is what names *that* - the engine cannot see it - and it is the next instrument
+rather than a guess.
+
 **The road those draws take is in the vanilla sources**, read rather than remembered: `ChunkSectionsToRender`
 takes an `EnumMap<ChunkSectionLayer, Int2ObjectOpenHashMap<List<RenderPass.Draw<...>>>>`, `LevelRenderer.prepareChunkRenders`
 fills it from `visibleSections` - one entry per section whose mesh has a draw for that layer *and* whose GPU
