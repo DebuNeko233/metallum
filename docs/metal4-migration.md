@@ -2243,6 +2243,16 @@ are visible: **2448 of them over the run, each answering true, for a 2560x1440 t
 observation for the performance phase rather than a claim: a pack that asks for a chain per sampler use is asking
 for it many times a frame, and nothing here has measured what that costs.
 
+**And the fixture's acceptance is now read rather than inferred.** Its three passes make a chain the picture can
+report on: `deferred.fsh` paints a one-pixel checkerboard, `deferred1.fsh` samples it at LOD 6 and paints a green
+checkerboard only where the chain averaged it to about 0.5, and `deferred2.fsh` samples *that* at LOD 6 again and
+paints cyan only where it recognises the averaged green. Both arms read the same thing - 40 s of settle, 4968 and
+4946 readbacks, mean of means RGBA `(5, 241, 241, 254)` on Metal 3 and `(4, 248, 248, 224)` on Metal 4, i.e. the
+`rebuilt` cyan - and **neither arm paints magenta anywhere**, which is what a chain that broke at any step would
+paint. The three passes, the pack parse and the absence of a fault are the same in both logs. So the deferred and
+mipmap step of the staircase is **M3 PASS / M4 PASS** on the picture and not only on the counters, and the
+staircase - which section 67 stopped at the depth fixture - has resumed one rung past where it stopped.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it
