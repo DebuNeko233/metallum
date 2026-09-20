@@ -1099,6 +1099,13 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.copyEncoder.barrierForSubsequentEncoders();
             this.copyEncoder.endEncoding();
         }
+        // Reported as the compute encoder it is, which is the same fact the reference arm reports before it opens
+        // one. This call was missing, and the frame probe's `computeEncoders` therefore read zero on this path for
+        // every frame that dispatched: Complementary Reimagined's shadow compute read as 532 encoders on the
+        // reference arm against **0** here, which is a difference in the counter rather than in the frame - the
+        // same shape as the indirect draws that read as an empty pass until they were counted. Nothing else in the
+        // probe is fed by this call, so counting it changes what is reported and never what is encoded.
+        MetalFrameProbe.encoderOpened(2);
         try {
             return MTL4ComputeEncoder.open(this.executionState.device(), this.ring.commandBuffer(), which);
         } catch (MTL4ComputeEncoder.Refused refused) {

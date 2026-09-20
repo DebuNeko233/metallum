@@ -783,7 +783,12 @@ Spatial on this generation, GPU counters and Metal 4 performance. **The real-pac
 first rung passes**: `MakeUp-UltraFast-9.5e` runs on both arms with the same **330 pipeline identities**, the
 same gross picture and no fault of any kind in either log, and the differences it shows are this path's known
 ones (a pass per clear, 1.18x/1.29x attachment traffic, drawable-wait pacing) registered for the performance
-phase rather than read as verdicts. Complementary Reimagined and Photon are the rungs after it. **And the pictures that have been read agree, now that blocker
+phase rather than read as verdicts. **and its second rung passes too**: `ComplementaryReimagined_r5.9.1`, a 219-file pack with deferred passes,
+shadows and compute, runs on both arms with **334 pipeline identities on each**, a dispatching compute road on
+each and no fault of any kind. That reading needed one instrument fix first - this path opened its dispatch
+encoder without reporting it, so its compute counted as zero against the reference arm's 532 and the pack's
+shadow compute looked absent until the counter was told about it, after which the same launch read 1893. Photon
+is the rung after these two. **And the pictures that have been read agree, now that blocker
 10 is fixed**: the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four
 MRT attachments, the orientation), the frames the *game* draws are right too - the no-pack Metal 4 frame is a world
 whose sampled terrain cells are the Metal 3 arm's own, and the depth fixture reads green at the geometry's edges on

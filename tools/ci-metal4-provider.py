@@ -1640,4 +1640,18 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and a compute encoder is reported as one ---------------------------------------------------------------
+# The frame probe's counters are the only way the two arms' encoder kinds are compared, and this path reported
+# render, blit and clear but never compute: Complementary Reimagined's shadow compute read as **532** compute
+# encoders over 600 frames on the reference arm against **0** here, which is a difference in the counter and not in
+# the frame. The call is made where the dispatch encoder is opened, which is the same place the reference arm makes
+# it, and nothing else in the probe is fed by it.
+for needle, why in (
+    ("        MetalFrameProbe.encoderOpened(2);\n        try {\n            return MTL4ComputeEncoder.open(",
+     "a dispatched compute encoder is not reported to the frame probe, so this path's compute counts read as zero "
+     "however much it dispatches - measured against the reference arm's 532"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

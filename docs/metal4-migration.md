@@ -2396,6 +2396,30 @@ a scene that is not deterministic and the only thing being compared today is str
 So the ladder's first rung is **M3 PASS / M4 PASS**, and the two heavier packs - Complementary Reimagined and
 Photon - are the next rungs rather than this one's work.
 
+**The second rung, and the counter that lied before it was read.** `ComplementaryReimagined_r5.9.1` is a real pack
+of 219 shader files with deferred passes, shadows and compute (`world0/shadowcomp.csh`). It runs on both arms with
+**no fault of any kind** and, for the second time in this migration, the first reading was the *instrument's* fault
+rather than the frame's:
+
+```text
+                       Metal 3   Metal 4 (before)   Metal 4 (after)
+pipeline identities      334          334                334
+render passes          13887        14429              13266
+compute encoders         532            0               1893
+```
+
+`computeEncoders=0` on this path looked like a pack whose compute never ran - and it was this path's own report:
+`Metal4FrameEncoder.dispatchEncoder` opens the dispatch encoder without telling the frame probe, while the
+reference arm reports every encoder kind it opens, compute among them. The call is now made where the encoder is
+opened, and the same launch reads **1893** compute encoders on this path against 532 on the reference arm. That
+difference is the design rather than a gap - this path opens one encoder per dispatch, which is the measured-safe
+shape from the storage-image round, and section 70 explicitly does *not* ask the two generations' native encoder
+counts to match: what has to match is the program set, and it does, at **334 identities on both arms**.
+
+So the ladder's second rung is **M3 PASS / M4 PASS** too, and the differences it shows are the registered ones: a
+pass of its own per clear (3279 against 538), attachment traffic 1.09x loaded and 1.15x stored, and one encoder per
+dispatch. Photon is the rung after it.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it
