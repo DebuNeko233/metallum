@@ -170,14 +170,55 @@ vertex table's nil check and its `setAddress:attributeStride:atIndex:` refusal w
 `return false` and are now two findings, because a device without attribute strides is a different fact from a
 device that would not make a second table.
 
-**What this does not yet have is the cheap trigger.** The right instrument is a harness that does
-`create device → run the probe once → report → exit`, with no Minecraft world and no 600-frame arm: the arms
-used so far cost about seventy seconds each and, at two flips in fourteen, cannot be run often enough to catch
-one on demand. With a process that starts and exits in a second or two, the cold/warm question becomes
-`first probe in a process` against `second and later probes in the same process`, run dozens of times, which is
-the experiment the tally actually calls for. Two flips in fourteen arms is a **hypothesis about cold first use
-and nothing more**; it is not a root cause, and no document here should say otherwise until a run has been
-captured with its stage named.
+**The cheap trigger exists now, and it has already caught the fault** (`tools/metal4-cold-probe.sh`,
+`tools/metal4-cold-probe/Metal4ColdProbe.java`). A process of its own - `create device → run the probe once →
+print one machine-readable line → exit`, with no Minecraft, no world, no pack, no window - costs about
+**240 ms** a probe against the client's seventy seconds, so the cold/warm question is now a distribution
+measured over processes rather than a coincidence waited for in sessions:
+
+```
+tools/metal4-cold-probe.sh --cold-runs 50 --warm-runs 20
+  cold processes: 50   failures: 1     (process 11)
+  warm probes:    20   failures: 1     (attempt 20)
+```
+
+Two failures in seventy attempts, **2.9 per cent**, and both carry the same stage and reason:
+
+```
+stage=pixel  reason=the vertex-buffer pass drew 191 in channel 2 where 128 was asked for
+             canMakeAndSubmit=true canBindAndDraw=false
+             familyMetal4=true queueSelector=true argumentTableSelector=true
+```
+
+**That retires two of the descriptions this issue has carried, on evidence rather than on argument.**
+
+*It is not an argument-table capability gap.* Every selector answers true in both failures, the queue and
+the command buffer are made and submitted, and `argumentTable=false render=false` in the capability record is
+what a *single* `canBindAndDraw` answer becomes: `MetalDeviceCapabilities.probe` ANDs that one verdict into
+both fields. The record's two false flags were never two findings.
+
+*The readback says exactly which pass failed and how.* `EXPECTED_UNIFORM_PIXEL` is `{64, 128, 191, 255}` and
+`EXPECTED_VERTEX_PIXEL` is `{64, 128, 128, 255}` - the two differ in **channel 2 alone** - so a readback of
+191 is the *first* pass's pixel, not a corrupted or half-written one. Pass two's colour takes its channel 2
+from a literal in the shader (`float4(vertices[vertexId].zw, 0.5, 1.0)`), so 128 arrives with any fragment at
+all; 191 means pass two covered pixel (0, 0) with nothing. Its triangle is `(-1, 1), (3, 1), (-1, -3)` in clip
+space, which covers the whole target, so the only way it covers nothing is that the three positions it read
+were degenerate.
+
+**Two hypotheses survive, and they are named as hypotheses.** Either the vertex buffer's contents written
+through `contents()` on a `StorageModeShared` buffer were not visible to the GPU when the draw ran, or the
+argument table's `setAddress:attributeStride:atIndex:` did not take effect for that draw. Both produce
+identical geometry - three positions at the origin - and **neither is distinguished by anything measured so
+far**; the fault is equally frequent cold (1 of 50) and warm (1 of 20), so it is not cold first use, and its
+probe times (227 ms and 5.4 ms) are ordinary, so it is not a timeout. What would separate them is the
+smallest reproducer the next step asks for: a probe that reads the vertex buffer back on the CPU after the
+draw, or one whose pass two clears the target first so that "nothing drawn" reads as the clear colour instead
+of as undefined tile memory - pass two's load action is `LOAD_DONT_CARE`, so a missed draw leaves the
+readback undefined by the API's own contract and 191 is one of the values it may legitimately return.
+
+Two of the four candidate causes in the registered issue are now excluded by measurement (cold first use, and
+an argument-table capability gap). The other two - a low-frequency race and driver/GPU state - remain open,
+with the race now the better supported of the two.
 
 ### Registered: the intermittent argument-table probe failure
 
@@ -198,15 +239,19 @@ include a **low-frequency race**, an **object-lifetime** problem (a released tab
 referenced), and **driver/GPU state** that a warm process happens not to be in. Two observations in fourteen
 arms, both on a session's first arm, is a hypothesis about cold first use and nothing more.
 
-What remains to do about it, and only this:
+What remains to do about it:
 
-1. build the cross-process cold-probe harness - `new process → create MTLDevice → probe once → report → exit` -
-   before Metal 4 is enabled by default under AUTO;
-2. count cold-first and warm/repeated separately;
-3. if it fails again, read the existing stage/reason instrumentation and locate it from that;
-4. do not write "first use of the argument table is the root cause" without that evidence;
-5. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
-   inert unless the property is set, and nothing in the frame path reads it).
+1. ~~build the cross-process cold-probe harness~~ - **done**, `tools/metal4-cold-probe.sh`;
+2. ~~count cold-first and warm/repeated separately~~ - **done**: 1 of 50 cold, 1 of 20 warm, so not cold-only;
+3. ~~locate it from the existing stage/reason instrumentation~~ - **done**: stage `pixel`, and the value read
+   identifies the failed pass exactly;
+4. **build the smallest reproducer** that tells the two surviving hypotheses apart - the vertex buffer's
+   contents not reaching the GPU, or the table's address binding not taking effect - and fix whichever it is;
+5. do not write "first use of the argument table is the root cause" without that evidence - it is now
+   positively excluded, cold and warm failing at the same rate;
+6. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
+   inert unless the property is set, and nothing in the frame path reads it). The new harness does not use it:
+   it repeats the probe in its own process, which is the experiment the switch was standing in for.
 
 ### Ownership, not count, is what the frame path's isolation has been moving on
 
