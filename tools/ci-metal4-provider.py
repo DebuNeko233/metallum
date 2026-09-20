@@ -153,11 +153,12 @@ for needle, why in (
     ("useResource(metal.nativeHandle());\n        return this.storagePipelines.clearZero(",
      "the image is not declared resident before it is written by a kernel, and an undeclared resource makes a"
      " command of this kind do nothing at all - measured"),
-    ("private MTL4ArgumentTable storageTable() {",
+    ("MTL4ArgumentTable table = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);",
      "there is no table for a storage dispatch to bind its image through, and this command model has no"
      " per-resource setter on the encoder"),
-    ("MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L)",
-     "the storage table is not made for one texture slot"),
+    ("queueForDestroy(table::close);\n        long width = texture.getWidth(0);",
+     "the clear's table is not given back through the frame's destruction queue, so it would outlive the slot"
+     " that may still read it - or leak"),
     ("name.endsWith(\"_UINT\") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.UINT",
      "the zeroing kernel's scalar type is not read from the texture's own format, so a uint image would be zeroed"
      " by the float kernel and the pipeline would not build or would write the wrong bits"),
@@ -1239,6 +1240,9 @@ if "this.computePipelineCache.clear();" not in body_of(context, "synchronized vo
                      "outlives the completion that made the release legal")
 
 for needle, why in (
+    ("MTL4ArgumentTable newTable(final MTLDevice device) {",
+     "the compute handle no longer makes a table for a dispatch, and every dispatch needs one sized to that"
+     " kernel's argument counts - a cached one is the shape that reads what the first dispatch bound"),
     ("private final Map<String, MetalComputeTranslator.Binding> bindings;",
      "the handle does not store the shared translation's bindings, so a dispatch would have to re-reflect"),
     ("Map<String, MetalComputeTranslator.Binding> bindings() {",
@@ -1295,8 +1299,12 @@ if "MetalFrameResourceCommands, MetalFrameComputeCommands {" not in encoder:
 for needle, why in (
     ("pipeline instanceof Metal4ComputePipeline resource", "the dispatch does not recognise this generation's "
      "pipeline resource, so it would answer false for its own handles"),
-    ("MTL4ArgumentTable table = resource.table(this.executionState.device());",
-     "the dispatch does not fill the handle's own table, which is the only way this command model binds"),
+    ("MTL4ArgumentTable table = resource.newTable(this.executionState.device());",
+     "the dispatch does not make a table for itself, and a table object re-pointed and handed to one encoder"
+     " twice is not reliably re-read - measured in the cold-probe reproducer's one-encoder mode"),
+    ("queueForDestroy(table::close);",
+     "the dispatch's table is not given back through the frame's destruction queue, so it would outlive the"
+     " slot that may still read it - or leak"),
     ("case UNIFORM_BUFFER, STORAGE_BUFFER -> bindDispatchBuffer(table, binding, buffers);",
      "buffers are not bound by address through the table"),
     ("case SAMPLED_IMAGE -> bindDispatchSampledImage(table, binding, textures, samplers);",

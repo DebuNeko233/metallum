@@ -113,14 +113,6 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /** The zeroing kernels this frame dispatches for a storage texture, made once per device by whoever owns it. */
     private final com.metallum.mtl.metal4.MTL4StorageTexturePipelines storagePipelines;
     /**
-     * The one-texture table a storage dispatch binds its image through, made on first use and re-pointed at each
-     * dispatch: the table's contents are snapshotted when a dispatch is encoded, so two clears on one encoder may
-     * share it as long as the second is bound after the first was encoded.
-     */
-    @Nullable
-    private MTL4ArgumentTable storageTable;
-
-    /**
      * The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth.
      * <p>
      * Overridable with {@code -Dmetallum.metal4RingSlots=N} for one diagnostic purpose, and only that: with a
@@ -424,10 +416,6 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.presentTable != null) {
             this.presentTable.close();
             this.presentTable = null;
-        }
-        if (this.storageTable != null) {
-            this.storageTable.close();
-            this.storageTable = null;
         }
         this.storagePipelines.close();
         if (this.residency != null) {
@@ -867,10 +855,14 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             return false;
         }
 
-        MTL4ArgumentTable table = storageTable();
+        // A clear is a dispatch too, so its table is its own for the same measured reason the compute path's is:
+        // the frame's clears used to share one re-pointed table, which is exactly the shape that reads what the
+        // first clear bound.
+        MTL4ArgumentTable table = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);
         if (table == null) {
             return false;
         }
+        queueForDestroy(table::close);
         long width = texture.getWidth(0);
         long height = dimensions == 1 ? 1L : texture.getHeight(0);
         long depth = dimensions == 3 ? texture.getDepthOrLayers() : 1L;
@@ -879,15 +871,6 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         useResource(metal.nativeHandle());
         return this.storagePipelines.clearZero(copies, table, metal.nativeHandle(), zeroingKind(texture.getFormat()),
                 dimensions, width, height, depth);
-    }
-
-    /** The one-texture table a storage dispatch binds through, made on first use. */
-    @Nullable
-    private MTL4ArgumentTable storageTable() {
-        if (this.storageTable == null) {
-            this.storageTable = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);
-        }
-        return this.storageTable;
     }
 
     /**
@@ -950,10 +933,15 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             return true;
         }
 
-        MTL4ArgumentTable table = resource.table(this.executionState.device());
+        // One table per dispatch, and it is this dispatch's own: a table object re-pointed and handed to one
+        // encoder twice is not reliably re-read - measured with the cold-probe reproducer, whose one-encoder
+        // mode reads the first colour on every even round while a fresh table per dispatch is clean eight of
+        // eight. The table is given back through the frame's destruction queue once this slot has completed.
+        MTL4ArgumentTable table = resource.newTable(this.executionState.device());
         if (table == null) {
             return false;
         }
+        queueForDestroy(table::close);
         for (MetalComputeTranslator.Binding binding : resource.bindings().values()) {
             switch (binding.kind()) {
                 case UNIFORM_BUFFER, STORAGE_BUFFER -> bindDispatchBuffer(table, binding, buffers);

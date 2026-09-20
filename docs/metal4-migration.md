@@ -2295,12 +2295,25 @@ table object has already been handed to the same encoder: the second dispatch re
 was first handed over. **A table of its own per dispatch is safe** (and so is an encoder per dispatch, which is
 the expensive version of the same thing).
 
-**This is the engine's own pattern, and that makes it a defect to fix rather than a curiosity.**
-`Metal4ComputePipeline` holds one table per compiled kernel (`table(device)`) and `Metal4FrameEncoder` hands it
-over again on every dispatch of that kernel, and `clearStorageTexture` re-points the single `storageTable` for
-every clear in a frame - so two dispatches of one kernel in a frame, or two storage clears, can bind what the
-first one bound. The reproducer is where that is proven and where the fix will be measured; the fix itself is
-one table per dispatch, released through the frame's destruction queue so its lifetime is still the slot's.
+**This is the engine's own pattern, and it was a defect rather than a curiosity.**
+`Metal4ComputePipeline` held one table per compiled kernel and `Metal4FrameEncoder` handed it over again on
+every dispatch of that kernel, while `clearStorageTexture` re-pointed a single `storageTable` for every clear in
+a frame - so two dispatches of one kernel in a frame, or two storage clears, could bind what the first one
+bound.
+
+**Fixed the same round, in the measured-safe shape.** `Metal4ComputePipeline.newTable(device)` makes a table for
+one dispatch and the handle keeps none, and both call sites in the frame encoder - `dispatchCompute` and
+`clearStorageTexture` - make their own and give it back through the frame's destruction queue, so a table's
+lifetime is still the slot's and not the dispatch's. The client says the path still runs: a forced Metal 4
+session with Vitrail's `compute-storage-contract` dispatches both programs and reports no refusal, and the
+storage image is still cleared through a kernel with no complaint.
+
+**And the fix has a price, measured rather than waved away**: three tables a frame in that fixture (two
+dispatches and one clear), where the old shape made one per kernel. In the same session the log's own count of
+`Metal 4 argument table: made` runs to 5708 over the run. That is the honest cost of correctness-first, and
+pooling is a phase-21 candidate with the same rule the fix came from: a table may be re-pointed between
+*encoders* (measured clean) but not within one, so a pool has to be keyed by the dispatch's place in the frame
+rather than by the kernel.
 
 **Measured, and with one honest fault in it.** Two 30-cold + 20-warm censuses and a six-process hunt
 (6 × 31 probes) were run: **286 probes**, of which `computeSample` and `computeVertex` are **286 of 286** -

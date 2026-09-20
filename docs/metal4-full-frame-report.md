@@ -609,10 +609,15 @@ answered rather than only what is left.
    round, in a victim of the reproducer's own. A **fresh table per dispatch** is clean, and so is an encoder or
    a commit per dispatch. **The engine does exactly the unsafe thing**: `Metal4ComputePipeline` keeps one table
    per compiled kernel and hands it over again per dispatch, and `Metal4FrameEncoder.clearStorageTexture`
-   re-points one table for every clear in a frame - so two dispatches of one kernel, or two storage clears, can
-   bind what the first bound. This is a correctness defect in the Metal 4 compute path with a measured
-   workaround, and it is the second reason AUTO stays off Metal 4 until it is fixed and the fix is measured in
-   the same reproducer.
+   re-points one table for every clear in a frame - so two dispatches of one kernel, or two storage clears, could
+   bind what the first bound. **Fixed the same round** in the measured-safe shape: a table per dispatch, made at
+   the call site and given back through the frame's destruction queue, in both `dispatchCompute` and
+   `clearStorageTexture`; the client still dispatches both of the fixture's programs with no refusal, and the
+   cost is three tables a frame there (pooling is a phase-21 candidate, keyed by the dispatch's place in the
+   frame rather than by the kernel). What is still **not measured** is the fix *changing an outcome* in the
+   client: Vitrail's compute fixture dispatches two different kernels, so the stale-hand-over shape is not in
+   its frame - a fixture that dispatches one kernel twice per frame is what would show it, and the reproducer
+   is what shows it native.
 7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,

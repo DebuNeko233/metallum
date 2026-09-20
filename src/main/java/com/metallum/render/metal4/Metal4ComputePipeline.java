@@ -18,10 +18,12 @@ import java.util.Objects;
  * A compiled Metal 4 compute kernel: the pipeline state a dispatch runs, the bindings it reads through, and the
  * argument table those bindings are filled into.
  * <p>
- * <strong>The handle holds the state it dispatches with, and the table it is bound through.</strong> A Metal 4
- * dispatch is bound by {@code setArgumentTable:} and nothing else - there are no per-resource setters on the new
- * compute encoder - so a kernel has to carry the table it is dispatched through, sized to the argument counts the
- * translation gave it. The pipeline state is a compiled object with no per-dispatch state, so the compilation
+ * <strong>The handle holds the state it dispatches with, and describes the table a dispatch is bound
+ * through.</strong> A Metal 4 dispatch is bound by {@code setArgumentTable:} and nothing else - there are no
+ * per-resource setters on the new compute encoder - so every dispatch needs a table sized to the argument counts
+ * the translation gave its kernel. That table is made per dispatch and not kept here: one table object
+ * re-pointed and handed to the same encoder twice is not reliably re-read, which
+ * {@link #newTable(MTLDevice)} records as the measured rule it is. The pipeline state is a compiled object with no per-dispatch state, so the compilation
  * context caches one per kernel and every handle to that kernel shares it; but <em>shared</em> is a refcount and
  * not a hand-over, which is why the constructor retains the state and {@link #close()} hands that reference to
  * the device's deferred release instead of dropping it where it stands. Without the retain this handle would be
@@ -31,10 +33,6 @@ import java.util.Objects;
  * it, a clear takes the context's reference and the handle keeps dispatching exactly as the Metal 3 handle - the
  * one that owns its state outright - does.
  * <p>
- * <strong>One table is enough for any number of dispatches.</strong> The header says the table is snapshotted when
- * a dispatch is encoded, which the cold record measured with one table re-pointed between two dispatches - so a
- * kernel re-pointing its table per dispatch is the design, and a second table would be another object with no
- * question of its own to answer.
  * <p>
  * The bindings are the shared translator's record: one kind of resource each, with the slot that kind's table
  * reads it from. That is all a dispatch needs, and it is why this class holds no switch of its own.
@@ -52,9 +50,6 @@ final class Metal4ComputePipeline implements MetalComputePipelineResource {
     private final long samplerSlots;
 
     private boolean closed;
-    private boolean tableAsked;
-    @Nullable
-    private MTL4ArgumentTable table;
 
     Metal4ComputePipeline(final MetalDevice device, final String label, final String entryPoint,
                           final MemorySegment pipelineState,
@@ -105,19 +100,22 @@ final class Metal4ComputePipeline implements MetalComputePipelineResource {
     }
 
     /**
-     * The table this kernel's resources are filled into, made on first use.
+     * A table for one dispatch, sized to what this kernel binds.
      * <p>
-     * Asked once: a device that will not make one will not make one on the next dispatch either, and the answer
-     * is null for the caller to refuse rather than to retry - which is the same shape the storage clear takes
-     * when it cannot get a table.
+     * <strong>One table per dispatch, and this is a measured rule rather than a preference.</strong> A table
+     * object handed to one compute encoder, re-pointed, and handed over again is not reliably re-read: the
+     * second dispatch reads what the table held when it was first handed over. That was measured with the
+     * cold-probe reproducer (`tools/metal4-cold-probe.sh --repro 8 --own one-encoder`): two dispatches through
+     * one re-pointed table read the first colour on every even round, while a fresh table for the second
+     * dispatch - or an encoder or a commit per dispatch - is clean eight rounds of eight. So the handle keeps
+     * no table at all: the frame path makes one where it dispatches and gives it back when the slot that used
+     * it has completed.
+     *
+     * @return a table for one dispatch, or null where this device will not make one
      */
     @Nullable
-    MTL4ArgumentTable table(final MTLDevice device) {
-        if (!this.tableAsked) {
-            this.tableAsked = true;
-            this.table = MTL4ArgumentTable.create(device, this.bufferSlots, this.textureSlots, this.samplerSlots);
-        }
-        return this.table;
+    MTL4ArgumentTable newTable(final MTLDevice device) {
+        return MTL4ArgumentTable.create(device, this.bufferSlots, this.textureSlots, this.samplerSlots);
     }
 
     boolean closed() {
@@ -125,8 +123,10 @@ final class Metal4ComputePipeline implements MetalComputePipelineResource {
     }
 
     /**
-     * Releases the table this handle owns, hands this handle's reference to the state back, and marks the
-     * handle spent.
+     * Hands this handle's reference to the state back and marks the handle spent.
+     * <p>
+     * There is no table to release: the tables belong to the dispatches that filled them, and the frame path
+     * gives each one back through its destruction queue.
      * <p>
      * The state is shared, so this releases <em>this handle's reference</em> and not the object: the context
      * holds one of its own, and another handle to the same kernel may hold one too, and the refcount is what
@@ -141,10 +141,6 @@ final class Metal4ComputePipeline implements MetalComputePipelineResource {
             return;
         }
         this.closed = true;
-        if (this.table != null) {
-            this.table.close();
-            this.table = null;
-        }
         this.device.queueResourceRelease(this.pipelineState);
     }
 
