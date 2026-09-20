@@ -411,13 +411,29 @@ performance:          NOT STARTED
 
 ## Performance
 
-**A Metal 4 frame exists to time now.** The first measured no-pack Metal 4 frame, 1280x720 windowed on the pinned
-world: `wallP50 8.48`, `wallP95 8.96`, `wallP99 9.00`, `8.02 ms a frame, 124.7 frames a second`, GPU from the
-queue's own commit feedback `gpuM4P50 2.08`, `gpuM4P95 2.31`, `gpuM4P99 2.34`, and `drawable wait p50 7.39 ms` -
-so the frame is paced by the display, not by the GPU or by the frame path's own work. NOT a comparison: the
-Metal 3 arm has not been run on the same scene in the same session (section 114), the picture has not been
-compared (section 37), and one measured difference is unexplained - this path loads and stores every attachment
-every pass (about 313 MiB a frame) where the Metal 3 arm reports 32 and 88 MiB a frame on the same scene.
+**The two generations have now been run against each other, in one session, on the same world at the same size:**
+
+```text
+m3: 8.06 ms a frame, 124.1 frames a second, 4.94 ms of GPU time a frame over 30 answered frames
+m4: 8.08 ms a frame, 123.8 frames a second, +0.2% against m3
+
+picture, m3 against m4: mean channel difference 0.00, 0.00% of pixels differ at all,
+                        0.00% differ by more than 8, 0.00% differ by more than 2, worst 0 at 0,0
+```
+
+**The no-pack frame is the same picture on both generations, and byte-identically so**: the two arms' screenshots
+hash to the same SHA-256 (`e9a46318...56519`), and the harness's own comparison reports zero pixels differing.
+That is this migration's success criterion measured rather than intended, and it covers the present road as well
+as the render path. **The pace is the same and it is the display's**: about 7.4 ms
+of each 8.06/8.08 ms frame is the drawable wait, so this scene is display-paced and cannot separate the two.
+**The GPU numbers are recorded but not compared**: `gpuP50 4.92 ms` is `MTLCommandBuffer.gpuMillis` and
+`gpuM4P50 2.04 ms` is `MTL4CommitFeedback.GPUStartTime/GPUEndTime` - two different APIs, and section 92's rule is
+that the timing kinds are not interchangeable until that is established. **The structural differences are the
+migration's own mechanisms** (render passes 120 → 360, clear encoders 0 → 150, pipeline binds 460 → 1920,
+attachment bytes loaded 950.3 MiB → 9387.8 MiB, stored 2637.8 → 9387.8) with the shader programs identical
+(`pipelineIdentities 100` both arms); the load traffic is the one real inefficiency the comparison names, because
+every attachment here is `CARRIED` (load and store) - the Metal 3 pass's per-attachment contents facts do not
+reach this path yet, and that is the next thing to give it.
 
 The Metal 3 reference on the pinned scene is
 `wallP50 7.25-7.26 ms`, `gpuP50 7.28-7.29`, `gpuMs 4366.72 / 4368.05` over two arms of
@@ -478,15 +494,16 @@ answered rather than only what is left.
    own per-frame GPU time from its commit feedback. The first collected run also exposed that the Metal 4 GPU
    samples had no percentile path (a `gpuM4Ms` total with every `gpuP*` at zero); they have their own
    `gpuM4P50/P95/P99/Max` now.
-2. **The comparison has not been run** - the Metal 4 no-pack frame is measured (8.02 ms a frame, 124.7 fps,
-   `wallP50 8.48`/`wallP99 9.00`, `gpuM4P50 2.08`/`gpuM4P99 2.34`, drawable wait 7.39 ms - the frame is paced by
-   the display), and the Metal 3 arm of the same scene in the same session is not: section 114 asks for exactly
-   that alternation, and no claim about which generation is faster is made until it is run. The picture has not
-   been compared either (section 37).
-3. **One measured difference is unexplained** - this path loads and stores every attachment every pass
-   (`loadedMiB 9387.8`, `storedMiB 9387.8` over thirty frames, about 313 MiB a frame) where the Metal 3 arm
-   reports 32 and 88 MiB a frame on the same scene, because the per-attachment contents facts the Metal 3 pass
-   carries do not reach this path yet. It is a measurement to understand, not yet a defect.
+2. ~~The comparison had not been run~~ - **run**: both arms in one session, same world and size. The picture is
+   identical (`0.00% of pixels differ`), the pace is identical (8.06 against 8.08 ms a frame, +0.2%) and it is
+   the display's (drawable wait ~7.4 ms of each). What that leaves open is a scene that is *not* display-paced,
+   and the two GPU numbers are recorded but not compared because they come from different APIs
+   (`MTLCommandBuffer.gpuMillis` against `MTL4CommitFeedback.GPUStartTime/GPUEndTime`) - section 92's timing
+   kinds have not been shown to measure the same interval.
+3. **The attachment traffic is the one measured inefficiency** - this path loads 9387.8 MiB and stores 9387.8 MiB
+   over thirty frames where the Metal 3 arm loads 950.3 and stores 2637.8 on the same scene, because every
+   attachment here is `CARRIED` (load and store) and the per-attachment contents facts the Metal 3 pass carries
+   do not reach this path yet. Measured on both sides now, and the next thing to give this path.
 4. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 5. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a

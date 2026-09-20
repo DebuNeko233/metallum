@@ -1660,6 +1660,63 @@ is about 313 MiB a frame, where the Metal 3 arm of the present sidecar reported 
 per-attachment contents facts the Metal 3 pass carries do not reach it yet, and that is a *measured* difference
 to understand later rather than a number to explain away.
 
+### The no-pack comparison: the same picture, the same pace, different mechanisms
+
+The two generations now run in one harness invocation, on the same world, at the same size, with the same
+settle - which is the alternation the plan's section 114 asks for and the structural record section 70 asks for
+in place of a claim. The run, both arms in sequence:
+
+```text
+m3: 8.06 ms a frame, 124.1 frames a second, 4.94 ms of GPU time a frame over 30 answered frames
+m4: 8.08 ms a frame, 123.8 frames a second, +0.2% against m3
+
+picture, m3 against m4: mean channel difference 0.00, 0.00% of pixels differ at all,
+                        0.00% differ by more than 8, 0.00% differ by more than 2, worst 0 at 0,0
+```
+
+**The picture is the same one, and stronger than the difference figure says: the two screenshots are
+byte-identical.** Both arms' `screen.png` hash to
+`e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`, so the no-pack frame Metal 4 presents is not
+merely within the comparison's tolerance of Metal 3's - it is the same image, through a different command model,
+a different binding path, a different present and a different compilation chain. That is the migration's own
+success criterion ("Metal 4 produces the same required frame correctly") stated as a measurement rather than an
+intention, and it covers the present road too: orientation, scaling and colour come out the same. The two arms
+also loaded the world in the same time (`Time elapsed: 1789 ms` against `1778 ms`).
+
+**The pace is the same, and it is the display's.** 8.06 against 8.08 ms, and in both arms about 7.4 ms of that is
+the drawable wait the layer imposes at the display's rate (`drawable wait p50 7.45 / 7.41 ms`). So this comparison
+says nothing about which generation is faster: both are waiting on the same display, and a scene that is
+display-paced cannot separate them. A performance comparison needs a scene where the GPU or the encode path is
+the limit, and it needs the two GPU numbers to be comparable first.
+
+**The two GPU numbers are not comparable yet, and the record says so.** Metal 3's `gpuP50 4.92 ms` comes from
+`MTLCommandBuffer.gpuMillis` (the driver's own times for a whole command buffer); Metal 4's `gpuM4P50 2.04 ms`
+comes from `MTL4CommitFeedback.GPUStartTime/GPUEndTime`. Both are whole-submission numbers and their *kinds* look
+alike, but section 92's rule is that the three timing kinds - CPU encode, GPU counter, whole-command-buffer
+driver time - are not interchangeable until that is established, and nothing has established that these two
+fields measure the same interval. The number is recorded as what each API said, not as a speed-up.
+
+**The structural differences are the migration's own mechanisms, and they are counted.** Section 70 asks for the
+logical facts to match and does not ask the native mechanisms to:
+
+| what | M3 | M4 | why they differ |
+| --- | --- | --- | --- |
+| pipeline identities | 100 | 100 | the same shader programs, which is the comparison's anchor |
+| render passes opened | 120 | 360 | a clear is a load action, so each clear is a pass of its own here |
+| clear encoders | 0 | 150 | the same fact, counted as the mechanism it is |
+| depth attachments | 90 | 330 | a clear's depth attachment plus the pass's |
+| attachment bytes loaded | 950.3 MiB | 9387.8 MiB | every attachment is `CARRIED` here (load and store) |
+| attachment bytes stored | 2637.8 MiB | 9387.8 MiB | the same, and the Metal 3 pass's contents facts (`contents=65` in its encoder-reuse line) are what let it discard loads |
+| pipeline binds | 460 | 1920 | a table is filled where the pipeline changes, per pass |
+| scissor | 330 | 90 | counted where the render encoder is given one |
+| viewport | 150 | 0 | the game's render-pass interface has no viewport call at all; Metal 3 counts the encoder's own |
+
+The traffic row is the one real inefficiency this comparison names, and it is now measured on **both** sides
+rather than suspected: this path loads and stores every attachment on every pass because the per-attachment
+contents facts that Metal 3 carries (whether anything reads an attachment afterwards, and whether the pass
+overwrites all of it) do not reach it yet. That is the next thing to give it - section 62's over-synchronise and
+over-store first, measure, then narrow - and the number it would move is on the table above.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
