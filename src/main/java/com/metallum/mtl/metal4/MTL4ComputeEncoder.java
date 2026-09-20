@@ -58,6 +58,13 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
     private static final Msg BARRIER = Msg.ofVoid("barrierAfterStages:beforeQueueStages:visibilityOptions:",
             JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
+    /**
+     * {@code generateMipmapsForTexture:}, read off this machine's SDK header
+     * ({@code MTL4ComputeCommandEncoder.h:543}). The compute encoder absorbed Metal 3's blit encoder, so a mip
+     * chain is generated here and not on an encoder of its own - which is why this is the road a pack's mipmaps
+     * take on the new command model.
+     */
+    private static final Msg GENERATE_MIPMAPS = Msg.ofVoid("generateMipmapsForTexture:", ADDRESS);
 
     private static final long STAGE_ALL = Long.MAX_VALUE;
     private static final long VISIBILITY_DEVICE = 1L;
@@ -194,6 +201,22 @@ public final class MTL4ComputeEncoder implements AutoCloseable {
             COPY_BUFFER_TO_TEXTURE.send(open, source, sourceOffset, sourceBytesPerRow, sourceBytesPerImage, size,
                     destination, destinationSlice, destinationLevel, origin);
         }
+        return true;
+    }
+
+    /**
+     * Generates a texture's mip chain from its level 0.
+     * <p>
+     * False where the encoder is not open or the object does not answer the selector, rather than a call that
+     * goes nowhere: the caller's fallback is the contract's own answer, and a generation that silently did
+     * nothing would leave a texture whose later levels hold whatever was there.
+     */
+    public boolean generateMipmaps(final MemorySegment texture) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || ObjC.isNil(texture) || !responds(open, GENERATE_MIPMAPS.name())) {
+            return false;
+        }
+        GENERATE_MIPMAPS.send(open, texture);
         return true;
     }
 

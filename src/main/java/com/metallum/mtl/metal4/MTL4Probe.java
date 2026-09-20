@@ -80,6 +80,8 @@ public final class MTL4Probe {
     private static final Msg END = Msg.ofVoid("endCommandBuffer");
     private static final Msg NEW_DESCRIPTOR = Msg.of("new", ADDRESS);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
+    /** {@code addResidencySet:}, the last half of declaring what a queue's work may touch. */
+    private static final Msg ADD_RESIDENCY_SET = Msg.ofVoid("addResidencySet:", ADDRESS);
     private static final Msg NEW_RENDER_PASS = Msg.of("new", ADDRESS);
     private static final Msg SET_TARGET_WIDTH = Msg.ofVoid("setRenderTargetWidth:", JAVA_LONG);
     private static final Msg SET_TARGET_HEIGHT = Msg.ofVoid("setRenderTargetHeight:", JAVA_LONG);
@@ -2146,6 +2148,240 @@ public final class MTL4Probe {
         }
 
         return true;
+    }
+
+    /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
+    private static final int MIP_LEVELS = 3;
+    private static final int MIP_PREFILLED = 200;
+    /** The two colours the checkerboard alternates, and what a box filter of a 2x2 block of them is. */
+    private static final int CHECKER_ON = 255;
+    private static final int CHECKER_OFF = 0;
+    private static final int CHECKER_AVERAGE = 128;
+
+    /**
+     * A texture with a mip chain, which is what a generation has to be asked for.
+     * <p>
+     * The level count is the whole point: a texture of one level has no chain to generate, and the engine's own
+     * contract refuses that case rather than calling a command with nothing to do.
+     */
+    private static MemorySegment newMipmappedTarget(final MTLDevice device) {
+        try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+            descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+            descriptor.width(TARGET_SIZE);
+            descriptor.height(TARGET_SIZE);
+            descriptor.mipmapLevelCount(MIP_LEVELS);
+            descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ);
+            descriptor.storageMode(MTLStorageMode.Shared);
+            return device.newTexture(descriptor);
+        }
+    }
+
+    /**
+     * A mip chain generated from level 0, with every level read back.
+     * <p>
+     * The plan's blit list has "mipmap generation if API path belongs here", and on this command model it does:
+     * {@code MTL4ComputeCommandEncoder.h:543} declares {@code generateMipmapsForTexture:}, and the compute
+     * encoder is where Metal 3's blit commands went. So the smoke is a level-0 checkerboard of the two extreme
+     * values, uploaded from a buffer, and a generation over it - and the reading that makes it a measurement is
+     * that the levels above 0 are <em>pre-filled</em> with a third value first. A generation that silently did
+     * nothing would leave that value there, and a smoke that only checked "level 1 is not level 0" would pass on
+     * a level nobody wrote.
+     * <p>
+     * Both the staging buffer and the texture are declared resident before the copy, which this command model
+     * requires of every resource the GPU touches and which is not decorative here: measured, a buffer-to-texture
+     * copy whose either end is not in a residency set does nothing at all, silently, and the level reads as it
+     * was created.
+     * <p>
+     * What the box filter of a 2x2 block of 0 and 255 is, is 127.5 - so the check is one level either way,
+     * which is the rounding and not a tolerance on the measurement. The same two colours at level 0 are read
+     * beside it, so a texture whose checkerboard never arrived is a failure rather than an average of nothing.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a texture's mip chain is generated from its level 0 and readable at every level
+     */
+    public static boolean canGenerateMipmaps(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("mipmaps", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment mips = MemorySegment.NULL;
+        MTLBuffer checker = null;
+        MTLBuffer flat = null;
+        MTL4ComputeEncoder copies = null;
+        MTL4ResidencySet resident = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("mipmaps", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            long levelZeroBytes = TARGET_SIZE * TARGET_SIZE * 4L;
+            checker = device.newBuffer(levelZeroBytes, STORAGE_SHARED);
+            flat = device.newBuffer(levelZeroBytes, STORAGE_SHARED);
+            if (checker == null || flat == null || checker.gpuAddress() == 0L || flat.gpuAddress() == 0L) {
+                return failed("mipmaps", "a staging buffer came back nil or without a GPU address");
+            }
+            MemorySegment checkerBytes = checker.contents().reinterpret(levelZeroBytes);
+            MemorySegment flatBytes = flat.contents().reinterpret(levelZeroBytes);
+            for (long y = 0; y < TARGET_SIZE; y++) {
+                for (long x = 0; x < TARGET_SIZE; x++) {
+                    long at = (y * TARGET_SIZE + x) * 4L;
+                    boolean on = ((x + y) & 1L) == 0L;
+                    checkerBytes.set(JAVA_BYTE, at, (byte) (on ? CHECKER_ON : CHECKER_OFF));
+                    checkerBytes.set(JAVA_BYTE, at + 1L, (byte) 0);
+                    checkerBytes.set(JAVA_BYTE, at + 2L, (byte) (on ? CHECKER_OFF : CHECKER_ON));
+                    checkerBytes.set(JAVA_BYTE, at + 3L, (byte) 0xFF);
+                    flatBytes.set(JAVA_BYTE, at, (byte) MIP_PREFILLED);
+                    flatBytes.set(JAVA_BYTE, at + 1L, (byte) MIP_PREFILLED);
+                    flatBytes.set(JAVA_BYTE, at + 2L, (byte) MIP_PREFILLED);
+                    flatBytes.set(JAVA_BYTE, at + 3L, (byte) 0xFF);
+                }
+            }
+
+            mips = newMipmappedTarget(device);
+            if (ObjC.isNil(mips)) {
+                return failed("mipmaps", "newTextureWithDescriptor: answered nil for a " + TARGET_SIZE + "x"
+                        + TARGET_SIZE + " RGBA8 texture with " + MIP_LEVELS + " levels");
+            }
+
+            BEGIN.send(buffer, allocator);
+            // Both the source buffer and the destination texture are declared resident before the copy, because
+            // this command model makes that the caller's job and a copy of an undeclared resource does *nothing*
+            // rather than failing. Measured on this device, one declaration at a time: with neither, the copy
+            // lands nowhere and level 0 reads as it was created; with only the buffer declared it still lands
+            // nowhere; with only the texture declared it still lands nowhere; with both it lands. The engine's
+            // own upload road declares both for the same reason.
+            resident = MTL4ResidencySet.create(device, 4L, "the mipmap smoke");
+            if (resident == null || !resident.add(checker.handle()) || !resident.add(mips)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                END.send(buffer);
+                return failed("mipmaps", "the smoke could not declare its buffer and texture resident, and an"
+                        + " undeclared resource makes this command model's copies do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+            try {
+                copies = MTL4ComputeEncoder.open(device, buffer, "the mipmap pass");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("mipmaps", "the mipmap pass could not be opened at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            // Level 0 from the checkerboard, then the levels above it from one flat value - which is what makes
+            // the generation after them a measurement rather than a look at uninitialised memory.
+            long row = TARGET_SIZE * 4L;
+            if (!copies.copyBufferToTexture(checker.handle(), 0L, row, row * TARGET_SIZE, TARGET_SIZE,
+                    TARGET_SIZE, 1L, mips, 0L, 0L, 0L, 0L, 0L)) {
+                END.send(buffer);
+                copies.close();
+                return failed("mipmaps", "the compute encoder refused the buffer-to-texture copy that fills level"
+                        + " 0, so there is nothing for a chain to be generated from");
+            }
+            long side = TARGET_SIZE / 2L;
+            if (!copies.copyBufferToTexture(flat.handle(), 0L, side * 4L, side * 4L * side, side, side, 1L,
+                    mips, 0L, 1L, 0L, 0L, 0L)) {
+                END.send(buffer);
+                copies.close();
+                return failed("mipmaps", "the compute encoder refused the copy that fills level 1");
+            }
+            long quarter = TARGET_SIZE / 4L;
+            if (!copies.copyBufferToTexture(flat.handle(), 0L, quarter * 4L, quarter * 4L * quarter, quarter,
+                    quarter, 1L, mips, 0L, 2L, 0L, 0L, 0L)) {
+                END.send(buffer);
+                copies.close();
+                return failed("mipmaps", "the compute encoder refused the copy that fills level 2");
+            }
+            if (!copies.generateMipmaps(mips)) {
+                END.send(buffer);
+                copies.close();
+                return failed("mipmaps", "the compute encoder did not answer generateMipmapsForTexture:, so this"
+                        + " command model has no mip generation for a mip chain to take");
+            }
+            copies.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("mipmaps", "the shared event did not reach 1 within 2000 ms, so the submitted pass"
+                        + " never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // Level 0 first: the checkerboard has to be there, or what the chain averages is not the two
+                // values this smoke is about. Its two neighbouring texels differ, which is the property the
+                // average depends on.
+                MTLTexture.bytes(mips, pixel, 4L, 32L, 32L, 1L, 1L, 0L);
+                if ((pixel.get(JAVA_BYTE, 0L) & 0xFF) != CHECKER_ON
+                        || (pixel.get(JAVA_BYTE, 2L) & 0xFF) != CHECKER_OFF) {
+                    return failed("mipmaps", "level 0 at (32,32) reads " + describe(pixel) + " where the upload"
+                            + " put " + CHECKER_ON + " in red and " + CHECKER_OFF + " in blue, so the chain would"
+                            + " be averaging something nobody wrote");
+                }
+                MTLTexture.bytes(mips, pixel, 4L, 33L, 32L, 1L, 1L, 0L);
+                if ((pixel.get(JAVA_BYTE, 0L) & 0xFF) != CHECKER_OFF) {
+                    return failed("mipmaps", "level 0 at (33,32) reads " + describe(pixel) + " where the"
+                            + " checkerboard's neighbouring texel is " + CHECKER_OFF + ", so the two values the"
+                            + " average is supposed to come from are not both there");
+                }
+
+                // Levels 1 and 2: the average of the block below them, and specifically NOT the value they were
+                // filled with before the generation ran.
+                for (long level : new long[]{1L, 2L}) {
+                    long at = TARGET_SIZE >> (int) level;
+                    MTLTexture.bytes(mips, pixel, 4L, at / 2L, at / 2L, 1L, 1L, level);
+                    int red = pixel.get(JAVA_BYTE, 0L) & 0xFF;
+                    int blue = pixel.get(JAVA_BYTE, 2L) & 0xFF;
+                    if (Math.abs(red - CHECKER_AVERAGE) > 1 || Math.abs(blue - CHECKER_AVERAGE) > 1) {
+                        return failed("mipmaps", "level " + level + " reads " + describe(pixel) + " where the box"
+                                + " filter of " + CHECKER_ON + " and " + CHECKER_OFF + " is " + CHECKER_AVERAGE
+                                + ", so the level either was not generated or still holds the " + MIP_PREFILLED
+                                + " it was filled with");
+                    }
+                    if (red == MIP_PREFILLED) {
+                        return failed("mipmaps", "level " + level + " still reads the " + MIP_PREFILLED + " it was"
+                                + " filled with, so generateMipmapsForTexture: was answered and did nothing");
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("mipmaps", "generating or reading back the mip chain threw " + threw);
+        } finally {
+            if (copies != null) {
+                copies.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            releaseIfPresent(checker);
+            releaseIfPresent(flat);
+            releaseIfPresent(mips);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
     }
 
     /** The depth smoke's colour clear, as the descriptor's four components. */

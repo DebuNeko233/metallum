@@ -147,6 +147,9 @@ depth_draw_failures="$(grep -c ' depthDraw=false ' "$probe_log" || true)"
 # a shader being able to read it afterwards.
 depth_sample_passes="$(grep -c ' depthSample=true ' "$probe_log" || true)"
 depth_sample_failures="$(grep -c ' depthSample=false ' "$probe_log" || true)"
+# The mip chain, counted on its own: a copy smoke says nothing about a generation.
+mipmap_passes="$(grep -c ' mipmaps=true ' "$probe_log" || true)"
+mipmap_failures="$(grep -c ' mipmaps=false ' "$probe_log" || true)"
 layout_passes="$(grep -c ' layout=true ' "$probe_log" || true)"
 layout_failures="$(grep -c ' layout=false ' "$probe_log" || true)"
 copy_passes="$(grep -c ' copy=true ' "$probe_log" || true)"
@@ -185,6 +188,7 @@ echo "colour attaches: $attachment_passes passed   $attachment_failures failed"
 echo "multi-targets:   $multi_target_passes passed   $multi_target_failures failed"
 echo "depth draws:     $depth_draw_passes passed   $depth_draw_failures failed"
 echo "depth samples:   $depth_sample_passes passed   $depth_sample_failures failed"
+echo "mip chains:      $mipmap_passes passed   $mipmap_failures failed"
 echo "bound layouts:   $layout_passes passed   $layout_failures failed"
 echo "texture copies:  $copy_passes passed   $copy_failures failed"
 echo "depth clears:    $depth_passes passed   $depth_failures failed"
@@ -237,6 +241,11 @@ fi
 
 if (( depth_sample_failures > 0 )); then
 	echo "the depth sampling smoke failed in $depth_sample_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( mipmap_failures > 0 )); then
+	echo "the mipmap smoke failed in $mipmap_failures probe(s)" >&2
 	exit 1
 fi
 

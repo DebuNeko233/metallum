@@ -48,6 +48,18 @@ public final class MTLTexture {
      */
     public static void bytes(final MemorySegment texture, final MemorySegment into, final long bytesPerRow,
                             final long x, final long y, final long width, final long height) {
+        bytes(texture, into, bytesPerRow, x, y, width, height, 0L);
+    }
+
+    /**
+     * The same, from one mip level.
+     * <p>
+     * Which level is read is not decoration for a mipmap: level 0 is the picture that was written and level 1 is
+     * what a generation made of it, so a readback that could only name level 0 could not see the thing a mipmap
+     * smoke is about.
+     */
+    public static void bytes(final MemorySegment texture, final MemorySegment into, final long bytesPerRow,
+                             final long x, final long y, final long width, final long height, final long level) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             MemorySegment region = MemorySegment.ofAddress(stack.nmalloc(8, 48)).reinterpret(48);
             region.set(JAVA_LONG, 0, x);
@@ -56,7 +68,7 @@ public final class MTLTexture {
             region.set(JAVA_LONG, 24, width);
             region.set(JAVA_LONG, 32, height);
             region.set(JAVA_LONG, 40, 1L);
-            GET_BYTES.send(texture, into, bytesPerRow, region, 0L);
+            GET_BYTES.send(texture, into, bytesPerRow, region, level);
         }
     }
 

@@ -38,6 +38,7 @@ import java.util.Optional;
  *                 multiTarget=&lt;bool&gt; multiTargetReason=&lt;text&gt;
  *                 depthDraw=&lt;bool&gt; depthDrawReason=&lt;text&gt;
  *                 depthSample=&lt;bool&gt; depthSampleReason=&lt;text&gt;
+ *                 mipmaps=&lt;bool&gt; mipmapsReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -207,6 +208,8 @@ public final class Metal4ColdProbe {
         String depthDrawReason = "-";
         boolean depthSample = false;
         String depthSampleReason = "-";
+        boolean mipmaps = false;
+        String mipmapsReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -255,6 +258,12 @@ public final class Metal4ColdProbe {
             depthSample = makeAndSubmit && MTL4Probe.canSampleDepth(device);
             if (!depthSample) {
                 depthSampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The blit list's last item: a mip chain generated from level 0 and read back at every level, which
+            // is the one frame-resource operation the engine used to answer false to.
+            mipmaps = makeAndSubmit && MTL4Probe.canGenerateMipmaps(device);
+            if (!mipmaps) {
+                mipmapsReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -363,6 +372,8 @@ public final class Metal4ColdProbe {
                     + " depthDrawReason=" + depthDrawReason.replace(' ', '_')
                     + " depthSample=" + depthSample
                     + " depthSampleReason=" + depthSampleReason.replace(' ', '_')
+                    + " mipmaps=" + mipmaps
+                    + " mipmapsReason=" + mipmapsReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy
