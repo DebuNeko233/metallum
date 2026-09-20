@@ -523,7 +523,21 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
                 && MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments)
                 && MetalPipelineSupport.sameHandle(renderDepthAttachment, depthAttachment)
                 && Arrays.equals(renderContents, stated)) {
+            MetalFrameProbe.renderEncoderReused();
             return enc;
+        }
+
+        // Why it could not be joined, asked only while the probe is armed: the comparisons are cheap but
+        // they are new work on a path that used to short-circuit, and an unarmed session may not pay for a
+        // reading it is not taking.
+        if (MetalFrameProbe.armed()) {
+            MetalFrameProbe.renderEncoderRecreated(
+                    !(currentEncoder instanceof MTLRenderCommandEncoder),
+                    hasClear,
+                    !MetalPipelineSupport.sameHandles(renderColorAttachments, colorAttachments),
+                    !MetalPipelineSupport.sameHandle(renderDepthAttachment, depthAttachment),
+                    !Arrays.equals(renderContents, stated)
+            );
         }
 
         endEncoder(MetalFrameProbe.EncoderEnd.PASS_CONFIGURATION_CHANGED);

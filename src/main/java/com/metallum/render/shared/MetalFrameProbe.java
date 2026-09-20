@@ -237,6 +237,57 @@ public final class MetalFrameProbe {
      */
     private static boolean censusClosed;
 
+    /**
+     * The Metal 3 argument-buffer path, counted so that its cost can be attributed rather than guessed.
+     * <p>
+     * An indirect descriptor is written into a native {@code MTLBuffer} the render pass allocates the first
+     * time a wide layout is needed, and that buffer is handed to the compiled pipeline's
+     * {@code MTLArgumentEncoder} before each descriptor write. Two different costs hide behind one total:
+     * allocating the native buffer, and the per-binding calls that follow. They are counted apart because they
+     * have different fixes - an arena for the first, a binding-state check for the second - and a single
+     * "argumentBufferCalls" number could not say which of the two was worth removing.
+     * <p>
+     * {@code argBufferSetCalls} counts every call the current control flow makes, and
+     * {@code argBufferSetChanges} the subset where the encoder's target buffer actually differs from the one it
+     * was last handed; the difference between the two is exactly what a state shadow could remove.
+     */
+    private static long argBufferPasses;
+    private static long argBufferLayouts;
+    private static long argBufferAllocations;
+    private static long argBufferAllocationBytes;
+    private static long argBufferSetCalls;
+    private static long argBufferSetChanges;
+    private static long argBufferTextureWrites;
+    private static long argBufferSamplerWrites;
+    private static long argBufferBufferWrites;
+    private static long argBufferUseResourceCalls;
+    private static long argBufferDraws;
+
+    /**
+     * Why a logical render pass could not join the native render encoder already open, counted once per
+     * attempt so that the share of reuses is read and not assumed.
+     * <p>
+     * The four causes are the four halves of the reuse condition, and each is a different answer to the same
+     * question: a clear action cannot be joined to an encoder that was opened without one, and the other three
+     * say the encoder would be recording into different attachments or leaving them in a different state. A
+     * single pass can fail several of them at once, so the causes are counted as a bitmask AND classified once
+     * into a mutually exclusive bucket - the bitmask says which conditions the frame is up against, the bucket
+     * says what one pass costs, and only the second one sums to the number of encoders.
+     */
+    private static long encReuseAttempts;
+    private static long encReuseReused;
+    private static long encReuseNoEncoder;
+    private static long encReuseClear;
+    private static long encReuseColor;
+    private static long encReuseDepth;
+    private static long encReuseContents;
+    private static long encReuseSingleClear;
+    private static long encReuseSingleColor;
+    private static long encReuseSingleDepth;
+    private static long encReuseSingleContents;
+    private static long encReuseSingleNoEncoder;
+    private static long encReuseMultiple;
+
     private MetalFrameProbe() {
     }
 
@@ -276,6 +327,171 @@ public final class MetalFrameProbe {
         }
 
         return true;
+    }
+
+    /**
+     * One logical pass reached the point where its argument buffers are bound. Counted once per pass that has
+     * any wide layout at all, which is what a per-frame "wide pipeline passes" reading needs.
+     */
+    public static void argBufferPass() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferPasses++;
+    }
+
+    /** One wide layout served for a pass, which is one binding of a native argument buffer. */
+    public static void argBufferLayout() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferLayouts++;
+    }
+
+    /** One native argument buffer allocated, and how many bytes it asked the device for. */
+    public static void argBufferAllocated(final long bytes) {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferAllocations++;
+        argBufferAllocationBytes += bytes;
+    }
+
+    /**
+     * One {@code MTLArgumentEncoder.setArgumentBuffer} call the current control flow makes.
+     *
+     * @param changed whether the encoder's target buffer differs from the one it was last handed, which is the
+     *                subset any state shadow would still have to make
+     */
+    public static void argBufferSet(final boolean changed) {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferSetCalls++;
+        if (changed) {
+            argBufferSetChanges++;
+        }
+    }
+
+    /** One texture descriptor written into an argument buffer. */
+    public static void argBufferTextureWrite() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferTextureWrites++;
+    }
+
+    /** One sampler descriptor written into an argument buffer. */
+    public static void argBufferSamplerWrite() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferSamplerWrites++;
+    }
+
+    /** One buffer descriptor written into an argument buffer. */
+    public static void argBufferBufferWrite() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferBufferWrites++;
+    }
+
+    /**
+     * One {@code useResource} call on an encoder, which the argument path makes per resource per layout because
+     * the resource is resident in a buffer Metal cannot see through.
+     */
+    public static void argBufferUseResource() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferUseResourceCalls++;
+    }
+
+    /** One draw whose compiled pipeline has at least one argument buffer. */
+    public static void argBufferDraw() {
+        if (!armed()) {
+            return;
+        }
+
+        argBufferDraws++;
+    }
+
+    /** A logical render pass took the native render encoder already open. */
+    public static void renderEncoderReused() {
+        if (!armed()) {
+            return;
+        }
+
+        encReuseAttempts++;
+        encReuseReused++;
+    }
+
+    /**
+     * A logical render pass could not join the open encoder, and which halves of the condition refused it.
+     * <p>
+     * The causes are passed one at a time rather than as a bitmask so that every entry point here opens with
+     * the armed guard: a {@code public static} constant that opens no body is read by this file's own contract
+     * as an unguarded entry point, and it was right to refuse it.
+     *
+     * @param noEncoder what is open is not a render encoder at all
+     * @param clear     the pass carries a clear, which an encoder opened without one cannot take
+     * @param color     the colour attachment handles differ
+     * @param depth     the depth attachment handle differs
+     * @param contents  the declared attachment contents differ
+     */
+    public static void renderEncoderRecreated(final boolean noEncoder, final boolean clear, final boolean color,
+            final boolean depth, final boolean contents) {
+        if (!armed()) {
+            return;
+        }
+
+        encReuseAttempts++;
+        int counted = 0;
+        if (noEncoder) {
+            encReuseNoEncoder++;
+            counted++;
+        }
+        if (clear) {
+            encReuseClear++;
+            counted++;
+        }
+        if (color) {
+            encReuseColor++;
+            counted++;
+        }
+        if (depth) {
+            encReuseDepth++;
+            counted++;
+        }
+        if (contents) {
+            encReuseContents++;
+            counted++;
+        }
+
+        // The exclusive bucket, so that these sum to the encoders the frame really built and cannot
+        // double-count a pass that failed two conditions at once.
+        if (counted > 1) {
+            encReuseMultiple++;
+        } else if (clear) {
+            encReuseSingleClear++;
+        } else if (color) {
+            encReuseSingleColor++;
+        } else if (depth) {
+            encReuseSingleDepth++;
+        } else if (contents) {
+            encReuseSingleContents++;
+        } else {
+            encReuseSingleNoEncoder++;
+        }
     }
 
     /**
@@ -671,6 +887,46 @@ public final class MetalFrameProbe {
                 percentile(gpuTimes, gpuSamples, 0.99),
                 percentile(gpuTimes, gpuSamples, 1.00)
         );
+        if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0) {
+            Metallum.LOGGER.info(
+                    "frame-probe argbuffers passes={} layouts={} allocations={} allocationMiB={} "
+                            + "setCalls={} setChanges={} textureWrites={} samplerWrites={} bufferWrites={} "
+                            + "useResourceCalls={} draws={}",
+                    argBufferPasses,
+                    argBufferLayouts,
+                    argBufferAllocations,
+                    String.format(Locale.ROOT, "%.3f", argBufferAllocationBytes / (1024.0 * 1024.0)),
+                    argBufferSetCalls,
+                    argBufferSetChanges,
+                    argBufferTextureWrites,
+                    argBufferSamplerWrites,
+                    argBufferBufferWrites,
+                    argBufferUseResourceCalls,
+                    argBufferDraws
+            );
+        }
+        if (encReuseAttempts > 0) {
+            Metallum.LOGGER.info(
+                    "frame-probe encoderreuse attempts={} reused={} recreated={} reusePercent={} "
+                            + "noEncoder={} clear={} color={} depth={} contents={} multiple={} "
+                            + "onlyClear={} onlyColor={} onlyDepth={} onlyContents={} onlyNoEncoder={}",
+                    encReuseAttempts,
+                    encReuseReused,
+                    encReuseAttempts - encReuseReused,
+                    String.format(Locale.ROOT, "%.1f", 100.0 * encReuseReused / encReuseAttempts),
+                    encReuseNoEncoder,
+                    encReuseClear,
+                    encReuseColor,
+                    encReuseDepth,
+                    encReuseContents,
+                    encReuseMultiple,
+                    encReuseSingleClear,
+                    encReuseSingleColor,
+                    encReuseSingleDepth,
+                    encReuseSingleContents,
+                    encReuseSingleNoEncoder
+            );
+        }
         censusClosed = true;
         reset();
 
@@ -767,6 +1023,30 @@ public final class MetalFrameProbe {
         buffers = 0;
         viewports = 0;
         scissors = 0;
+        argBufferPasses = 0;
+        argBufferLayouts = 0;
+        argBufferAllocations = 0;
+        argBufferAllocationBytes = 0L;
+        argBufferSetCalls = 0;
+        argBufferSetChanges = 0;
+        argBufferTextureWrites = 0;
+        argBufferSamplerWrites = 0;
+        argBufferBufferWrites = 0;
+        argBufferUseResourceCalls = 0;
+        argBufferDraws = 0;
+        encReuseAttempts = 0;
+        encReuseReused = 0;
+        encReuseNoEncoder = 0;
+        encReuseClear = 0;
+        encReuseColor = 0;
+        encReuseDepth = 0;
+        encReuseContents = 0;
+        encReuseSingleClear = 0;
+        encReuseSingleColor = 0;
+        encReuseSingleDepth = 0;
+        encReuseSingleContents = 0;
+        encReuseSingleNoEncoder = 0;
+        encReuseMultiple = 0;
     }
 
     /**

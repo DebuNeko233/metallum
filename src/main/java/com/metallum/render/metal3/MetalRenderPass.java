@@ -80,6 +80,14 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     private final HashMap<String, TextureViewAndSampler> samplers = new HashMap<>();
     private final BitSet dirtyDescriptors = new BitSet();
     private final HashMap<MetalCompiledRenderPipeline.ArgumentBufferLayout, MTLBuffer> argumentBufferStates = new HashMap<>();
+
+    /**
+     * What each compiled pipeline's {@code MTLArgumentEncoder} was last handed, for the rebinding census only.
+     * An identity map because the key is the native wrapper object itself: two layouts that compare equal would
+     * still be two encoders, and only the object says which one a set would retarget. Cleared wherever the
+     * buffers are, because the encoders belong to the compiled pipeline that is changing.
+     */
+    private final java.util.IdentityHashMap<Object, MTLBuffer> argEncoderTargets = new java.util.IdentityHashMap<>();
     @Nullable
     private MetalCompiledRenderPipeline compiledPipeline;
     @Nullable
@@ -203,6 +211,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         if (this.compiledPipeline != compiled) {
             this.compiledPipeline = compiled;
             this.argumentBufferStates.clear();
+            this.argEncoderTargets.clear();
             vertexBuffersDirty = true;
             pipelineDirty = true;
         }
@@ -653,6 +662,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         if (compiledPipeline == null) {
             throw new IllegalStateException("Pipeline is missing");
         }
+        if (compiledPipeline.usesArgumentBuffers()) {
+            MetalFrameProbe.argBufferDraw();
+        }
         if (pipelineDirty) {
             boolean useDepth = depthAttachmentFormat().value != MTLPixelFormat.Invalid.value;
             MemorySegment pipelineHandle = compiledPipeline.getNativePipeline(useDepth);
@@ -740,7 +752,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     }
 
     private void ensureArgumentBuffersBound(final MTLRenderCommandEncoder enc) {
+        MetalFrameProbe.argBufferPass();
         for (MetalCompiledRenderPipeline.ArgumentBufferLayout layout : compiledPipeline.argumentBuffers()) {
+            MetalFrameProbe.argBufferLayout();
             MTLBuffer buffer = argumentBufferStates.get(layout);
             if (buffer == null) {
                 long length = Math.max(1L, layout.encodedLength());
@@ -748,11 +762,12 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                         length,
                         MTLResourceOptions.of(MTLStorageMode.Shared, MTLHazardTrackingMode.Tracked)
                 );
+                MetalFrameProbe.argBufferAllocated(length);
                 commandEncoder.queueForDestroy(() -> ObjC.release(created.handle()));
                 argumentBufferStates.put(layout, created);
                 buffer = created;
             }
-            layout.encoder().setArgumentBuffer(buffer, 0L);
+            setArgumentBuffer(layout, buffer);
             if (layout.stageMask() == MetalCompiledRenderPipeline.STAGE_VERTEX) {
                 MetalFrameProbe.bufferBound();
                 enc.setVertexBuffer(buffer, 0L, layout.bufferIndex());
@@ -819,11 +834,14 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             MetalGpuSampler sampler = (MetalGpuSampler) textureBinding.sampler();
             forEachArgumentLayout(binding, layout -> {
                 MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
-                layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+                setArgumentBuffer(layout, argumentBuffer);
                 MetalFrameProbe.textureBound();
+                MetalFrameProbe.argBufferTextureWrite();
                 layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());
                 MetalFrameProbe.samplerBound();
+                MetalFrameProbe.argBufferSamplerWrite();
                 layout.encoder().setSamplerState(sampler.nativeHandle(), binding.samplerMetalIndex());
+                MetalFrameProbe.argBufferUseResource();
                 enc.useResource(
                         textureView.nativeHandle(),
                         MTLRenderCommandEncoder.RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_SAMPLE,
@@ -838,9 +856,11 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             noteGraphicsStorageImageWrite(textureView);
             forEachArgumentLayout(binding, layout -> {
                 MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
-                layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+                setArgumentBuffer(layout, argumentBuffer);
                 MetalFrameProbe.textureBound();
+                MetalFrameProbe.argBufferTextureWrite();
                 layout.encoder().setTexture(textureView.nativeHandle(), binding.metalIndex());
+                MetalFrameProbe.argBufferUseResource();
                 enc.useResource(
                         textureView.nativeHandle(),
                         MTLRenderCommandEncoder.RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_WRITE,
@@ -861,9 +881,11 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                 : MTLRenderCommandEncoder.RESOURCE_USAGE_READ;
         forEachArgumentLayout(binding, layout -> {
             MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
-            layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+            setArgumentBuffer(layout, argumentBuffer);
             MetalFrameProbe.bufferBound();
+            MetalFrameProbe.argBufferBufferWrite();
             layout.encoder().setBuffer(uniformBuffer.metalBuffer(), uniformSlice.offset(), binding.metalIndex());
+            MetalFrameProbe.argBufferUseResource();
             enc.useResource(uniformBuffer.nativeHandle(), usage, renderStage(layout.stageMask()));
         });
     }
@@ -883,9 +905,11 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         MemorySegment texelTexture = createTexelBufferTexture(binding);
         forEachArgumentLayout(binding, layout -> {
             MTLBuffer argumentBuffer = requireArgumentBuffer(layout);
-            layout.encoder().setArgumentBuffer(argumentBuffer, 0L);
+            setArgumentBuffer(layout, argumentBuffer);
             MetalFrameProbe.textureBound();
+            MetalFrameProbe.argBufferTextureWrite();
             layout.encoder().setTexture(texelTexture, binding.metalIndex());
+            MetalFrameProbe.argBufferUseResource();
             enc.useResource(
                     texelTexture,
                     MTLRenderCommandEncoder.RESOURCE_USAGE_READ | MTLRenderCommandEncoder.RESOURCE_USAGE_SAMPLE,
@@ -949,6 +973,26 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             throw new IllegalStateException("Uniform " + binding.name() + " buffer has been closed");
         }
         return slice;
+    }
+
+    /**
+     * Hands one layout's encoder its buffer, and counts the call against the last buffer that encoder was
+     * handed.
+     * <p>
+     * <strong>The call is made exactly as before and nothing is skipped.</strong> What is new is that the census
+     * can tell the two costs apart - a call that retargets the encoder and a call that hands it the buffer it
+     * already holds - because those are the two answers that decide whether a binding-state shadow is worth
+     * writing. The shadow the census needs is kept only while the probe is armed and keyed by the encoder
+     * OBJECT, because an argument encoder belongs to a compiled pipeline and is reused across passes.
+     */
+    private void setArgumentBuffer(
+            final MetalCompiledRenderPipeline.ArgumentBufferLayout layout,
+            final MTLBuffer buffer
+    ) {
+        if (MetalFrameProbe.armed()) {
+            MetalFrameProbe.argBufferSet(argEncoderTargets.put(layout.encoder(), buffer) != buffer);
+        }
+        layout.encoder().setArgumentBuffer(buffer, 0L);
     }
 
     private MTLBuffer requireArgumentBuffer(final MetalCompiledRenderPipeline.ArgumentBufferLayout layout) {

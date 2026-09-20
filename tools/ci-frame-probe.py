@@ -429,11 +429,15 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 20:
+if len(guarded) != 31:
     raise SystemExit(
-        "frame probe: expected 20 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame probe: expected 31 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
-        "kinds, pipeline creation, the pipeline census, the drawable wait and the submit-window wait), found "
+        "kinds, pipeline creation, the pipeline census, the drawable wait, the submit-window wait, and the "
+        "eleven the Metal 3 backend-cost census added: nine for the argument-buffer path - a pass, a layout, "
+        "an allocation, a set call, a texture write, a sampler write, a buffer write, a useResource call and a "
+        "draw - and two for the render-encoder reuse census, one for the reuse taken and one for the recreation "
+        "with its causes), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
