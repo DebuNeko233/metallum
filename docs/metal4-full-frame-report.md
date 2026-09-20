@@ -720,7 +720,16 @@ answered rather than only what is left.
    and never the history target, so `colortex2Clear = false` is honoured and a clear is **eliminated** as the cause.
    The native smoke for this exact dependency (`canSampleAfterCopy`) is 50 of 50 on this device, so what is missing
    is in the frame path - and the instrument that names it is the *sampled* texture per pass, which the trace does
-   not print yet. Section 67 stops the staircase here.
+   not print yet - and **that list has since been added, and it takes the binding side off the list**: in all 1783
+   endings of a traced session every history pass samples exactly the copy the pass before it wrote
+   (`composite` writes `0x..de00` and samples `0x..db80`, `composite1` writes `0x..db80` and samples `0x..de00`,
+   `composite2` writes `0x..de00` and samples `0x..db80`), and the reason those bindings do not change between
+   frames is that Vitrail exchanges the halves by *copying* (`ColorTargets.copyBack`: "1 targets are copied back
+   from their far half at the end of every frame"). That copy is one engine call, `copyTextureToTexture`, which
+   this path implements with both textures declared resident, the right selector and the right argument order,
+   and throws rather than returning quietly. So the question narrows to **where in the frame that copy is
+   encoded**: after this frame's commit it would land in the next frame, behind the pass that needed it.
+   Section 67 stops the staircase here.
 
 ## Metal 4 full-frame implementation complete?
 

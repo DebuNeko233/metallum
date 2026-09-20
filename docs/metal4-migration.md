@@ -2287,6 +2287,36 @@ next instrument: the two together say whether the binding points at the wrong co
 right copy whose write did not land. Section 67 says the staircase stops at an M3 PASS / M4 FAIL, so it stops here
 - one rung past depth and deferred/mipmap, at history.
 
+### And the bindings are right: the history's exchange is a copy, and the copy is a call
+
+The next instrument was the *sampled* texture a pass bound, because the attachments alone cannot tell a wrong copy
+from a write that did not land. It is now on the trace line, and what it says takes the binding side off the list:
+in all 1783 endings of a traced Metal 4 session,
+
+```text
+Vitrail composite    writes 0x..de00            samples colortex2=0x..db80
+Vitrail composite1   writes 0x..db80            samples colortex2=0x..de00
+Vitrail composite2   writes 0x..d900,0x..de00   samples colortex2=0x..db80
+```
+
+- **every pass samples exactly the copy the pass before it wrote**, which is what a doubled target's ping pong is
+supposed to do, and the pattern is identical in every one of those 1783 endings. So it is not a mis-bound copy.
+
+**And the pattern not changing between frames is not a frozen phase either: Vitrail exchanges the halves by
+copying, not by rebinding.** Its own record says why - `ColorTargets.copyBack` copies the alternate half over the
+main one at the end of every frame, "and the exchange alternates for as long as the pack stays loaded" - and the
+session agrees with it: `1 targets are copied back from their far half at the end of every frame, because the pack
+keeps them`. The engine call that carries it is `encoder.copyTextureToTexture(from, to, 0, 0, 0, 0, 0, w, h)`, and
+on this path that call is implemented, declares **both** textures resident (the measured law here is that an
+undeclared resource makes a copy do nothing at all), maps to
+`copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:...` with the source first and the
+destination second, and throws rather than returning quietly when the copy pass refuses. So the call itself is not
+obviously the fault either, and the question narrows to **where in the frame that copy is encoded**: Vitrail's
+contract for it is "outside any render pass, and after the last one of the frame", and a copy encoded after this
+frame's commit would land in the next frame - after the pass that needed it had already read the main half, which
+is exactly the stale read the fixture reports. Putting the copy's frame-relative position on the trace is the next
+instrument.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it

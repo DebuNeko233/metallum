@@ -290,9 +290,9 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         if (TRACE) {
             Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={} colours={}"
-                            + " load={} store={} clear={}",
+                            + " load={} store={} clear={} samples=[{}]",
                     label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled,
-                    colours(), load0(), store0(), this.cleared0);
+                    colours(), load0(), store0(), this.cleared0, sampledTextures());
         }
         releaseTables();
         if (!this.encoder.open()) {
@@ -309,6 +309,34 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private AttachmentContents @Nullable [] statedContents;
     private MemorySegment @Nullable [] colourHandles;
     private boolean cleared0;
+
+    /**
+     * The textures this pass *sampled*, by the name the pack bound them under, so a pass's reads and its writes can
+     * be compared in one line.
+     * <p>
+     * This is the second half of a question the attachments alone could not answer: on a target the pack doubles
+     * for history, two physical textures stand for one logical name, and a pass that samples the copy it is about
+     * to write reads its own target's initial content instead of what the pass before it wrote. Attachments say
+     * which copy each pass wrote; this says which copy each one read.
+     */
+    private String sampledTextures() {
+        if (this.textureBindings.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        int shown = 0;
+        for (Map.Entry<String, Sampled> entry : this.textureBindings.entrySet()) {
+            if (shown++ == 8) {
+                text.append(",...");
+                break;
+            }
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(entry.getKey()).append("=0x").append(Long.toHexString(entry.getValue().texture().address()));
+        }
+        return text.toString();
+    }
 
     /**
      * Every colour texture this pass attached, as handles, so a reader can tell which target a pass wrote - and,

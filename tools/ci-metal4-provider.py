@@ -1602,4 +1602,20 @@ for needle, why in (
     if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and the trace says what a pass read as well as what it wrote -------------------------------------------
+# A pass's attachments alone cannot answer the history question: on a target the pack doubles for history, two
+# physical textures stand for one logical name, and "the pass read the copy it is about to write" and "the pass read
+# the right copy whose write did not land" look identical from the write side. Measured with this line: every
+# history pass samples exactly the copy the pass before it wrote (composite writes 0x..de00 and samples 0x..db80,
+# composite1 writes 0x..db80 and samples 0x..de00, composite2 writes 0x..de00 and samples 0x..db80), in all 1783
+# endings of the run - so the binding is not what breaks the chain, and the round that added this stopped having to
+# argue about it.
+for needle, why in (
+    ("private String sampledTextures() {",
+     "the trace cannot say which texture a pass sampled, so a wrong copy and an unlanded write read the same"),
+    ("samples=[{}]", "the sampled textures are not printed on the pass's own line"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")
