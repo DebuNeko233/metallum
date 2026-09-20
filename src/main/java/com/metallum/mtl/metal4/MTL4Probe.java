@@ -3859,6 +3859,266 @@ public final class MTL4Probe {
         }
     }
 
+    /** The two colours the write-after-read smoke needs: what the reader sees, and what the writer puts. */
+    private static final int[] WAR_READ_PIXEL = {30, 60, 90, 255};
+    private static final int[] WAR_WRITE_PIXEL = {200, 100, 50, 255};
+
+    /**
+     * Whether a write encoded after a read is ordered after it - the third direction of section 61's list.
+     * <p>
+     * Every other fixture in this probe is a producer writing something a consumer then reads. This one is the
+     * other way round and it is the direction a frame's own reuse takes: **a pass samples a texture, and a later
+     * encoder writes that same texture**. A driver that let the write overtake the read would give the reader the
+     * new contents, and nothing in a picture would say so - the target would simply hold a plausible colour.
+     * <p>
+     * So the reading is two facts and both are checked: the reader's target must hold what the texture held
+     * <em>before</em> the write, and the texture must hold what the writer put there. A target holding the
+     * writer's colour is the ordering failure this fixture exists for; a texture that still holds the reader's
+     * colour is a write that never landed.
+     * <p>
+     * The reader is a render pass sampling through a table and the writer is a dispatch through a table of its
+     * own, so the two encoders in the middle of the sequence are of different kinds - which is the shape a
+     * pack's composite-then-compute frame has.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether the write was ordered after the read and landed
+     */
+    public static boolean canWriteAfterRead(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("writeAfterRead", "the device does not answer one of the factories this sequence's"
+                    + " queue, allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment texture = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment sampledPipeline = MemorySegment.NULL;
+        MemorySegment writerFunction = MemorySegment.NULL;
+        MemorySegment writerPipeline = MemorySegment.NULL;
+        MTLBuffer colour = null;
+        MTL4ArgumentTable sampledTable = null;
+        MTL4ArgumentTable writerTable = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder writer = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("writeAfterRead", "a Metal 4 queue, allocator, command buffer or shared event came"
+                        + " back nil");
+            }
+
+            // The texture is all three things: the reader's render target is a different texture, this one is
+            // cleared as a target, sampled as a read and written as a storage image.
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(TARGET_SIZE);
+                descriptor.height(TARGET_SIZE);
+                descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ | USAGE_SHADER_WRITE);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                texture = device.newTexture(descriptor);
+            }
+            target = newTarget(device);
+            if (ObjC.isNil(texture) || ObjC.isNil(target)) {
+                return failed("writeAfterRead", "the texture both encoders touch or the reader's target came back"
+                        + " nil");
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("writeAfterRead", "newSamplerStateWithDescriptor: answered nil, so the reader has"
+                        + " nothing to sample the texture with");
+            }
+
+            colour = device.newBuffer(16L, STORAGE_SHARED);
+            if (colour == null || colour.gpuAddress() == 0L) {
+                return failed("writeAfterRead", "the colour the writer puts into the texture came back nil or"
+                        + " without a GPU address");
+            }
+            writeColor(colour, WAR_WRITE_PIXEL);
+
+            sampledPipeline = MTLBuiltinPipelines.buildPipelineForProbe(SAMPLED_DRAW_MSL,
+                    "metallum_sampled_probe_vs", "metallum_sampled_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            writerFunction = device.newFunction(STORAGE_WRITE_MSL, "metallum_storage_write_probe");
+            if (ObjC.isNil(sampledPipeline) || ObjC.isNil(writerFunction)) {
+                return failed("writeAfterRead", "the reader's pipeline or the writer's kernel came back nil");
+            }
+            writerPipeline = device.newComputePipelineState(writerFunction);
+            if (ObjC.isNil(writerPipeline)) {
+                return failed("writeAfterRead", "the writer's compute pipeline came back nil");
+            }
+
+            sampledTable = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            writerTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            if (sampledTable == null || writerTable == null
+                    || !sampledTable.texture(texture, 0L) || !sampledTable.sampler(sampler, 0L)
+                    || !writerTable.address(colour.gpuAddress(), 0L) || !writerTable.texture(texture, 0L)) {
+                return failed("writeAfterRead", "a table this smoke needs would not take its resources");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the write-after-read smoke");
+            if (resident == null || !resident.add(texture) || !resident.add(target)
+                    || !resident.add(colour.handle())
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("writeAfterRead", "the smoke could not declare its texture, target and colour"
+                        + " resident, and an undeclared resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+
+            // The first write: the texture's starting contents, which the reader has to see.
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(texture, colorOf(WAR_READ_PIXEL))},
+                    "the write-after-read smoke's first write")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed("writeAfterRead", "the pass that gives the texture its starting contents does not"
+                            + " answer the producer barrier, so the reader has no encoded dependency on it");
+                }
+            }
+
+            // The read: a pass that samples the texture through a table, so what it read is a pixel of its own
+            // target.
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    "the write-after-read smoke's reader")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.setCullMode(MTLCullMode.None.value)
+                        || !pass.setRenderPipelineState(sampledPipeline)
+                        || !pass.setArgumentTable(sampledTable, STAGE_FRAGMENT)
+                        || !pass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                    END.send(buffer);
+                    return failed("writeAfterRead", "the reader refused one of the commands it needs - the cull"
+                            + " mode, the pipeline, the table or the draw");
+                }
+                // The reader is the producer the writer must be ordered against, so its barrier is the one that
+                // says so.
+                if (!pass.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed("writeAfterRead", "the reader does not answer the producer barrier, so the"
+                            + " write that follows it has no encoded dependency on the read");
+                }
+            }
+
+            // The write, in an encoder of its own: the same texture the reader just sampled.
+            try {
+                writer = MTL4ComputeEncoder.open(device, buffer, "the write-after-read smoke's writer");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("writeAfterRead", "the writer's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (!writer.setComputePipelineState(writerPipeline) || !writer.setArgumentTable(writerTable)) {
+                END.send(buffer);
+                return failed("writeAfterRead", "the writer's encoder did not take the kernel's pipeline and its"
+                        + " table");
+            }
+            if (!writer.dispatchThreads(TARGET_SIZE, TARGET_SIZE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("writeAfterRead", "the write over the texture's own extent was not encoded");
+            }
+            if (!writer.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("writeAfterRead", "the writer's encoder does not answer the producer barrier");
+            }
+            writer.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("writeAfterRead", "the shared event did not reach 1 within 2000 ms, so the read and"
+                        + " the write after it never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // What the reader saw: the texture's contents before the write.
+                for (long[] at : new long[][]{{8L, 8L}, {TARGET_SIZE - 1L, TARGET_SIZE - 1L}, {31L, 15L}}) {
+                    MTLTexture.bytes(target, pixel, 4L, at[0], at[1], 1L, 1L);
+                    if (matches(pixel, WAR_WRITE_PIXEL)) {
+                        return failed("writeAfterRead", "the reader's target at (" + at[0] + ", " + at[1] + ") holds"
+                                + " the colour the later write put into the texture, so the write was ordered before"
+                                + " the read that sampled it");
+                    }
+                    if (matches(pixel, CLEAR_PIXEL)) {
+                        return failed("writeAfterRead", "the reader drew nothing at (" + at[0] + ", " + at[1] + "):"
+                                + " its target reads the clear colour, so the sample did not reach it");
+                    }
+                    if (!matches(pixel, WAR_READ_PIXEL)) {
+                        return failed("writeAfterRead", "the reader's target at (" + at[0] + ", " + at[1] + ") reads "
+                                + describe(pixel) + " where the texture held " + describe(WAR_READ_PIXEL) + " when it"
+                                + " was sampled");
+                    }
+                }
+
+                // And that the write landed at all.
+                MTLTexture.bytes(texture, pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, WAR_WRITE_PIXEL)) {
+                    return failed("writeAfterRead", "the texture reads " + describe(pixel) + " where the write after"
+                            + " the read put " + describe(WAR_WRITE_PIXEL) + ", so the write never landed");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("writeAfterRead", "encoding, submitting or reading back the write-after-read sequence"
+                    + " threw " + threw);
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (writerTable != null) {
+                writerTable.close();
+            }
+            if (sampledTable != null) {
+                sampledTable.close();
+            }
+            releaseIfPresent(writerPipeline);
+            releaseIfPresent(writerFunction);
+            releaseIfPresent(sampledPipeline);
+            releaseIfPresent(sampler);
+            releaseIfPresent(target);
+            releaseIfPresent(texture);
+            releaseIfPresent(colour);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
     private static final int MIP_LEVELS = 3;
     private static final int MIP_PREFILLED = 200;

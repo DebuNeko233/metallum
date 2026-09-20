@@ -499,6 +499,16 @@ for needle, why in (
      "the driver does not count the compute-to-compute smoke's failures"),
     ("if (( compute_chain_failures > 0 )); then",
      "the driver counts the compute-to-compute smoke's failures and does not fail the run on them"),
+    # And the third direction, whose failure is a write that overtook a read.
+    ('+ " writeAfterRead=" + writeAfterRead',
+     "the harness does not print the write-after-read smoke's answer"),
+    ('+ " writeAfterReadReason=" + writeAfterReadReason',
+     "the harness does not print why the write-after-read smoke failed"),
+    ("MTL4Probe.canWriteAfterRead(device)", "the harness never asks the write-after-read smoke"),
+    ("write_after_read_failures=\"$(grep -c ' writeAfterRead=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the write-after-read smoke's failures"),
+    ("if (( write_after_read_failures > 0 )); then",
+     "the driver counts the write-after-read smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -1051,6 +1061,37 @@ for needle, why in (
     ('" still holds the"', "the sentinel is not refused, so a chain that never ran could pass"),
 ):
     if needle not in chain:
+        raise SystemExit("cold-probe harness: " + why)
+
+# --- write-after-read, the direction whose failure is a write that overtook a read --------------------------
+if "public static boolean canWriteAfterRead(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the write-after-read smoke is gone, so the harness's writeAfterRead "
+                     "field would report a call that is not there")
+war = engine_probe_source[engine_probe_source.index("public static boolean canWriteAfterRead("):]
+war = war[:war.index("/** How many levels the mipmap smoke asks for")]
+for needle, why in (
+    ("descriptor.usage(USAGE_RENDER_TARGET | USAGE_SHADER_READ | USAGE_SHADER_WRITE);",
+     "the texture the reader samples and the writer writes does not declare all three usages, so one of the two"
+     " would be refused"),
+    ("|| !sampledTable.texture(texture, 0L) || !sampledTable.sampler(sampler, 0L)",
+     "the reader's table is not given the texture and its sampler"),
+    ("|| !writerTable.address(colour.gpuAddress(), 0L) || !writerTable.texture(texture, 0L)) {",
+     "the writer's table is not given the colour and the same texture"),
+    ("if (!pass.barrierForSubsequentEncoders()) {\n                    END.send(buffer);\n"
+     "                    return failed(\"writeAfterRead\", \"the reader does not answer the producer barrier",
+     "the reader does not barrier, so the write after it has no encoded dependency on the read"),
+    ('writer = MTL4ComputeEncoder.open(device, buffer, "the write-after-read smoke\'s writer");',
+     "the writing dispatch has no encoder of its own"),
+    ("if (matches(pixel, WAR_WRITE_PIXEL)) {",
+     "the reader's target is not checked against the colour the later write put in, which is the ordering failure"
+     " this fixture exists for"),
+    ("so the write was ordered before", "the ordering failure is not named as itself"),
+    ("if (!matches(pixel, WAR_READ_PIXEL)) {",
+     "the reader's target is not compared against what the texture held before the write"),
+    ("if (!matches(pixel, WAR_WRITE_PIXEL)) {\n                    return failed(\"writeAfterRead\", \"the texture reads ",
+     "the texture is not read back, so a write that never landed would pass"),
+):
+    if needle not in war:
         raise SystemExit("cold-probe harness: " + why)
 
 # And the native calls themselves, where the commands live.

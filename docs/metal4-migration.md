@@ -2419,12 +2419,22 @@ in the census, **50 of 50 on all seven dependency fields** - and it is the case 
 unmeasured while the client's compute fixture happened to pass, because the picture of that fixture is not
 available on this machine.
 
-Section 61 asks for each case to be classified, and the list above is one column of that table: **every
-dependency fixture here is a read-after-write**, which is the direction a producer's barrier is encoded for.
-Write-after-write is measured too, though not as a dependency fixture - `canWriteStorageImage` is two dispatches
-writing the same texture through two tables, and what it reads is the second write, so the write the encoder
-after it must see is the one that landed last. **Write-after-read is not measured at all**: a fixture where a
-pass samples a texture and a later encoder writes it needs its own smoke, and it is the next one in this slice.
+**Section 61's three directions are all measured now.** The list above is one of them - **read-after-write**,
+which is the direction a producer's barrier is encoded for. The other two are fixtures of their own:
+
+- **write-after-write**: `canWriteStorageImage` is two dispatches writing the same texture through two tables,
+  and what it reads is the second write, so the write the encoder after it must see is the one that landed last;
+- **write-after-read**: `canWriteAfterRead`, and this is the direction a frame's own reuse takes - a pass samples
+  a texture through a table and a later dispatch writes that same texture. Its reading is deliberately two
+  facts: the reader's target must hold what the texture held *before* the write, and the texture must hold what
+  the writer put. A target holding the writer's colour is a write that overtook a read, which is the failure
+  this fixture exists for; a texture still holding the reader's colour is a write that never landed. The reader
+  is a render pass and the writer is a dispatch, so the two encoders in the middle of the sequence are of
+  different kinds - the shape a pack's composite-then-compute frame has.
+
+The fixture's own sensitivity was checked rather than assumed: pointing its comparison at the writer's colour
+instead of the reader's makes it fail, so the readback is live and the assertion is not decoration.
+
 The barrier cost section 62 refuses to optimise before the counters exist is a phase-21 measurement rather than
 a correctness question.
 

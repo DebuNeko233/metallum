@@ -47,6 +47,7 @@ import java.util.Optional;
  *                 copyDispatch=&lt;bool&gt; copyDispatchReason=&lt;text&gt;
  *                 renderDispatch=&lt;bool&gt; renderDispatchReason=&lt;text&gt;
  *                 computeChain=&lt;bool&gt; computeChainReason=&lt;text&gt;
+ *                 writeAfterRead=&lt;bool&gt; writeAfterReadReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -234,6 +235,8 @@ public final class Metal4ColdProbe {
         String renderDispatchReason = "-";
         boolean computeChain = false;
         String computeChainReason = "-";
+        boolean writeAfterRead = false;
+        String writeAfterReadReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -339,6 +342,13 @@ public final class Metal4ColdProbe {
             computeChain = makeAndSubmit && MTL4Probe.canDispatchAfterDispatch(device);
             if (!computeChain) {
                 computeChainReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And the other direction of section 61: a pass samples a texture and a later encoder writes that same
+            // texture. The reading is two facts - what the reader saw before the write, and that the write landed -
+            // because a write that overtook the read would leave a plausible colour in the reader's target.
+            writeAfterRead = makeAndSubmit && MTL4Probe.canWriteAfterRead(device);
+            if (!writeAfterRead) {
+                writeAfterReadReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -465,6 +475,8 @@ public final class Metal4ColdProbe {
                     + " renderDispatchReason=" + renderDispatchReason.replace(' ', '_')
                     + " computeChain=" + computeChain
                     + " computeChainReason=" + computeChainReason.replace(' ', '_')
+                    + " writeAfterRead=" + writeAfterRead
+                    + " writeAfterReadReason=" + writeAfterReadReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

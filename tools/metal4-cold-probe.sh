@@ -224,6 +224,9 @@ render_dispatch_failures="$(grep -c ' renderDispatch=false ' "$probe_log" || tru
 # And the chain of two dispatches, which is a different question from either producer above.
 compute_chain_passes="$(grep -c ' computeChain=true ' "$probe_log" || true)"
 compute_chain_failures="$(grep -c ' computeChain=false ' "$probe_log" || true)"
+# And the third direction: a write encoded after a read of the same texture.
+write_after_read_passes="$(grep -c ' writeAfterRead=true ' "$probe_log" || true)"
+write_after_read_failures="$(grep -c ' writeAfterRead=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -264,6 +267,7 @@ echo "copy->pass:      $copy_sample_passes passed   $copy_sample_failures failed
 echo "copy->dispatch:  $copy_dispatch_passes passed   $copy_dispatch_failures failed"
 echo "render->dispatch: $render_dispatch_passes passed   $render_dispatch_failures failed"
 echo "compute->compute: $compute_chain_passes passed   $compute_chain_failures failed"
+echo "read->write (WAR): $write_after_read_passes passed   $write_after_read_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -354,6 +358,11 @@ fi
 
 if (( compute_chain_failures > 0 )); then
 	echo "the compute-to-compute dependency smoke failed in $compute_chain_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( write_after_read_failures > 0 )); then
+	echo "the write-after-read dependency smoke failed in $write_after_read_failures probe(s)" >&2
 	exit 1
 fi
 
