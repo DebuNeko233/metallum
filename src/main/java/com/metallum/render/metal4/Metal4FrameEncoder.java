@@ -2,6 +2,8 @@ package com.metallum.render.metal4;
 
 import com.metallum.Metallum;
 import com.metallum.mtl.CAMetalDrawable;
+import com.metallum.mtl.MTLBuffer;
+import com.metallum.mtl.MTLStorageMode;
 import com.metallum.mtl.MTLBuiltinPipelines;
 import com.metallum.mtl.CAMetalLayer;
 import com.metallum.mtl.MTLDevice;
@@ -45,6 +47,9 @@ import org.joml.Vector4fc;
 import org.jspecify.annotations.NonNull;
 
 import java.lang.foreign.MemorySegment;
+
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -126,6 +131,21 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     private final MetalDevice device;
     /** The queue this encoder was given by the execution services, and which it owns and releases. */
     private MemorySegment queue = MemorySegment.NULL;
+    /**
+     * The presented drawable, copied out so the picture can be read where the display cannot be photographed.
+     * <p>
+     * {@code -Dmetallum.drawableReadback=true} turns the layer's {@code framebufferOnly} off (a drawable that is
+     * framebuffer-only may not be copied from) and makes this path copy the drawable into a shared buffer after
+     * the present pass. The copy belongs to the frame's own command buffer because the drawable is only valid
+     * for the frame that took it, and the pixels are read at the next frame that reuses the slot - which is the
+     * point the ring proved the slot's submission complete. A diagnostic, off by default, and the layer says so
+     * at startup.
+     */
+    private final boolean drawableReadback = com.metallum.mtl.CAMetalLayer.readbackRequested();
+    private final MTLBuffer[] readbackStaging;
+    private final boolean[] readbackPending;
+    private final long[] readbackWidth;
+    private final long[] readbackHeight;
     private final Metal4ExecutionState executionState;
     private final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource;
     private final MTL4FrameRing ring;
@@ -293,6 +313,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         for (int slot = 0; slot < this.deferred.length; slot++) {
             this.deferred[slot] = new ArrayDeque<>();
         }
+        this.readbackStaging = new MTLBuffer[FRAMES_IN_FLIGHT];
+        this.readbackPending = new boolean[FRAMES_IN_FLIGHT];
+        this.readbackWidth = new long[FRAMES_IN_FLIGHT];
+        this.readbackHeight = new long[FRAMES_IN_FLIGHT];
     }
 
     /** The state this encoder was made from, for the helpers that will be handed it rather than the device. */
@@ -425,6 +449,12 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.residency.close();
             this.residency = null;
         }
+        for (int slot = 0; slot < this.readbackStaging.length; slot++) {
+            if (this.readbackStaging[slot] != null) {
+                ObjC.release(this.readbackStaging[slot].handle());
+                this.readbackStaging[slot] = null;
+            }
+        }
         this.ring.close();
         // The queue came from the execution services and nothing else holds it, so this encoder is its owner and
         // releases it here - after the ring, which is the only thing that submits on it. The Metal 3 encoder does
@@ -505,6 +535,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (!this.ring.beginFrame()) {
             throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
         }
+        // The slot's previous submission is complete as of the wait inside beginFrame, so a drawable copied out
+        // of that submission can be read now - the same fact the retire below is allowed to run on.
+        reportDrawableReadback(this.ring.slot());
         // The wait inside beginFrame is what makes this legal: the slot's previous submission has completed, so
         // everything filed against it can be released now.
         retire(this.ring.slot());
@@ -1276,7 +1309,112 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         } finally {
             pass.close();
         }
+        if (this.drawableReadback) {
+            copyDrawableForReadback(drawableTexture, width, height);
+        }
         this.presentDrawables.add(drawable);
+    }
+
+    /**
+     * Copies the drawable into this slot's staging buffer, in the frame's own command buffer.
+     * <p>
+     * Only reachable when the layer was built with {@code framebufferOnly} off, which is what the diagnostic
+     * switch does: a framebuffer-only drawable may not be the source of a copy, and the copy is the only way the
+     * presented pixels reach this process at all - the display cannot be photographed here.
+     */
+    private void copyDrawableForReadback(final MemorySegment drawableTexture, final long width, final long height) {
+        int slot = this.ring.slot();
+        long bytesPerRow = ((width * 4L + 255L) / 256L) * 256L;
+        long bytes = bytesPerRow * height;
+        MTLBuffer staging = this.readbackStaging[slot];
+        if (staging == null || staging.length() < bytes) {
+            if (staging != null) {
+                MemorySegment retired = staging.handle();
+                queueForDestroy(() -> ObjC.release(retired));
+            }
+            // Made on the device this frame executes on, and shared so the CPU can read what the GPU wrote.
+            staging = this.executionState.device().newBuffer(bytes, MTLStorageMode.Shared.value);
+            this.readbackStaging[slot] = staging;
+        }
+        // The address the copy writes through is an address like any other, so the allocation is declared the
+        // same way: an undeclared resource makes a command of this kind do nothing at all, measured.
+        useResource(staging.handle());
+        MTL4ComputeEncoder copies = copyEncoder();
+        if (copies == null || !copies.copyTextureToBuffer(drawableTexture, 0L, 0L, 0L, 0L, 0L, width, height, 1L,
+                staging.handle(), 0L, bytesPerRow, bytesPerRow * height)) {
+            Metallum.LOGGER.warn("Metal 4 drawable readback: the copy of the presented drawable could not be"
+                    + " encoded, so this frame's picture is not read");
+            return;
+        }
+        copies.barrierForSubsequentEncoders();
+        this.readbackPending[slot] = true;
+        this.readbackWidth[slot] = width;
+        this.readbackHeight[slot] = height;
+    }
+
+    /**
+     * Reads and reports the drawable a slot copied, once that slot's submission is known complete.
+     * <p>
+     * Called from {@link #beginFrameIfNeeded()} right after the ring has waited for the slot, which is the same
+     * fact the deferred releases are run on. What it prints is deliberately small and structural - a five by
+     * five grid of samples, top row first, and the mean of each channel - because the questions it exists to
+     * answer are whether the presented image has anything in it at all, whether it is the right way up, and
+     * whether it is the colour the fixture asked for. The layer is BGRA8, so the bytes are blue, green, red,
+     * alpha and the report says them in that order.
+     */
+    private void reportDrawableReadback(final int slot) {
+        if (!this.readbackPending[slot]) {
+            return;
+        }
+        this.readbackPending[slot] = false;
+        MTLBuffer staging = this.readbackStaging[slot];
+        long width = this.readbackWidth[slot];
+        long height = this.readbackHeight[slot];
+        if (staging == null || width <= 0L || height <= 0L) {
+            return;
+        }
+        long bytesPerRow = ((width * 4L + 255L) / 256L) * 256L;
+        MemorySegment pixels = staging.contents().reinterpret(bytesPerRow * height);
+        StringBuilder grid = new StringBuilder();
+        long[] mean = new long[4];
+        long counted = 0L;
+        for (int row = 0; row < 5; row++) {
+            long y = Math.min(height - 1L, row * (height - 1L) / 4L);
+            if (row > 0) {
+                grid.append(' ');
+            }
+            for (int column = 0; column < 5; column++) {
+                long x = Math.min(width - 1L, column * (width - 1L) / 4L);
+                long at = y * bytesPerRow + x * 4L;
+                long blue = pixels.get(JAVA_BYTE, at) & 0xFF;
+                long green = pixels.get(JAVA_BYTE, at + 1L) & 0xFF;
+                long red = pixels.get(JAVA_BYTE, at + 2L) & 0xFF;
+                long alpha = pixels.get(JAVA_BYTE, at + 3L) & 0xFF;
+                if (column > 0) {
+                    grid.append(',');
+                }
+                grid.append(String.format("%02x%02x%02x%02x", alpha, red, green, blue));
+            }
+        }
+        // The mean over a sparse grid of the whole surface: every sixteenth pixel in both directions, so the
+        // reading costs a few thousand loads rather than a few million.
+        for (long y = 0L; y < height; y += 16L) {
+            for (long x = 0L; x < width; x += 16L) {
+                long at = y * bytesPerRow + x * 4L;
+                mean[0] += pixels.get(JAVA_BYTE, at) & 0xFF;
+                mean[1] += pixels.get(JAVA_BYTE, at + 1L) & 0xFF;
+                mean[2] += pixels.get(JAVA_BYTE, at + 2L) & 0xFF;
+                mean[3] += pixels.get(JAVA_BYTE, at + 3L) & 0xFF;
+                counted++;
+            }
+        }
+        if (counted == 0L) {
+            counted = 1L;
+        }
+        Metallum.LOGGER.info("Metal 4 drawable readback: {}x{} ARGB rows(top first)=[{}] meanBGRA=({}, {}, {}, {})"
+                        + " over {} samples",
+                width, height, grid, mean[0] / counted, mean[1] / counted, mean[2] / counted, mean[3] / counted,
+                counted);
     }
 
     /**

@@ -28,15 +28,41 @@ public final class CAMetalLayer {
     private final MemorySegment handle;
     private boolean released;
 
+    /**
+     * Whether the drawable may be read instead of only drawn into.
+     * <p>
+     * {@code framebufferOnly} is true by default and it is what lets the layer keep the drawable's storage in
+     * whatever form is cheapest to scan out; a texture that is framebuffer-only may not be the source of a copy,
+     * so the presented pixels are unreachable to this process. That is the whole reason the picture column of
+     * every measurement session is empty: the display cannot be photographed here, and the drawable could not be
+     * read.
+     * <p>
+     * Turning it off is a **diagnostic**, not a default: it changes the layer's contract and may cost scan-out
+     * performance, so it is read from {@code -Dmetallum.drawableReadback=true} and nowhere else, and the session
+     * says out loud that it is on.
+     */
+    private static final boolean READBACK =
+            Boolean.parseBoolean(System.getProperty("metallum.drawableReadback", "false"));
+
+    /** Whether this session asked to read the presented drawable back, for the frame path to honour. */
+    public static boolean readbackRequested() {
+        return READBACK;
+    }
+
     public CAMetalLayer(final MTLDevice device, final double contentsScale) {
         this.handle = NEW.sendPtr(CLS);
         if (ObjC.isNil(this.handle)) {
             throw new IllegalStateException("Failed to create CAMetalLayer");
         }
         SET_DEVICE.send(this.handle, device.handle());
-        SET_FRAMEBUFFER_ONLY.send(this.handle, true);
+        SET_FRAMEBUFFER_ONLY.send(this.handle, !READBACK);
         SET_OPAQUE.send(this.handle, true);
         SET_CONTENTS_SCALE.send(this.handle, contentsScale);
+        if (READBACK) {
+            com.metallum.Metallum.LOGGER.warn("Metal layer: framebufferOnly is OFF because"
+                    + " metallum.drawableReadback=true, so the presented drawable can be copied out and read -"
+                    + " this is a diagnostic that changes the layer's contract, not a default");
+        }
     }
 
     /**

@@ -1394,4 +1394,52 @@ if "Metal4RenderPass.addressOf(slice.buffer(), slice.offset())" not in body_of(e
 if "case TEXEL_BUFFER -> throw new IllegalStateException(" not in dispatch_body:
     raise SystemExit("metal 4 provider: a binding kind the dispatch cannot fill is dropped in silence")
 
+
+# --- the drawable readback, which is the only way this machine can see the picture -------------------------
+# The display cannot be photographed here and a drawable that is framebuffer-only cannot be copied from, so the
+# picture column of every session has been empty for a reason about the *observation* rather than the frame.
+# `-Dmetallum.drawableReadback=true` turns the layer's framebufferOnly off and copies the presented drawable into
+# a shared buffer, where it can be read. It is a diagnostic and it is pinned as one: off by default, said out
+# loud when on, asked for through one accessor, and released with the frame.
+LAYER = ROOT / "src/main/java/com/metallum/mtl/CAMetalLayer.java"
+if not LAYER.is_file():
+    raise SystemExit("metal 4 provider: CAMetalLayer.java is gone, so framebufferOnly is nowhere")
+layer = LAYER.read_text(encoding="utf-8")
+for needle, why in (
+    ('System.getProperty("metallum.drawableReadback", "false")',
+     "the drawable readback is not asked for by one property with a default of off"),
+    ("SET_FRAMEBUFFER_ONLY.send(this.handle, !READBACK);",
+     "the layer is framebuffer-only whatever the diagnostic says, so the copy it exists for would be refused -"
+     " or it is off without anyone asking"),
+    ("public static boolean readbackRequested() {",
+     "the frame path cannot ask the layer whether the drawable may be read, so the property would be read twice"
+     " and could disagree with itself"),
+    ("framebufferOnly is OFF because", "a session that changes the layer's contract does not say so"),
+):
+    if needle not in layer:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ("private final boolean drawableReadback = com.metallum.mtl.CAMetalLayer.readbackRequested();",
+     "the frame encoder does not ask whether the drawable may be read"),
+    ("copyDrawableForReadback(drawableTexture, width, height);",
+     "the presented drawable is never copied out, so the picture is still unreadable"),
+    ("staging = this.executionState.device().newBuffer(bytes, MTLStorageMode.Shared.value);",
+     "the readback's staging buffer is not a shared buffer on this generation's device, so the CPU could not read"
+     " what the GPU wrote"),
+    ("useResource(staging.handle());",
+     "the readback's staging buffer is not declared resident, and an undeclared resource makes a copy do nothing"
+     " at all - measured"),
+    ("copies.copyTextureToBuffer(drawableTexture, 0L, 0L, 0L, 0L, 0L, width, height, 1L,",
+     "the drawable is not copied into the buffer the report reads"),
+    ("reportDrawableReadback(this.ring.slot());",
+     "the copied drawable is never read, or it is read before the slot's submission is known complete"),
+    ("Metal 4 drawable readback: {}x{} ARGB rows(top first)=[{}] meanBGRA=",
+     "the readback prints nothing structural, so a reader could not tell a black drawable from a wrong one"),
+    ("ObjC.release(this.readbackStaging[slot].handle());",
+     "the readback's staging buffers are never released with the encoder"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

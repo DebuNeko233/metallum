@@ -2458,6 +2458,36 @@ frame path is a process-global singleton - the queue, the ring, the tables, the 
 pipelines and the compilation caches are all owned by the frame encoder or the execution state, so a second
 device in one process gets its own.
 
+### The presented drawable, read back: the picture column has a first measurement
+
+Every session's picture column has been empty, and the reason was always about the **observation**: this machine
+refuses to let the display be photographed (`screencapture` returns one flat colour) and it refuses automation
+that would press the game's own screenshot key (`-1743`). Neither of those says anything about the frame. What
+neither of them explained is that the drawable itself was unreachable too - a `CAMetalLayer` is created with
+`framebufferOnly = true`, and a framebuffer-only texture may not be the source of a copy.
+
+`-Dmetallum.drawableReadback=true` is that switch: the layer is built with `framebufferOnly` off, the frame
+encoder copies the presented drawable into a shared buffer after the present pass (in the frame's own command
+buffer, because the drawable is only valid for the frame that took it), and the pixels are read at the next frame
+that reuses the slot - the point the ring has proved that slot's submission complete. What it prints is small and
+structural: a five by five grid of samples, top row first, and the mean of each channel over a sparse grid of the
+whole surface (the layer is BGRA8, so the report names the channels in that order). It is off by default, it says
+out loud that it changes the layer's contract, and it costs a whole-surface copy per frame when it is on - a
+diagnostic, not a road.
+
+**The first measurement, on a forced Metal 4 session with Vitrail's compute-storage fixture: 150 readbacks.** 69
+of them are one flat colour - `meanBGRA=(61, 50, 239, 255)`, the loading screen - and 81 are the world: a dark
+image with structure, every sample different (`[ff0d0d0a, ff12110c, ff10100b, ...]`, mean around
+`(13, 20, 22)`). **No readback is black**, and none is empty: the presented drawable holds a real, varying image,
+so the frame's present road puts a picture into the drawable. What the display capture showed was the capture,
+not the frame.
+
+**What this does not yet prove.** Presence is not correctness: the readback says the drawable has content, not
+that the content is *right*. Orientation, scaling and colour are questions for a comparison, and the comparison
+this method makes possible is the one the migration already has everywhere else - **M3 and M4, same scene, same
+switch** - with the M3 encoder's present road reading its drawable the same way. That is the next step here, and
+until it is done the picture column reads "content measured, correctness not compared".
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
