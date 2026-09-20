@@ -3627,6 +3627,238 @@ public final class MTL4Probe {
         }
     }
 
+    /**
+     * Whether a dispatch reads what another dispatch wrote - compute to compute, through a storage image.
+     * <p>
+     * This is the shape a pack's own compute chain is made of and the one the client fixture depends on: its
+     * first program writes a storage image and its second reads it, and if the second reads the first's *input*
+     * rather than its output the picture is wrong in a way no counter reports. The two dispatches are separate
+     * encoders with a producer barrier between them, each with a table of its own, which is the safe shape both
+     * the storage smoke and the engine use.
+     * <p>
+     * The reading is the sampling dispatch's: sixteen samples on the CPU against a per-channel sentinel, so a
+     * second dispatch that never ran, one that ran and wrote nothing and one that read stale contents are three
+     * different failures.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether the second dispatch read the first dispatch's output
+     */
+    public static boolean canDispatchAfterDispatch(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("computeChain", "the device does not answer one of the factories this sequence's"
+                    + " queue, allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment image = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment writerFunction = MemorySegment.NULL;
+        MemorySegment writerPipeline = MemorySegment.NULL;
+        MemorySegment readerFunction = MemorySegment.NULL;
+        MemorySegment readerPipeline = MemorySegment.NULL;
+        MTLBuffer colour = null;
+        MTLBuffer out = null;
+        MTL4ArgumentTable writerTable = null;
+        MTL4ArgumentTable readerTable = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder writer = null;
+        MTL4ComputeEncoder reader = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("computeChain", "a Metal 4 queue, allocator, command buffer or shared event came"
+                        + " back nil");
+            }
+
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(STORAGE_EDGE);
+                descriptor.height(STORAGE_EDGE);
+                descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                image = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(image)) {
+                return failed("computeChain", "newTextureWithDescriptor: answered nil for the storage image the"
+                        + " two dispatches share");
+            }
+
+            colour = device.newBuffer(16L, STORAGE_SHARED);
+            out = device.newBuffer(SAMPLING_SLOTS * 16L, STORAGE_SHARED);
+            if (colour == null || out == null || colour.gpuAddress() == 0L || out.gpuAddress() == 0L) {
+                return failed("computeChain", "the writer's colour or the reader's output buffer came back nil or"
+                        + " without a GPU address");
+            }
+            writeColor(colour, COPY_SOURCE_PIXEL);
+            MemorySegment words = out.contents().reinterpret(SAMPLING_SLOTS * 16L);
+            for (long slot = 0; slot < SAMPLING_SLOTS; slot++) {
+                for (int channel = 0; channel < 4; channel++) {
+                    words.set(JAVA_FLOAT, slot * 16L + channel * 4L, SAMPLING_SENTINEL);
+                }
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("computeChain", "newSamplerStateWithDescriptor: answered nil, so the reading"
+                        + " dispatch has nothing to sample with");
+            }
+
+            writerFunction = device.newFunction(STORAGE_WRITE_MSL, "metallum_storage_write_probe");
+            readerFunction = device.newFunction(SAMPLING_DISPATCH_MSL, "metallum_sampling_probe");
+            if (ObjC.isNil(writerFunction) || ObjC.isNil(readerFunction)) {
+                return failed("computeChain", "one of the smoke's two kernels did not compile into a function");
+            }
+            writerPipeline = device.newComputePipelineState(writerFunction);
+            readerPipeline = device.newComputePipelineState(readerFunction);
+            if (ObjC.isNil(writerPipeline) || ObjC.isNil(readerPipeline)) {
+                return failed("computeChain", "one of the smoke's two compute pipelines came back nil");
+            }
+
+            // Two tables, one per dispatch: the writer reads a colour and writes the image, the reader samples
+            // the image and writes its samples out.
+            writerTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            readerTable = MTL4ArgumentTable.create(device, 1L, 1L, 1L);
+            if (writerTable == null || readerTable == null
+                    || !writerTable.address(colour.gpuAddress(), 0L) || !writerTable.texture(image, 0L)
+                    || !readerTable.address(out.gpuAddress(), 0L) || !readerTable.texture(image, 0L)
+                    || !readerTable.sampler(sampler, 0L)) {
+                return failed("computeChain", "a table this chain needs would not take its resources");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the compute-to-compute smoke");
+            if (resident == null || !resident.add(colour.handle()) || !resident.add(out.handle())
+                    || !resident.add(image)
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed("computeChain", "the smoke could not declare its buffers and its image resident, and"
+                        + " an undeclared resource makes a dispatch do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+
+            // The writer, in an encoder of its own, ending with the producer barrier the reader depends on.
+            try {
+                writer = MTL4ComputeEncoder.open(device, buffer, "the compute chain's writer");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("computeChain", "the writer's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (!writer.setComputePipelineState(writerPipeline) || !writer.setArgumentTable(writerTable)
+                    || !writer.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("computeChain", "the writer's encoder did not take its pipeline, its table and its"
+                        + " dispatch");
+            }
+            if (!writer.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("computeChain", "the writer's encoder does not answer the producer barrier, so the"
+                        + " dispatch that reads its output would have no encoded dependency on it");
+            }
+            writer.endEncoding();
+
+            try {
+                reader = MTL4ComputeEncoder.open(device, buffer, "the compute chain's reader");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed("computeChain", "the reader's encoder could not be opened at stage "
+                        + refused.stage() + ": " + refused.getMessage());
+            }
+            if (!reader.setComputePipelineState(readerPipeline) || !reader.setArgumentTable(readerTable)
+                    || !reader.dispatchThreads(SAMPLING_EDGE, SAMPLING_EDGE, 1L, SAMPLING_EDGE, SAMPLING_EDGE, 1L)) {
+                END.send(buffer);
+                return failed("computeChain", "the reader's encoder did not take its pipeline, its table and its"
+                        + " dispatch");
+            }
+            if (!reader.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed("computeChain", "the reader's encoder does not answer the producer barrier");
+            }
+            reader.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("computeChain", "the shared event did not reach 1 within 2000 ms, so the chain"
+                        + " never completed");
+            }
+
+            MemorySegment written = out.contents().reinterpret(SAMPLING_SLOTS * 16L);
+            for (long slot = 0; slot < SAMPLING_SLOTS; slot++) {
+                int[] seen = new int[4];
+                boolean sentinel = true;
+                for (int channel = 0; channel < 4; channel++) {
+                    float value = written.get(JAVA_FLOAT, slot * 16L + channel * 4L);
+                    if (value != SAMPLING_SENTINEL) {
+                        sentinel = false;
+                    }
+                    seen[channel] = Math.round(value * 255.0f);
+                }
+                if (sentinel) {
+                    return failed("computeChain", "the reading dispatch's slot " + slot + " still holds the"
+                            + " sentinel it was filled with, so no thread wrote it");
+                }
+                if (!matches(seen, COPY_SOURCE_PIXEL)) {
+                    return failed("computeChain", "the reading dispatch sampled " + describe(seen) + " in slot "
+                            + slot + " where the writing dispatch wrote " + describe(COPY_SOURCE_PIXEL) + ", so it"
+                            + " read something other than the other dispatch's output");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("computeChain", "encoding, submitting or reading back the compute chain threw " + threw);
+        } finally {
+            if (reader != null) {
+                reader.close();
+            }
+            if (writer != null) {
+                writer.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (readerTable != null) {
+                readerTable.close();
+            }
+            if (writerTable != null) {
+                writerTable.close();
+            }
+            releaseIfPresent(readerPipeline);
+            releaseIfPresent(writerPipeline);
+            releaseIfPresent(readerFunction);
+            releaseIfPresent(writerFunction);
+            releaseIfPresent(sampler);
+            releaseIfPresent(image);
+            releaseIfPresent(out);
+            releaseIfPresent(colour);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
     private static final int MIP_LEVELS = 3;
     private static final int MIP_PREFILLED = 200;

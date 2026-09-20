@@ -221,6 +221,9 @@ copy_dispatch_passes="$(grep -c ' copyDispatch=true ' "$probe_log" || true)"
 copy_dispatch_failures="$(grep -c ' copyDispatch=false ' "$probe_log" || true)"
 render_dispatch_passes="$(grep -c ' renderDispatch=true ' "$probe_log" || true)"
 render_dispatch_failures="$(grep -c ' renderDispatch=false ' "$probe_log" || true)"
+# And the chain of two dispatches, which is a different question from either producer above.
+compute_chain_passes="$(grep -c ' computeChain=true ' "$probe_log" || true)"
+compute_chain_failures="$(grep -c ' computeChain=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -260,6 +263,7 @@ echo "compute->draw:   $compute_vertex_passes passed   $compute_vertex_failures 
 echo "copy->pass:      $copy_sample_passes passed   $copy_sample_failures failed"
 echo "copy->dispatch:  $copy_dispatch_passes passed   $copy_dispatch_failures failed"
 echo "render->dispatch: $render_dispatch_passes passed   $render_dispatch_failures failed"
+echo "compute->compute: $compute_chain_passes passed   $compute_chain_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -345,6 +349,11 @@ fi
 
 if (( render_dispatch_failures > 0 )); then
 	echo "the render-to-dispatch dependency smoke failed in $render_dispatch_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( compute_chain_failures > 0 )); then
+	echo "the compute-to-compute dependency smoke failed in $compute_chain_failures probe(s)" >&2
 	exit 1
 fi
 

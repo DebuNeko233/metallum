@@ -2409,10 +2409,20 @@ the storage smoke, with no capability failure. With that, **all seven of section
 | render writes → blit reads | `canSampleAfterCopy` (same fixture, the other direction) |
 | blit writes → compute reads | `canDispatchSampledCopy` |
 
-What is **not** in that table is section 61's classification of each case as RAW, WAW or WAR, and the
-`compute → compute` visibility a pack's own chain uses when one dispatch's storage image is another's input.
-Those are the next fixtures in this slice; the barrier cost that section 62 refuses to optimise before the
-counters exist is a phase-21 measurement, not a correctness question.
+**And the chain of two dispatches is measured too** (`canDispatchAfterDispatch`), because that is the shape a
+pack's own compute chain is made of and the one Vitrail's compute fixture depends on: the first dispatch writes
+a storage image through the storage-write kernel, its encoder barriers, and a second dispatch of its own samples
+that image and writes its sixteen samples into a buffer - the same sentinel and the same per-slot comparison as
+the two producer smokes, so a second dispatch that never ran, one that ran and wrote nothing and one that read
+stale contents are three different failures. Two encoders, two tables, one command buffer, one commit. With it
+in the census, **50 of 50 on all seven dependency fields** - and it is the case that would otherwise have gone
+unmeasured while the client's compute fixture happened to pass, because the picture of that fixture is not
+available on this machine.
+
+What is **not** in the table is section 61's classification of each case as RAW, WAW or WAR - every fixture
+above is a read-after-write, and write-after-write and write-after-read are fixtures of their own - and the
+barrier cost that section 62 refuses to optimise before the counters exist, which is a phase-21 measurement
+rather than a correctness question.
 
 ## The API mapping
 

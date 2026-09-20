@@ -46,6 +46,7 @@ import java.util.Optional;
  *                 copySample=&lt;bool&gt; copySampleReason=&lt;text&gt;
  *                 copyDispatch=&lt;bool&gt; copyDispatchReason=&lt;text&gt;
  *                 renderDispatch=&lt;bool&gt; renderDispatchReason=&lt;text&gt;
+ *                 computeChain=&lt;bool&gt; computeChainReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -231,6 +232,8 @@ public final class Metal4ColdProbe {
         String copyDispatchReason = "-";
         boolean renderDispatch = false;
         String renderDispatchReason = "-";
+        boolean computeChain = false;
+        String computeChainReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -329,6 +332,13 @@ public final class Metal4ColdProbe {
             renderDispatch = makeAndSubmit && MTL4Probe.canDispatchSampledRender(device);
             if (!renderDispatch) {
                 renderDispatchReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And a dispatch reading another dispatch's output, which is the shape a pack's own compute chain is
+            // made of: the first writes a storage image, the second samples it, and the reading is sixteen values
+            // on the CPU rather than a picture.
+            computeChain = makeAndSubmit && MTL4Probe.canDispatchAfterDispatch(device);
+            if (!computeChain) {
+                computeChainReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -453,6 +463,8 @@ public final class Metal4ColdProbe {
                     + " copyDispatchReason=" + copyDispatchReason.replace(' ', '_')
                     + " renderDispatch=" + renderDispatch
                     + " renderDispatchReason=" + renderDispatchReason.replace(' ', '_')
+                    + " computeChain=" + computeChain
+                    + " computeChainReason=" + computeChainReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

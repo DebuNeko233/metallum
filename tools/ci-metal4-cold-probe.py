@@ -490,6 +490,15 @@ for needle, why in (
      "the driver does not count the render-to-dispatch smoke's failures"),
     ("if (( render_dispatch_failures > 0 )); then",
      "the driver counts the render-to-dispatch smoke's failures and does not fail the run on them"),
+    # And the chain of two dispatches, which is a different question from either producer above.
+    ('+ " computeChain=" + computeChain', "the harness does not print the compute-to-compute smoke's answer"),
+    ('+ " computeChainReason=" + computeChainReason',
+     "the harness does not print why the compute-to-compute smoke failed"),
+    ("MTL4Probe.canDispatchAfterDispatch(device)", "the harness never asks the compute-to-compute smoke"),
+    ("compute_chain_failures=\"$(grep -c ' computeChain=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the compute-to-compute smoke's failures"),
+    ("if (( compute_chain_failures > 0 )); then",
+     "the driver counts the compute-to-compute smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -1012,6 +1021,37 @@ if "return sampledProducer(device, true, \"copyDispatch\");" not in engine_probe
         or "return sampledProducer(device, false, \"renderDispatch\");" not in engine_probe_source:
     raise SystemExit("cold-probe harness: the two producer-to-dispatch smokes no longer differ in their producer,"
                      " so one of section 60's cases is measured twice and the other not at all")
+
+# --- the chain of two dispatches, which is the shape a pack's own compute chain is made of -------------------
+if "public static boolean canDispatchAfterDispatch(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the compute-to-compute smoke is gone, so the harness's computeChain "
+                     "field would report a call that is not there")
+chain = engine_probe_source[engine_probe_source.index("public static boolean canDispatchAfterDispatch("):]
+chain = chain[:chain.index("/** How many levels the mipmap smoke asks for")]
+for needle, why in (
+    ("writerFunction = device.newFunction(STORAGE_WRITE_MSL, \"metallum_storage_write_probe\");",
+     "the writing dispatch does not use the storage-write kernel, so nothing writes the image"),
+    ("readerFunction = device.newFunction(SAMPLING_DISPATCH_MSL, \"metallum_sampling_probe\");",
+     "the reading dispatch does not sample, so the chain measures no read"),
+    ("!writerTable.address(colour.gpuAddress(), 0L) || !writerTable.texture(image, 0L)",
+     "the writer's table is not given the colour and the image"),
+    ("|| !readerTable.address(out.gpuAddress(), 0L) || !readerTable.texture(image, 0L)",
+     "the reader's table is not given its output buffer and the same image"),
+    ("|| !resident.add(out.handle())", "the reader's output buffer is not declared resident"),
+    ("writer = MTL4ComputeEncoder.open(device, buffer, \"the compute chain's writer\");",
+     "the writing dispatch has no encoder of its own"),
+    ("reader = MTL4ComputeEncoder.open(device, buffer, \"the compute chain's reader\");",
+     "the reading dispatch has no encoder of its own, so the two share one - the shape that loses a dispatch"),
+    ("if (!writer.barrierForSubsequentEncoders()) {",
+     "the writer does not barrier, so the reader has no encoded dependency on it"),
+    ("if (!reader.barrierForSubsequentEncoders()) {",
+     "the reader does not barrier before whatever follows the chain"),
+    ("if (!matches(seen, COPY_SOURCE_PIXEL)) {",
+     "the samples are not compared against the colour the other dispatch wrote"),
+    ('" still holds the"', "the sentinel is not refused, so a chain that never ran could pass"),
+):
+    if needle not in chain:
+        raise SystemExit("cold-probe harness: " + why)
 
 # And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
