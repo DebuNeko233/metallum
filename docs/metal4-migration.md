@@ -1677,14 +1677,16 @@ picture, m3 against m4: mean channel difference 0.00, 0.00% of pixels differ at 
                         0.00% differ by more than 8, 0.00% differ by more than 2, worst 0 at 0,0
 ```
 
-**The picture is the same one, and stronger than the difference figure says: the two screenshots are
-byte-identical.** Both arms' `screen.png` hash to
-`e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`, so the no-pack frame Metal 4 presents is not
-merely within the comparison's tolerance of Metal 3's - it is the same image, through a different command model,
-a different binding path, a different present and a different compilation chain. That is the migration's own
-success criterion ("Metal 4 produces the same required frame correctly") stated as a measurement rather than an
-intention, and it covers the present road too: orientation, scaling and colour come out the same. The two arms
-also loaded the world in the same time (`Time elapsed: 1789 ms` against `1778 ms`).
+**The picture verdict this section first drew from those numbers is withdrawn, and the reason is an instrument
+fault.** The two `screen.png` files do hash to the same SHA-256
+(`e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`) - because both are a **single black pixel
+colour**, 3600x2338 of `(0,0,0)`: `screencapture` photographed a locked or asleep display, not the game. Two
+pictures of nothing compare as perfectly identical, and the comparison printed "0.00% of pixels differ ... worst 0
+at 0,0" for them. So the harness's own line was evidence of the display's state and of nothing about either
+generation's frame. Three claims in this record were built on it before the file was opened, and all three are
+withdrawn here; what survives is the probe's counters, Vitrail's own chain lines, and the absence of a fault or a
+refusal - none of which says the frame *looks* right. The instrument now refuses that verdict (see "A picture
+column that is not a picture"), and the no-pack frame's appearance is **NOT MEASURED**.
 
 **The pace is the same, and it is the display's.** 8.06 against 8.08 ms, and in both arms about 7.4 ms of that is
 the drawable wait the layer imposes at the display's rate (`drawable wait p50 7.45 / 7.41 ms`). So this comparison
@@ -1771,10 +1773,11 @@ m4 renderPasses / clearEncoders  360 / 150                366 / 150
   reported (`renderPasses 360 → 366`) are the explanation, and the arithmetic is close: six loaded 1280x720 BGRA
   attachments are 21.1 MiB. This is churn in the scene's pass count between sessions, not an effect of the
   coverage - and the depth half above is the control that says so.
-- **The picture did not move**: all four arms of the two sessions hash to
-  `e9a463183b9845376a0a179c1abf677605c4640e8aa6fde3292c469fe2f56519`, and each session's own comparison reports
-  `0.00% of pixels differ`. Wiring the facts and counting the clears changed no pixel, which is what a
-  correctness-first step has to be able to say.
+- **The picture column was void, which was not known at the time.** All four arms' `screen.png` hash the same
+  because all four are one black colour: the display was not photographed. The clean re-run of the same pair
+  (`/tmp/clean-nopack`, three stale clients killed first) reproduced every counter above to the digit - `m3
+  950.3/2637.8`, `m4 9387.8/13184.7`, `depthAttachments 480`, `depthLoadedMiB 4640.6` - so the stale clients
+  were inert for these counters, and the `loadedMiB` difference is the pass-count churn as attributed.
 - **The pace did not move either**: `8.04 / 8.06 ms` a frame for Metal 4 against `8.06 / 8.06 ms` for Metal 3, in
   a scene where ~7.4 ms of each frame is the drawable wait.
 
@@ -1795,6 +1798,77 @@ session's flags) - which is evidence that the road is inert until it is used, an
 the MRT fixture, where a pack's `stillRead`/`writesEveryPixel` answers arrive; the structural half is pinned in
 `tools/ci-metal4-provider.py` and mutation-proved (18 mutations of the wiring, the per-slot default, the
 take-and-clear order, the clear/present coverage and the two scaler answers, every one of them caught).
+
+### A pack reaches Metal 4, and the capability dispatch decides which facts arrive
+
+The paragraph above ended with "that evidence is the smoke-pack staircase". It was taken: Vitrail's own
+`attachment-traffic-contract` fixture - unchanged, staged as a zip from a copy outside the instance - ran
+through the Metal 4 path on the pinned no-pack world, four arms in one session:
+
+```text
+Vitrail: This pack's first full frame opened 13 render passes, cleared 12 textures and copied 0, for 0 queue submits
+m3:  renderPasses=390  clearEncoders=0    pipelineIdentities=105  loadedMiB=3903.4  storedMiB=7940.3
+m4:  renderPasses=600  clearEncoders=150  pipelineIdentities=105  loadedMiB=11497.2 storedMiB=17643.4
+m3: 8.02 ms a frame, 124.7 fps, gpuP50 5.48   m4: 8.04 ms a frame, 124.3 fps, gpuM4P50 3.60
+```
+
+The same pack line, the same 105 pipeline identities, 20 logical passes a frame on the Metal 4 arm, no fault, no
+refusal, no `GPURestart`, and the same display-paced frame time. **The pack's two facts did not arrive, though,
+and the reason was one contract away from them.** The client installs its capability adapter from
+`MetallumFrameBridge.supports(backend)`, which asks Metallum's flat bridge whether the encoder carries
+`MetalFrameResourceCommands` - and Metal 4 deliberately did not carry it, because its three operations are not
+implemented. So the adapter was absent as a whole: attachment contents, mipmaps, storage images, compute and
+scale together. The attachment half is the half that works here.
+
+The two arms say it in three ways at once, and this is what a measured mechanism looks like when two of them
+agree by accident:
+
+| | M3, elide off | M3, elide on | M4, elide off | M4, elide on |
+| --- | --- | --- | --- | --- |
+| bridge's own line | absent | **"the backend was told what a pass needs of 1 colour attachment slot(s)"** | absent | **absent** |
+| `loadedMiB` | 3903.4 | 3481.6 (-421.8) | 11497.2 | 11075.3 (-421.9) |
+| `storedMiB` | 7940.3 | 7096.6 (-843.7) | 17643.4 | 17643.4 (-0.0) |
+
+The load figure moves on Metal 4 by almost exactly Metal 3's amount *without a statement*: `takeClearOrEmpty` is
+the client's own fallback for a backend it cannot tell - an explicit zero clear where the pass had none, which
+costs a load no longer. The store figure cannot move that way, because a store is only elided by the fact itself,
+and it did not move at all. So the road this migration wired was unreachable on the client, and no counter on its
+own would have said so: the load column reads like success.
+
+**The fix is to carry the contract and answer no per operation**, which is the contract's own shape - every
+caller takes a boolean and has another road for false - with the reason said once per operation. `Metal4FrameEncoder`
+now implements `MetalFrameResourceCommands` and refuses `generateMipmaps`, `clearStorageTexture` and
+`copyStorageTextureRegion` by name. What that buys is not those three: it is the dispatch. Measured after, same
+fixture pack, same session shape, and reproduced in a second session:
+
+```text
+                    m4          m4elide
+loadedMiB        11497.2        11075.3   (-421.9, -3.7%)
+storedMiB        17643.4        16799.7   (-843.7, -4.8%)
+```
+
+`storedMiB` falls by 843.7 MiB - **Metal 3's own figure to the tenth of a MiB** - and the client's "the backend
+was told" line appears on this path for the first time. Two generations, two independent mechanisms of delivery,
+one number: that is the contents road proven on the device rather than pinned in a file. The three operations stay
+unimplemented and unclaimed: the Metal 4 compute encoder carries copies and barriers and no mipmap call, a storage
+texture is written by a dispatch or a fill this path has not got, and a 3D region copy is a subresource move where
+the copies here are whole-texture and 2D.
+
+**A picture column that is not a picture.** Every `screen.png` of these sessions is a single black pixel colour:
+`screencapture` photographed a locked or asleep display. Two of those compare as byte-identical, and the
+comparison printed `0.00% of pixels differ` for them - which is how two rounds of this record came to claim a
+byte-identical picture between the generations, and why that claim is withdrawn. The instrument now refuses it:
+the comparison finds a capture whose pixels are all one colour, prints NOT COMPARABLE with the colour it found
+instead of a difference figure, and exits non-zero; the harness asks the same question of a test capture before
+its first launch, marks the session's picture column void when the display cannot be photographed, and ends 9 if
+it was. The counters still run - they are the measurement, and the picture is the aid - but no session can end
+zero with photographs of nothing in it.
+
+**What this milestone does not say.** That the pack's frame is *correct*. The Metal 4 arm's counters and the
+client's chain lines say the pack's passes were opened, its programs compiled (identical identities), its targets
+cleared and its facts delivered; they do not say the image is right, and no picture was taken. The fixture has an
+acceptance test for exactly that - its negative controls are designed so a wrong elision changes pixels - and it
+has not been run. That is the next rung, and it needs a display that can be photographed.
 
 ## The API mapping
 
