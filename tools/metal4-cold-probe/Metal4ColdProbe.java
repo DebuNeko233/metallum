@@ -44,6 +44,8 @@ import java.util.Optional;
  *                 computeSample=&lt;bool&gt; computeSampleReason=&lt;text&gt;
  *                 computeVertex=&lt;bool&gt; computeVertexReason=&lt;text&gt;
  *                 copySample=&lt;bool&gt; copySampleReason=&lt;text&gt;
+ *                 copyDispatch=&lt;bool&gt; copyDispatchReason=&lt;text&gt;
+ *                 renderDispatch=&lt;bool&gt; renderDispatchReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -225,6 +227,10 @@ public final class Metal4ColdProbe {
         String computeVertexReason = "-";
         boolean copySample = false;
         String copySampleReason = "-";
+        boolean copyDispatch = false;
+        String copyDispatchReason = "-";
+        boolean renderDispatch = false;
+        String renderDispatchReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -311,6 +317,18 @@ public final class Metal4ColdProbe {
             copySample = makeAndSubmit && MTL4Probe.canSampleAfterCopy(device);
             if (!copySample) {
                 copySampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // And the read side of the same boundary: a dispatch samples what the encoder before it wrote. One
+            // smoke with a copy as the producer and one with a render pass, because they are two of section 60's
+            // cases and a dispatch that reads a copy's output and one that reads a pass's output are different
+            // encoders to be ordered against.
+            copyDispatch = makeAndSubmit && MTL4Probe.canDispatchSampledCopy(device);
+            if (!copyDispatch) {
+                copyDispatchReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            renderDispatch = makeAndSubmit && MTL4Probe.canDispatchSampledRender(device);
+            if (!renderDispatch) {
+                renderDispatchReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -431,6 +449,10 @@ public final class Metal4ColdProbe {
                     + " computeVertexReason=" + computeVertexReason.replace(' ', '_')
                     + " copySample=" + copySample
                     + " copySampleReason=" + copySampleReason.replace(' ', '_')
+                    + " copyDispatch=" + copyDispatch
+                    + " copyDispatchReason=" + copyDispatchReason.replace(' ', '_')
+                    + " renderDispatch=" + renderDispatch
+                    + " renderDispatchReason=" + renderDispatchReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

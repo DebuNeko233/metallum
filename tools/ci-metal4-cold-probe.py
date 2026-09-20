@@ -462,6 +462,34 @@ for needle, why in (
      "the driver does not count the compute-to-draw smoke's failures"),
     ("if (( compute_vertex_failures > 0 )); then",
      "the driver counts the compute-to-draw smoke's failures and does not fail the run on them"),
+    # The three dependency smokes wired after that one: the copy's two boundaries and the two producers a
+    # dispatch reads. Each needs its field, its invocation and a counted failure, or a run that fails one would
+    # print it and exit zero.
+    ('+ " copySample=" + copySample', "the harness does not print the copy-to-pass smoke's answer"),
+    ('+ " copySampleReason=" + copySampleReason',
+     "the harness does not print why the copy-to-pass smoke failed"),
+    ("MTL4Probe.canSampleAfterCopy(device)", "the harness never asks the copy-to-pass smoke"),
+    ("copy_sample_failures=\"$(grep -c ' copySample=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the copy-to-pass smoke's failures"),
+    ("if (( copy_sample_failures > 0 )); then",
+     "the driver counts the copy-to-pass smoke's failures and does not fail the run on them"),
+    ('+ " copyDispatch=" + copyDispatch', "the harness does not print the copy-to-dispatch smoke's answer"),
+    ('+ " copyDispatchReason=" + copyDispatchReason',
+     "the harness does not print why the copy-to-dispatch smoke failed"),
+    ("MTL4Probe.canDispatchSampledCopy(device)", "the harness never asks the copy-to-dispatch smoke"),
+    ("copy_dispatch_failures=\"$(grep -c ' copyDispatch=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the copy-to-dispatch smoke's failures"),
+    ("if (( copy_dispatch_failures > 0 )); then",
+     "the driver counts the copy-to-dispatch smoke's failures and does not fail the run on them"),
+    ('+ " renderDispatch=" + renderDispatch',
+     "the harness does not print the render-to-dispatch smoke's answer"),
+    ('+ " renderDispatchReason=" + renderDispatchReason',
+     "the harness does not print why the render-to-dispatch smoke failed"),
+    ("MTL4Probe.canDispatchSampledRender(device)", "the harness never asks the render-to-dispatch smoke"),
+    ("render_dispatch_failures=\"$(grep -c ' renderDispatch=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the render-to-dispatch smoke's failures"),
+    ("if (( render_dispatch_failures > 0 )); then",
+     "the driver counts the render-to-dispatch smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -910,6 +938,80 @@ for needle, why in (
 ):
     if needle not in script:
         raise SystemExit("cold-probe harness: " + why)
+
+# --- the dependency smokes wired after the compute ones: the copy's boundaries and the read side ------------
+# `canSampleAfterCopy` (a pass, a copy, a pass that samples), `canDispatchSampledCopy` and
+# `canDispatchSampledRender` (a dispatch that samples what a pass or a copy wrote) were wired into the harness
+# before they had pins. What is pinned here is what makes each of them a measurement: the barriers at every
+# boundary, the readbacks that separate "never wrote" from "never read", and - for the two dispatch smokes - the
+# safe shape the storage smoke measured, a table AND an encoder for the dispatch itself.
+for smoker, why in (
+    ("canSampleAfterCopy", "the copy-to-pass smoke is gone, so its harness field would report a call that is not"
+     " there"),
+    ("canDispatchSampledCopy", "the copy-to-dispatch smoke is gone"),
+    ("canDispatchSampledRender", "the render-to-dispatch smoke is gone"),
+):
+    if "public static boolean " + smoker + "(" not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+copy_boundaries = engine_probe_source[engine_probe_source.index("public static boolean canSampleAfterCopy("):]
+copy_boundaries = copy_boundaries[:copy_boundaries.index("private static float[] colorOf(")]
+for needle, why in (
+    ("copy.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, COPY_HALF, COPY_HALF, 1L,\n"
+     "                    destination, 0L, 0L, COPY_HALF, 0L, 0L)",
+     "the copy smoke does not encode the region it reads back"),
+    ("if (!copy.barrierForSubsequentEncoders()) {",
+     "the copy smoke's copy does not barrier before the pass that samples its output"),
+    ("MTLTexture.bytes(destination, pixel, 4L, 0L, 0L, 1L, 1L);",
+     "the copy smoke does not read the destination's untouched half, so a copy that overwrote everything would"
+     " pass"),
+    ("MTLTexture.bytes(target, pixel, 4L, COPY_HALF + 8L, 8L, 1L, 1L);",
+     "the copy smoke never reads the copied half through the sampler, which is the dependency it exists for"),
+):
+    if needle not in copy_boundaries:
+        raise SystemExit("cold-probe harness: " + why)
+
+sampled = engine_probe_source[engine_probe_source.index("private static boolean sampledProducer("):]
+sampled = sampled[:sampled.index("/** How many levels the mipmap smoke asks for")]
+# The kernel lives above the method, so it is pinned against the file rather than the slice.
+for needle, why in (
+    ("kernel void metallum_sampling_probe(texture2d<float, access::sample> source [[texture(0)]],",
+     "the sampling kernel does not take the texture it reads at the slot the table binds"),
+    ("sampler nearest [[sampler(0)]],", "the sampling kernel has no sampler, so it cannot sample"),
+    ("device float4* out [[buffer(0)]],", "the sampling kernel writes nowhere the smoke can read back"),
+    ("source.sample(", "the kernel does not sample, so the smoke measures no read at all"),
+):
+    if needle not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ("resident.add(out.handle())", "the dispatch's output buffer is not declared resident, and an undeclared"
+     " resource makes a dispatch do nothing at all - measured"),
+    ("|| !table.address(out.gpuAddress(), 0L)) {",
+     "the output buffer is not bound to the dispatch's table by address"),
+    ("if (!pass.barrierForSubsequentEncoders()) {",
+     "the producer pass does not barrier before the encoder that reads its output"),
+    ("dispatch = MTL4ComputeEncoder.open(device, buffer, \"the \" + stage + \" smoke's dispatch\");",
+     "the sampling dispatch has no encoder of its own, which is the measured safe shape"),
+    ("if (!dispatch.barrierForSubsequentEncoders()) {",
+     "the dispatch's encoder does not barrier, so whatever encoder follows it has no encoded dependency"),
+    ("words.set(JAVA_FLOAT, slot * 16L + channel * 4L, SAMPLING_SENTINEL);",
+     "the output buffer is not pre-filled with a sentinel, so a dispatch that never ran could pass on whatever"
+     " a fresh buffer holds"),
+    ("still holds the sentinel it was", "the sentinel is not refused afterwards, so the pre-fill proves nothing"),
+    ("MemorySegment written = out.contents().reinterpret(SAMPLING_SLOTS * 16L);\n"
+     "            for (long slot = 0; slot < SAMPLING_SLOTS; slot++) {",
+     "the readback does not cover every sample the dispatch wrote - and the needle carries the line above it,"
+     " because the pre-fill loop is the same text and would satisfy a bare one"),
+    ("if (!matches(seen, COPY_SOURCE_PIXEL)) {",
+     "the samples are not compared against the colour the producer wrote, so a wrong read could pass"),
+):
+    if needle not in sampled:
+        raise SystemExit("cold-probe harness: " + why)
+if "return sampledProducer(device, true, \"copyDispatch\");" not in engine_probe_source \
+        or "return sampledProducer(device, false, \"renderDispatch\");" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the two producer-to-dispatch smokes no longer differ in their producer,"
+                     " so one of section 60's cases is measured twice and the other not at all")
 
 # And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"

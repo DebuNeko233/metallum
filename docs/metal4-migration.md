@@ -2378,6 +2378,42 @@ the counters, not numbers to be read off a log.
 two hunts (four processes of 31 warm probes, and three of 31): **317 probes, no field failure**, with the copy
 fixture, the compute-to-pass and the compute-to-draw fixtures all green in every one.
 
+### The read side of the boundary, and section 60's list is complete
+
+The dispatch side of the compute boundary was measured two rounds ago; this is the **read** side. Two smokes,
+one road: a producer writes a texture, its encoder barriers, and a dispatch of its own samples that texture and
+writes every sample into a buffer - so the answer is **a value on the CPU and not a pixel in a picture**. The
+kernel is four lines (`texture2d<float, access::sample> source [[texture(0)]]`, `sampler nearest
+[[sampler(0)]]`, `device float4* out [[buffer(0)]]`, `source.sample(...)` over a 4x4 grid), the output buffer
+is pre-filled with a sentinel per channel, and every one of the sixteen slots is refused if it still holds the
+sentinel and compared against the colour the producer wrote. Each boundary encodes its producer barrier, and
+the dispatch gets **an encoder of its own** - the shape the storage smoke measured as the safe one, and now
+also the shape the engine uses.
+
+- `canDispatchSampledCopy` - a pass clears a source, a copy moves a region of it into the destination, and the
+  dispatch samples the destination. That is section 60's "blit writes → compute reads";
+- `canDispatchSampledRender` - the producer is the pass itself, and the dispatch samples what it wrote. That is
+  "render writes storage image → compute reads".
+
+**Measured: a 30-cold + 20-warm census is 50 of 50 on all six dependency fields** - render→render,
+compute→render, compute→draw, copy→render (and render→copy), copy→compute and render→compute - and 50 of 50 on
+the storage smoke, with no capability failure. With that, **all seven of section 60's cases are native-proven**:
+
+| section 60's case | smoke |
+| --- | --- |
+| render writes texture → render samples texture | `canDrawSampledTexture` (a pattern pass, its barrier, a sampled pass) |
+| render writes storage image → compute reads | `canDispatchSampledRender` |
+| compute writes storage image → render reads | `canSampleComputeOutput` |
+| compute writes buffer → draw reads buffer | `canDrawFromComputeWrittenBuffer` |
+| blit writes texture → render samples | `canSampleAfterCopy` |
+| render writes → blit reads | `canSampleAfterCopy` (same fixture, the other direction) |
+| blit writes → compute reads | `canDispatchSampledCopy` |
+
+What is **not** in that table is section 61's classification of each case as RAW, WAW or WAR, and the
+`compute → compute` visibility a pack's own chain uses when one dispatch's storage image is another's input.
+Those are the next fixtures in this slice; the barrier cost that section 62 refuses to optimise before the
+counters exist is a phase-21 measurement, not a correctness question.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

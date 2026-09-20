@@ -3347,6 +3347,286 @@ public final class MTL4Probe {
         return new float[]{pixel[0] / 255.0f, pixel[1] / 255.0f, pixel[2] / 255.0f, pixel[3] / 255.0f};
     }
 
+    /**
+     * The kernel the read side of a dependency is measured with: it samples a texture and writes every sample
+     * into a buffer, so what a dispatch *read* is a value on the CPU and not a pixel in a picture.
+     */
+    private static final String SAMPLING_DISPATCH_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            kernel void metallum_sampling_probe(texture2d<float, access::sample> source [[texture(0)]],
+                                                sampler nearest [[sampler(0)]],
+                                                device float4* out [[buffer(0)]],
+                                                uint2 xy [[thread_position_in_grid]]) {
+              constexpr float edge = 4.0;
+              out[xy.y * 4 + xy.x] = source.sample(
+                  nearest, float2((xy.x + 0.5) / edge, (xy.y + 0.5) / edge));
+            }
+            """;
+
+    /** The grid the sampling dispatch runs over, and the number of samples it writes, one a thread. */
+    private static final long SAMPLING_EDGE = 4L;
+    private static final long SAMPLING_SLOTS = SAMPLING_EDGE * SAMPLING_EDGE;
+    /** What the buffer holds before the dispatch, so a dispatch that never ran is a value and not a guess. */
+    private static final float SAMPLING_SENTINEL = -1.0f;
+
+    /**
+     * Whether a dispatch reads what the encoder before it wrote - with a copy as the producer.
+     * <p>
+     * This is section 60's "blit writes → compute reads", and it is the read side of the boundary the storage
+     * clear's dispatch sits on: a pass clears a source, a copy moves a region of it into the destination, and a
+     * kernel then <em>samples</em> the destination and writes what it read into a buffer - so the answer is a
+     * value on the CPU rather than a pixel in a picture. Each boundary encodes its producer barrier, and the
+     * dispatch gets an encoder of its own, which is the shape the storage smoke measured as the one that keeps
+     * a second binding honest.
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether the dispatch read every sample of what the copy wrote
+     */
+    public static boolean canDispatchSampledCopy(final MTLDevice device) {
+        return sampledProducer(device, true, "copyDispatch");
+    }
+
+    /**
+     * The same question with a render pass as the producer: section 60's "render writes storage image → compute
+     * reads".
+     *
+     * @param device the device binding, asked for every selector before it is sent
+     * @return whether the dispatch read every sample of what the pass wrote
+     */
+    public static boolean canDispatchSampledRender(final MTLDevice device) {
+        return sampledProducer(device, false, "renderDispatch");
+    }
+
+    /**
+     * The one road both smokes take: a producer writes a texture, its encoder barriers, and a dispatch of its
+     * own samples that texture into a buffer which is then read back slot by slot.
+     *
+     * @param viaCopy whether the producer is a copy of a pass's output or the pass itself
+     */
+    private static boolean sampledProducer(final MTLDevice device, final boolean viaCopy, final String stage) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed(stage, "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment source = MemorySegment.NULL;
+        MemorySegment destination = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTLBuffer out = null;
+        MTL4ArgumentTable table = null;
+        MTL4ResidencySet resident = null;
+        MTL4ComputeEncoder dispatch = null;
+        MTL4ComputeEncoder copy = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed(stage, "a Metal 4 queue, allocator, command buffer or shared event came back nil");
+            }
+
+            // The producer's target is a render target and a shader read; the copy's destination is both too,
+            // because the dispatch reads it. The pass's own target is the source when there is no copy.
+            source = newTarget(device, USAGE_RENDER_TARGET | USAGE_SHADER_READ);
+            destination = viaCopy ? newTarget(device, USAGE_RENDER_TARGET | USAGE_SHADER_READ) : source;
+            if (ObjC.isNil(source) || (viaCopy && ObjC.isNil(destination))) {
+                return failed(stage, "one of the smoke's textures came back nil");
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed(stage, "newSamplerStateWithDescriptor: answered nil, so the dispatch has nothing to"
+                        + " read the producer's output with");
+            }
+
+            out = device.newBuffer(SAMPLING_SLOTS * 16L, STORAGE_SHARED);
+            if (out == null || out.gpuAddress() == 0L) {
+                return failed(stage, "the buffer the dispatch writes its samples into came back nil or without a"
+                        + " GPU address");
+            }
+            // A sentinel, because a buffer the dispatch never wrote and a buffer it wrote the wrong value into
+            // are different faults and a fresh buffer's contents are nobody's promise.
+            MemorySegment words = out.contents().reinterpret(SAMPLING_SLOTS * 16L);
+            for (long slot = 0; slot < SAMPLING_SLOTS; slot++) {
+                for (int channel = 0; channel < 4; channel++) {
+                    words.set(JAVA_FLOAT, slot * 16L + channel * 4L, SAMPLING_SENTINEL);
+                }
+            }
+
+            function = device.newFunction(SAMPLING_DISPATCH_MSL, "metallum_sampling_probe");
+            if (ObjC.isNil(function)) {
+                return failed(stage, "the probe's sampling kernel did not compile into a function");
+            }
+            pipeline = device.newComputePipelineState(function);
+            if (ObjC.isNil(pipeline)) {
+                return failed(stage, "newComputePipelineStateWithFunction: answered nil for the sampling kernel");
+            }
+
+            table = MTL4ArgumentTable.create(device, 1L, 1L, 1L);
+            if (table == null || !table.texture(destination, 0L) || !table.sampler(sampler, 0L)
+                    || !table.address(out.gpuAddress(), 0L)) {
+                return failed(stage, "a table made for one buffer, one texture and one sampler did not take the"
+                        + " sampled image, its sampler and the dispatch's output buffer");
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the " + stage + " smoke");
+            if (resident == null || !resident.add(source) || !resident.add(destination)
+                    || !resident.add(out.handle())
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return failed(stage, "the smoke could not declare its textures and its buffer resident, and an"
+                        + " undeclared resource makes a command of this kind do nothing at all");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+
+            // The producer, with its own producer barrier: a pass that clears, then - where the assertion is
+            // about a copy - a copy encoder that moves a region of it into the destination.
+            try (MTL4RenderEncoder pass = openPass(device, buffer, new MTL4RenderEncoder.Color[]{
+                    MTL4RenderEncoder.Color.cleared(source, colorOf(COPY_SOURCE_PIXEL))},
+                    "the " + stage + " smoke's producer pass")) {
+                if (pass == null) {
+                    END.send(buffer);
+                    return false;
+                }
+                if (!pass.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed(stage, "the producer pass does not answer the producer barrier, so what the"
+                            + " dispatch reads has no encoded dependency on it");
+                }
+            }
+
+            if (viaCopy) {
+                try {
+                    copy = MTL4ComputeEncoder.open(device, buffer, "the " + stage + " smoke's copy");
+                } catch (MTL4ComputeEncoder.Refused refused) {
+                    END.send(buffer);
+                    return failed(stage, "the copy's encoder could not be opened at stage " + refused.stage() + ": "
+                            + refused.getMessage());
+                }
+                if (!copy.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, TARGET_SIZE, TARGET_SIZE, 1L,
+                        destination, 0L, 0L, 0L, 0L, 0L)) {
+                    END.send(buffer);
+                    return failed(stage, "the copy encoder did not answer the selector"
+                            + " copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:"
+                            + "destinationSlice:destinationLevel:destinationOrigin:");
+                }
+                if (!copy.barrierForSubsequentEncoders()) {
+                    END.send(buffer);
+                    return failed(stage, "the copy encoder does not answer the producer barrier, so the dispatch"
+                            + " that samples its output would have no encoded dependency on it");
+                }
+                copy.endEncoding();
+            }
+
+            // The dispatch, in an encoder of its own, which is the measured rule and also what the engine does:
+            // every table-binding dispatch gets a new encoder.
+            try {
+                dispatch = MTL4ComputeEncoder.open(device, buffer, "the " + stage + " smoke's dispatch");
+            } catch (MTL4ComputeEncoder.Refused refused) {
+                END.send(buffer);
+                return failed(stage, "the dispatch's encoder could not be opened at stage " + refused.stage()
+                        + ": " + refused.getMessage());
+            }
+            if (!dispatch.setComputePipelineState(pipeline) || !dispatch.setArgumentTable(table)) {
+                END.send(buffer);
+                return failed(stage, "the dispatch's encoder did not take the kernel's pipeline and its table");
+            }
+            if (!dispatch.dispatchThreads(SAMPLING_EDGE, SAMPLING_EDGE, 1L, SAMPLING_EDGE, SAMPLING_EDGE, 1L)) {
+                END.send(buffer);
+                return failed(stage, "the sampling dispatch was not encoded");
+            }
+            // Asked for before it is sent, like every barrier here: an encoder that does not implement it is an
+            // Objective-C exception, and the pass that follows has to be ordered against this dispatch.
+            if (!dispatch.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                return failed(stage, "the dispatch's encoder does not answer the producer barrier");
+            }
+            dispatch.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed(stage, "the shared event did not reach 1 within 2000 ms, so the producer and the"
+                        + " dispatch that reads it never completed");
+            }
+
+            MemorySegment written = out.contents().reinterpret(SAMPLING_SLOTS * 16L);
+            for (long slot = 0; slot < SAMPLING_SLOTS; slot++) {
+                int[] seen = new int[4];
+                boolean sentinel = true;
+                for (int channel = 0; channel < 4; channel++) {
+                    float value = written.get(JAVA_FLOAT, slot * 16L + channel * 4L);
+                    if (value != SAMPLING_SENTINEL) {
+                        sentinel = false;
+                    }
+                    seen[channel] = Math.round(value * 255.0f);
+                }
+                if (sentinel) {
+                    return failed(stage, "the dispatch's output slot " + slot + " still holds the sentinel it was"
+                            + " filled with, so no thread wrote it");
+                }
+                if (!matches(seen, COPY_SOURCE_PIXEL)) {
+                    return failed(stage, "the sample in slot " + slot + " reads " + describe(seen) + " where the"
+                            + " producer wrote " + describe(COPY_SOURCE_PIXEL) + ", so the dispatch read something"
+                            + " other than what the encoder before it wrote");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed(stage, "encoding, submitting or reading back the sampled producer threw " + threw);
+        } finally {
+            // The encoders and the table are released here, after the wait: an encoder released before the
+            // command buffer it encoded is committed aborts the driver.
+            if (dispatch != null) {
+                dispatch.close();
+            }
+            if (copy != null) {
+                copy.close();
+            }
+            if (resident != null) {
+                resident.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            releaseIfPresent(function);
+            releaseIfPresent(sampler);
+            releaseIfPresent(destination == source ? MemorySegment.NULL : destination);
+            releaseIfPresent(source);
+            releaseIfPresent(out);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
     /** How many levels the mipmap smoke asks for, and the value its non-zero levels start at. */
     private static final int MIP_LEVELS = 3;
     private static final int MIP_PREFILLED = 200;
@@ -4686,6 +4966,19 @@ public final class MTL4Probe {
     private static boolean matches(final MemorySegment pixel, final int[] expected) {
         for (int index = 0; index < expected.length; index++) {
             if ((pixel.get(JAVA_BYTE, index) & 0xFF) != expected[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The same comparison for a colour that was read as floats and rounded to channels, which is how a compute
+     * smoke reads a buffer back. One level of tolerance, because a float that should be 30/255 rounds to 30.
+     */
+    private static boolean matches(final int[] seen, final int[] expected) {
+        for (int index = 0; index < expected.length; index++) {
+            if (Math.abs(seen[index] - expected[index]) > 1) {
                 return false;
             }
         }
