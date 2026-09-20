@@ -128,15 +128,29 @@ if "MetalFrameResourceCommands" not in encoder.split("implements", 1)[1].split("
                      "three unimplemented operations but the whole capability dispatch - the attachment-contents "
                      "half included, which is measured to stop arriving when the contract is absent")
 for needle, why in (
-    ("public boolean generateMipmaps(final GpuTexture texture) {\n        return refuseResourceOperation(\"generateMipmaps\");",
-     "mipmap generation no longer refuses by name, so a caller would be told a chain was built"),
+    # Mipmap generation is implemented now rather than refused, and what is pinned is the whole road: the
+    # texture has to be one a chain can be generated for, the command goes on the frame's copy encoder, and the
+    # texture is declared resident first.
+    ("|| texture.getMipLevels() <= 1 || !supportsMipmapGeneration(texture.getFormat())",
+     "mipmap generation no longer refuses a texture with one level or a format the native command cannot filter,"
+     " so a caller would be told a chain was built"),
+    ("boolean generated = copies.generateMipmaps(metal.nativeHandle());",
+     "the frame path does not send the mipmap command, so the operation is still a refusal with a longer body"),
+    ("Metal 4 trace: generated the mip chain of a {}x{} texture: {}",
+     "a generated chain is not said under the trace switch, so nothing on a device run can show that a pack's"
+     " mipmaps went through this path"),
+    ("useResource(metal.nativeHandle());\n        boolean generated = copies.generateMipmaps(",
+     "the texture is not declared resident before its chain is generated, and an undeclared resource makes a"
+     " command of this kind do nothing at all - measured"),
+    ("private static boolean supportsMipmapGeneration(final com.mojang.blaze3d.GpuFormat format) {",
+     "the format list the native mipmap command needs is gone, so a texture it cannot filter would be sent"),
     ("public boolean clearStorageTexture(final GpuTexture texture, final int dimensions) {\n"
      "        return refuseResourceOperation(\"clearStorageTexture\");",
      "clearing a storage texture no longer refuses by name, so a caller would be told it was cleared"),
     ("return refuseResourceOperation(\"copyStorageTextureRegion\");",
      "a storage-texture region copy no longer refuses by name, so a caller would be told it was copied"),
     ("private boolean refuseResourceOperation(final String operation) {",
-     "the three resource refusals no longer run through one helper, so one of them can be answered without a "
+     "the remaining resource refusals no longer run through one helper, so one of them can be answered without a "
      "name or without a line in the log"),
     ("this.refusedResourceOperations.add(operation)",
      "a resource refusal is not remembered, so an operation called every frame would fill the log"),
@@ -946,6 +960,33 @@ if "SET_INITIALIZE.send(descriptor, 1L);" not in ARGUMENT_TABLE.read_text(encodi
     raise SystemExit("metal 4 provider: the argument table is not created with its bindings initialised, so a"
                      " slot this path skips by design holds undefined data and a shader that reads it faults the"
                      " GPU - measured, and the first world frame was doing exactly that")
+
+# The mipmap format list is the Metal 3 encoder's list, and the two are compared here rather than trusted: a
+# format Metal 3 will generate a chain for and Metal 4 refuses is a difference between the generations, and one
+# that would only show up as a blurry texture.
+def mipmap_formats(source: str, marker: str) -> set[str]:
+    """The format names one mipmap-support switch lists, read as identifiers rather than as text.
+
+    Reading them as text picked up the method's own signature - the switch's opening line ends in a parameter
+    named `format`, and a split on commas happily returned `... GpuFormat format) { return switch (format) {
+    R8_UNORM` as one entry. An identifier scan over the switch body cannot do that.
+    """
+    at = source.index(marker)
+    body = source[source.index("return switch (format) {", at):source.index("default -> false;", at)]
+    return set(re.findall(r"[A-Z][A-Z0-9_]*", body))
+
+
+metal3_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal3"
+                  / "MetalCommandEncoder.java")
+if not metal3_encoder.is_file():
+    raise SystemExit("metal 4 provider: MetalCommandEncoder.java is gone, so there is no reference list of the"
+                     " formats a native mipmap command can filter")
+metal3_source = metal3_encoder.read_text(encoding="utf-8")
+m3_formats = mipmap_formats(metal3_source, "private static boolean supportsNativeMipmaps(")
+m4_formats = mipmap_formats(encoder, "private static boolean supportsMipmapGeneration(")
+if not m3_formats or m3_formats != m4_formats:
+    raise SystemExit("metal 4 provider: the mipmap formats the two generations will generate a chain for differ:"
+                     f" metal 3 {sorted(m3_formats)} against metal 4 {sorted(m4_formats)}")
 
 # The frame probe, fed by the full-frame path. The probe is how the standard harness collects a run at all - it
 # waits for the probe's window line - and it was fed by the Metal 3 encoder alone, so a forced Metal 4 run was

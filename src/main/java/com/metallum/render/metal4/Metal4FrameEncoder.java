@@ -81,9 +81,10 @@ import java.util.Set;
  * and a store action - and its other three members answer what is true of this generation rather than pretending:
  * the storage-image boundary it asks for is already encoded after every pass, and the scaler it asks about does
  * not exist until the Metal 4 MetalFX milestone. {@link MetalFrameResourceCommands} is carried for the same kind
- * of reason read the other way: its three operations are not implemented yet and each answers false, which is the
- * contract's own shape for a caller's fallback - but omitting the contract altogether does not cost this path
- * three operations, it costs the capability dispatch as a whole. Measured: a pack's per-attachment statements
+ * of reason read the other way: mipmap generation is implemented on the frame's copy encoder - this command model
+ * puts it there, and the texture is declared resident first - and the other two operations answer false, which is
+ * the contract's own shape for a caller's fallback. Omitting the contract altogether does not cost this path
+ * those operations, it costs the capability dispatch as a whole. Measured: a pack's per-attachment statements
  * never reached this encoder, because the client decides whether to install its capability adapter from
  * {@code MetalFrameBridge.supports}, which asks whether the encoder carries <em>this</em> contract. A generation
  * that says "ask me" and answers no per operation keeps the half that does work.
@@ -745,13 +746,68 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /**
      * {@inheritDoc}
      * <p>
-     * No, and said once in the log: this path has no mipmap command yet. The Metal 4 compute encoder carries
-     * copies and barriers and no {@code generateMipmapsForTexture:}, which is the Metal 3 road's blit call, so
-     * there is nothing to answer with until the migration's mipmap slice.
+     * A mip chain is generated on the frame's copy encoder, which is where this command model puts it:
+     * {@code MTL4ComputeCommandEncoder.h:543} declares {@code generateMipmapsForTexture:}, and the compute
+     * encoder is what absorbed Metal 3's blit encoder. The texture is declared resident before the command,
+     * because an undeclared resource makes a command of this kind do nothing at all rather than fail - measured,
+     * with a buffer-to-texture copy and this very command.
+     * <p>
+     * False rather than a throw where the texture cannot have a chain generated: a texture of one level, a
+     * closed one, one that is not this engine's, and a format the native command cannot filter are all answers
+     * the caller's fallback is for. Answers false <em>by name</em> rather than doing nothing silently, which is
+     * the same shape the rest of this class's refusals take.
      */
     @Override
     public boolean generateMipmaps(final GpuTexture texture) {
-        return refuseResourceOperation("generateMipmaps");
+        if (this.closed || !(texture instanceof MetalGpuTexture metal) || texture.isClosed()
+                || texture.getMipLevels() <= 1 || !supportsMipmapGeneration(texture.getFormat())) {
+            return false;
+        }
+        // A pass the game still has open ends first: one encoder may be open on a command buffer, and the copy
+        // encoder cannot be opened under a render pass that has not ended.
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        beginFrameIfNeeded();
+        // The generation reads level 0, so it is ordered against everything this frame has already encoded -
+        // including a copy out of staging memory that may be encoded but not yet visible.
+        MTL4ComputeEncoder copies = copyEncoder();
+        if (copies == null || !copies.open()) {
+            return false;
+        }
+        useResource(metal.nativeHandle());
+        boolean generated = copies.generateMipmaps(metal.nativeHandle());
+        if (TRACE) {
+            // Said under the diagnostic switch and not per session, because a pack may regenerate a chain every
+            // frame: what this is for is answering "did the client's mipmaps go through this path at all",
+            // which no counter separates from the copies the same encoder carries.
+            Metallum.LOGGER.info("Metal 4 trace: generated the mip chain of a {}x{} texture: {}",
+                    texture.getWidth(0), texture.getHeight(0), generated);
+        }
+        return generated;
+    }
+
+    /**
+     * Whether the native mipmap command can filter this format.
+     * <p>
+     * Metal's generation requires both filtering and colour-rendering support. The list is the Apple7/M1 common
+     * denominator, because this engine targets every Apple Silicon Mac and does not query the runtime GPU
+     * family: full-range integer formats are colour-renderable but not filterable, and the 32-bit float formats
+     * only become filterable on Apple9, so neither group is safe for the backend-wide path. The Metal 3 encoder
+     * carries the same list for the same reason, and the two are kept identical by
+     * {@code tools/ci-metal4-provider.py} rather than by memory.
+     */
+    private static boolean supportsMipmapGeneration(final com.mojang.blaze3d.GpuFormat format) {
+        return switch (format) {
+            case R8_UNORM, R8_SNORM,
+                    R16_UNORM, R16_SNORM, R16_FLOAT,
+                    RG8_UNORM, RG8_SNORM,
+                    RG16_UNORM, RG16_SNORM, RG16_FLOAT,
+                    RGBA8_UNORM, RGBA8_SNORM,
+                    RGB10A2_UNORM, RG11B10_FLOAT,
+                    RGBA16_UNORM, RGBA16_SNORM, RGBA16_FLOAT -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -779,7 +835,12 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         return refuseResourceOperation("copyStorageTextureRegion");
     }
 
-    /** What has already been said about a resource operation this path cannot perform, so each says it once. */
+    /**
+     * What has already been said about a resource operation this path cannot perform, so each says it once.
+     * <p>
+     * Mipmap generation left this set when the frame's copy encoder learned the command; what is left is the two
+     * operations a storage texture would need, which wait for the compute slice.
+     */
     private final Set<String> refusedResourceOperations = new HashSet<>();
 
     /**
