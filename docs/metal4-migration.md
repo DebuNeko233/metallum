@@ -1527,22 +1527,47 @@ and both are recorded here rather than fixed in passing:
    translation's metadata for `sodium:pipeline/solid_terrain`, not as a difference between the two generations,
    and the next milestone does not depend on it.
 
-**And the fault that was open is gone.** A three-slot run of the terrain frame used to end in
-`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`; the candidates included the indirect arguments buffer
-this milestone adds to the residency set. With the indirect draw implemented, a forced Metal 4 launch **renders
-for four minutes with no GPU restart, no fault and no refusal** - so whatever the terrain draw was reading by
-address, it is declared now. That is measured, not assumed: the kernel log is quiet for the whole window.
+**Correction, because the first version of this paragraph claimed too much.** What the four-minute run showed
+is that the **loading screen** renders with no fault: whatever the earlier terrain frame was reading by address
+is declared now, and the loading screen - which used to fault within two seconds - does not. The **world frame
+still faults**, and the first run that loaded a world says so: the integrated server's `Time elapsed: 1783 ms`
+appears, the player joins, the chunk builder starts, and then
 
-**What stands between this and a finished no-pack frame is now speed, and the measurement says where it is.**
-The four-minute run never produced the harness's no-pack arm signal - the integrated server's `Time elapsed:`
-line - and its log is dominated by per-pass argument-table creation (about eighty thousand lines a minute,
-`Metal 4 argument table: made for ...`). The frame path makes a table per pipeline change per pass and
-re-resolves every remembered binding into it, which is the correctness-first version section 50 asks for and is
-now the measurable cost between this path and a frame the harness can count. A trace run of 120 seconds reaches
-the world's own registries and the chunk-builder stage at the end of its window, so the load is **slow and not
-stuck** - and the two ways forward are a measurement decision (a longer no-pack window) or understanding that
-per-frame cost. Neither is taken yet: the plan puts performance after correctness, and the honest state is that
-the path is correct enough to render for minutes and too slow to finish a load in the window it is given.
+```text
+Metal 4 frame: the GPU reported a fault in a committed submission -
+The operation couldn't be completed. (MTL4CommandQueueErrorDomain error 1.)
+```
+
+with two kernel `GPURestart`s in that window. So residency is necessary and not yet sufficient: something the
+world frame reads by address is still not resident, or something it reads has been let go, and that is the open
+question - not a closed one.
+
+**The frame path is not the slow part, and that is now measured rather than suspected.** A per-frame counter
+line (`-Dmetallum.metal4FrameStats`, off unless a session asks) reports frames, wall milliseconds a frame,
+passes, encoders, argument tables, draws, indexed draws and residency declarations once every sixty frames.
+Two lines from the loading screen:
+
+```text
+frame stats: frames=60  fps=13.3  msPerFrame=75.26 passesPerFrame=1.5 encodersPerFrame=1.5 tablesPerFrame=5.6
+             drawsPerFrame=153.0 indexedPerFrame=2.0 residencyPerFrame=75.6
+frame stats: frames=120 fps=440.9 msPerFrame=2.27 passesPerFrame=7.0 encodersPerFrame=7.0 tablesPerFrame=10.5
+             drawsPerFrame=11.4  indexedPerFrame=6.3 residencyPerFrame=1.5
+```
+
+The first sixty frames are startup - 75 ms a frame, with seventy-six residency declarations a frame as the
+atlas and the pipelines arrive - and then the path runs the loading screen at **440 frames a second**. So the
+per-pass argument table, the per-pass encoder and the per-frame residency commit are *not* what stands between
+this path and a world frame: the world frame's own fault is, and the earlier suspicion that the frame path was
+simply slow was wrong.
+
+**What is next is isolation, not optimisation.** The world frame's fault is the only thing between this path
+and a counted no-pack frame, and the instrument that has worked twice already is the trace plus a narrowed ring:
+the last passes the faulting submission encoded are the world's own, and the candidates are the resources the
+world frame reads that the loading screen never does. Two are named by the run itself: the game resizes its
+dynamic uniform buffer *during* the first world frame (`Resizing Dynamic Transforms UBO, capacity limit of 2
+reached during a single frame`), and the world frame is the first to draw indexed geometry indirectly, to use
+the cubemap and cloud passes, and to read the terrain's own region buffers. The next run narrows it the same way
+the loading screen's fault was narrowed: trace, one slot, and the kernel log as the arbiter.
 
 ## The API mapping
 

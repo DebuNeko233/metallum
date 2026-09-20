@@ -489,14 +489,17 @@ process with no window is not the same claim as a capability proven through the 
    comes from the translation's own bind-group metadata, and the Metal 3 pass skips it in exactly the same way,
    which the control run proves by rendering thirty world frames of the same terrain through the same
    translation); and a three-slot run of the same frame still ends in a GPU fault
-   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`) where the one-slot run reached the refusal - and
-   that fault is **gone** now that the indirect arguments buffer is declared: a forced Metal 4 launch renders
-   for four minutes with no restart, no fault and no refusal. What stands between this and a counted no-pack
-   frame is **speed**: the four-minute run never reached the harness's no-pack arm line (the integrated server's
-   `Time elapsed:`), and the log is dominated by per-pass argument-table creation - about eighty thousand lines
-   a minute. A 120-second trace run reaches the world's own registries and the chunk-builder stage at the end of
-   its window, so the load is slow rather than stuck. The residency smoke passes 50 of 50 cold-probe processes
-   (30 cold + 20 warm), as does the indirect one. AUTO stays blocked on the remaining list below.
+   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`). **The loading screen's fault is fixed and the
+   world frame's is not**: a forced Metal 4 launch renders the loading screen for four minutes with no restart,
+   no fault and no refusal, and a run that loads a world reaches `Time elapsed: 1783 ms`, joins the player and
+   then faults on the first world frame (`MTL4CommandQueueErrorDomain error 1`, two kernel `GPURestart`s in that
+   window). So residency was necessary and is not yet sufficient; isolating what the world frame reads is the
+   next milestone, and the candidates the run itself names are the dynamic uniform buffer it resizes during that
+   frame and the resources only the world frame touches (indirect terrain, the cubemap and cloud passes, the
+   terrain region buffers). **The frame path is not the slow part**: with the per-frame counters on, the loading
+   screen runs at 440 frames a second after a 60-frame startup at 13 (75 ms a frame, seventy-six residency
+   declarations a frame as the atlas and the pipelines arrive). The residency smoke passes 50 of 50 cold-probe
+   processes (30 cold + 20 warm), as does the indirect one. AUTO stays blocked on the remaining list below.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

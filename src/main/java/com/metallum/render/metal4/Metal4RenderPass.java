@@ -212,6 +212,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.targetHeight = height;
 
         try {
+            owner.statEncoder();
             this.encoder = MTL4RenderEncoder.open(owner.nativeDevice(), owner.commandBuffer(), width, height,
                     colors, depth, label());
         } catch (MTL4RenderEncoder.Refused refused) {
@@ -251,6 +252,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         if (TRACE) {
             Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={}",
                     label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled);
+            this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         }
         releaseTables();
         if (!this.encoder.open()) {
@@ -320,6 +322,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.firstAvailableVertexBufferSlot(),
                 compiled.vertexBufferCount());
         releaseTables();
+        this.owner.statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L
+                + (this.plan.usesStage(MetalShaderStages.FRAGMENT) ? 1L : 0L));
         if (this.plan.usesStage(MetalShaderStages.VERTEX)) {
             this.vertexTable = MTL4ArgumentTable.create(this.owner.nativeDevice(),
                     this.plan.bufferSlots(MetalShaderStages.VERTEX),

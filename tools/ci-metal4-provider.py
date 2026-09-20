@@ -188,8 +188,7 @@ for needle, why in (
     # Pinned with its body, because the same `begun` test appears in submit() and a bare test would be satisfied
     # by the other occurrence while the frame stopped being begun at all. It is one method now, because the first
     # pass and the first copy both need it.
-    ("private void beginFrameIfNeeded() {\n        if (this.ring.begun()) {\n            return;\n        }\n"
-     "        if (!this.ring.beginFrame()) {",
+    ("private void beginFrameIfNeeded() {\n        if (this.ring.begun()) {\n            return;\n        }\n",
      "the frame is not begun at the first pass, so a pass has no command buffer"),
     ("retire(this.ring.slot());", "the slot's filed releases are not run once its completion has been observed"),
     ("retire(this.ring.slot());", "the slot's filed releases are not run once its completion has been observed"),
@@ -807,6 +806,31 @@ for needle, why in (
 ):
     if needle not in pass_source:
         raise SystemExit("metal 4 provider: " + why)
+
+# The frame's own counters, which are the instrument the next question needed: the path rendered the loading
+# screen at a fraction of the Metal 3 rate and the candidate list (a table a pass, an encoder a pass, a residency
+# commit a frame) is exactly what these separate. Off unless a session asks, because a line every sixty frames is
+# a diagnostic and not a session's log.
+for needle, why in (
+    ('Boolean.getBoolean("metallum.metal4FrameStats")',
+     "the frame path cannot be asked what a frame cost, so a slow frame is a guess again"),
+    ("private static final boolean COUNTING = TRACE || STATS;",
+     "the counters are not kept when either diagnostic is on, so a trace run has no summary"),
+    ("Metal 4 frame stats: frames={} fps={} msPerFrame={}", "the counters are never reported"),
+    ("this.statPasses++;", "a pass is not counted"),
+    ("this.statEncoders++;", "an encoder is not counted"),
+    ("this.statTables += tables;", "an argument table is not counted"),
+    ("this.statResidency++;", "a residency declaration is not counted"),
+    ("this.statFrameNanos += System.nanoTime() - this.statBeganAt;", "a frame's wall time is not measured"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+if "owner.statPass(this.drawsEncoded, this.indexedEncoded);" not in pass_source:
+    raise SystemExit("metal 4 provider: a pass's draws are not reported to the frame's counters")
+if "owner.statEncoder();" not in pass_source:
+    raise SystemExit("metal 4 provider: a pass's encoder is not reported to the frame's counters")
+if "statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L" not in pass_source:
+    raise SystemExit("metal 4 provider: the tables a pass makes are not reported to the frame's counters")
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two

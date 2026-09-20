@@ -153,6 +153,67 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /** Whether a residency failure has been said already, so a device that cannot do it says so once. */
     private boolean residencyWarned;
 
+    /**
+     * What one frame cost, counted rather than guessed, and only while {@code -Dmetallum.metal4Trace} is on.
+     * <p>
+     * The point is to answer "why is this slow" with numbers from the path itself: passes, encoders, argument
+     * tables, draws, residency declarations and the wall time between beginning a frame and submitting it. The
+     * first forced Metal 4 client that rendered continuously did so at a fraction of the Metal 3 frame rate, and
+     * the candidate list - a table per pass, an encoder per pass, a residency commit per frame - is exactly what
+     * these counters separate.
+     */
+    private static final boolean TRACE = Boolean.getBoolean("metallum.metal4Trace");
+    /**
+     * Whether the per-frame counters are on and reported once every sixty frames.
+     * <p>
+     * Separate from the trace because the two answer different questions: the trace is what the frame encoded,
+     * draw by draw, and this is what a frame cost. The counters are kept whenever either is on, so a trace run
+     * also gets the summary.
+     */
+    private static final boolean STATS = Boolean.getBoolean("metallum.metal4FrameStats");
+    /** Whether either diagnostic is on, which is what the counters themselves are gated on. */
+    private static final boolean COUNTING = TRACE || STATS;
+    private long statFrames;
+    private long statPasses;
+    private long statEncoders;
+    private long statTables;
+    private long statDraws;
+    private long statIndexed;
+    private long statResidency;
+    private long statBeganAt;
+    private long statFrameNanos;
+
+    /** One pass ended, with what it encoded. */
+    void statPass(final long draws, final long indexed) {
+        if (!COUNTING) {
+            return;
+        }
+        this.statPasses++;
+        this.statDraws += draws;
+        this.statIndexed += indexed;
+    }
+
+    /** One render encoder was opened, which is the descriptor-and-encoder cost a pass pays. */
+    void statEncoder() {
+        if (COUNTING) {
+            this.statEncoders++;
+        }
+    }
+
+    /** How many argument tables were made for one pass's tables. */
+    void statTables(final long tables) {
+        if (COUNTING) {
+            this.statTables += tables;
+        }
+    }
+
+    /** One allocation was added to the frame's residency set. */
+    void statResidencyDeclaration() {
+        if (COUNTING) {
+            this.statResidency++;
+        }
+    }
+
     private boolean closed;
 
     /**
@@ -229,6 +290,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // After the commit, which is the half that comes second: the queue is told the drawable may be shown
         // once the work it just committed has run.
         presentAll();
+        statFrame();
         // The arena's blocks are rotated here and not earlier: the submission that reads them has just been
         // made, and the slot that owns them is the one the ring will prove complete before reusing it.
         this.transientMemory.rotate();
@@ -375,6 +437,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     private void beginFrameIfNeeded() {
         if (this.ring.begun()) {
             return;
+        }
+        if (STATS) {
+            this.statBeganAt = System.nanoTime();
         }
         if (!this.ring.beginFrame()) {
             throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
@@ -873,6 +938,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             }
             return;
         }
+        statResidencyDeclaration();
         this.residencyDirty = true;
     }
 
@@ -904,6 +970,39 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                         + " the frame binds by address is not declared to it");
             }
         }
+    }
+
+    /** One frame's counters, said once every sixty frames so the line is a rate and not a wall of numbers. */
+    private void statFrame() {
+        if (!STATS) {
+            return;
+        }
+        if (this.statBeganAt != 0L) {
+            this.statFrameNanos += System.nanoTime() - this.statBeganAt;
+            this.statBeganAt = 0L;
+        }
+        this.statFrames++;
+        if (this.statFrames % 60L != 0L) {
+            return;
+        }
+        Metallum.LOGGER.info("Metal 4 frame stats: frames={} fps={} msPerFrame={} passesPerFrame={}"
+                        + " encodersPerFrame={} tablesPerFrame={} drawsPerFrame={} indexedPerFrame={}"
+                        + " residencyPerFrame={}", this.statFrames,
+                String.format("%.1f", 60.0 / (this.statFrameNanos / 1.0e9)),
+                String.format("%.2f", this.statFrameNanos / 1.0e6 / 60.0),
+                String.format("%.1f", (double) this.statPasses / 60.0),
+                String.format("%.1f", (double) this.statEncoders / 60.0),
+                String.format("%.1f", (double) this.statTables / 60.0),
+                String.format("%.1f", (double) this.statDraws / 60.0),
+                String.format("%.1f", (double) this.statIndexed / 60.0),
+                String.format("%.1f", (double) this.statResidency / 60.0));
+        this.statPasses = 0L;
+        this.statEncoders = 0L;
+        this.statTables = 0L;
+        this.statDraws = 0L;
+        this.statIndexed = 0L;
+        this.statResidency = 0L;
+        this.statFrameNanos = 0L;
     }
 
     /** A clear colour as the descriptor's four components. */
