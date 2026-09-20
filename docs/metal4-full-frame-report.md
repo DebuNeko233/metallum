@@ -431,26 +431,68 @@ residency:        PROVEN AND REQUIRED - the frame encoder owns one `MTL4Residenc
 ## Blit
 
 ```
-full:   PROVEN as a native smoke and wired INTO the frame encoder - `MTL4ComputeEncoder.copyTextureToTexture`
+full:   PROVEN on the device, wired into the frame encoder, and NOW MEASURED IN LIVE FRAMES - the native smoke
         copies a 64x64 four-quadrant pattern into a second texture and every quadrant is read back (50 of 50
-        probes); `Metal4FrameEncoder.copyTextureToTexture` is the engine's own form of it, and the client has
-        walked past the uploads that use the other copies. NOT through a frame: no live frame has encoded one
-region: PROVEN as a native smoke and wired INTO the frame encoder - a 32x32 region at the origin is copied
-        into the destination's other half, and both a pixel inside where it landed and a pixel outside it are
-        read (the first is the source's top-left quadrant, the second is still the clear). The engine's
-        `copyBufferToTexture`/`copyTextureToBuffer`/`writeToTexture` are implemented over the same encoder
-mipmap: NOT STARTED - no mip chain has been copied on the new path
+        probes), `Metal4FrameEncoder.copyTextureToTexture` is the engine's own form of it, and a live frame now
+        encodes thousands of them: photon_v1.3b's window reports `blits=5049 blittedMiB=55882.4` against Metal
+        3's `blits=4972` on the same scene, which is Vitrail's history swap-back copy plus the mip work below
+region: PROVEN on the device and wired into the frame encoder - a 32x32 region at the origin is copied into the
+        destination's other half, and both a pixel inside where it landed and a pixel outside it are read (the
+        first is the source's top-left quadrant, the second is still the clear). The engine's
+        `copyBufferToTexture`/`copyTextureToBuffer`/`writeToTexture` are implemented over the same encoder.
+        **Region semantics are also where this path had a real fault**: every texture-to-texture copy moved
+        nothing for a while, because the override read the contract's nine parameters in a different order and a
+        correct caller's rectangle arrived as 0x0 - and Metal accepts a zero-sized copy silently. The history
+        fixture reads cyan on both arms now; blocker 11 has the measurement
+mipmap: PROVEN on the device and used by live frames - `canGenerateMipmaps` uploads a level-0 checkerboard, the
+        levels above it are pre-filled with a third value, the chain is generated and every level read back
+        against the box average of the one below (50 of 50). In the frame path a Vitrail fixture's chain
+        generations are visible under the trace switch (2448 over the run, each true, for a 2560x1440 target),
+        and that fixture's acceptance colour is in the presented frame on both arms
 ```
 
 ## Compute
 
 ```
-dispatch:       NOT STARTED
-SSBO:           NOT STARTED
-storage image:  NOT STARTED
-render->compute: NOT STARTED
-compute->render: NOT STARTED
+dispatch:       PROVEN on the device AND RUNNING in live frames - `canDispatchCompute` builds a pipeline from the
+                probe's own kernel, fills a table with two buffers by address, dispatches one threadgroup of 32
+                threads and reads every output word back against its own index's formula, with a sentinel
+                proving the kernel ran (50 of 50 in a 30-cold/20-warm census). In the client, Vitrail's
+                `compute-storage-contract` reports both of its dispatches on a forced Metal 4 session
+                (`Dispatched compute composite`, `Dispatched compute composite_a ... groups=(1, 1, 1),
+                local=(1, 1, 1)`), and photon_v1.3b's window counts 1893 compute encoders against Metal 3's 532
+                - one encoder per dispatch is this path's shape, which section 70 explicitly does not compare
+SSBO:           PROVEN as a binding, not as a shader read - the fixture's `Phase15Buffer` is allocated through the
+                backend, declared resident, and the dispatch that reads it is encoded with the buffer in its
+                table by address; no probe shader declares an SSBO, so what is proven on the device is the
+                binding and not the read
+storage image:  PROVEN on the device - `canWriteStorageImage` has a kernel write a texture **twice, each
+                dispatch in its own compute encoder with a table of its own**, because both the re-pointed form
+                and the shared-encoder form lost the second dispatch; the texture is read back at both corners
+                and the middle (50 of 50 in the census, 93 of 93 in a hunt, against 18 failures in one warm
+                process of the round that found it). The frame path's `clearStorageTexture` dispatches a typed
+                zeroing kernel over the texture's own extent with a table per clear
+render->compute: PROVEN - `canDispatchSampledRender` (a pass writes a storage image, a dispatch samples it) and
+                `canDispatchSampledCopy` (a copy writes it), each with a per-channel sentinel and all sixteen
+                samples compared against the producer's colour; plus `canDispatchAfterDispatch`, the two-dispatch
+                chain a pack's own compute chain is made of
+compute->render: PROVEN - `canSampleComputeOutput` (a pass samples what a dispatch wrote, with the CPU readback
+                making "the kernel never wrote" and "the sample never arrived" two different failures) and
+                `canDrawFromComputeWrittenBuffer` (a draw reads vertices a dispatch wrote, from a buffer that
+                starts as three copies of the origin so an early draw paints nothing)
+picture:        MEASURED through the readback road rather than an F2 press - on the `compute-storage-contract`
+                fixture both arms present the fixture's acceptance colour (pure green, with red and blue at
+                zero) and the picture read is the drawable written frame for frame, which is the reading the
+                capability matrix's presentation row carries. The one thing still not localised is the alpha byte
 ```
+
+**A note on these two blocks, because they are how a report goes wrong.** They read "NOT STARTED" long after the
+work behind them had landed: the capability matrix above was updated rung by rung while the narrative sections
+beneath it were not, so the same document contradicted itself - a reader who took the Compute block at its word
+would have concluded the compute road did not exist while the matrix three screens up described its dispatches
+running in a live frame. Both are rewritten against the counter readings and the device smokes rather than from
+memory, and the rule that produced the gap is the one worth keeping: a section is part of the update, not a
+summary written once.
 
 ## Synchronization
 
@@ -479,17 +521,27 @@ F3+T:       PASS - driven through the client's own reload entry point (`Minecraf
             the path the key submits to, and its future completed: the compilation caches were cleared and the
             pack was rebuilt through this path in the same session, with the chain drawn again afterwards and no
             stop, no stale pipeline and no use-after-release. `tools/run-metal4-lifecycle-probe.sh`.
-pack switch: PARTIAL - the half a switch puts at risk is the retirement of the old compiled artifacts while a
-            frame still names them, and that is what the reload above exercises (5994 submissions across it).
-            Selecting a different pack in the pack screen needs the GUI and is NOT MEASURED.
+pack switch: PARTIAL, and it stays partial for a reason that is about the GUI and not about the frame path -
+            the half a switch puts at risk is the retirement of the old compiled artifacts while a frame still
+            names them, which the reload above exercises across 5994 submissions and across a *dimension* change
+            that re-reads and re-translates the whole pack. Selecting a different pack in the pack screen itself
+            is NOT MEASURED.
 world leave: PASS - `Minecraft.clearClientLevel(new TitleScreen())`, the path Save-and-Quit takes. The frame
             path survived it: the sessions that leave and then quit run to a clean `Stopping!`. One caveat of
             the driver rather than of the frame path: a packet that arrives for the level just cleared makes
             vanilla throw in `ClientPacketListener.handleSetEntityMotion` (`this.level` is null), which the real
             UI path does not hit because the connection is closed first.
 world join:  PASS - every one of these sessions joins a world through `--quickPlaySingleplayer` and renders it.
-dimension:  NOT MEASURED - a dimension change needs a teleport command, which needs a keyboard this machine
-            refuses. The nearest reading is the reference arm's (`docs/metal3-performance-report.md`).
+dimension:  PASS - and it is the one transition on the list that is a command rather than a method call, which
+            is why it was the last to be driven: `ClientPacketListener.sendCommand("execute in minecraft:the_nether
+            run tp @s 0 80 0")` is what a player's chat line becomes. Measured on this path with
+            ComplementaryReimagined_r5.9.1: the server answers `Teleported Player478 to 0.5, 80.0, 0.5`, Vitrail
+            logs `Left minecraft:overworld for minecraft:the_nether: a dimension replaces the root rather than
+            layering over it, so the whole pack is read, translated and its colour targets allocated again`, and
+            then `Drawing ComplementaryReimagined_r5.9.1 from world-1 for minecraft:the_nether, at 2560x1440, 8
+            full screen passes before the final`. The chain drew twice - once for `world0`, once for `world-1` -
+            with no stop, no fault and zero teardown warnings, which is the moment stale targets, stale tables
+            and stale argument buffers would show.
 resize:     PASS and measured in the frame path - `Window.setWindowed(1600, 900)` mid-session takes the
             presented extent from 2560x1440 to 3200x1800 and back to 2560x1440 over 2375/1061/2555 readbacks,
             with every render target, table and argument buffer that names one rebuilt across it and no fault.

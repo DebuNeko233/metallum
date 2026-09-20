@@ -3680,9 +3680,21 @@ survived, and the quit runs `Stopping!` through to `BUILD SUCCESSFUL` with the c
 stop, and **zero teardown warnings**. The reference arm on the same schedule is also clean, which is what makes
 the timeout Metal 4's own rather than a property of quitting.
 
-**Two things the gate still does not cover**, and they are registered rather than implied: a dimension change
-needs a teleport command, and an in-session shader-pack *switch* needs the pack screen - the reload covers the
-half of a switch that this path can get wrong, which is the retirement of the old artifacts. And one caveat
+**And the dimension change turned out to be drivable after all**, which is worth writing down because the first
+reading of the gate had it as unmeasurable. It is not a method call on the client - it is a server-side teleport
+- but what a player types is a chat command, and the client's own road to one is
+`ClientPacketListener.sendCommand`. Sent as `execute in minecraft:the_nether run tp @s 0 80 0`, the server
+answers `Teleported Player478 to 0.5, 80.0, 0.5`, Vitrail logs
+`Left minecraft:overworld for minecraft:the_nether: a dimension replaces the root rather than layering over it, so
+the whole pack is read, translated and its colour targets allocated again`, and then
+`Drawing ComplementaryReimagined_r5.9.1 from world-1 for minecraft:the_nether, at 2560x1440, 8 full screen passes
+before the final` - the chain drawn twice, once per dimension, with no stop and zero teardown warnings. That is
+the row that re-reads and re-translates a whole pack mid-session, which is where stale targets, stale tables and
+stale argument buffers would show.
+
+**One thing the gate still does not cover**, registered rather than implied: an in-session shader-pack *switch*
+needs the pack screen. The reload and the dimension change between them cover the half of a switch this path can
+get wrong, which is the retirement of the old artifacts while a frame still names them. And one caveat
 belongs to the driver: `clearClientLevel` called directly lets a packet arrive for the level just cleared, and
 vanilla throws in `ClientPacketListener.handleSetEntityMotion`; the UI path closes the connection first and does
 not.
