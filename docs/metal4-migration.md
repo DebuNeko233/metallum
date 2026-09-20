@@ -2482,11 +2482,41 @@ image with structure, every sample different (`[ff0d0d0a, ff12110c, ff10100b, ..
 so the frame's present road puts a picture into the drawable. What the display capture showed was the capture,
 not the frame.
 
-**What this does not yet prove.** Presence is not correctness: the readback says the drawable has content, not
-that the content is *right*. Orientation, scaling and colour are questions for a comparison, and the comparison
-this method makes possible is the one the migration already has everywhere else - **M3 and M4, same scene, same
-switch** - with the M3 encoder's present road reading its drawable the same way. That is the next step here, and
-until it is done the picture column reads "content measured, correctness not compared".
+**And the comparison is now measured: the Metal 3 arm reads its drawable the same way.** The Metal 3 present
+road's helper answers the drawable it drew into (`encodePresentTextureToDrawable`), the encoder copies it in the
+same command buffer, and the pixels are read where this arm already waits - at the point `submit()` closes the
+command buffer of the slot being reused, whose completion the window wait has just seen. Both arms read through
+the *same* formatter in the shared layer (`DrawableReadback`), because a comparison whose two sides formatted
+differently compares the formatting.
+
+Two arms, one scene, the same fixture, the same switch, ten seconds of settle after the fixture's dispatches
+(1366 and 1372 readbacks). **Both arms present the fixture's acceptance colour**: the fixture's second compute
+writes `vec4(0, 1, 0, 1)` into its storage image and its final pass paints pure green when the chain worked, and
+both drawables are green with the red and blue channels at zero. **And they are not the same green**:
+
+| | Metal 3 (last frame) | Metal 4 (last frame) |
+| --- | --- | --- |
+| centre sample | `ff00ff00` (green 255, alpha 255) | `0000ff00` (green 255, **alpha 0**) |
+| corner sample | `ff00e600` (green 230, alpha 255) | `0000ff00` (green 255, alpha 0) |
+| mean | `(0, 247, 0, 254)` | `(0, 255, 0, 0)` |
+| shape | a gentle radial ramp, 230 at the corners to 255 at the centre | flat |
+
+Two differences, both **measured and unexplained**, and each has its experiment:
+
+- **the alpha**: the fixture's shader writes alpha 1, the Metal 3 drawable holds it, and the Metal 4 drawable
+  holds zero. The layer is opaque, so this is invisible on screen - but it is the one pixel-level difference a
+  comparison can see here, and the candidates are the two present passes' attachment load and store actions (this
+  path loads and stores the drawable, the Metal 3 road loads `DontCare`) and the shared present pipeline's blend
+  state. The experiment is to make the two attachment treatments the same and read again.
+- **the ramp**: 230 at the corners against a flat 255. A flat source drawn with blending over a destination that
+  is *not* the same colour would look exactly like this, which is why the load action above is the first
+  candidate; the scaler is not one - both arms report MetalFX available and neither logs an encode.
+
+So the picture column now reads: **content and colour measured on both arms, the fixture's acceptance colour
+included; two pixel-level differences registered with their experiments, and neither claimed as a defect yet.**
+What is still missing is a *second* scene for orientation: this fixture's picture is symmetric (a green ramp),
+so it can say "the colour arrived" and cannot say "the image is the right way up" - an asymmetric scene is the
+next thing to read.
 
 ## The API mapping
 

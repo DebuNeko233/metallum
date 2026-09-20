@@ -1434,12 +1434,56 @@ for needle, why in (
      "the drawable is not copied into the buffer the report reads"),
     ("reportDrawableReadback(this.ring.slot());",
      "the copied drawable is never read, or it is read before the slot's submission is known complete"),
-    ("Metal 4 drawable readback: {}x{} ARGB rows(top first)=[{}] meanBGRA=",
-     "the readback prints nothing structural, so a reader could not tell a black drawable from a wrong one"),
+    ("com.metallum.render.shared.DrawableReadback.report(\"metal4\", width, height,",
+     "the frame path does not read its copied drawable through the shared formatter, so the two arms' lines"
+     " would not be comparable"),
+    ("com.metallum.render.shared.DrawableReadback.bytesPerRow(width);",
+     "the readback's row stride is computed here rather than by the shared helper the other arm uses"),
     ("ObjC.release(this.readbackStaging[slot].handle());",
      "the readback's staging buffers are never released with the encoder"),
 ):
     if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
+
+# And the same readback on the reference arm, because a comparison needs both sides: the Metal 3 present road's
+# helper answers the drawable it drew into, the encoder copies it in the same command buffer and reads it where
+# that arm already waits - and both arms format through the shared layer.
+SHARED_READBACK = ROOT / "src/main/java/com/metallum/render/shared/DrawableReadback.java"
+if not SHARED_READBACK.is_file():
+    raise SystemExit("metal 4 provider: the shared drawable formatter is gone, so the two arms would format"
+                     " their own lines and a comparison would compare the formatting")
+shared_readback = SHARED_READBACK.read_text(encoding="utf-8")
+for needle, why in (
+    ("public static void report(final String which, final long width, final long height,",
+     "the shared formatter does not take which arm read the drawable, so the two lines could not be told apart"),
+    ("rows(top first)=[{}] meanBGRA=",
+     "the shared formatter prints nothing structural, so a reader could not tell a black drawable from a wrong"
+     " one"),
+    ("public static long bytesPerRow(final long width) {",
+     "the row stride is not shared, so the two arms could disagree about it"),
+):
+    if needle not in shared_readback:
+        raise SystemExit("metal 4 provider: " + why)
+
+M3_ENCODER = ROOT / "src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java"
+if not M3_ENCODER.is_file():
+    raise SystemExit("metal 4 provider: MetalCommandEncoder.java is gone, so the reference arm has no drawable"
+                     " readback and the comparison has one side")
+m3 = M3_ENCODER.read_text(encoding="utf-8")
+for needle, why in (
+    ("private final boolean drawableReadback = com.metallum.mtl.CAMetalLayer.readbackRequested();",
+     "the reference arm does not ask whether the drawable may be read"),
+    ("MemorySegment drawableTexture =\n                    commandBuffer.encodePresentTextureToDrawable(",
+     "the reference arm's present road does not take back the drawable it drew into, so it cannot be read"),
+    ("blitCommandEncoder().copyFromTextureToBuffer(drawableTexture, 0L, 0L, 0L, 0L, width, height, staging, 0L,",
+     "the reference arm never copies its drawable out"),
+    ("reportDrawableReadback((int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT));",
+     "the reference arm never reads what it copied, or reads it before the slot's submission is known complete"),
+    ('com.metallum.render.shared.DrawableReadback.report("metal3", width, height,',
+     "the reference arm does not read through the shared formatter"),
+):
+    if needle not in m3:
         raise SystemExit("metal 4 provider: " + why)
 
 print("Metal 4 execution provider contract: PASS")

@@ -265,8 +265,13 @@ public final class MTLCommandBuffer {
         );
     }
 
-    public void encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture, final MTLFence globalFence) {
-        MTLBuiltinPipelines.encodePresentTextureToDrawable(this, layer, sourceTexture, globalFence);
+    /**
+     * Draws the picture into the layer's next drawable and presents it, answering the drawable's texture so a
+     * caller that wants to read what was presented can - the drawable is valid for this command buffer alone.
+     */
+    public MemorySegment encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture,
+                                                        final MTLFence globalFence) {
+        return MTLBuiltinPipelines.encodePresentTextureToDrawable(this, layer, sourceTexture, globalFence);
     }
 
     public void presentDrawable(final CAMetalDrawable drawable) {

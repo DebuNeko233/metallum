@@ -1324,7 +1324,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     private void copyDrawableForReadback(final MemorySegment drawableTexture, final long width, final long height) {
         int slot = this.ring.slot();
-        long bytesPerRow = ((width * 4L + 255L) / 256L) * 256L;
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
         long bytes = bytesPerRow * height;
         MTLBuffer staging = this.readbackStaging[slot];
         if (staging == null || staging.length() < bytes) {
@@ -1373,48 +1373,11 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (staging == null || width <= 0L || height <= 0L) {
             return;
         }
-        long bytesPerRow = ((width * 4L + 255L) / 256L) * 256L;
-        MemorySegment pixels = staging.contents().reinterpret(bytesPerRow * height);
-        StringBuilder grid = new StringBuilder();
-        long[] mean = new long[4];
-        long counted = 0L;
-        for (int row = 0; row < 5; row++) {
-            long y = Math.min(height - 1L, row * (height - 1L) / 4L);
-            if (row > 0) {
-                grid.append(' ');
-            }
-            for (int column = 0; column < 5; column++) {
-                long x = Math.min(width - 1L, column * (width - 1L) / 4L);
-                long at = y * bytesPerRow + x * 4L;
-                long blue = pixels.get(JAVA_BYTE, at) & 0xFF;
-                long green = pixels.get(JAVA_BYTE, at + 1L) & 0xFF;
-                long red = pixels.get(JAVA_BYTE, at + 2L) & 0xFF;
-                long alpha = pixels.get(JAVA_BYTE, at + 3L) & 0xFF;
-                if (column > 0) {
-                    grid.append(',');
-                }
-                grid.append(String.format("%02x%02x%02x%02x", alpha, red, green, blue));
-            }
-        }
-        // The mean over a sparse grid of the whole surface: every sixteenth pixel in both directions, so the
-        // reading costs a few thousand loads rather than a few million.
-        for (long y = 0L; y < height; y += 16L) {
-            for (long x = 0L; x < width; x += 16L) {
-                long at = y * bytesPerRow + x * 4L;
-                mean[0] += pixels.get(JAVA_BYTE, at) & 0xFF;
-                mean[1] += pixels.get(JAVA_BYTE, at + 1L) & 0xFF;
-                mean[2] += pixels.get(JAVA_BYTE, at + 2L) & 0xFF;
-                mean[3] += pixels.get(JAVA_BYTE, at + 3L) & 0xFF;
-                counted++;
-            }
-        }
-        if (counted == 0L) {
-            counted = 1L;
-        }
-        Metallum.LOGGER.info("Metal 4 drawable readback: {}x{} ARGB rows(top first)=[{}] meanBGRA=({}, {}, {}, {})"
-                        + " over {} samples",
-                width, height, grid, mean[0] / counted, mean[1] / counted, mean[2] / counted, mean[3] / counted,
-                counted);
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        // The reading and the wording are the shared layer's, so that this arm's line and the Metal 3 arm's line
+        // are the same shape: a comparison whose two sides formatted differently compares the formatting.
+        com.metallum.render.shared.DrawableReadback.report("metal4", width, height,
+                staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
     }
 
     /**

@@ -219,6 +219,21 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         );
     }
 
+    /**
+     * The presented drawable, copied out so the picture can be read where the display cannot be photographed.
+     * <p>
+     * The same diagnostic the Metal 4 frame encoder carries, on this arm: {@code -Dmetallum.drawableReadback=true}
+     * turns the layer's {@code framebufferOnly} off, the drawable the present road drew into is copied into a
+     * shared buffer, and the pixels are read when this slot's submission has completed - which is the wait
+     * {@link #submit()} already does for the command buffer it is about to close. A comparison needs both arms
+     * to say the same thing about the same frame, which is the only reason this exists on the reference path.
+     */
+    private final boolean drawableReadback = com.metallum.mtl.CAMetalLayer.readbackRequested();
+    private final com.metallum.mtl.MTLBuffer[] readbackStaging = new com.metallum.mtl.MTLBuffer[MAX_SUBMITS_IN_FLIGHT];
+    private final boolean[] readbackPending = new boolean[MAX_SUBMITS_IN_FLIGHT];
+    private final long[] readbackWidth = new long[MAX_SUBMITS_IN_FLIGHT];
+    private final long[] readbackHeight = new long[MAX_SUBMITS_IN_FLIGHT];
+
     MTLBlitCommandEncoder blitCommandEncoder() {
         // A blit already open is where the next blit belongs. Metal orders the commands inside one encoder,
         // and the fence the following encoder waits on is updated when this one ends either way, so nothing
@@ -498,6 +513,8 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
             throw new IllegalStateException("5s timeout reached when waiting for Metal submit completion");
         }
 
+        reportDrawableReadback((int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT));
+
         if (toClose != null) {
             // A command buffer that failed completes exactly like one that drew, so the frame's own
             // outcome is read here rather than assumed: the error state and the two driver times that
@@ -773,8 +790,64 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         // does not want this road does not even record a layer for it (the short circuit is what keeps that
         // true - `presenting` records the layer and the picture as it answers).
         if (!presentGate.takesPicture(layer, source.nativeHandle())) {
-            commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
+            MemorySegment drawableTexture =
+                    commandBuffer.encodePresentTextureToDrawable(layer, source.nativeHandle(), fence);
+            if (this.drawableReadback && !ObjC.isNil(drawableTexture)) {
+                copyDrawableForReadback(drawableTexture);
+            }
         }
+    }
+
+    /**
+     * Copies the drawable this frame presented into its slot's staging buffer.
+     * <p>
+     * Only reachable when the layer was built with {@code framebufferOnly} off, which is what the diagnostic
+     * switch does, and only where the layer handed a drawable out - the present helper answers the texture it
+     * drew into because the drawable is valid for this command buffer alone.
+     */
+    private void copyDrawableForReadback(final MemorySegment drawableTexture) {
+        long width = MTLTexture.width(drawableTexture);
+        long height = MTLTexture.height(drawableTexture);
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        long bytes = bytesPerRow * height;
+
+        int slot = (int) (currentSubmitIndex % MAX_SUBMITS_IN_FLIGHT);
+        com.metallum.mtl.MTLBuffer staging = this.readbackStaging[slot];
+        if (staging == null || staging.length() < bytes) {
+            if (staging != null) {
+                ObjC.release(staging.handle());
+            }
+            staging = device.metalDevice().newBuffer(bytes, com.metallum.mtl.MTLStorageMode.Shared.value);
+            this.readbackStaging[slot] = staging;
+        }
+        blitCommandEncoder().copyFromTextureToBuffer(drawableTexture, 0L, 0L, 0L, 0L, width, height, staging, 0L,
+                bytesPerRow, bytesPerRow * height);
+        this.readbackPending[slot] = true;
+        this.readbackWidth[slot] = width;
+        this.readbackHeight[slot] = height;
+    }
+
+    /**
+     * Reads and reports the drawable a slot copied, once that slot's submission is known complete.
+     * <p>
+     * Called where the ring already waits: the command buffer being closed here is the slot's submission from
+     * three frames ago, and the window wait above has seen its completion. The reading and the wording are the
+     * shared layer's, so this arm's line and the Metal 4 arm's line are the same shape.
+     */
+    private void reportDrawableReadback(final int slot) {
+        if (!this.readbackPending[slot]) {
+            return;
+        }
+        this.readbackPending[slot] = false;
+        com.metallum.mtl.MTLBuffer staging = this.readbackStaging[slot];
+        long width = this.readbackWidth[slot];
+        long height = this.readbackHeight[slot];
+        if (staging == null || width <= 0L || height <= 0L) {
+            return;
+        }
+        long bytesPerRow = com.metallum.render.shared.DrawableReadback.bytesPerRow(width);
+        com.metallum.render.shared.DrawableReadback.report("metal3", width, height,
+                staging.contents().reinterpret(bytesPerRow * height), bytesPerRow);
     }
 
     @Override
@@ -1090,6 +1163,12 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     public void close() {
         // The queue is this encoder's own now, so its teardown is here beside the rest of its release.
         this.commandQueue.close();
+        for (int slot = 0; slot < this.readbackStaging.length; slot++) {
+            if (this.readbackStaging[slot] != null) {
+                ObjC.release(this.readbackStaging[slot].handle());
+                this.readbackStaging[slot] = null;
+            }
+        }
         submitRenderPass();
         endEncoder();
         for (int slot = 0; slot < inFlight.length; slot++) {

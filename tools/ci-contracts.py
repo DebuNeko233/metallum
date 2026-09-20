@@ -241,11 +241,14 @@ require("Generic Final present entry", "src/main/java/com/metallum/render/metal3
 ))
 require("Generic command-buffer present", "src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java", (
     "private static final Msg PRESENT_DRAWABLE = Msg.ofVoid(\"presentDrawable:\", ADDRESS);",
-    "public void encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture, final MTLFence globalFence)",
+    "public MemorySegment encodePresentTextureToDrawable(final CAMetalLayer layer, final MemorySegment sourceTexture,",
     "PRESENT_DRAWABLE.send(handle(), drawable.handle());",
 ))
 require("Generic CAMetalLayer presentation", "src/main/java/com/metallum/mtl/MTLBuiltinPipelines.java", (
     "CAMetalDrawable drawable = layer.nextDrawable();",
+    # The drawable is valid for the command buffer that took it, so the helper answers it: a diagnostic that
+    # wants to read what was presented can only do so from here.
+    "public static MemorySegment encodePresentTextureToDrawable(",
     "MemorySegment drawableTexture = drawable.texture();",
     "MTLRenderPassDescriptor.LOAD_ACTION_DONT_CARE",
     "MTLRenderPassDescriptor.STORE_ACTION_STORE",

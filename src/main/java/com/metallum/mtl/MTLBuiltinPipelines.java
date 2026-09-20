@@ -298,7 +298,16 @@ public final class MTLBuiltinPipelines {
         return scaling ? presentLinearSampler : presentNearestSampler;
     }
 
-    public static void encodePresentTextureToDrawable(
+    /**
+     * Draws the picture into the layer's next drawable and presents it.
+     * <p>
+     * Answers the drawable's texture, or nil where the layer would not hand one out - because the caller is the
+     * only one that can read it: the drawable is valid for this command buffer alone, so a diagnostic that wants
+     * to copy it out has to do so here, and one that cannot get the handle back can only guess.
+     *
+     * @return the drawable's texture, or {@link MemorySegment#NULL} where there was no drawable
+     */
+    public static MemorySegment encodePresentTextureToDrawable(
             final MTLCommandBuffer commandBuffer,
             final CAMetalLayer layer,
             final MemorySegment sourceTexture,
@@ -307,7 +316,7 @@ public final class MTLBuiltinPipelines {
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             CAMetalDrawable drawable = layer.nextDrawable();
             if (drawable == null) {
-                return;
+                return MemorySegment.NULL;
             }
             MemorySegment drawableTexture = drawable.texture();
 
@@ -345,6 +354,7 @@ public final class MTLBuiltinPipelines {
 
             encoder.endEncoding();
             commandBuffer.presentDrawable(drawable);
+            return drawableTexture;
         }
     }
 
