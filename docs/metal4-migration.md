@@ -2232,6 +2232,32 @@ samples`, `render writes → blit reads`, `blit writes → compute reads`), the 
 client's own fixture depends on, and the read/write matrix's WAR direction. Each is its own smoke in the same
 shape as the two above, and none of them is claimed yet.
 
+**And the copy's two boundaries are a reproducer, so they are held out of the default census.** A third smoke
+of the same shape was written for them - a pass clears a source, a copy moves its region into a destination's
+other half, and a second pass samples the destination - and it passes on the device. What it also does is make
+the storage-image smoke fail: with it in the suite, four runs of one cold process plus four warm probes failed
+the storage-image smoke in **four of four runs, always at the process's fourth probe**, and a ten-warm run
+failed at probes 3, 5, 7 and 9 - a period of two - while a run of the same driver without it was clean. Four
+bisects narrowed the ingredient rather than the mechanism:
+
+| Variant | Result |
+| --- | --- |
+| the copy smoke's table made with one buffer slot instead of none | the pattern stays |
+| a **fresh** table for the storage smoke's second dispatch instead of the re-pointed one | the pattern stays |
+| the copy encoder's block removed, its three textures and both passes kept | **clean, 11 of 11** |
+| the copy kept, its producer barrier removed | the pattern stays |
+
+So it is the **region copy encoded in a compute encoder between two render encoders** that sets the state off,
+not the table, not the re-point, and not the barrier - and a later attempt's *two dispatches through one table*
+is what reads wrong, always as the first dispatch's colour where the second's was asked for. That is the shape
+the frame path encodes every frame, so the smoke is **not committed**: the census has to keep meaning "this
+capability works", and a suite that is red for a reason another suite's field reports is worse than a suite
+that does not ask. The code is forty lines in the shape of the two smokes above (`openPass` a source, a
+`MTL4ComputeEncoder` with `copyTextureRegion(source, 0, 0, 0, 0, 0, COPY_HALF, COPY_HALF, 1, destination, 0, 0,
+COPY_HALF, 0, 0)`, then `openPass` a destination and sample it), and the next round's first job is the
+mechanism, not the smoke: the reproducer is deterministic, the ingredient is one call, and the thing it breaks
+is the engine's own clear path.
+
 **Measured, and with one honest fault in it.** Two 30-cold + 20-warm censuses and a six-process hunt
 (6 × 31 probes) were run: **286 probes**, of which `computeSample` and `computeVertex` are **286 of 286** -
 every cold process and every warm repeat, including the 30 cold processes of both censuses. The storage-image

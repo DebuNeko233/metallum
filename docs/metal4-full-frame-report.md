@@ -595,14 +595,17 @@ answered rather than only what is left.
    machine's display awake.
 5. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
-6. **A new intermittency in the storage-image smoke, and the frame's clears are built on the same mechanism.**
+6. **The storage-image smoke loses its second dispatch, and it is now reproducible on demand.**
    One census this round failed eighteen consecutive warm probes in a single process (its third probe onward),
-   each reading the *first* dispatch's red where the *second* dispatch's green was asked for - that is, the
-   table re-point between two dispatches stopped taking. It has not been seen cold (0 of 60 that round), the
-   second census and a six-process hunt did not reproduce it (268 of 286 probes this round green), and it is
-   the same table-snapshot property `Metal4FrameEncoder.clearStorageTexture` depends on, so it is registered
-   here rather than dismissed: no reproducer yet, and the stage is already exact. The reproduction command and
-   the full distribution are in `metal4-migration.md`, under the dependency smokes.
+   each reading the *first* dispatch's red where the *second* dispatch's green was asked for. That is the same
+   table-snapshot property `Metal4FrameEncoder.clearStorageTexture` depends on, so it was chased rather than
+   filed: a smoke of the copy's two boundaries makes it deterministic - four of four runs failed the process's
+   fourth probe, a ten-warm run failed probes 3, 5, 7 and 9 - and four bisects put the ingredient on the
+   **region copy encoded in a compute encoder between two render encoders**, not on the table, the re-point or
+   the barrier. The reproducer is forty lines and is not committed, because the census has to keep meaning
+   "this capability works"; what is committed is the exact shape and the four bisect results in
+   `metal4-migration.md`. Until the mechanism is known, this is the second reason AUTO stays off Metal 4 - the
+   frame path encodes copies between passes every frame - and it is the next round's first job.
 7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,
