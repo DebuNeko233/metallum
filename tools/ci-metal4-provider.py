@@ -1654,4 +1654,23 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- and a per-pass creation event is not printed per pass -----------------------------------------------
+# This path makes an argument table per pass, so a Photon session wrote 525893 lines to its log and 105187 of them
+# were that one line, one per table per pass. The line is now said under the trace switch, which is the same
+# property the per-pass trace uses, and the routine fact stays with the frame probe's `tablesPerFrame`, which
+# counts every table without printing any. **It is hygiene and not a fix**: gating it was first tried as the
+# explanation for a pack load that stopped, and it changed that session's outcome by nothing - the same 251 pack
+# units served at the same twelve seconds, before and after. The pin holds the gating; it does not claim a cause.
+ARGUMENT_TABLE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4ArgumentTable.java"
+table_source = ARGUMENT_TABLE.read_text(encoding="utf-8")
+for needle, why in (
+    ('private static final boolean TRACE = Boolean.getBoolean("metallum.metal4Trace");',
+     "the table's creation line is not gated on the trace switch, so a pack with many passes prints a line per"
+     " table per frame - measured as 105187 of 525893 lines and a load that served 251 units in 300 seconds"),
+    ("            if (TRACE) {\n                Metallum.LOGGER.info(\"Metal 4 argument table: made for",
+     "the creation line is printed unconditionally again"),
+):
+    if needle not in table_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

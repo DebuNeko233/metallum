@@ -38,6 +38,9 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 @Environment(EnvType.CLIENT)
 public final class MTL4ArgumentTable implements AutoCloseable {
 
+    /** The switch the frame path's per-pass trace uses, so one property asks for every creation event. */
+    private static final boolean TRACE = Boolean.getBoolean("metallum.metal4Trace");
+
     private static final Msg NEW_DESCRIPTOR = Msg.of("new", ADDRESS);
     /** The header's own factory: the descriptor and a null error slot. */
     private static final Msg NEW_TABLE_WITH_ERROR =
@@ -136,9 +139,20 @@ public final class MTL4ArgumentTable implements AutoCloseable {
                 return null;
             }
 
-            Metallum.LOGGER.info("Metal 4 argument table: made for {} buffers, {} textures and {} samplers, "
-                    + "through {}", buffers, textures, samplers,
-                    withError ? "newArgumentTableWithDescriptor:error:" : "newArgumentTableWithDescriptor:");
+            // Said under the trace switch rather than every time, because this path makes a table per pass: a
+            // Photon session wrote 525893 lines to its log and 105187 of them were this one, one per table per
+            // pass. The routine fact belongs to the frame probe's `tablesPerFrame`, which counts every table
+            // without printing any, and a creation event is what a reader asks for by name.
+            //
+            // It is hygiene and **not** a fix for anything: this line was first suspected of starving the render
+            // thread while a pack loaded, and gating it changed that session's outcome by nothing at all - the
+            // same 251 pack units served at the same twelve seconds, before and after. The stop was elsewhere,
+            // and the suspicion is recorded here so nobody re-runs it as an experiment.
+            if (TRACE) {
+                Metallum.LOGGER.info("Metal 4 argument table: made for {} buffers, {} textures and {} samplers, "
+                        + "through {}", buffers, textures, samplers,
+                        withError ? "newArgumentTableWithDescriptor:error:" : "newArgumentTableWithDescriptor:");
+            }
             return new MTL4ArgumentTable(made);
         }
     }

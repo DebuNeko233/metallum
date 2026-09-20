@@ -2420,6 +2420,40 @@ So the ladder's second rung is **M3 PASS / M4 PASS** too, and the differences it
 pass of its own per clear (3279 against 538), attachment traffic 1.09x loaded and 1.15x stored, and one encoder per
 dispatch. Photon is the rung after it.
 
+### The ladder's third rung names the binding design: Photon stops on one pipeline
+
+`photon_v1.3b` is the heaviest pack here - 557 files, 503 shaders, light-propagation compute, mip chains and
+fifteen colour targets, eleven of them doubled - and it is the first real pack that does **not** run on this path.
+The reference arm serves its whole chain in about ten seconds and draws it; this path serves 251 of its 607 pack
+units in twelve seconds and then stops, and the presented frame stays a frame with no pack in it for the rest of
+the session. **M3 PASS / M4 FAIL**, and the log names the failure in one exception:
+
+```text
+java.lang.IllegalStateException: Pipeline vitrail:pipeline/pack/2/world0/deferred4 requires wide Metal resources,
+but Argument Buffer Tier 2 is unavailable
+    at com.metallum.render.shared.MetalCrossShaderTranslator.translate(MetalCrossShaderTranslator.java:87)
+    at com.metallum.render.metal4.Metal4PipelineCompiler.compile(Metal4PipelineCompiler.java:62)
+```
+
+and then Vitrail's own last words on it: `Vitrail stopped drawing this pack after an error`.
+
+**The mechanism is a design boundary this rung is the first to reach, and it is exactly section 46's subject.** A
+pipeline whose bindings do not fit MSL's *direct* slots makes the translator fall back to **Metal 3 argument
+buffers** (`needsArgumentBuffers(...)`), and the Metal 4 compiler tells the translator that argument-buffer tier 2
+is unavailable - correctly, because this generation binds through **argument tables** rather than argument buffers
+- so the fallback throws instead of choosing the table path. Photon's `deferred4` is wide enough to reach it. The
+fix is the production binding path sections 46 to 51 describe rather than a flag: a wide pipeline on this
+generation has to carry its excess resources through the table (or through an address-space buffer the table
+points at), which is what `Metal4BindingPlan` exists to decide.
+
+**And one suspicion was refuted on the way, by its own A/B.** The session wrote 525893 lines to its log, 105187 of
+them `Metal 4 argument table: made for ...`, one per table per pass - and a per-table INFO line in a hot path looked
+like it was starving the render thread while the pack loaded. Gating it behind the trace switch changed the outcome
+by **nothing**: the same 251 units, served at the same twelve seconds, before and after. So the gating is kept as
+hygiene - one line per object per pass is not what a log is for, and the frame probe's `tablesPerFrame` already
+counts every table - and the *cause* it was suspected of is recorded as refuted, in the code comment and in the
+pin, so it is not re-run as an experiment. Section 67 stops the ladder here.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it

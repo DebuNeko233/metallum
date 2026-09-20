@@ -787,8 +787,11 @@ phase rather than read as verdicts. **and its second rung passes too**: `Complem
 shadows and compute, runs on both arms with **334 pipeline identities on each**, a dispatching compute road on
 each and no fault of any kind. That reading needed one instrument fix first - this path opened its dispatch
 encoder without reporting it, so its compute counted as zero against the reference arm's 532 and the pack's
-shadow compute looked absent until the counter was told about it, after which the same launch read 1893. Photon
-is the rung after these two. **And the pictures that have been read agree, now that blocker
+shadow compute looked absent until the counter was told about it, after which the same launch read 1893. **and its third rung does not pass**: `photon_v1.3b` serves 251 of its 607 pack units and then stops, because
+one of its pipelines (`world0/deferred4`) does not fit MSL's direct binding slots and the translator's
+fallback to Metal 3 argument buffers is refused on this generation - which binds through tables. M3 PASS /
+M4 FAIL, localised to the exception line, and the fix is section 46-51's production binding path for a wide
+pipeline rather than a flag. **And the pictures that have been read agree, now that blocker
 10 is fixed**: the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four
 MRT attachments, the orientation), the frames the *game* draws are right too - the no-pack Metal 4 frame is a world
 whose sampled terrain cells are the Metal 3 arm's own, and the depth fixture reads green at the geometry's edges on
