@@ -146,6 +146,8 @@ for needle, why in (
 # clears, a load across a pass boundary), so what is pinned here is the object over it: that it is the neutral
 # contract and only that contract, that it resolves the game's attachments and opens through the measured
 # layer, and that every operation it cannot perform refuses by name rather than drawing nothing.
+ARGUMENT_TABLE = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                  / "MTL4ArgumentTable.java")
 PASS = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4RenderPass.java"
 if not PASS.is_file():
     raise SystemExit("metal 4 provider: Metal4RenderPass.java is gone, so createRenderPass has no pass object "
@@ -825,12 +827,26 @@ for needle, why in (
 ):
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
+if ("owner.statPass(this.drawsEncoded, this.indexedEncoded);\n        if (TRACE) {") not in pass_source:
+    raise SystemExit("metal 4 provider: a pass's draws are counted only while the per-draw trace is on, so the"
+                     " counters that answer what a frame cost report passes with no draws")
 if "owner.statPass(this.drawsEncoded, this.indexedEncoded);" not in pass_source:
     raise SystemExit("metal 4 provider: a pass's draws are not reported to the frame's counters")
 if "owner.statEncoder();" not in pass_source:
     raise SystemExit("metal 4 provider: a pass's encoder is not reported to the frame's counters")
 if "statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L" not in pass_source:
     raise SystemExit("metal 4 provider: the tables a pass makes are not reported to the frame's counters")
+
+# The argument table's unbound slots, which is a correctness fact and not a detail: the header says
+# initializeBindings defaults to false, so a slot this path never fills holds whatever the driver left there, and
+# a shader that reads one dereferences it. This path skips a binding by design where a layout declares it as the
+# other kind of resource, and the first world frame - the first that draws the clouds - was killing the GPU with
+# an MMU fault until the tables were created with their bindings initialised to nil. Nil reads as zero, which is
+# what the Metal 3 pass does with a name its layout never encodes.
+if "SET_INITIALIZE.send(descriptor, 1L);" not in ARGUMENT_TABLE.read_text(encoding="utf-8"):
+    raise SystemExit("metal 4 provider: the argument table is not created with its bindings initialised, so a"
+                     " slot this path skips by design holds undefined data and a shader that reads it faults the"
+                     " GPU - measured, and the first world frame was doing exactly that")
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two

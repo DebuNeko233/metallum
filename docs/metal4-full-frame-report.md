@@ -418,7 +418,7 @@ CI, which is where every smoke here was run.
 
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
-| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
+| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - the no-pack world frame renders (9,000+ frames, no fault, 300 fps, 15 passes and 34 draws a frame), measured by the path's own counters; the picture has not been compared with Metal 3's | yes |
 | MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a | yes |
 | clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | n/a | yes |
 | depth           | yes         | **clear half** - a `Depth32Float` attachment cleared to 0.25 in a pass of its own and read back; no depth-stencil state has been bound to a draw | n/a | yes |
@@ -448,6 +448,16 @@ process with no window is not the same claim as a capability proven through the 
 
 ## Remaining blockers
 
+0. ~~The first world frame hangs the GPU~~ - **found and fixed**: an argument table's bindings are not
+   initialised unless you ask (`MTL4ArgumentTable.h`: `initializeBindings` defaults to **false**), so a slot this
+   path never fills - and this path skips a binding by design where a layout declares it as the other kind of
+   resource - held undefined data, and the first frame that drew the clouds read one. Tables are now created
+   with their bindings initialised to nil. MEASURED: a forced Metal 4 launch loads a world
+   (`Time elapsed: 1783 ms`) and renders it for nine thousand frames with no fault, no `GPURestart` and no
+   refusal - 300.6 fps, 3.33 ms a frame, 15.0 passes, 15.0 encoders, 22.3 argument tables, 33.8 draws and 5.0
+   indexed draws a frame. NOT claimed: that the picture is right (nothing has compared it with Metal 3's), and
+   the standard harness cannot collect the run yet because the frame probe is fed by the Metal 3 encoder only -
+   feeding it from the full-frame path is the next milestone.
 1. **The first world frame hangs the GPU** - a forced Metal 4 launch presents its own loading screen for
    more than thirty frames and then, on the first frame of the loaded world, stops with the ring waiting for a
    submission that never completes. The machine's own log is the finding: the kernel logged a `GPURestart` for
@@ -530,7 +540,12 @@ process with no window is not the same claim as a capability proven through the 
 
 ## Metal 4 full-frame implementation complete?
 
-**NO.** Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
+**NO, but the first full-frame milestone is reached.** A forced Metal 4 launch loads a world and renders it -
+nine thousand frames, 300 fps, no fault, no restart, no refusal - which is what Phase 5 of the plan asks for;
+what is not yet true is everything that turns "it renders" into "it renders correctly and measurably": the
+picture has not been compared with Metal 3's, the harness cannot collect the run (the frame probe is not fed by
+this path), and MRT/depth/blend/scissor, blit/compute, the synchronization fixtures, the lifecycle checks and the
+real packs are all still open. Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
 bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
 frame encoder's lifetime - the ring - proven on the device, its copies wired, its clears implemented and
 measured, its fence answering the Metal 3 fence's three ways, its bindings recorded by name and resolved when

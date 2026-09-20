@@ -249,10 +249,12 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      * command buffer may be ended once and a caller may reach this on more than one path.
      */
     void finish() {
+        // Reported to the frame's counters whether or not the per-draw trace is on: the counters are what
+        // answer "what did a frame cost", and a pass is the unit a cost is attributed to.
+        this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         if (TRACE) {
             Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={}",
                     label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled);
-            this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         }
         releaseTables();
         if (!this.encoder.open()) {

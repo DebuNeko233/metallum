@@ -1578,6 +1578,44 @@ the next narrowing is per-operation rather than per-frame: the frame's own passe
 target (the trace names them, and the terrain's indirect draw, the cubemap and cloud passes and the blit are the
 ones the loading screen never encodes).
 
+### The argument table's unbound slots faulted the GPU, and the world renders now
+
+The world frame's fault was found, and it was not residency. **An argument table's bindings are not initialised
+unless you ask.** This machine's `MTL4ArgumentTable.h` says of `initializeBindings`: "Configures whether Metal
+initializes the bindings to nil values upon creation of argument table. The default value of this property is
+**false**." The frame path created its tables with the default - the comment beside the call even claimed the
+opposite, that an uninitialised slot "would be read as null" - so a slot this path never filled held whatever the
+driver left there, and a shader that read one dereferenced it.
+
+And this path **skips a binding by design**: a name a pipeline declares as the other kind of resource is not
+encoded, because that is what the Metal 3 pass does (it keeps uniforms and textures in two maps). The engine's
+cloud pass is exactly that case - it binds a uniform under a name whose pipeline declares a texture - so its
+texture slot was never filled. The loading screen draws no clouds and never faulted; **the first world frame
+does, and did**, which is the whole of the "world frame fault" that three rounds were chasing. The fix is one
+argument: the tables are created with their bindings initialised to nil, and a nil read is zero, which is what
+the Metal 3 pass does with a name its layout never encodes.
+
+**Measured, with the path's own counters.** A forced Metal 4 launch now loads a world and renders it:
+
+```text
+Time elapsed: 1783 ms                     (the integrated server completes the load)
+Metal 4 frame stats: frames=9360  fps=300.6  msPerFrame=3.33  passesPerFrame=15.0 encodersPerFrame=15.0
+                     tablesPerFrame=22.3 drawsPerFrame=33.8 indexedPerFrame=5.0 residencyPerFrame=1.0
+```
+
+Nine thousand frames, no fault, no kernel `GPURestart`, and no refusal: **the Metal 4 path renders the no-pack
+world at about three hundred frames a second**, with fifteen passes, fifteen encoders, twenty-two argument
+tables and thirty-four draws a frame. What is *not* claimed: that the picture is right. Nothing has compared it
+with Metal 3's, and the standard harness cannot collect this run yet (next paragraph).
+
+**The harness's next gap, which this run exposed.** The no-pack arm line appears, the run is collected as far as
+the screenshot, and then the harness waits for the frame probe's window - which never opens, because
+`MetalFrameProbe` is fed by the Metal 3 encoder (`encoderOpened`, the submit window, the frame end) and the
+Metal 4 path reports only its pipeline compilations to it. So a forced Metal 4 run is measured today by the
+path's own counters and nothing else, and **feeding the frame probe from the full-frame path** is the milestone
+that makes the two generations comparable in the standard way - which is what the plan's sections 37, 70 and 94
+ask for before any performance claim.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

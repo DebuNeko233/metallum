@@ -1501,7 +1501,12 @@ require("the argument table is asked for by the selector its header declares",
     # pin follows the call and keeps what it was watching, which is the resource id and the header's selector.
     "public boolean texture(final MemorySegment textureHandle, final long index) {",
     "SET_TEXTURE.send(handle, RESOURCE_ID.sendLong(textureHandle), index);",
-    "SET_INITIALIZE.send(descriptor, 0L);",
+    # Asked for with one and not zero, which this contract used to pin the other way round. The header says
+    # `initializeBindings` defaults to false, so a table created with the default leaves a slot this path never
+    # fills holding whatever the driver left there - and this path skips a binding by design where a layout
+    # declares it as the other kind of resource. The first world frame, the first frame that draws the clouds,
+    # read one of those slots and killed the GPU; with the bindings initialised to nil it renders.
+    "SET_INITIALIZE.send(descriptor, 1L);",
 ))
 require("a missing table is said out loud rather than hidden",
         "src/main/java/com/metallum/render/Metal4Path.java", (

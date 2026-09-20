@@ -112,10 +112,14 @@ public final class MTL4ArgumentTable implements AutoCloseable {
             SET_MAX_BUFFER.send(descriptor, buffers);
             SET_MAX_TEXTURE.send(descriptor, textures);
             SET_MAX_SAMPLER.send(descriptor, samplers);
-            // The table is filled every frame before it is used, so its bindings need no initial values -
-            // and one that was left uninitialised would be read as null and fault the draw rather than draw
-            // the wrong thing, which is the direction to fail in.
-            SET_INITIALIZE.send(descriptor, 0L);
+            // Initialised to nil, and the reason is measured rather than reasoned: the header says this
+            // property's default is false, so a slot the frame path never fills holds whatever the driver left
+            // there - and a shader that reads one dereferences that. This path skips a binding by design where
+            // the layout declares it as the other kind of resource (the engine's own cloud pass binds a uniform
+            // under a name its pipeline gives a texture), and the first world frame - the first frame that
+            // draws the clouds - was killing the GPU with an MMU fault. Nil reads as zero, which is what the
+            // Metal 3 pass does with a name its layout never encodes.
+            SET_INITIALIZE.send(descriptor, 1L);
             // The header asks for this before a vertex buffer is bound with a stride: it is what reserves
             // room for the strides in the table. Reserving it on a table with buffer slots costs a little
             // memory and is what makes `setAddress:attributeStride:atIndex:` the call the header describes.
