@@ -1566,8 +1566,17 @@ the last passes the faulting submission encoded are the world's own, and the can
 world frame reads that the loading screen never does. Two are named by the run itself: the game resizes its
 dynamic uniform buffer *during* the first world frame (`Resizing Dynamic Transforms UBO, capacity limit of 2
 reached during a single frame`), and the world frame is the first to draw indexed geometry indirectly, to use
-the cubemap and cloud passes, and to read the terrain's own region buffers. The next run narrows it the same way
-the loading screen's fault was narrowed: trace, one slot, and the kernel log as the arbiter.
+the cubemap and cloud passes, and to read the terrain's own region buffers.
+
+**The first narrowing is done, and it is a negative one worth having: it is not a race between frames.** The
+same world frame faults with **one** slot in flight - a frame is committed only after the previous one has
+completed, so nothing the path does may overlap anything else it does - and the error is the same
+`MTL4CommandQueueErrorDomain error 1`, with the kernel logging restarts around it. So the fault is in one
+frame's own content: something that frame reads by address is not resident, or something it reads has been let
+go, or a dependency inside it is not encoded. The candidates are the resources only a world frame touches, and
+the next narrowing is per-operation rather than per-frame: the frame's own passes are the instrument's next
+target (the trace names them, and the terrain's indirect draw, the cubemap and cloud passes and the blit are the
+ones the loading screen never encodes).
 
 ## The API mapping
 

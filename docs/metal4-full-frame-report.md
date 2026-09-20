@@ -496,7 +496,8 @@ process with no window is not the same claim as a capability proven through the 
    window). So residency was necessary and is not yet sufficient; isolating what the world frame reads is the
    next milestone, and the candidates the run itself names are the dynamic uniform buffer it resizes during that
    frame and the resources only the world frame touches (indirect terrain, the cubemap and cloud passes, the
-   terrain region buffers). **The frame path is not the slow part**: with the per-frame counters on, the loading
+   terrain region buffers). **The first narrowing is done and it is negative**: the same frame faults with one
+   slot in flight, so it is not an overlap between frames but one frame's own content. **The frame path is not the slow part**: with the per-frame counters on, the loading
    screen runs at 440 frames a second after a 60-frame startup at 13 (75 ms a frame, seventy-six residency
    declarations a frame as the atlas and the pipelines arrive). The residency smoke passes 50 of 50 cold-probe
    processes (30 cold + 20 warm), as does the indirect one. AUTO stays blocked on the remaining list below.
