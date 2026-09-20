@@ -1993,10 +1993,86 @@ m4: renderPasses=540  clearEncoders=150  depthAttachments=510  pipelineIdentitie
 m3: 8.05 ms a frame, 124.2 fps, gpuP50 5.27    m4: 8.08 ms a frame, 123.8 fps, gpuM4P50 3.14
 ```
 
-The same 103 programs, 18 logical passes a frame against Metal 3's 11, 30 presents, no fault and no refusal:
-the game's own draws write depth on this path and a pack pass samples it afterwards. **The picture is NOT
-MEASURED** - the fixture's acceptance is a picture and the display cannot be photographed - so what this says
-is that the road runs, not that the image is right.
+The same 103 programs, 18 logical passes a frame against Metal 3's 11, 30 presents, no fault and no refusal.
+**That paragraph's next sentence used to read "the game's own draws write depth on this path and a pack pass
+samples it afterwards", and the picture refutes it**: the road runs, and no geometry writes that depth on this
+path at all - see the section below, which is what reading the pixels rather than the fault list found.
+
+### The picture says otherwise: a no-pack Metal 4 frame is a clear, and the world's terrain never reaches a pass
+
+The two fixtures above were run with the readback road on both arms, and the depth one is the first fixture to
+contradict a Metal 3 arm rather than agree with it. That contradiction is the finding, and chasing it found
+something bigger than the fixture.
+
+**The depth fixture, read.** `depthtex0-contract` samples the game's depth texture and paints green where it
+*varies* between a pixel and its right or down neighbour (a geometry edge), cyan where it is valid but flat, and
+magenta where it is outside 0..1. Forty seconds of settle, ~4950 readbacks an arm: the Metal 3 frame is
+**100152 green samples against 21380 cyan** - the world's geometry is in the depth buffer - and the Metal 4 frame
+is **cyan at every one of its 119625 samples**. A second diagnostic fixture, `depth-value-contract`, paints which
+value instead of whether it varies (red for the clear, blue for zero, green for a real depth, magenta for
+something that is not a depth at all): Metal 3 reads 100152 green and 21380 red, Metal 4 reads **red for 121500 of
+123575 samples**. So the pack's `depthtex0` binding is right (a real depth texture, not an empty or unbound one)
+and the depth buffer is cleared correctly, and **no geometry writes it**.
+
+**The no-pack frame, read.** A session with no pack needs no fixture to compare, and it is the Definition of
+Done's own "no-pack frame passes" item. Same world, same spawn, same anchor, same switch, forty seconds, ~4950
+readbacks an arm:
+
+| | Metal 3 | Metal 4 |
+| --- | --- | --- |
+| most common frame, all twenty-five samples | sky rows `88b0ff`/`85aeff` over grass and dirt `366821`/`412d1e`/`446b33` | **`00b8d2ff` at every sample** |
+| mean BGRA | `(67, 86, 71, 254)` - a world | `(255, 210, 184, 0)` - one light blue, alpha 0 |
+
+The Metal 4 frame is **one flat sky-blue clear** - not a sky with a gradient, not a world seen from an odd
+camera: the same value at all twenty-five samples of all 4958 readbacks, and still the same after a **ninety
+second** settle, so it is not a world that had not loaded yet. Both halves of the frame agree (the picture's
+RGB is the drawable's, the R/B swap of the two formats included), so the present road is doing its job; there is
+nothing in the target for it to show.
+
+**Where the draws go missing, measured rather than guessed.** Under `-Dmetallum.metal4Trace=true` the frame path
+prints what each of its passes ends with, and the same session says two different things at once:
+
+```text
+Terrain                    depth=true draws=0   indexed=0   22836 passes, every one of them zero draws
+Sky sun / Sky moon         depth=true draws=1   indexed=1
+Sky disc                   depth=true draws=1   indexed=0
+Clouds                     depth=true draws=1   indexed=1
+Particles - Solid          depth=true draws=1   indexed=1
+GUI before/after blur      depth=true draws=1-11
+Blit render target         depth=true draws=1
+Update light               depth=false draws=1
+Animate ...atlas/...       depth=false draws=1-11, 82420 in one pass label
+```
+
+So the frame is not empty of draws: the sky, the clouds, the particles, the GUI, the blits, the light updates
+and the atlas animations all encode theirs, and it is **the world's terrain that encodes none**, in every one of
+22836 pass endings over a ninety second run.
+
+**The road those draws take is in the vanilla sources**, read rather than remembered: `ChunkSectionsToRender`
+takes an `EnumMap<ChunkSectionLayer, Int2ObjectOpenHashMap<List<RenderPass.Draw<...>>>>`, `LevelRenderer.prepareChunkRenders`
+fills it from `visibleSections` - one entry per section whose mesh has a draw for that layer *and* whose GPU
+buffer slice exists - and `ChunkSectionsToRender.renderGroup` walks it and calls
+`renderPass.drawMultipleIndexed(draws, defaultIndexBuffer, defaultIndexType, List.of("ChunkSection"), ...)`,
+skipping a group whose list is empty. The pass the trace labels `Terrain` is exactly that pass
+(`"Section layers for " + group.label()`), which is why its zero draws are the terrain's and not somebody else's.
+
+**And no operation is refused anywhere in those sessions.** This round made the Metal 4 pass's refusals say so
+in the log before they throw - which section 104 asks for on its own, and which was needed here because a
+*caller that catches the throw* drops the work silently - and the log names **nothing**: neither
+`drawMultipleIndexed` nor any other refused operation. The frame-encoder refusals are absent too. So the draws
+are not being refused; they are **not being asked for**, and the empty draw group is where that happens. Three
+candidates remain, and none of them is measured yet:
+
+- no section is *visible* to whatever fills `visibleSections` (the culling side);
+- sections are visible but `getRenderSectionSlice` answers null for every one of them, i.e. the section meshes
+  never got their GPU buffer slices (the mesh upload side);
+- the section meshes have no draws for any layer at all (the compilation side).
+
+`drawMultipleIndexed` is deliberately **not** on that list even though this path still refuses it: a refused call
+would now be in the log, and the log is empty. That refusal will need its own implementation - it is the shape a
+multi-draw takes on this API, and Metal 3 implements it as a loop - but implementing it cannot be the fix for a
+call that is never made. Section 67's rule is what the next step follows: the staircase stops here, at an
+M3 PASS / M4 FAIL, until the three candidates are told apart.
 
 **And the comparison needed teaching for this A/B.** Its drift check refuses two arms whose render-pass and
 depth-attachment counts differ by more than 2 per cent, because a drifted scene reads like a win; across

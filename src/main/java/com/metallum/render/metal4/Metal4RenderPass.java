@@ -303,12 +303,34 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      * <p>
      * The name is the migration plan's own vocabulary, so a log line and the plan's remaining work can be read
      * against each other.
+     * <p>
+     * <strong>And it is said out loud, once per operation, because a thrown refusal is not the same thing as a
+     * visible one.</strong> Section 35 forbids silently dropping an operation, and a throw satisfies it only for
+     * a caller that lets it out: the first no-pack Metal 4 session measured this exactly - the presented frame
+     * was one flat clear colour for every one of its 4958 frames, the world's `Terrain` pass ended with
+     * `draws=0` on all 5316 of its traced passes, and the session's log named nothing at all, because the game's
+     * terrain batching calls a multi-draw, this pass refuses it by throwing, and the caller catches the throw and
+     * moves on. So the refusal is logged here, before it is thrown, with the pass it happened in.
      */
-    private static Metal4ExecutionProvider.Unimplemented unimplemented(final String operation) {
+    private Metal4ExecutionProvider.Unimplemented unimplemented(final String operation) {
+        if (REFUSED_OPERATIONS.add(operation)) {
+            Metallum.LOGGER.warn("Metal 4 render pass '{}': {} is not encoded by this path yet, so the work that"
+                            + " asked for it did not happen. This is the refusal by name section 35 asks for, said"
+                            + " here as well as thrown, because a caller that catches the throw would otherwise"
+                            + " drop the work with nothing in the log",
+                    label(), operation);
+        }
         return new Metal4ExecutionProvider.Unimplemented(operation,
                 "the Metal 4 render pass does not encode " + operation + " yet: the frame path is still Metal 3's,"
                         + " and this pass refuses by name rather than drawing nothing");
     }
+
+    /**
+     * Which refusals have already been logged, so the line is one per operation per session rather than one per
+     * draw: the terrain's batching asks for the same missing operation hundreds of times a frame. It holds names
+     * and nothing else and no decision is taken from it.
+     */
+    private static final java.util.Set<String> REFUSED_OPERATIONS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // ---------------------------------------------------------------- the pass's own bookkeeping
 

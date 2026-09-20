@@ -1419,6 +1419,27 @@ if "case TEXEL_BUFFER -> throw new IllegalStateException(" not in dispatch_body:
     raise SystemExit("metal 4 provider: a binding kind the dispatch cannot fill is dropped in silence")
 
 
+# --- and a refusal by name is said out loud as well as thrown ----------------------------------------------
+# Measured on the first no-pack Metal 4 session that was read rather than counted: the presented frame was one
+# flat clear colour (`00b8d2ff` at all twenty-five samples of all 4958 readbacks), the world's `Terrain` pass ended
+# with `draws=0` on every one of its 5316 traced passes, and the log said nothing - because the game's terrain
+# batching asks for a multi-draw, the Metal 4 pass refuses it by throwing, and the caller catches the throw.
+# Section 35 forbids a silent drop, and a throw alone is not enough when the caller swallows it: the refusal is
+# logged where it is made, naming the pass, once per operation rather than once per draw.
+if ("Metal 4 render pass '{}': {} is not encoded by this path yet, so the work that" not in pass_source):
+    raise SystemExit("metal 4 provider: a refused operation is not said out loud, so a caller that catches the "
+                     "throw drops the work with nothing in the log - measured as a world missing from a frame whose "
+                     "session reported no fault")
+for needle, why in (
+    ("if (REFUSED_OPERATIONS.add(operation)) {",
+     "the refusal line is not de-duplicated, so a refused multi-draw asked for every frame would fill a session's "
+     "log"),
+    ("private static final java.util.Set<String> REFUSED_OPERATIONS",
+     "the refusal names are not kept anywhere, so the once-per-operation line has nothing to check"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 # --- the drawable readback, which is the only way this machine can see the picture -------------------------
 # The display cannot be photographed here and a drawable that is framebuffer-only cannot be copied from, so the
 # picture column of every session has been empty for a reason about the *observation* rather than the frame.
