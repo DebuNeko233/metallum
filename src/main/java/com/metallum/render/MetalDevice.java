@@ -109,11 +109,27 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // seam asks - the queue, the present policy - disagree with the selection this same constructor had
         // just logged. Nothing read it yet, so nothing broke; the day something does, an AUTO launch that
         // chose Metal 4 and a forced Metal 3 launch would have looked identical to it.
-        // Metal 3 executes the frame whatever was selected: the selected generation's own frame path is what
-        // M4 builds, and until it exists this argument is the honest answer rather than a constant baked into
-        // the services. `framePathReady()` is then asked - not to change anything, but because a readiness seam
-        // nothing asks is a readiness seam that answers wrongly the first time something does.
-        this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);
+        // What EXECUTES the frame is a separate fact from what was selected, and it is decided here rather than
+        // by the selector: the selector answers which generation the session is for, and this answers which one
+        // encodes today. Metal 4 executes only where the launch asked for it by name - `AUTO` must not promote a
+        // frame path the migration has not finished, which is the readiness gate of section 74, and a forced
+        // Metal 3 session stays Metal 3 whatever was selected. A forced Metal 4 launch that the device cannot
+        // satisfy never reaches this line: the selector refuses it at startup, which is this project's public
+        // behaviour for a forced preference rather than a silent fallback.
+        MetalApiGeneration executesToday =
+                decision.preference() == MetalExecutionPreference.FORCE_METAL4
+                        ? MetalApiGeneration.METAL4
+                        : MetalApiGeneration.METAL3;
+        this.services = MetalExecutionServices.of(decision.selected(), executesToday);
+        if (executesToday == MetalApiGeneration.METAL4) {
+            // Said once, and at warn: a session that runs the new path is a session whose numbers are about an
+            // unfinished frame path, and an operation that path does not encode yet fails by name rather than
+            // being dropped into a half frame.
+            com.metallum.Metallum.LOGGER.warn("Metal execution: Metal 4 EXECUTES this session because {}={} was"
+                    + " asked for. The frame path is experimental: an operation it does not encode yet refuses by"
+                    + " name, and AUTO will not select it until the migration's readiness gate is met",
+                    MetalExecutionPreference.PROPERTY, MetalExecutionPreference.FORCE_METAL4.word());
+        }
         this.presentGate = this.services.startPresentPath(this.metalDevice);
         // Both facts, written where both are known. The selector decides which generation was selected and
         // cannot know which one executes - that is this constructor's own choice, made on the line above - and

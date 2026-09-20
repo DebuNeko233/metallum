@@ -177,16 +177,19 @@ provider:            PROVEN as a skeleton - Metal4ExecutionProvider implements t
                      - measured in the cold-probe harness, per process, on Apple Silicon, identical in 53 of
                      53 probes. The encoder is not asked there and the line says why: it is built from the
                      engine's device, which a bare process cannot make
-frame encoder:       EXISTS as a skeleton - `render.metal4.Metal4FrameEncoder` implements the neutral
+frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` implements the neutral
                      `MetalFrameEncoder`, owns the frame's ring (allocators, one command buffer, one shared
                      event), files every deferred release against a ring slot and runs it only once that
-                     slot's completion has been observed, and refuses each operation it does not encode by
-                     name: transientMemory, createRenderPass, submitRenderPass, clearColorTexture,
+                     slot's completion has been observed, and `createRenderPass`/`submitRenderPass` build a
+                     real pass from the game's descriptor (a forced Metal 4 client launch has run this far).
+                     What it still refuses by name: transientMemory, clearColorTexture,
                      clearColorAndDepthTextures, clearDepthTexture, writeToBuffer, copyToBuffer,
                      writeToTexture, copyBufferToTexture, copyTextureToBuffer, copyTextureToTexture,
-                     createFence, writeTimestamp - fourteen names, which is the migration's remaining work
-                     list. NOT PROVEN: no frame has been submitted through it, because nothing encodes into
-                     one yet; its evidence is the ring's device proof plus a structural contract
+                     createFence, writeTimestamp - twelve names, which is the migration's remaining work list
+                     and, measured, the order the client asks for them in (`writeToTexture` first, from its
+                     own texture-manager construction). NOT PROVEN: no frame has been submitted through it,
+                     because the client stops at that first write; its evidence is the ring's device proof
+                     plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
                      compilation state (SPIR-V modules, native functions, depth-stencil states, compiled
                      artifacts) and `getOrCompilePipeline` compiles through `Metal4PipelineCompiler`: the
@@ -199,10 +202,18 @@ state:               PROVEN on the device - `Metal4ExecutionState` owns this gen
                      probes answered `compile=ok(valid=true)` in 30 cold processes and 20 warm repeats, which
                      is the whole chain (game GLSL compiler, shared translator, this generation's native
                      pipeline state) in a process with no window in it
-reached by:          the services now hand out the provider of the EXECUTING generation rather than a
-                     constant `new Metal3ExecutionProvider()`, so selected=Metal4 with executing=Metal3
-                     still builds the frame from Metal 3 objects, exactly as section 19 requires - the day a
-                     Metal 4 frame path is ready, the device constructor's one line changes
+reached by:          the services hand out the provider of the EXECUTING generation, and what executes is
+                     decided from the launch's preference: AUTO still executes Metal 3 with referenceShell
+                     true (the readiness gate of section 74), and a launch that asks for
+                     `-Dmetallum.execution=metal4` executes Metal 4 and says so once at warn. MEASURED: a
+                     forced Metal 4 client launch really did execute Metal 4 -
+                     `selectedGeneration=metal4 executingGeneration=metal4 mode=own-path referenceShell=false
+                     framePathReady=true`, with the shader profile switched to msl4.0 - and stopped at the
+                     first operation the new path does not encode:
+                     `Unimplemented: writeToTexture`, raised from
+                     `DynamicTexture.upload -> TextureManager.<init> -> Minecraft.<init>`. That is a startup
+                     upload rather than a frame: the next Metal 4 milestone is the texture write/copy path
+                     (sections 54-55), which the client needs before any draw.
 queue:               PROVEN for the provider skeleton; no frame is submitted through it yet
 allocators:          PROVEN as a rule, before any encoder was built over it - `MTL4FrameRing` owns three
                      slots, one command buffer and one shared event, and a slot is reset only after the value
@@ -365,7 +376,11 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
+3. **The Metal 4 frame path stops at its first texture write** - a forced Metal 4 launch executes Metal 4 and
+   refuses `writeToTexture` from the game's own texture-manager construction, so no frame has been drawn. The
+   copy/upload path (Metal 4 puts copies in the compute encoder) is the next milestone, and it is what
+   sections 54-55 describe - arrived at from the client's demand rather than from the plan's order.
+4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
    rests on the structural contract plus those measured layers. What is left before a no-pack frame is the

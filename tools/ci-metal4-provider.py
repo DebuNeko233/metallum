@@ -336,6 +336,32 @@ for needle, why in (
     if needle not in probe_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
+# The selector answers which generation the session is for; this answers which one encodes today, and the two
+# are deliberately different facts. AUTO must not promote a frame path the migration has not finished (section
+# 74's readiness gate), and a forced Metal 3 session stays Metal 3 whatever was selected - so the only way Metal
+# 4 executes is a launch that asked for it by name.
+DEVICE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "MetalDevice.java"
+device = DEVICE.read_text(encoding="utf-8")
+for needle, why in (
+    ("decision.preference() == MetalExecutionPreference.FORCE_METAL4",
+     "the executing generation is not decided from the preference, so either AUTO could promote an unfinished "
+     "frame path or a forced Metal 4 launch would still execute Metal 3"),
+    ("MetalExecutionServices.of(decision.selected(), executesToday);",
+     "the services are not built from both facts, so the selection and what executes could disagree again"),
+    ("executing == MetalApiGeneration.METAL4" if False else "executesToday == MetalApiGeneration.METAL4",
+     "a session that executes Metal 4 is not named as experimental, which is the one thing a reader of its "
+     "numbers has to know"),
+    ("Metal 4 EXECUTES this session", "the experimental warning does not say that Metal 4 is what runs"),
+):
+    if needle not in device:
+        raise SystemExit("metal 4 provider: " + why)
+# And the gate itself: AUTO must not be able to reach Metal 4 by the executing-generation line.
+if "case AUTO -> MetalApiGeneration.METAL4" in device or "preference() == MetalExecutionPreference.AUTO" in device:
+    raise SystemExit("metal 4 provider: AUTO can reach the executing Metal 4 path, which is the readiness gate "
+                     "section 74 puts before it")
+
+
 # --- and it is reached by the EXECUTING generation, not by a constant ------------------------------------
 if "switch (executing)" not in services:
     raise SystemExit("metal 4 provider: the services do not choose the provider by the executing generation, "

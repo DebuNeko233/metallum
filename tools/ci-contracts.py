@@ -1353,7 +1353,9 @@ require("the device answers that contract",
 ))
 require("the frame's queue comes from the execution services",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    "this.services = MetalExecutionServices.of(decision.selected(), MetalApiGeneration.METAL3);",
+    # The constants are gone: the services are built from BOTH facts - what was selected and what executes -
+    # because a forced Metal 4 launch executes Metal 4 while AUTO still executes the reference path.
+    "this.services = MetalExecutionServices.of(decision.selected(), executesToday);",
     "this.commandEncoder = this.services.createFrameEncoder(this, this.executionState, this.defaultShaderSource);",
     "this.presentGate = this.services.startPresentPath(this.metalDevice);",
 ))

@@ -896,6 +896,59 @@ caught at once, three after the pins were strengthened (a lookup pin satisfied b
 release pin satisfied by another call site, and two assignment pins that a short-circuit could step over). The
 last pair is the shape a text pin cannot see on its own, and the contract file says so where it is pinned.
 
+### What executes, and the gate before it
+
+The selector answers which generation a session was *selected* for; what *executes* is a second fact, and until
+now it was the literal `METAL3` in the device constructor. It is now decided from the preference, with the two
+rules the migration asks for written into the line:
+
+- **nothing but a forced Metal 4 launch makes Metal 4 execute.** `AUTO` selecting Metal 4 still executes Metal 3
+  with `referenceShell` true, which is section 19's shape and section 74's readiness gate at once: the
+  capability selector decides what the session is *for*, and a frame path the migration has not finished is not
+  promoted to the road the game runs on;
+- **a forced Metal 3 session executes Metal 3** whatever was selected, which keeps the reference path
+  measurable exactly as section 75 requires.
+
+A session that does execute Metal 4 says so once, at warn: the frame path is experimental, an operation it does
+not encode yet refuses by name, and AUTO will not select it. Section 76's fallback is respected by not changing
+the project's public behaviour: a forced Metal 4 launch the device cannot satisfy is a **startup failure with
+its reason logged** - the selector's own contract, written before this milestone - and not a quiet fallback to
+the old path.
+
+**A forced Metal 4 launch has now been attempted on a real client**, which is the first time the new path is
+entered by the game rather than by the cold probe. The session really did execute Metal 4:
+
+```
+WARN  Metal execution: Metal 4 EXECUTES this session because metallum.execution=metal4 was asked for. The frame
+      path is experimental: an operation it does not encode yet refuses by name, and AUTO will not select it
+      until the migration's readiness gate is met
+INFO  Metal execution: metal4 selected, metal4 executes (Metal 4 was forced for this launch, and the device
+      satisfies its minimum contract)
+INFO  Metal execution seam: selectedGeneration=metal4 executingGeneration=metal4 mode=own-path
+      referenceShell=false framePathReady=true
+INFO  Metal shader profile: msl4.0 selected (Metal 4 executes the frame and the 4.0 toolchain is the one the
+      translator was written against)
+```
+
+and then it stopped, at the first operation the new path does not encode:
+
+```
+com.metallum.render.metal4.Metal4ExecutionProvider$Unimplemented: writeToTexture: the Metal 4 frame encoder does
+not encode writeToTexture yet
+  at Metal4FrameEncoder.writeToTexture(Metal4FrameEncoder.java:345)
+  at com.mojang.blaze3d.systems.CommandEncoder.writeToTexture(CommandEncoder.java:367)
+  at net.minecraft.client.renderer.texture.DynamicTexture.upload(DynamicTexture.java:53)
+  at net.minecraft.client.renderer.texture.TextureManager.<init>(TextureManager.java:43)
+  at net.minecraft.client.Minecraft.<init>(Minecraft.java:596)
+```
+
+That is a startup failure and not a frame failure: the game uploads the first dynamic texture while its texture
+manager is being constructed, so the Metal 4 path's next required operation is a **texture write**, long before
+a draw. The migration's own order puts blit and copy after render, MRT and depth (sections 54 to 55), and the
+client is what re-orders it: a frame path that cannot upload a texture cannot begin. The failure is also the
+shape the plan asks for - named, at the operation, with the caller visible in the stack - and it is the roadmap
+for the next milestone rather than a claim that anything was drawn.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes
