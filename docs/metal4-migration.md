@@ -722,6 +722,52 @@ pins, all caught - two of them only after the pins were strengthened, which is t
 a pin on `pushDebugGroup`'s signature alone was satisfied by a body that refused, and a pin on the frame-begin
 test alone was satisfied by the same test inside `submit()`.
 
+### The compilation chain: a Metal 4 pipeline is compiled by Metal 4
+
+`Metal4ExecutionState.getOrCompilePipeline` no longer refuses. The generation now owns its own chain -
+`Metal4CompilationContext`, `Metal4PipelineCompiler` and `Metal4CompiledRenderPipeline` - and nothing in it
+reaches into `render.metal3`:
+
+- the **game's own GLSL compiler** turns a pack's source into SPIR-V, cached per (shader, stage, defines,
+  profile);
+- the **shared translator** (`MetalCrossShaderTranslator`, already shared and already the layer the plan's
+  section 27 puts between the generations) turns that into MSL and names the resources it declared;
+- **this generation** builds the native pipeline states from the MSL, with the attachment formats, the blend or
+  disabled blend and write mask, the vertex descriptor and the depth format taken from the pipeline itself -
+  two states, with and without a depth format, for the same reason the Metal 3 artifact keeps two.
+
+**The one argument that differs from the Metal 3 compiler, and the reason for it.** The Metal 3 compiler asks
+the translator for an argument-buffer layout where the device supports one; this one asks for **direct
+bindings** (`translate(..., false)`) and refuses a translation that comes back with argument buffers anyway.
+Metal 4's binding mechanism is the argument *table*, and a pipeline translated for argument buffers would be
+handed the previous generation's mechanism inside the new path - so `Metal4CompiledRenderPipeline.resources()`
+is a list of direct bindings, each carrying the metal index its MSL was compiled against, which is exactly what
+a table slot is filled from.
+
+**The MSL profile is part of every cache key** - the module key, the function key and the artifact key - for the
+reason the Metal 3 context records: a module translated for one profile is not the one another profile needs,
+and a cache keyed only on source text would be safe by accident.
+
+**Retirement is smaller here, and deliberately.** An artifact that is evicted or replaced may still be named by
+work in flight, so it is **filed** rather than closed, and released by `clearCachesAfterGpuCompletion()` - whose
+neutral contract already says the caller has established GPU completion. The Metal 3 context can retire per
+submit because it can ask the frame encoder; this one has one queue and one method, which is the smaller
+lifetime model and the one the contract actually describes.
+
+**One shared-layer move came with it**: `GlslCommentStripper` moved from `render.metal3` to
+`render.shared`, because both generations prepare GLSL the same way (strip comments first - the pack toggle-block
+lexical trap the Metal 3 path paid for - then inject defines) and neither may reach into the other's package.
+The Metal 3 context uses the shared class now; its behaviour is unchanged. `tools/ci-shader-diagnostics.py`
+follows the file and the package its contract harness compiles it into.
+
+**What is NOT proven, and it is the next milestone**: this chain has not run on the device. Compiling needs a
+`RenderPipeline` and a `ShaderSource`, which a bare cold-probe process has no way to make, so the harness cannot
+reach it - and the pass object cannot either, because nothing sets a pipeline yet. The chain's evidence this
+round is a structural contract (sixteen mutations, all caught) and the fact that the layer underneath it - MSL
+into a native pipeline state - is the same construction the device smokes have exercised all along. The next
+milestone is a cold-probe smoke that builds a pipeline description and a shader source in the bare process and
+compiles it there, which is what would turn "the chain exists" into "the chain works".
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

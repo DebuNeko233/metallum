@@ -1,4 +1,4 @@
-package com.metallum.render.metal3;
+package com.metallum.render.shared;
 
 /**
  * Removes GLSL comments without changing the source's line structure or joining tokens that were
@@ -10,11 +10,18 @@ package com.metallum.render.metal3;
  * loses that lexical ordering and can leave the first slash behind as live GLSL. One left-to-right
  * scan keeps the same first-token-wins rule as the language.
  */
-final class GlslCommentStripper {
+public final class GlslCommentStripper {
     private GlslCommentStripper() {
     }
 
-    static String strip(final String source) {
+    /**
+     * The source with its comments removed, and nothing else changed.
+     * <p>
+     * Public because both generations prepare GLSL the same way and the second one may not reach into the
+     * first's package to borrow it - which is how this moved here from {@code render.metal3} when the Metal 4
+     * compilation chain needed it.
+     */
+    public static String strip(final String source) {
         StringBuilder stripped = new StringBuilder(source.length());
         int index = 0;
         while (index < source.length()) {

@@ -15,13 +15,12 @@ import java.util.function.Predicate;
  * The Metal 4 generation's session state: the device it executes on, and the caches a Metal 4 compilation chain
  * will fill.
  * <p>
- * <strong>It owns the device and no cache yet, and it says so where a cache would be.</strong> The neutral
- * state's four operations are asked of it, and three of them are already true answers rather than refusals -
- * nothing is cached, so removing a selection removes nothing, clearing after GPU completion clears nothing, and
- * closing releases nothing. The fourth, {@link #getOrCompilePipeline}, is the one that cannot be answered: the
- * Metal 4 compilation chain does not exist, and a state that answered it with a Metal 3 artifact would be a
- * Metal 4 path silently running Metal 3's pipelines. It refuses by name instead, which is section 35's rule and
- * the same shape the provider's own refusals have.
+ * <strong>It owns the device and this generation's compilation state</strong>: the SPIR-V module cache, the
+ * native function cache, the depth-stencil cache and the compiled-artifact cache, all of which the neutral
+ * state's four operations are answered from. Nothing here is Metal 3's: the artifacts come from
+ * {@code Metal4PipelineCompiler}, which asks the shared translator for direct bindings rather than argument
+ * buffers and builds its own native pipeline states - so a Metal 4 session compiles Metal 4 pipelines rather
+ * than being handed the reference generation's.
  * <p>
  * The device is held rather than passed around because the state is per-device by construction: the frame
  * encoder asks it for the device its ring is made on, so there is one place that says which device a Metal 4
@@ -31,9 +30,11 @@ import java.util.function.Predicate;
 final class Metal4ExecutionState implements MetalExecutionState {
 
     private final MTLDevice device;
+    private final Metal4CompilationContext compilation;
 
     Metal4ExecutionState(final MTLDevice device) {
         this.device = device;
+        this.compilation = new Metal4CompilationContext(device);
     }
 
     /** The device this state, and the frame encoder made from it, belong to. */
@@ -42,18 +43,14 @@ final class Metal4ExecutionState implements MetalExecutionState {
     }
 
     /**
-     * There is no Metal 4 compilation chain yet, so this is the one operation the state cannot answer.
-     * <p>
-     * It refuses before touching either argument, so the refusal names the operation rather than whatever the
-     * caller happened to pass - which is the difference between "this generation cannot compile yet" and "the
-     * caller gave me nothing".
+     * The compiled artifact for this pipeline, through this generation's own chain: the game's GLSL compiler, the
+     * shared SPIR-V-to-MSL translator, and this generation's native pipeline construction. Nothing Metal 3's is
+     * reached, which is what makes the artifact a Metal 4 one rather than a Metal 3 artifact wearing a different
+     * owner's name.
      */
     @Override
     public CompiledRenderPipeline getOrCompilePipeline(final RenderPipeline pipeline, final ShaderSource source) {
-        throw new Metal4ExecutionProvider.Unimplemented("getOrCompilePipeline",
-                "no Metal 4 compilation chain exists yet, so this state holds no compiled artifact - the frame"
-                        + " path it belongs to is still Metal 3's, and a Metal 3 artifact returned here would be"
-                        + " a Metal 4 path running Metal 3's pipelines");
+        return this.compilation.getOrCompilePipeline(pipeline, source);
     }
 
     /**
@@ -64,16 +61,24 @@ final class Metal4ExecutionState implements MetalExecutionState {
      */
     @Override
     public List<RenderPipeline> evictCachedPipelines(final Predicate<RenderPipeline> predicate) {
-        return List.of();
+        return this.compilation.evictCachedPipelines(predicate);
     }
 
-    /** Nothing is cached after GPU completion either, for the same reason and with the same honesty. */
+    /**
+     * Releases what the caches hold, once the caller has established GPU completion.
+     * <p>
+     * The precondition is the contract's, and it is the reason the retired artifacts can be released here at
+     * all: an artifact that was evicted while work naming it was still in flight is exactly what this cannot
+     * release on its own.
+     */
     @Override
     public void clearCachesAfterGpuCompletion() {
+        this.compilation.clearCachesAfterGpuCompletion();
     }
 
-    /** Releases nothing: this state has no cache, no queue and no command buffer to give back. */
+    /** Releases the compilation state: the artifacts, the functions, the modules and the depth-stencil states. */
     @Override
     public void close() {
+        this.compilation.close();
     }
 }

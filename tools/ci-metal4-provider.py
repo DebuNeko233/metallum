@@ -79,12 +79,15 @@ if "instanceof Metal4ExecutionState metal4" not in provider:
 # nothing" are different facts about the frame path.
 for needle, why in (
     ("implements MetalExecutionState", "the state no longer implements the neutral contract the device holds"),
-    ('throw new Metal4ExecutionProvider.Unimplemented("getOrCompilePipeline"',
-     "the state no longer refuses compiling by name, so a Metal 4 session would be handed an artifact whose "
-     "first use fails somewhere else"),
-    ("return List.of();", "evictCachedPipelines no longer answers with the truth about an empty cache"),
-    ("public void clearCachesAfterGpuCompletion() {", "the cache clear is gone, so a pack reload has no answer"),
-    ("public void close() {", "the state has no release, so a teardown has nothing to call"),
+    ("return this.compilation.getOrCompilePipeline(pipeline, source);",
+     "the state does not compile through this generation's own chain, so a Metal 4 session would be handed "
+     "something built somewhere else"),
+    ("return this.compilation.evictCachedPipelines(predicate);",
+     "eviction no longer reaches the compilation state, so a pack reload would evict nothing"),
+    ("return this.compilation.clearCachesAfterGpuCompletion();" if False else
+     "this.compilation.clearCachesAfterGpuCompletion();",
+     "the cache clear is gone, so a pack reload or a teardown has no answer"),
+    ("this.compilation.close();", "the state has no release, so a teardown has nothing to call"),
 ):
     if needle not in state:
         raise SystemExit("metal 4 provider: " + why)
@@ -170,6 +173,80 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- the compilation chain, which is what a draw needs before it needs anything else ---------------------
+# The state now compiles Metal 4 artifacts rather than refusing: the game's GLSL compiler turns a pack's source
+# into SPIR-V, the SHARED translator turns that into MSL and names the resources, and this generation builds its
+# own native pipeline states from it. Nothing Metal 3's is reached - which is the whole point, and the reason
+# these classes exist rather than a call into the reference implementation.
+CONTEXT = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4CompilationContext.java"
+COMPILER = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4PipelineCompiler.java"
+ARTIFACT = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4"
+            / "Metal4CompiledRenderPipeline.java")
+for path in (CONTEXT, COMPILER, ARTIFACT):
+    if not path.is_file():
+        raise SystemExit(f"metal 4 provider: {path.name} is missing, so the generation has no compilation chain")
+context = CONTEXT.read_text(encoding="utf-8")
+compiler = COMPILER.read_text(encoding="utf-8")
+artifact = ARTIFACT.read_text(encoding="utf-8")
+
+if "new Metal4CompilationContext(device)" not in state:
+    raise SystemExit("metal 4 provider: the state owns no compilation context, so it can compile nothing")
+# Imports, not mentions: these files explain in prose which package they may not depend on, and a pin that a
+# comment can fail is a pin that pushes the explanation out of the code.
+for source, name in ((context, "context"), (compiler, "compiler"), (artifact, "artifact")):
+    if re.search(r"^import\s+.*(render\.metal3|mtl\.metal3)", source, re.MULTILINE):
+        raise SystemExit(f"metal 4 provider: the {name} imports a Metal 3 package, which the architecture rules"
+                         " forbid: the new generation may not depend on the reference one")
+
+for needle, why in (
+    ("Metal4PipelineCompiler.compile(this, p, source)",
+     "the cache does not compile through this generation's compiler"),
+    # The profile is part of every cache key for the same reason it is in the Metal 3 context: a module or a
+    # function translated for one profile is not the one another profile needs.
+    ("new ShaderCompilationKey(id, type, defines,\n                MetalShaderLanguageProfile.selected().token())",
+     "a translated module is keyed without the MSL profile, so a session that changed profile could be handed "
+     "the other one's module"),
+    ("new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token())",
+     "a compiled function is keyed without the MSL profile"),
+    ("this.retired.add(held);", "a replaced artifact is not retired, so it would either leak or be closed while "
+                                "work naming it is still in flight"),
+    ("this.retired.poll().close();",
+     "retired artifacts are not released where the contract says GPU completion has been established"),
+    ("GlslCommentStripper.strip(source).stripLeading()",
+     "the GLSL preparation no longer strips comments, which the Metal 3 path paid for: independent comment "
+     "regexes leave a live slash behind on a pack's toggle block"),
+):
+    if needle not in context and needle not in artifact and needle not in compiler:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ("MetalCrossShaderTranslator.translate(vertexSpirv, fragmentSpirv, pipeline, layout, false);",
+     "the compiler no longer asks the SHARED translator for direct bindings, so either the translation is "
+     "duplicated here or the generation asked for argument buffers - Metal 3's binding mechanism"),
+    ("if (translated.usesArgumentBuffers()) {",
+     "a translation that came back with argument buffers is accepted, so the shader would be compiled against a "
+     "binding path this generation does not fill"),
+    ("MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(), false)",
+     "the artifact's key does not name the profile and the direct-binding decision"),
+):
+    if needle not in compiler:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ("implements CompiledRenderPipeline, MetalCompiledArtifact, AutoCloseable",
+     "the artifact is not both the game's compiled pipeline and a keyed neutral artifact"),
+    ("compilation.device().newRenderPipelineState(descriptor)",
+     "the artifact does not build its own native pipeline state through the compiled functions"),
+    ("MTLPixelFormat.Depth32Float", "no depth variant is built, so a pass with a depth attachment has no state"),
+    ("private static MTLVertexDescriptor buildVertexDescriptor(",
+     "the vertex layouts are not described, so a vertex-buffer draw has no attribute mapping"),
+    ("return highest + 1;",
+     "the vertex layouts no longer start past the named vertex-stage buffers, so they would overwrite them"),
+    ("BitSet allResources()", "the artifact does not publish the binding footprint a pass has to fill"),
+):
+    if needle not in artifact:
+        raise SystemExit("metal 4 provider: " + why)
+
 # Every operation the game can ask for and this path cannot perform is refused by name. The list is the
 # migration's own remaining work, one line per operation.
 # createRenderPass and submitRenderPass are deliberately NOT in this list any more: they are implemented, and
@@ -211,8 +288,9 @@ if "provider=" not in harness or "Metal4ExecutionProvider" not in harness:
 for needle, why in (
     ("MetalExecutionState state = metal4.createExecutionState(probeDevice);",
      "the harness does not make the state on the real device, so nothing reports what the state answers"),
-    ("state.getOrCompilePipeline(null, null)",
-     "the harness does not ask the state to compile, so the one refusal that matters goes unmeasured"),
+    ('"compile:not-asked(needs-a-pipeline-and-a-shader-source)"',
+     "the harness does not say why compiling is not asked, so a reader cannot tell a deliberate omission from a "
+     "missing answer - the chain needs a pipeline and a shader source, which a bare process cannot make"),
     ("state.evictCachedPipelines(pipeline -> false)",
      "the harness does not ask the state to evict, so an empty cache's answer is assumed rather than measured"),
     ("state.clearCachesAfterGpuCompletion()", "the harness does not ask the state to clear its caches"),

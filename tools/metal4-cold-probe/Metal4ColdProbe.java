@@ -102,9 +102,11 @@ public final class Metal4ColdProbe {
             try {
                 MetalExecutionState state = metal4.createExecutionState(probeDevice);
                 stateOutcome = "ok";
-                // Three of the state's four operations are true answers for a state that caches nothing; the
-                // compile path is the one it cannot answer, and it has to say so by name.
-                stateMethods = "compile:" + refusal(() -> state.getOrCompilePipeline(null, null))
+                // The state compiles now, but compiling needs a pipeline and a shader source, and a bare
+                // process has no way to make either - so the chain's own device proof is its own milestone and
+                // is recorded as an omission here rather than asked with nulls. What is asked is the rest of
+                // the neutral contract.
+                stateMethods = "compile:not-asked(needs-a-pipeline-and-a-shader-source)"
                         + ",evict:" + refusal(() -> state.evictCachedPipelines(pipeline -> false))
                         + ",clear:" + refusal(() -> {
                             state.clearCachesAfterGpuCompletion();

@@ -8,7 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEVICE = ROOT / "src/main/java/com/metallum/render/MetalDevice.java"
 COMPILATION = ROOT / "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java"
 CROSS = ROOT / "src/main/java/com/metallum/render/shared/MetalCrossShaderTranslator.java"
-STRIPPER = ROOT / "src/main/java/com/metallum/render/metal3/GlslCommentStripper.java"
+# The stripper moved to the shared layer with the Metal 4 compilation chain: two generations prepare
+# GLSL the same way, and neither may reach into the other's package for the helper.
+STRIPPER = ROOT / "src/main/java/com/metallum/render/shared/GlslCommentStripper.java"
+STRIPPER_PACKAGE = "com.metallum.render.shared"
 source = COMPILATION.read_text(encoding="utf-8")
 cross_source = CROSS.read_text(encoding="utf-8")
 
@@ -44,7 +47,7 @@ if '"spvc_compiler_options_set_bool(MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS)"' not in
 
 harness = textwrap.dedent(
     r'''
-    package com.metallum.render.metal3;
+    package com.metallum.render.shared;
 
     public final class GlslCommentStripperContract {
         public static void main(String[] args) {
@@ -112,14 +115,14 @@ harness = textwrap.dedent(
 
 with tempfile.TemporaryDirectory(prefix="metallum-shader-comments-") as tmp:
     root = Path(tmp)
-    package_dir = root / "com/metallum/render"
+    package_dir = root / STRIPPER_PACKAGE.replace(".", "/")
     package_dir.mkdir(parents=True)
     contract = package_dir / "GlslCommentStripperContract.java"
     contract.write_text(harness, encoding="utf-8")
     out = root / "out"
     subprocess.run(["javac", "-d", str(out), str(STRIPPER), str(contract)], check=True)
     subprocess.run(
-        ["java", "-cp", str(out), "com.metallum.render.metal3.GlslCommentStripperContract"],
+        ["java", "-cp", str(out), STRIPPER_PACKAGE + ".GlslCommentStripperContract"],
         check=True,
     )
 
