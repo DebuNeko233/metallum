@@ -175,8 +175,66 @@ reuse has no passes to work on (`onlyClear` is nought), and §31's contents expe
 (`onlyContents` is nought). Nothing is changed here, and 68.4 per cent of pass asks already take the
 encoder that is open.
 
-## Phase 3 - `MTLArgumentEncoder.setArgumentBuffer` rebinding
+## Phase 3 - `MTLArgumentEncoder.setArgumentBuffer` rebinding (KEPT)
 
-The census above is this phase's reading: **14400 calls, 1200 of which retarget the encoder.** That is the
-shape the plan says to act on (its worked example is 20000 calls against 2000 changes), and the candidate is
-taken in the next commit.
+The census above is this phase's "before": **14400 calls, 1200 of which retarget the encoder.** That is
+the shape the plan says to act on (its worked example is 20000 calls against 2000 changes).
+
+**The change**: `MetalRenderPass.setArgumentBuffer` keeps the buffer each compiled pipeline's
+`MTLArgumentEncoder` was last handed - an identity map keyed by the encoder OBJECT, cleared wherever the
+pipeline changes - and skips the call when the encoder already holds that buffer. The descriptor writes
+themselves are untouched; what is not repeated is telling the encoder which buffer they belong in.
+
+**Why it is sound**, pinned by a contract rather than argued: one `MetalRenderPass` per logical pass, so
+the map starts empty and cannot outlive its pass; a layout's buffer is allocated once per pass and never
+replaced under the map; and the encoder objects belong to a compiled pipeline and are shared between
+passes, which is why the map is keyed by the object and cleared on a pipeline change. The encoder is told
+first and the map records after, so a throw between the two leaves the map not knowing rather than lying.
+
+**Mutation-tested**, all six failing for the intended reason:
+
+| mutation | contract's answer |
+| --- | --- |
+| shadow cleared across a pipeline change | the shadow is not cleared exactly once, where the pipeline changes |
+| shadow hoisted to a static | the shadow is not an instance field of the pass |
+| a second, untracked `setArgumentBuffer` site | a second call exists, which the shadow does not track |
+| the map recording before the encoder is told | the map records before the encoder is told |
+| the pass pooled instead of built per pass | the pass is no longer built fresh for every logical pass |
+| the skip removed | the skip is not decided in exactly one place |
+
+**Measured A/B** (`run/m3-shadow-argbuf`, b1 and b2, against the census arms c1 and c2 of the same scene):
+
+```
+                              c1 / c2      b1 / b2
+setArgumentBuffer calls:    14400 / 14400   1200 / 1200     -91.7 %
+calls the shadow skipped:       0 / 0    13200 / 13200
+textureWrites:              12000 / 12000  12000 / 12000    unchanged
+samplerWrites:              12000 / 12000  12000 / 12000    unchanged
+bufferWrites:                1200 / 1200    1200 / 1200     unchanged
+useResourceCalls:           13200 / 13200  13200 / 13200    unchanged
+passes / layouts / draws:  600/1200/600    600/1200/600     unchanged
+native allocations:          1200 / 1200    1200 / 1200     unchanged
+
+encoders:                   21440 / 21440   21435 / 21435   (the anchor's own spread)
+passChanged:                20840 / 20840   20835 / 20835
+loadedMiB:               93943.3 / 93943.3  93922.0 / 93922.0
+storedMiB:              132773.6 /132773.6 132752.3 /132752.3
+blits / blittedMiB:        6600 / 22159.3   6600 / 22159.3  unchanged
+pipelineIdentities == keys:      345            345        unchanged
+compiles / compileMs:            0 / 0.00       0 / 0.00    unchanged
+
+gpuMs over 600:           4380.63 / 4392.70 4367.87 / 4366.48
+wallP50:                     7.30 / 7.29       7.27 / 7.27
+```
+
+**Correctness**: every descriptor write and every `useResource` call is unchanged, so nothing about what is
+bound moved; the structural counters sit inside the anchor's documented spread; and the picture the runs
+drew is the same frame by the counters that describe it. The screenshots the harness left are **not** the
+evidence - two launches of a temporal pack never draw the same frame - which is why this is argued from
+counters and a contract.
+
+**Frame time: no claim.** `gpuMs` reads 0.3-0.6 per cent better than the baseline arms, which is *inside*
+the noise floor this scene has (the baseline's own two arms are 0.28 per cent apart, and the plan says
+under one per cent is noise without strong mechanism evidence). The mechanism here is CPU ObjC call count
+on a GPU-bound frame, so the measured result is the call count and nothing else.
+

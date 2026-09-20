@@ -84,8 +84,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     /**
      * What each compiled pipeline's {@code MTLArgumentEncoder} was last handed, for the rebinding census only.
      * An identity map because the key is the native wrapper object itself: two layouts that compare equal would
-     * still be two encoders, and only the object says which one a set would retarget. Cleared wherever the
-     * buffers are, because the encoders belong to the compiled pipeline that is changing.
+     * still be two encoders, and only the object says which one a set would retarget.
      */
     private final java.util.IdentityHashMap<Object, MTLBuffer> argEncoderTargets = new java.util.IdentityHashMap<>();
     @Nullable
@@ -976,23 +975,43 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     }
 
     /**
-     * Hands one layout's encoder its buffer, and counts the call against the last buffer that encoder was
-     * handed.
+     * Hands one layout's encoder its buffer, and hands it nothing when it already holds that buffer.
      * <p>
-     * <strong>The call is made exactly as before and nothing is skipped.</strong> What is new is that the census
-     * can tell the two costs apart - a call that retargets the encoder and a call that hands it the buffer it
-     * already holds - because those are the two answers that decide whether a binding-state shadow is worth
-     * writing. The shadow the census needs is kept only while the probe is armed and keyed by the encoder
-     * OBJECT, because an argument encoder belongs to a compiled pipeline and is reused across passes.
+     * <strong>Why the skip is sound.</strong> {@code MTLArgumentEncoder.setArgumentBuffer} is state on the
+     * ENCODER object: it says which buffer the descriptor writes that follow it land in. The census read the
+     * control flow before this existed and found the same buffer handed over again and again - 14400 calls
+     * against 1200 real changes in a window, so 22 calls a frame wrote nothing - because the descriptor push
+     * re-points the encoder for every resource it writes, and a pass's layout-to-buffer map does not change
+     * under it.
+     * <p>
+     * Three facts make the held answer true and each is pinned by a contract rather than assumed:
+     * <ul>
+     *   <li>one {@code MetalRenderPass} per logical pass, so this map starts empty for every pass and a stale
+     *       target cannot outlive the pass that recorded it ({@code MetalCommandEncoder.createRenderPass} is
+     *       the only construction site);</li>
+     *   <li>a layout's buffer is allocated once per pass and never replaced, and a pipeline change clears both
+     *       this map and the buffers, so the encoder can only be re-pointed by this method;</li>
+     *   <li>the encoder objects belong to a compiled pipeline and are shared between passes, which is why the
+     *       map is keyed by the encoder OBJECT and why it is cleared wherever the pipeline changes.</li>
+     * </ul>
+     * The descriptor writes themselves are untouched: what changes is only whether the encoder is told again
+     * which buffer they belong in.
      */
     private void setArgumentBuffer(
             final MetalCompiledRenderPipeline.ArgumentBufferLayout layout,
             final MTLBuffer buffer
     ) {
-        if (MetalFrameProbe.armed()) {
-            MetalFrameProbe.argBufferSet(argEncoderTargets.put(layout.encoder(), buffer) != buffer);
+        if (argEncoderTargets.get(layout.encoder()) == buffer) {
+            MetalFrameProbe.argBufferSetSkipped();
+            return;
         }
+
+        // The encoder is told FIRST and the map records it after, which is the fail-safe order: a throw
+        // between the two leaves a map that does not know what the encoder holds, and the next call sets
+        // it again, where the other order would leave a map claiming a binding the encoder never took.
         layout.encoder().setArgumentBuffer(buffer, 0L);
+        argEncoderTargets.put(layout.encoder(), buffer);
+        MetalFrameProbe.argBufferSet();
     }
 
     private MTLBuffer requireArgumentBuffer(final MetalCompiledRenderPipeline.ArgumentBufferLayout layout) {

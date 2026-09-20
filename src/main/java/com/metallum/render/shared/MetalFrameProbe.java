@@ -256,7 +256,7 @@ public final class MetalFrameProbe {
     private static long argBufferAllocations;
     private static long argBufferAllocationBytes;
     private static long argBufferSetCalls;
-    private static long argBufferSetChanges;
+    private static long argBufferSetSkipped;
     private static long argBufferTextureWrites;
     private static long argBufferSamplerWrites;
     private static long argBufferBufferWrites;
@@ -361,20 +361,31 @@ public final class MetalFrameProbe {
     }
 
     /**
-     * One {@code MTLArgumentEncoder.setArgumentBuffer} call the current control flow makes.
-     *
-     * @param changed whether the encoder's target buffer differs from the one it was last handed, which is the
-     *                subset any state shadow would still have to make
+     * One {@code MTLArgumentEncoder.setArgumentBuffer} call the control flow really made, which after the
+     * binding-state shadow is one that retargets the encoder.
      */
-    public static void argBufferSet(final boolean changed) {
+    public static void argBufferSet() {
         if (!armed()) {
             return;
         }
 
         argBufferSetCalls++;
-        if (changed) {
-            argBufferSetChanges++;
+    }
+
+    /**
+     * One such call the binding-state shadow did NOT make, because the encoder already held the buffer it was
+     * about to be handed.
+     * <p>
+     * Counted apart from the calls that were made because the two are the two halves of the same finding: the
+     * census before the shadow read 14400 calls against 1200 changes a window, and the reading after it is 1200
+     * calls against 13200 skips, which is the same frame described from the other side.
+     */
+    public static void argBufferSetSkipped() {
+        if (!armed()) {
+            return;
         }
+
+        argBufferSetSkipped++;
     }
 
     /** One texture descriptor written into an argument buffer. */
@@ -890,14 +901,14 @@ public final class MetalFrameProbe {
         if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0) {
             Metallum.LOGGER.info(
                     "frame-probe argbuffers passes={} layouts={} allocations={} allocationMiB={} "
-                            + "setCalls={} setChanges={} textureWrites={} samplerWrites={} bufferWrites={} "
+                            + "setCalls={} setSkipped={} textureWrites={} samplerWrites={} bufferWrites={} "
                             + "useResourceCalls={} draws={}",
                     argBufferPasses,
                     argBufferLayouts,
                     argBufferAllocations,
                     String.format(Locale.ROOT, "%.3f", argBufferAllocationBytes / (1024.0 * 1024.0)),
                     argBufferSetCalls,
-                    argBufferSetChanges,
+                    argBufferSetSkipped,
                     argBufferTextureWrites,
                     argBufferSamplerWrites,
                     argBufferBufferWrites,
@@ -1028,7 +1039,7 @@ public final class MetalFrameProbe {
         argBufferAllocations = 0;
         argBufferAllocationBytes = 0L;
         argBufferSetCalls = 0;
-        argBufferSetChanges = 0;
+        argBufferSetSkipped = 0;
         argBufferTextureWrites = 0;
         argBufferSamplerWrites = 0;
         argBufferBufferWrites = 0;

@@ -429,15 +429,15 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 31:
+if len(guarded) != 32:
     raise SystemExit(
-        "frame probe: expected 31 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame probe: expected 32 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
         "kinds, pipeline creation, the pipeline census, the drawable wait, the submit-window wait, and the "
-        "eleven the Metal 3 backend-cost census added: nine for the argument-buffer path - a pass, a layout, "
-        "an allocation, a set call, a texture write, a sampler write, a buffer write, a useResource call and a "
-        "draw - and two for the render-encoder reuse census, one for the reuse taken and one for the recreation "
-        "with its causes), found "
+        "twelve the Metal 3 backend-cost census added: ten for the argument-buffer path - a pass, a layout, an "
+        "allocation, a set call, a set skipped, a texture write, a sampler write, a buffer write, a useResource "
+        "call and a draw - and two for the render-encoder reuse census, one for the reuse taken and one for the "
+        "recreation with its causes), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
@@ -636,6 +636,64 @@ if not start < created < stopped:
     raise SystemExit("pipeline compile counter: the Metal pipeline creation is not wrapped by the two timestamps")
 if pipeline.count("newRenderPipelineState(") != 1:
     raise SystemExit("pipeline compile counter: a second creation site in this file must be counted as well")
+
+# ---------------------------------------------------------------------------
+# The argument-buffer binding state shadow
+#
+# `MetalRenderPass.setArgumentBuffer` skips `MTLArgumentEncoder.setArgumentBuffer` when the encoder
+# already holds the buffer it was about to be handed, which the census read as 14400 calls against
+# 1200 real changes in one window. The skip is only correct while three facts hold, and each one is
+# a way somebody could reasonably break it while the frame still looked right:
+#
+#   - one MetalRenderPass per logical pass, so the shadow starts empty and cannot outlive its pass;
+#   - the layout's buffer is allocated once per pass and never replaced under the shadow;
+#   - a pipeline change clears the shadow, because the MTLArgumentEncoder objects belong to the
+#     compiled pipeline and are shared between the passes that use it.
+#
+# This is the mutation the contract was written against: make the map survive a pass (hoist it to a
+# static, or drop the per-pass construction) and a stale target would be read by the next pass.
+# ---------------------------------------------------------------------------
+if render_pass.count("argEncoderTargets.get(") != 1:
+    raise SystemExit(
+        "argument-buffer binding state: the skip is not decided in exactly one place, so a second "
+        "site could skip a set the encoder really needed"
+    )
+order(
+    render_pass,
+    "layout.encoder().setArgumentBuffer(buffer, 0L);",
+    "argEncoderTargets.put(layout.encoder(), buffer);",
+    "argument-buffer binding state: the map records the buffer before the encoder is told about it, "
+    "so a throw between the two leaves a map claiming a binding the encoder never took",
+)
+if "private final java.util.IdentityHashMap<Object, MTLBuffer> argEncoderTargets" not in render_pass:
+    raise SystemExit(
+        "argument-buffer binding state: the shadow is not an instance field of the pass, so it "
+        "survives the pass that recorded it and the next pass reads a target it never set"
+    )
+if render_pass.count("argEncoderTargets.clear();") != 1:
+    raise SystemExit(
+        "argument-buffer binding state: the shadow is not cleared exactly once, where the pipeline "
+        "changes -- an argument encoder belongs to a compiled pipeline and is shared by every pass "
+        "that uses it, so a shadow kept across a pipeline change is a buffer the encoder no longer has"
+    )
+order(
+    render_pass,
+    "this.argumentBufferStates.clear();",
+    "this.argEncoderTargets.clear();",
+    "argument-buffer binding state: the shadow is cleared before the buffers it names, so the two "
+    "halves of one pipeline change are cleared in an order nothing pins",
+)
+if encoder.count("MetalRenderPass renderPass = new MetalRenderPass(") != 1:
+    raise SystemExit(
+        "argument-buffer binding state: the pass is no longer built fresh for every logical pass -- a "
+        "pooled or reused pass carries the shadow of the pass before it, and the encoder it names holds "
+        "another pass's buffer"
+    )
+if render_pass.count(".setArgumentBuffer(") != 1:
+    raise SystemExit(
+        "argument-buffer binding state: a second call to MTLArgumentEncoder.setArgumentBuffer exists "
+        "in this file, which the shadow does not track"
+    )
 
 # ---------------------------------------------------------------------------
 # No shader-pack vocabulary
