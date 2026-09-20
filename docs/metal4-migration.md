@@ -2247,16 +2247,46 @@ bisects narrowed the ingredient rather than the mechanism:
 | the copy encoder's block removed, its three textures and both passes kept | **clean, 11 of 11** |
 | the copy kept, its producer barrier removed | the pattern stays |
 
-So it is the **region copy encoded in a compute encoder between two render encoders** that sets the state off,
-not the table, not the re-point, and not the barrier - and a later attempt's *two dispatches through one table*
-is what reads wrong, always as the first dispatch's colour where the second's was asked for. That is the shape
-the frame path encodes every frame, so the smoke is **not committed**: the census has to keep meaning "this
-capability works", and a suite that is red for a reason another suite's field reports is worse than a suite
-that does not ask. The code is forty lines in the shape of the two smokes above (`openPass` a source, a
-`MTL4ComputeEncoder` with `copyTextureRegion(source, 0, 0, 0, 0, 0, COPY_HALF, COPY_HALF, 1, destination, 0, 0,
-COPY_HALF, 0, 0)`, then `openPass` a destination and sample it), and the next round's first job is the
-mechanism, not the smoke: the reproducer is deterministic, the ingredient is one call, and the thing it breaks
-is the engine's own clear path.
+So the smoke is **not in the census** - the census has to keep meaning "this capability works", and a suite
+that is red for a reason another suite's field reports is worse than one that does not ask - and the finding
+now has an artifact of its own instead: **`tools/metal4-cold-probe/CopyThenDispatchRepro.java`**, run by
+`tools/metal4-cold-probe.sh --repro N [--variant NAME]`. It is a mode of the census harness and not a second
+harness, so it is compiled against the same classpath and cannot measure another branch's classes. Each round
+runs the **victim** first - `canWriteStorageImage`, the smoke the real suite loses - and then the **trigger**,
+which is the copy shape above; the parts of the trigger are switches rather than an edit, so one run removes
+exactly one of them.
+
+**The variant matrix, six rounds each, `storageFailures` out of six.** `full` reproduces on the even rounds:
+3 of 6, and the victim's own second call in the same round (`storageAgain`) fails exactly when the first does,
+so it is a state that persists inside the round rather than a first-command-after-a-copy effect.
+
+| variant | storage | trigger's own check | reading |
+| --- | --- | --- | --- |
+| `full` | 3/6 | clean | reproduces |
+| `full-copy` (whole texture, not a region) | 3/6 | clean | the region is not special |
+| `no-copy` (encoder kept, command dropped) | **0/6** | clean | the copy **command** is required |
+| `no-copy-encoder` | **0/6** | clean | an empty encoder is not enough |
+| `buffer-copy` (buffers instead of textures) | **0/6** | clean | it is a **texture** copy, not a copy of any kind |
+| `no-sampled-pass` | 3/6 | clean | the pass that samples is not needed |
+| `no-source-pass` | 3/6 | 6/6 failed | the source's contents are not needed |
+| `no-destination-clear` | 3/6 | clean | the clear is not needed |
+| `separate-commit` (its own buffer and commit) | 3/6 | clean | "one command buffer" is not it |
+| `no-residency` | 3/6 | clean | residency is not it |
+| `textures-released-last` | 3/6 | clean | the release order is not it |
+| `plain-destination` (not a render target) | 3/6 | clean | the usage bits are not it |
+| `copy-to-unbound` (the copy's target is in no table) | 3/6 | clean | the destination being bound is not it |
+
+**So the ingredient is the texture-to-texture copy command, and nothing else in the shape.** Everything around
+it was removed one at a time and the fault stayed; remove the command itself, or make the copy move *buffers*
+instead of textures, and the fault is gone completely. What is still not known is the mechanism: the victim's
+*second* dispatch is the one whose result is missing (the texture holds the first dispatch's red where the
+second's green was asked for), and the whole thing **alternates per round** - which is a fact about a state
+that flips, not about data that is lost once. The next experiment is a victim of our own with a **third**
+dispatch through a third table between the two: if the third's colour is what the texture holds, the *second
+command* was dropped; if the texture still holds the first's, the *binding* was stale for both. That separates
+"a command the encoder dropped" from "a re-point the driver did not see", which is the difference between a
+scheduling fault and the exact property `Metal4FrameEncoder.clearStorageTexture` and
+`Metal4ComputePipeline`'s per-dispatch table re-point depend on.
 
 **Measured, and with one honest fault in it.** Two 30-cold + 20-warm censuses and a six-process hunt
 (6 × 31 probes) were run: **286 probes**, of which `computeSample` and `computeVertex` are **286 of 286** -

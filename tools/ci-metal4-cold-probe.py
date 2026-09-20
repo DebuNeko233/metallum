@@ -804,6 +804,64 @@ for needle, why in (
     if needle not in engine_probe_source:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the reproducer, which is a mode of this harness and a laboratory rather than a smoke -----------------
+# Round 41's fault - a later dispatch through a table reading the first dispatch's colour after a texture copy -
+# has a deterministic reproducer: round 41 measured it in the suite, and this artifact is what keeps it
+# runnable without the suite. It is compiled against the same classpath and run by the same script, so it
+# cannot measure another branch's classes and needs no second build path.
+for needle, why in (
+    ("--repro) repro_rounds=\"$2\"; shift 2 ;;", "the harness has no reproducer mode"),
+    ("--variant) variant=\"$2\"; shift 2 ;;", "the harness cannot select a variant of the reproducer"),
+    ("CopyThenDispatchRepro.java", "the reproducer is not compiled, so the mode would run nothing"),
+    ("CopyThenDispatchRepro \"$repro_rounds\" \"$variant\"",
+     "the reproducer is run without its rounds or its variant, so a run could not say which shape it asked"),
+    ("variant $variant", "the harness does not say which variant it ran"),
+    ("if grep -q 'storageFailures=0 ' \"$repro_out\"; then",
+     "the reproducer's answer is not read, so a run's exit code could not say whether it reproduced"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
+REPRO = ROOT / "tools" / "metal4-cold-probe" / "CopyThenDispatchRepro.java"
+if not REPRO.is_file():
+    raise SystemExit("cold-probe harness: the copy-then-dispatch reproducer is gone, so the fault it made "
+                     "deterministic has no artifact again")
+repro = REPRO.read_text(encoding="utf-8")
+for needle, why in (
+    ("boolean storage = MTL4Probe.canWriteStorageImage(device);",
+     "the reproducer does not run the victim smoke, so it is not reproducing the measured fault"),
+    ("boolean storageAgain = MTL4Probe.canWriteStorageImage(device);",
+     "the reproducer does not run the victim twice, so a state a second call clears cannot be told from one "
+     "that persists"),
+    ("String copyReason = trigger(device, shape);",
+     "the reproducer never runs the trigger, so every variant would be clean and mean nothing"),
+    ("copy.copyTextureRegion(source, 0L, 0L, 0L, 0L, 0L, HALF, HALF, 1L,\n"
+     "                                        into, 0L, 0L, HALF, 0L, 0L);",
+     "the trigger's texture-to-texture region copy is gone, and that copy is what every variant measures"),
+    ("case \"no-copy\" ->", "the variant that removes the copy command is gone, so the one control that "
+     "separates the copy from its surroundings cannot be run"),
+    ("case \"buffer-copy\" ->", "the variant that copies buffers instead of textures is gone, so nothing "
+     "separates a texture copy from a copy of any kind"),
+    ("case \"separate-commit\" ->", "the variant that gives the copy its own command buffer is gone, so "
+     "\"one command buffer\" cannot be ruled out"),
+    ("case \"copy-to-unbound\" ->", "the variant whose copy target no table names is gone, so the copy's "
+     "destination being a bound resource cannot be ruled out"),
+    ("case \"no-residency\" ->", "the variant that declares nothing is gone, so residency cannot be ruled out"),
+    ("case \"textures-released-last\" ->", "the variant that hands the textures back after the command buffer "
+     "is gone, so a release-order fault cannot be ruled out"),
+    ("case \"plain-destination\" ->", "the variant whose textures are not render targets is gone, so the usage "
+     "bits cannot be ruled out"),
+    ("M4_REPRO SUMMARY variant=", "the reproducer prints no summary, so a shell cannot read its answer"),
+):
+    if needle not in repro:
+        raise SystemExit("cold-probe harness: " + why)
+# The two release orders have to be different code, or the variant is a comment.
+release_orders = repro.split("if (shape.texturesReleasedLast()) {")
+if len(release_orders) != 2 or release_orders[1].index("release(source);") > \
+        release_orders[1].index("} else {"):
+    raise SystemExit("cold-probe harness: the reproducer's two release orders are the same code, so the "
+                     "variant that reorders them measures nothing")
+
 # And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
                    / "MTL4ComputeEncoder.java")

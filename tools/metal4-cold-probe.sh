@@ -22,6 +22,8 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cold_runs=30
 warm_runs=20
 probes_per_process=1
+repro_rounds=0
+variant="full"
 mode="raw"
 keep=false
 out_file=""
@@ -44,6 +46,14 @@ Usage: metal4-cold-probe.sh [options]
                     cold-only fault turns on.
   --out FILE        write the raw M4_PROBE_RESULT lines here as well as summarising them.
   --keep            leave the compiled probe class in place instead of clearing it.
+
+  --variant NAME    which part of the reproducer's shape to remove: full, no-copy, no-copy-encoder,
+                    no-sampled-pass, no-source-pass, no-destination-clear, separate-commit, no-residency,
+                    textures-released-last.
+  --repro N         run the copy-then-dispatch reproducer instead of the census: N rounds of the
+                    storage-image smoke followed by the trigger (a pass, a region copy in a compute
+                    encoder, and a pass that samples the copy), one line a round. Exits 1 when the
+                    storage smoke failed in any round, which is what reproduction looks like.
 USAGE
 }
 
@@ -55,6 +65,8 @@ while [[ $# -gt 0 ]]; do
 		--mode) mode="$2"; shift 2 ;;
 		--out) out_file="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
+		--repro) repro_rounds="$2"; shift 2 ;;
+		--variant) variant="$2"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "unknown option: $1" >&2; usage; exit 2 ;;
 	esac
@@ -97,7 +109,28 @@ cleanup() {
 trap cleanup EXIT
 
 echo "compiling the probe" >&2
-javac -nowarn -cp "$classpath" -d "$classes" "$repo_root/tools/metal4-cold-probe/Metal4ColdProbe.java"
+javac -nowarn -cp "$classpath" -d "$classes" \
+	"$repo_root/tools/metal4-cold-probe/Metal4ColdProbe.java" \
+	"$repo_root/tools/metal4-cold-probe/CopyThenDispatchRepro.java"
+
+# The reproducer is not the census: it asks one question - does the copy shape set the storage smoke off -
+# and it is run instead of the census rather than beside it, because a census that is red for a reason it
+# does not itself explain is worse than a census that does not ask.
+if (( repro_rounds > 0 )); then
+	echo "reproducing the copy-then-dispatch fault for $repro_rounds rounds, variant $variant" >&2
+	repro_out="$(mktemp -t m4-repro)"
+	set +e
+	java -cp "$classes:$classpath" CopyThenDispatchRepro "$repro_rounds" "$variant" | tee "$repro_out"
+	set -e
+	if grep -q 'storageFailures=0 ' "$repro_out"; then
+		echo "the storage-image smoke passed every round, so the fault did not reproduce" >&2
+		rm -f "$repro_out"
+		exit 0
+	fi
+	echo "the storage-image smoke failed in at least one round: the fault reproduced" >&2
+	rm -f "$repro_out"
+	exit 1
+fi
 
 run_one() {
 	local index="$1" attempts="$2"
