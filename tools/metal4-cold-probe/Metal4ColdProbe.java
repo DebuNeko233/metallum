@@ -192,6 +192,8 @@ public final class Metal4ColdProbe {
         String depthReason = "-";
         boolean fence = false;
         String fenceReason = "-";
+        boolean indexed = false;
+        String indexedReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -243,6 +245,13 @@ public final class Metal4ColdProbe {
             fence = makeAndSubmit && MTL4Probe.canAwaitSubmissions(device);
             if (!fence) {
                 fenceReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The one thing Metal 4's indexed draw does differently from Metal 3's: its index buffer is an
+            // address in the draw and its first index becomes an offset into it. The client reached this by
+            // stopping there, and the selector's own arity was wrong when it did.
+            indexed = makeAndSubmit && MTL4Probe.canDrawIndexed(device);
+            if (!indexed) {
+                indexedReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -307,6 +316,8 @@ public final class Metal4ColdProbe {
                     + " fence=" + fence
                     + " depthReason=" + depthReason
                     + " fenceReason=" + fenceReason.replace(' ', '_')
+                    + " index=" + indexed
+                    + " indexReason=" + indexedReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     + " compile=" + compile.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was

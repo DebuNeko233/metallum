@@ -286,13 +286,45 @@ for needle, why in (
      "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
     ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
      "the fragment table is not sized from the plan"),
-    ("Metal4BindingPlan.Slot slot = requirePlan().slot(name);",
+    ("Metal4BindingPlan.Slot slot = this.plan.slot(name);",
      "a binding is filled without looking it up in the pipeline's layout"),
-    ('throw new IllegalStateException("the Metal 4 pipeline does not declare a binding called \'" + name',
+    ("if (slot == null) {\n            throw new IllegalStateException(\"the Metal 4 pipeline \"",
      "a name the pipeline does not declare is not refused, so a layout mismatch would be a silently dropped "
      "binding - the half frame section 35 forbids"),
-    ("if (slot.buffer()) {", "a texture bound to a buffer's name is not refused"),
-    ("if (slot.texture()) {", "a buffer bound to a texture's name is not refused"),
+    ("this.encoder.drawIndexedPrimitives(this.artifact.topology().value, indexCount, this.indexTypeValue,\n"
+     "                address, length, instanceCount, vertexOffset, firstInstance)",
+     "the indexed draw does not carry the draw's own base instance, or does not pass the offset arithmetic's "
+     "address and length"),
+    ("this.vertexTable.address(address, stride, plan.firstVertexBufferSlot() + slot)",
+     "a vertex layout is bound at the game's own slot rather than at the slot the pipeline's descriptor starts "
+     "its layouts from, so it would overwrite a named vertex-stage buffer (the same expression appears in the "
+     "fault's own message, which is why the pin is the call)"),
+    ("if (slot.buffer() == texture) {", "a texture bound to a buffer's name is not refused, or the other way"),
+    # And the model itself: a binding is remembered and resolved when a layout exists, which is the game's own
+    # order (a pass's default uniforms are bound by name before any pipeline is set) and the Metal 3 pass's own
+    # model (it keeps its uniforms and textures in maps and resolves them into the argument buffer a draw
+    # builds).
+    ("private final Map<String, Long> uniformAddresses = new LinkedHashMap<>();",
+     "a uniform bound before the pipeline is not remembered, so the binding the game makes first would be lost"),
+    ("private final Map<String, Sampled> textureBindings = new LinkedHashMap<>();",
+     "a texture bound before the pipeline is not remembered"),
+    ("private final Map<Integer, GpuBufferSlice> vertexBuffers = new LinkedHashMap<>();",
+     "a vertex layout bound before the pipeline is not remembered"),
+    ("applyBindings();", "the remembered bindings are not resolved when a pipeline arrives"),
+    ("Metal4BindingPlan.Slot slot = slotFor(name, true);",
+     "a texture is not resolved against the layout, or not by name"),
+    ("Metal4BindingPlan.Slot slot = slotFor(name, false);",
+     "a uniform is not resolved against the layout, or not by name"),
+    ("if (this.pipeline == null) {\n            return null;",
+     "a binding made before the pipeline has no remembered answer, so the game's default uniforms would be "
+     "refused instead of resolved when a pipeline arrives"),
+    ("if (slot != null && !slot.texture()) {",
+     "a remembered uniform is filled for a pipeline that declares the name as a texture, so a stale binding "
+     "would be written into a texture's slot"),
+    ("if (slot != null && !slot.buffer()) {",
+     "a remembered texture is filled for a pipeline that declares the name as a buffer"),
+    ("this.vertexBuffers.put(slot, buffer);",
+     "a vertex layout bound before the pipeline is not remembered with its slot"),
     ("long stride = format == null ? 0L : format.getVertexSize();",
      "the vertex stride is not the pipeline's own vertex format, so a layout would be read per buffer rather "
      "than per vertex"),
@@ -380,6 +412,44 @@ for method, why in (
 ):
     if COPY_THEN_PASS not in body_of(encoder, method):
         raise SystemExit("metal 4 provider: " + why)
+
+# The indexed draw's selector, which is the one command whose arity was wrong: this machine's
+# MTL4RenderCommandEncoder.h declares eight arguments, and the form without baseInstance: does not exist. The
+# guard asks the encoder before it is sent, so a short declaration is a named refusal in a log rather than a
+# message send with the wrong arity - and the smoke draws through this method rather than through a copy of it.
+ENCODER = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4RenderEncoder.java"
+encoder_source = ENCODER.read_text(encoding="utf-8")
+for needle, why in (
+    ('"drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:"\n'
+     '                    + "baseInstance:",',
+     "the indexed draw's selector is not the eight-argument one this SDK declares, so respondsToSelector: "
+     "answers no and every indexed draw refuses"),
+    ("JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);",
+     "the indexed selector is not declared with the eight argument widths it takes"),
+    ("indexBufferLength, instanceCount, baseVertex, baseInstance);",
+     "the indexed draw is not sent all eight arguments"),
+    ("public String refusal() {", "the encoder cannot say why a draw was refused, so a client log names the "
+     "draw and not the reason"),
+    ("if (indexBufferAddress == 0L) {\n"
+     "            this.refusal = \"the index buffer has no GPU address, so there is nothing to read \"",
+     "an index buffer with no GPU address is refused without saying so, so the one fault this milestone found "
+     "would read as a draw that was asked for and did not happen"),
+    ("if (indexCount <= 0L) {", "an indexed draw of no indices is refused without saying so"),
+):
+    if needle not in encoder_source:
+        raise SystemExit("metal 4 provider: " + why)
+# The two draws' "not open" refusal is the same sentence in both methods on purpose, so it is counted rather
+# than searched: a search would be satisfied by the other method's copy while one of them went silent.
+if encoder_source.count('this.refusal = "the pass " + this.which + " is not open, so there is no encoder to draw'
+                        ' on";') != 2:
+    raise SystemExit("metal 4 provider: a closed pass is refused without saying so in one of the two draws")
+
+if "public boolean drawIndexedPrimitives(final long primitiveType, final long indexCount, final long indexType,\n" \
+        "                                         final long indexBufferAddress, final long indexBufferLength,\n" \
+        "                                         final long instanceCount, final long baseVertex, final long baseInstance)" \
+        not in encoder_source:
+    raise SystemExit("metal 4 provider: the indexed draw does not take a base instance, which the SDK's "
+                     "selector requires")
 
 # The copies have to be there as implementations and not only absent from the refusal list: a method that was
 # renamed away would leave the refusal check passing and the frame path with nowhere to upload a texture.

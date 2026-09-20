@@ -29,9 +29,12 @@ import org.jspecify.annotations.Nullable;
 import com.mojang.blaze3d.IndexType;
 import org.lwjgl.PointerBuffer;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.IntBuffer;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;
@@ -83,6 +86,25 @@ final class Metal4RenderPass implements RenderPassBackend {
     private MTL4ArgumentTable fragmentTable;
     /** Whether the tables the encoder holds are the ones this pass has been filling. */
     private boolean tablesAssigned;
+
+    /**
+     * The bindings the frame path has made <strong>by name</strong>, kept so a pipeline set later can resolve
+     * them.
+     * <p>
+     * This is the game's own order and not an accommodation: a pass is created, {@code bindDefaultUniforms}
+     * binds its default uniforms by name, and the pipeline that turns a name into a slot is set per draw
+     * afterwards. The Metal 3 pass keeps its uniforms and textures in maps and resolves them into the argument
+     * buffer a draw builds, so the two generations have to agree about the model or the same frame would work on
+     * one path and not on the other.
+     */
+    private final Map<String, Long> uniformAddresses = new LinkedHashMap<>();
+    private final Map<String, Sampled> textureBindings = new LinkedHashMap<>();
+    /** The vertex layouts by the game's own slot, which the pipeline's descriptor numbers from its own base. */
+    private final Map<Integer, GpuBufferSlice> vertexBuffers = new LinkedHashMap<>();
+
+    /** One texture and the sampler that goes with it, as the frame path bound them. */
+    private record Sampled(MemorySegment texture, MemorySegment sampler) {
+    }
     /** The index buffer an indexed draw reads, as the address the new model's draw takes. */
     private long indexBufferAddress;
     private long indexBufferLength;
@@ -289,61 +311,104 @@ final class Metal4RenderPass implements RenderPassBackend {
                     + " made, so nothing this pass binds would reach a shader");
         }
         this.tablesAssigned = false;
+        // The tables are new, so everything this pass has been told to bind is resolved against them: the
+        // bindings that arrived before this pipeline - the game's default uniforms, a vertex layout - are
+        // applied here, and the ones already filled above are filled again into these tables.
+        applyBindings();
     }
 
     /**
-     * One resource of the pipeline's own layout, bound where the plan says the compiled MSL reads it.
+     * One texture and its sampler, recorded by name and filled into the layout the pipeline gives that name.
      * <p>
-     * A name the pipeline does not declare is a fault rather than something to skip: the layout the pack asked
-     * for and the layout the shader was compiled against disagree, and dropping the binding would be the half
-     * frame the migration's section 35 forbids. A binding read by both stages is filled in both tables.
+     * <strong>When a name is missing from the pipeline that is set, the answer depends on when it was
+     * bound.</strong> A binding made while a pipeline is set is a claim about that pipeline's layout, so a name
+     * that pipeline does not declare is the disagreement the migration's section 35 forbids and is refused by
+     * name. A binding made before any pipeline in this pass is a claim about the pass's own bindings, which a
+     * given pipeline may or may not read - the GUI is handed every default uniform and most of its pipelines use
+     * some of them - so it is remembered and applied to each later pipeline that declares it.
+     * <p>
+     * A binding read by both stages is filled in both tables.
      */
     @Override
     public void bindTexture(final @NonNull String name, final @NonNull GpuTextureView view,
                             final @NonNull GpuSampler sampler) {
-        Metal4BindingPlan.Slot slot = require(name);
-        if (slot.buffer()) {
-            throw new IllegalStateException("the Metal 4 pipeline binds '" + name + "' as a buffer and the frame"
-                    + " path bound a texture to it, so the two disagree about the layout");
-        }
         if (!(view instanceof MetalGpuTextureView textureView) || !(sampler instanceof MetalGpuSampler metalSampler)) {
             throw new IllegalStateException("the Metal 4 pass was handed a texture or sampler that is not this"
                     + " engine's: " + view.getClass().getName() + ", " + sampler.getClass().getName());
         }
-
-        for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
-            MTL4ArgumentTable table = this.tableFor(stage);
-            if (table == null || !slot.readBy(stage)) {
-                continue;
-            }
-            if (!table.texture(textureView.nativeHandle(), slot.metalIndex())
-                    || (slot.sampled() && !table.sampler(metalSampler.nativeHandle(), slot.samplerMetalIndex()))) {
-                throw new IllegalStateException("the Metal 4 table refused the binding '" + name + "' at texture "
-                        + slot.metalIndex() + " on " + stageName(stage));
-            }
+        Sampled sampled = new Sampled(textureView.nativeHandle(), metalSampler.nativeHandle());
+        this.textureBindings.put(name, sampled);
+        Metal4BindingPlan.Slot slot = slotFor(name, true);
+        if (slot != null) {
+            fillTexture(name, slot, sampled);
         }
         this.tablesAssigned = false;
     }
 
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBuffer buffer) {
-        bindBuffer(name, addressOf(buffer, 0L));
+        setUniform(name, buffer.slice());
     }
 
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice slice) {
-        bindBuffer(name, addressOf(slice.buffer(), slice.offset()));
+        long address = addressOf(slice.buffer(), slice.offset());
+        this.uniformAddresses.put(name, address);
+        Metal4BindingPlan.Slot slot = slotFor(name, false);
+        if (slot != null) {
+            fillAddress(name, slot, address);
+        }
+        this.tablesAssigned = false;
+    }
+
+    /**
+     * A vertex layout, bound by address <em>and stride</em> at the slot the pipeline's vertex descriptor puts it
+     * in. The stride is the pipeline's own vertex format, because it is the layout the shader was compiled to
+     * read - a table bound without it would read a vertex per buffer rather than per vertex. A slot bound before
+     * the pipeline is remembered with it and filled when the descriptor is known, the same way a named binding
+     * is.
+     */
+    @Override
+    public void setVertexBuffer(final int slot, final @NonNull GpuBufferSlice buffer) {
+        this.vertexBuffers.put(slot, buffer);
+        Metal4BindingPlan plan = this.plan;
+        if (plan != null) {
+            fillVertexBuffer(plan, slot, buffer);
+        }
+        this.tablesAssigned = false;
+    }
+
+    /**
+     * The slot the current pipeline gives this name for this kind of resource, or null where no pipeline is set
+     * and the binding is only remembered.
+     * <p>
+     * A pipeline that is set and does not declare the name is a named fault rather than something to skip: the
+     * layout the pack asked for and the layout the shader was compiled against disagree, and dropping the
+     * binding would be the half frame section 35 forbids. So is a name the pipeline declares as the other kind
+     * of resource.
+     */
+    private Metal4BindingPlan.@Nullable Slot slotFor(final String name, final boolean texture) {
+        if (this.pipeline == null) {
+            return null;
+        }
+        Metal4BindingPlan.Slot slot = this.plan.slot(name);
+        if (slot == null) {
+            throw new IllegalStateException("the Metal 4 pipeline " + this.pipeline.getLocation() + " does not"
+                    + " declare a binding called '" + name + "', so the frame path and the shader disagree about"
+                    + " the layout");
+        }
+        if (slot.buffer() == texture) {
+            throw new IllegalStateException("the Metal 4 pipeline binds '" + name + "' as a "
+                    + (texture ? "buffer" : "texture") + " and the frame path bound a "
+                    + (texture ? "texture" : "buffer") + " to it, so the two disagree about the layout");
+        }
+        return slot;
     }
 
     /** Points every table that reads this name at the buffer's GPU address, offset included. */
-    private void bindBuffer(final String name, final long address) {
-        Metal4BindingPlan.Slot slot = require(name);
-        if (slot.texture()) {
-            throw new IllegalStateException("the Metal 4 pipeline binds '" + name + "' as a texture and the frame"
-                    + " path bound a buffer to it, so the two disagree about the layout");
-        }
+    private void fillAddress(final String name, final Metal4BindingPlan.Slot slot, final long address) {
         for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
-            MTL4ArgumentTable table = this.tableFor(stage);
+            MTL4ArgumentTable table = tableFor(stage);
             if (table == null || !slot.readBy(stage)) {
                 continue;
             }
@@ -352,17 +417,25 @@ final class Metal4RenderPass implements RenderPassBackend {
                         + slot.metalIndex() + " on " + stageName(stage));
             }
         }
-        this.tablesAssigned = false;
     }
 
-    /**
-     * A vertex layout, bound by address <em>and stride</em> at the slot the pipeline's vertex descriptor puts it
-     * in. The stride is the pipeline's own vertex format, because it is the layout the shader was compiled to
-     * read - a table bound without it would read a vertex per buffer rather than per vertex.
-     */
-    @Override
-    public void setVertexBuffer(final int slot, final @NonNull GpuBufferSlice buffer) {
-        Metal4BindingPlan plan = requirePlan();
+    /** The same for a texture and, where the plan has one beside it, the sampler that goes with it. */
+    private void fillTexture(final String name, final Metal4BindingPlan.Slot slot, final Sampled sampled) {
+        for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
+            MTL4ArgumentTable table = tableFor(stage);
+            if (table == null || !slot.readBy(stage)) {
+                continue;
+            }
+            if (!table.texture(sampled.texture(), slot.metalIndex())
+                    || (slot.sampled() && !table.sampler(sampled.sampler(), slot.samplerMetalIndex()))) {
+                throw new IllegalStateException("the Metal 4 table refused the binding '" + name + "' at texture "
+                        + slot.metalIndex() + " on " + stageName(stage));
+            }
+        }
+    }
+
+    /** One remembered vertex layout into the table the current plan sized, by the pipeline's own stride. */
+    private void fillVertexBuffer(final Metal4BindingPlan plan, final int slot, final GpuBufferSlice buffer) {
         if (this.vertexTable == null) {
             throw new IllegalStateException("the Metal 4 pipeline declares no vertex stage, so vertex buffer " + slot
                     + " has nowhere to go");
@@ -378,7 +451,36 @@ final class Metal4RenderPass implements RenderPassBackend {
             throw new IllegalStateException("the Metal 4 vertex table refused buffer slot " + slot + " at table"
                     + " index " + (plan.firstVertexBufferSlot() + slot));
         }
-        this.tablesAssigned = false;
+    }
+
+    /**
+     * Fills every remembered binding the new pipeline declares.
+     * <p>
+     * Called when a pipeline arrives, because the plan - and with it the tables - is what a remembered name is
+     * resolved against. A remembered name this pipeline does not declare is skipped and not a fault: it was a
+     * claim about an earlier layout or about the pass's own bindings, and a pipeline that does not read it has
+     * nothing to say about it. A name this pipeline declares as the other kind of resource is skipped for the
+     * same reason - the remembered value is stale for this layout, and whatever this pipeline reads is bound
+     * when the frame path binds it.
+     */
+    private void applyBindings() {
+        Metal4BindingPlan plan = this.plan;
+        if (plan == null) {
+            return;
+        }
+        this.uniformAddresses.forEach((name, address) -> {
+            Metal4BindingPlan.Slot slot = plan.slot(name);
+            if (slot != null && !slot.texture()) {
+                fillAddress(name, slot, address);
+            }
+        });
+        this.textureBindings.forEach((name, sampled) -> {
+            Metal4BindingPlan.Slot slot = plan.slot(name);
+            if (slot != null && !slot.buffer()) {
+                fillTexture(name, slot, sampled);
+            }
+        });
+        this.vertexBuffers.forEach((slot, buffer) -> fillVertexBuffer(plan, slot, buffer));
     }
 
     /**
@@ -424,9 +526,10 @@ final class Metal4RenderPass implements RenderPassBackend {
         long address = this.indexBufferAddress + (long) firstIndex * this.indexTypeBytes;
         long length = Math.max(0L, this.indexBufferLength - (long) firstIndex * this.indexTypeBytes);
         if (!this.encoder.drawIndexedPrimitives(this.artifact.topology().value, indexCount, this.indexTypeValue,
-                address, length, instanceCount, vertexOffset)) {
+                address, length, instanceCount, vertexOffset, firstInstance)) {
             throw new IllegalStateException("the Metal 4 encoder refused an indexed draw of " + indexCount
-                    + " indices");
+                    + " indices at address " + address + " of " + length + " bytes, type " + this.indexTypeValue
+                    + ": " + this.encoder.refusal());
         }
     }
 
@@ -463,7 +566,8 @@ final class Metal4RenderPass implements RenderPassBackend {
         }
         if (!this.encoder.drawPrimitives(this.artifact.topology().value, firstVertex, vertexCount, instanceCount,
                 firstInstance)) {
-            throw new IllegalStateException("the Metal 4 encoder refused a draw of " + vertexCount + " vertices");
+            throw new IllegalStateException("the Metal 4 encoder refused a draw of " + vertexCount + " vertices: "
+                    + this.encoder.refusal());
         }
     }
 
@@ -504,25 +608,6 @@ final class Metal4RenderPass implements RenderPassBackend {
             this.encoder.setScissorRect(this.scissorX, this.scissorY, this.scissorWidth, this.scissorHeight);
         }
         return true;
-    }
-
-    /** The plan this pass is filling, refusing where no pipeline has been set. */
-    private Metal4BindingPlan requirePlan() {
-        if (this.plan == null) {
-            throw new IllegalStateException("the Metal 4 pass was asked to bind a resource with no pipeline set,"
-                    + " so which slot it belongs in is not known");
-        }
-        return this.plan;
-    }
-
-    /** One binding of the current pipeline's layout, by the name the pack gave it. */
-    private Metal4BindingPlan.Slot require(final String name) {
-        Metal4BindingPlan.Slot slot = requirePlan().slot(name);
-        if (slot == null) {
-            throw new IllegalStateException("the Metal 4 pipeline does not declare a binding called '" + name
-                    + "', so the frame path and the shader disagree about the layout");
-        }
-        return slot;
     }
 
     /** The table the given stage reads through, or null where this pass has none for it. */

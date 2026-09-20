@@ -89,8 +89,9 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     // The index buffer is an address on this model, and it is declared as one rather than as a long: the two are
     // the same register either way, but the header says MTLGPUAddress and the declaration should say so too.
     private static final Msg DRAW_INDEXED = Msg.ofVoid(
-            "drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:",
-            JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+            "drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:"
+                    + "baseInstance:",
+            JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final long STAGE_ALL = Long.MAX_VALUE;
     private static final long VISIBILITY_DEVICE = 1L;
 
@@ -100,6 +101,8 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     private MemorySegment descriptor;
     private final String which;
     private boolean ended;
+    /** Why the last draw answered no, where one has been refused. */
+    private String refusal;
 
     private MTL4RenderEncoder(final MemorySegment descriptor, final MemorySegment encoder, final String which) {
         this.descriptor = descriptor;
@@ -357,11 +360,18 @@ public final class MTL4RenderEncoder implements AutoCloseable {
      */
     public boolean drawPrimitives(final long primitiveType, final long vertexStart, final long vertexCount,
                                   final long instanceCount, final long baseInstance) {
+        this.refusal = null;
         MemorySegment open = open() ? this.encoder : null;
-        if (open == null || vertexCount <= 0L) {
+        if (open == null) {
+            this.refusal = "the pass " + this.which + " is not open, so there is no encoder to draw on";
+            return false;
+        }
+        if (vertexCount <= 0L) {
+            this.refusal = "the draw asks for " + vertexCount + " vertices";
             return false;
         }
         if (!responds(open, DRAW.name())) {
+            this.refusal = "the encoder does not answer " + DRAW.name();
             return false;
         }
         DRAW.send(open, primitiveType, vertexStart, vertexCount, instanceCount, baseInstance);
@@ -370,21 +380,39 @@ public final class MTL4RenderEncoder implements AutoCloseable {
 
     /**
      * An indexed draw, whose index buffer is an <em>address</em> on the new model rather than a bound buffer:
-     * the engine's first index becomes an offset into that address and its base vertex is the draw's own
-     * {@code baseVertex}, which is why both are parameters here and neither is state.
+     * the engine's first index becomes an offset into that address, and the base vertex and base instance are
+     * the draw's own, which is why all three are parameters here and none is state.
+     * <p>
+     * The selector has <strong>eight</strong> arguments, read off this machine's
+     * {@code MTL4RenderCommandEncoder.h} rather than remembered: the form without {@code baseInstance:} does
+     * not exist, and a declaration that is one argument short makes {@code respondsToSelector:} answer no - so
+     * the guard below reports a missing selector rather than a message send with the wrong arity. The first
+     * version of this method was that mistake.
      */
     public boolean drawIndexedPrimitives(final long primitiveType, final long indexCount, final long indexType,
                                          final long indexBufferAddress, final long indexBufferLength,
-                                         final long instanceCount, final long baseVertex) {
+                                         final long instanceCount, final long baseVertex, final long baseInstance) {
+        this.refusal = null;
         MemorySegment open = open() ? this.encoder : null;
-        if (open == null || indexCount <= 0L || indexBufferAddress == 0L) {
+        if (open == null) {
+            this.refusal = "the pass " + this.which + " is not open, so there is no encoder to draw on";
+            return false;
+        }
+        if (indexCount <= 0L) {
+            this.refusal = "the indexed draw asks for " + indexCount + " indices";
+            return false;
+        }
+        if (indexBufferAddress == 0L) {
+            this.refusal = "the index buffer has no GPU address, so there is nothing to read " + indexCount
+                    + " indices from";
             return false;
         }
         if (!responds(open, DRAW_INDEXED.name())) {
+            this.refusal = "the encoder does not answer " + DRAW_INDEXED.name();
             return false;
         }
         DRAW_INDEXED.send(open, primitiveType, indexCount, indexType, MemorySegment.ofAddress(indexBufferAddress),
-                indexBufferLength, instanceCount, baseVertex);
+                indexBufferLength, instanceCount, baseVertex, baseInstance);
         return true;
     }
 
@@ -396,6 +424,18 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     /** The name this pass was opened under, for a message that has to say which pass it was. */
     public String which() {
         return this.which;
+    }
+
+    /**
+     * Why the last draw answered no, for a caller that has to say what stopped it.
+     * <p>
+     * A boolean is the whole answer a caller needs but not the whole answer a reader needs: "refused an indexed
+     * draw of 30 indices" says which draw and not which of the four things it could have been, and the one time
+     * a client stopped here the difference was the whole investigation.
+     */
+    @Nullable
+    public String refusal() {
+        return this.refusal;
     }
 
     /** Ends the pass where it is still open, then releases the encoder and the descriptor. */

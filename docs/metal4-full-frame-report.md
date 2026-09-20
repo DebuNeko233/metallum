@@ -40,21 +40,24 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All ten device smokes passed
-                  in every one of them - the drawn sampled texture, the allocator-slot ring, the four
-                  colour attachments, the bound layout, the texture copies, the depth clear and the new
-                  **fence wait** - and the compilation chain compiled a pipeline in every process
-                  (`compile=ok(valid=true)`). The fence wait is the new one: two empty frames submitted, both
-                  committed values waited for on the shared event, the next value polling false, asking to
-                  wait for it refused by name, and a value of zero answering complete (50 of 50). The depth
-                  clear, added the same round as the fence, is a colour target and a `Depth32Float` depth
-                  target in one pass, the depth cleared to 0.25 and read back (also 50 of 50). The bound
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All eleven device smokes
+                  passed in every one of them - the drawn sampled texture, the allocator-slot ring, the four
+                  colour attachments, the bound layout, the texture copies, the depth clear, the fence wait
+                  and the new **indexed draw** - and the compilation chain compiled a pipeline in every
+                  process (`compile=ok(valid=true)`). The indexed draw is the new one: two covering
+                  triangles of different flat colour, one index buffer listing all six vertices, and the same
+                  pass encoded at index 0 and at index 3 - an index buffer that is not read leaves the clear
+                  colour, and a first index that never becomes an offset draws the first triangle twice (50
+                  of 50). The fence wait and the depth clear are the round before it: two empty frames with
+                  both committed values waited for, the next value polling false and refused by name for a
+                  wait; and a colour target beside a `Depth32Float` target cleared to 0.25 and read back
+                  (both 50 of 50). The bound
                   layout smoke still builds its tables from the production `Metal4BindingPlan`, so the plan
                   itself is what those 50 probes measured. The pass object is still NOT reachable here - it
                   needs the engine's device and real texture views - so its evidence remains the structural
                   contract plus the measured layers underneath (the attachment smoke's own evidence: 50 of 50
                   in the round that added it; the ring's: 56 of 56; the drawn smoke's: 100 of 100). Cold
-                  processes this round: 564-1211 ms wall, 380-456 ms of probing in them; warm probes 28-36 ms
+                  processes this round: 517-1075 ms wall, 340-386 ms of probing in them; warm probes 23-34 ms
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -196,13 +199,14 @@ frame encoder:       EXISTS and is entered - `render.metal4.Metal4FrameEncoder` 
                      It also owns the fence: `createFence` returns a `Metal4Fence`, a promise about one of
                      the ring's submissions, waited for on the ring's own shared event with the three answers
                      the Metal 3 fence gives (see Synchronization below).
-                     MEASURED: a forced Metal 4 launch now walks past its own texture-manager upload, past
-                     `Lightmap.<init>`'s clear, past `createFence` in `FogRenderer.endFrame`, and into the
-                     drawn frame itself - it stops at the pass's own binding contract, raised from
-                     `RenderSystem.bindDefaultUniforms -> GuiRenderer.executeDrawRange ->
-                     GameRenderer.render`: the game binds uniforms **by name before a pipeline is set**, and
-                     this pass resolves a name through the pipeline's plan. What still refuses by name: the
-                     scissored `clearColorAndDepthTextures` and writeTimestamp - two names.
+                     MEASURED: a forced Metal 4 launch now encodes a whole frame's worth of work - texture
+                     uploads, the lightmap clear, `createFence` in `FogRenderer.endFrame`, the GUI's passes
+                     with their uniforms bound **by name before a pipeline is set**, and indexed draws - and
+                     stops at the surface: `MetalSurface.blitFromTexture` refuses this encoder because it
+                     implements `MetalFrameEncoder` and not `MetalFramePresentation`. That is the next
+                     milestone (section 38's drawable-and-present ownership), not a missing command. What
+                     still refuses by name: the scissored `clearColorAndDepthTextures` and writeTimestamp -
+                     two names.
                      NOT PROVEN: no frame has been submitted through it; its evidence is the ring's device
                      proof plus a structural contract
 state:               PROVEN on the device - `Metal4ExecutionState` owns this generation's
@@ -295,16 +299,21 @@ scissor: PARTLY - the pass's own scissor is set, cleared and measured on the dev
 ## Resource Binding
 
 ```
-textures:         PROVEN as a layout, NOT through a frame - the layout smoke binds a texture through a table at
-                  the slot its shader declares and reads the sampled colour back; the pass object still refuses
-                  bindTexture by name
-samplers:         PROVEN as a layout, NOT through a frame - a sampler at the slot the shader declares, bound in
-                  the same table as the texture it is used with
-uniform buffers:  PROVEN as a layout, NOT through a frame - two uniforms on two stages (a vertex-stage tint and
-                  a fragment-stage bias), each at its own buffer index, each changing the readback
-vertex/index:     PARTLY - a vertex buffer is bound by address AND attribute stride through a table and drawn
-                  (device-proven); an index buffer is an address in the draw selector rather than state, and no
-                  probe has drawn indexed geometry yet
+textures:         PROVEN as a layout on the device AND implemented in the pass - the layout smoke binds a
+                  texture through a table at the slot its shader declares and reads the sampled colour back;
+                  the pass records a texture and its sampler by name and resolves them into the table the
+                  pipeline's plan sizes, whether the pipeline was set before or after the binding
+samplers:         PROVEN as a layout on the device, and implemented in the pass beside the texture it is used
+                  with - one sampler at the slot the shader declares
+uniform buffers:  PROVEN as a layout on the device AND implemented in the pass - two uniforms on two stages (a
+                  vertex-stage tint and a fragment-stage bias), each at its own buffer index, each changing the
+                  readback; the pass records a GPU address by name, which is what makes the game's
+                  `bindDefaultUniforms`-before-`setPipeline` order work
+vertex/index:     vertex PROVEN on the device (address + attribute stride through a table, drawn, read back)
+                  and implemented in the pass by slot; **index PROVEN on the device** - two covering triangles
+                  of different flat colour and one six-entry UInt16 index buffer, drawn at index 0 and at
+                  index 3 through the production encoder's `drawIndexedPrimitives`, each read back against its
+                  own triangle (50 of 50), and implemented in the pass as an address the draw offsets
 argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
                   setArgumentTable:atStages:, and the draw reads every slot
 residency:        NOT STARTED - nothing declares residency yet; the argument table has been enough on this
@@ -404,8 +413,9 @@ CI, which is where every smoke here was run.
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | n/a | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
 | uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | n/a | yes |
-| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index PARTLY - the pass turns the engine's first index into an address offset for the draw selector, and no probe has drawn indexed geometry yet | n/a | yes (vertex) |
+| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index yes - see the indexed-draw row | n/a | yes |
 | argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
+| indexed draw    | yes         | yes - an index buffer as an address in the draw, six UInt16 indices, drawn at index 0 and at index 3 with each frame read back against its own triangle; the selector is the eight-argument one this SDK declares | n/a | yes |
 | blit            | yes         | yes - whole and region texture copies measured on the device, and the engine's own `writeToBuffer`/`writeToTexture`/`copyBufferToTexture`/`copyTextureToBuffer`/`copyTextureToTexture` implemented over the same compute encoder (the client walked past its texture-manager upload); none encoded inside a live frame yet | n/a | yes |
 | mipmap          | yes         | no                                | n/a           | no          |
 | compute         | yes         | no                                | n/a           | no          |
@@ -428,15 +438,13 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **Bindings that arrive before the pipeline are the next gap** - the clears and the fence are implemented
-   and measured, so a forced Metal 4 launch now walks past `Lightmap.<init>`'s clear, past `createFence` in
-   `FogRenderer.endFrame`, and **into a drawn frame**: it stops at the pass's own binding contract, raised from
-   `RenderSystem.bindDefaultUniforms -> GuiRenderer.executeDrawRange -> GameRenderer.render`. The game creates
-   a pass, binds its default uniforms **by name**, and only then sets a pipeline per draw - so a binding has to
-   be remembered and applied when the plan arrives, where this pass currently resolves every name through the
-   plan immediately. That is the game's own contract and not a defect in the fence. The scissored
-   `clearColorAndDepthTextures` and `writeTimestamp` still refuse by name, and each forced run names the one
-   after that.
+3. **Presentation is the next gap** - the clears, the fence, the named-binding model and the indexed draw
+   are all implemented and measured, so a forced Metal 4 launch now **encodes a whole frame** - uploads, the
+   lightmap clear, fences, the GUI's passes with their uniforms bound before their pipelines, and indexed
+   draws - and stops at `MetalSurface.blitFromTexture`, which refuses this encoder because it implements
+   `MetalFrameEncoder` and not `MetalFramePresentation`. Section 38's drawable-and-present ownership is the
+   milestone that follows, and it is where the two present decisions (the frame path's and the sidecar's)
+   become one. The scissored `clearColorAndDepthTextures` and `writeTimestamp` still refuse by name.
 4. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
    compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
    over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
@@ -459,11 +467,12 @@ process with no window is not the same claim as a capability proven through the 
 **NO.** Items 0 to 4 of the plan's order are done as far as they can be without a frame: the Metal 3
 bookkeeping, the cold-probe harness, the provider (queue, state and encoder), all five native render smokes, the
 frame encoder's lifetime - the ring - proven on the device, its copies wired, its clears implemented and
-measured, and its fence answering the Metal 3 fence's three ways. A forced Metal 4 client launch now gets past
-startup and **into a drawn frame** - it clears, it copies, it fences, it encodes passes through the game's own
-descriptors, and it reaches the GUI's draw path - where it stops on the pass's binding contract: names are
-bound before the pipeline that gives them slots. Everything the Definition of Done asks for that needs a frame
-the client actually drew is still unchecked: the no-pack frame, the Vitrail smoke pack, MRT, depth writes,
-argument-table binding through the frame, blit in a live frame, compute, the synchronization matrix,
-presentation owned by the full path, resize, reload, dimension, shutdown, and the real-pack and performance
-validation. The next item is binding-before-pipeline, then the first no-pack frame.
+measured, its fence answering the Metal 3 fence's three ways, its bindings recorded by name and resolved when
+the layout arrives, and its indexed draw proven on the device. A forced Metal 4 client launch now **encodes a
+whole frame** - clears, copies, fences, passes through the game's own descriptors, uniforms bound before their
+pipelines, indexed draws - and stops at the surface, which asks for `MetalFramePresentation` rather than for a
+class. Everything the Definition of Done asks for that needs a frame the client actually *drew* is still
+unchecked: the no-pack frame (nothing has been presented yet), the Vitrail smoke pack, MRT draws, depth writes,
+blit in a live frame, compute, the synchronization matrix, presentation owned by the full path, resize, reload,
+dimension, shutdown, and the real-pack and performance validation. The next item is presentation, then the first
+no-pack frame.

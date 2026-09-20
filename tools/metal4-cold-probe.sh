@@ -143,6 +143,8 @@ depth_passes="$(grep -c ' depth=true ' "$probe_log" || true)"
 depth_failures="$(grep -c ' depth=false ' "$probe_log" || true)"
 fence_passes="$(grep -c ' fence=true ' "$probe_log" || true)"
 fence_failures="$(grep -c ' fence=false ' "$probe_log" || true)"
+index_passes="$(grep -c ' index=true ' "$probe_log" || true)"
+index_failures="$(grep -c ' index=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -168,6 +170,7 @@ echo "bound layouts:   $layout_passes passed   $layout_failures failed"
 echo "texture copies:  $copy_passes passed   $copy_failures failed"
 echo "depth clears:    $depth_passes passed   $depth_failures failed"
 echo "fence waits:     $fence_passes passed   $fence_failures failed"
+echo "indexed draws:   $index_passes passed   $index_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -218,5 +221,10 @@ fi
 
 if (( fence_failures > 0 )); then
 	echo "the fence/submission smoke failed in $fence_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( index_failures > 0 )); then
+	echo "the indexed-draw smoke failed in $index_failures probe(s)" >&2
 	exit 1
 fi

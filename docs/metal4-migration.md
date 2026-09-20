@@ -1174,6 +1174,119 @@ event the wait goes through, the submission the frame encoder promises, the smok
 refusal caught as `IllegalStateException` and not as any runtime fault, which would let a real defect read as
 the contract holding), the harness's field and the driver's failure exit - **22 mutations run, 22 caught**.
 
+### A binding is recorded by name, and resolved when the layout arrives
+
+The cleared-and-fenced client got as far as a real draw and stopped one step before it:
+
+```
+java.lang.IllegalStateException: the Metal 4 pass was asked to bind a resource with no pipeline set,
+so which slot it belongs in is not known
+  at com.metallum.render.metal4.Metal4RenderPass.requirePlan
+  at com.metallum.render.metal4.Metal4RenderPass.setUniform
+  at com.mojang.blaze3d.systems.RenderPass.setUniform
+  at com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms
+  at net.minecraft.client.gui.render.GuiRenderer.executeDrawRange
+```
+
+**The game binds by name before it sets a pipeline, and that is not an accident of the GUI.** `executeDrawRange`
+creates a pass, calls `RenderSystem.bindDefaultUniforms(pass)` and binds more uniforms by name, and only then
+calls `pass.setPipeline(...)` per draw inside `executeDraw`. The Metal 3 pass is built for exactly that order:
+its `setUniform`/`bindTexture` put the value in a map and mark the descriptor dirty, `setVertexBuffer` puts the
+slice in an array and marks the vertex buffers dirty, and `setPipeline` marks everything dirty again - the
+resolution into an argument buffer happens when a draw builds one. The M4 pass had resolved every name
+immediately, which worked only because the layout smoke binds after it sets a pipeline.
+
+So the pass keeps the same three recordings - GPU addresses by name, texture-and-sampler pairs by name, vertex
+layouts by slot - and resolves them against the plan:
+
+- **a binding made while a pipeline is set** is a claim about *that* pipeline's layout, so a name it does not
+  declare, or declares as the other kind of resource, is still a named fault. That is the section 35 rule and
+  it is unchanged;
+- **a binding made before any pipeline in the pass** is a claim about the pass's own bindings, which a given
+  pipeline may or may not read - the GUI hands every pipeline all the default uniforms and most of them use
+  some of them - so it is remembered and applied when a pipeline arrives, and skipped where that pipeline does
+  not declare it;
+- **when the pipeline changes**, the tables are new, so every remembered binding is applied to the new plan
+  again. A remembered name the new pipeline declares as the other kind is skipped rather than faulted: the
+  remembered value is stale for that layout, and whatever the new pipeline reads is bound by the frame path
+  when it binds it.
+
+That is one model with three answers instead of a fault at the first step, and it is the same model the Metal 3
+pass runs - which is the point: the same frame has to work on both paths.
+
+**Then the client drew.** With the bindings resolved, `executeDraw` set its pipeline, bound its vertex buffer
+and its three textures, set its index buffer, and called `drawIndexed` - where the *encoder* refused:
+
+```
+java.lang.IllegalStateException: the Metal 4 encoder refused an indexed draw of 30 indices at address
+1099515274752 of 120 bytes, type 0: the encoder does not answer
+drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:
+```
+
+**The selector was one argument short.** This machine's `MTL4RenderCommandEncoder.h` declares
+
+```objc
+- (void)drawIndexedPrimitives:(MTLPrimitiveType)primitiveType
+                   indexCount:(NSUInteger)indexCount
+                    indexType:(MTLIndexType)indexType
+                  indexBuffer:(MTLGPUAddress)indexBuffer
+            indexBufferLength:(NSUInteger)indexBufferLength
+                instanceCount:(NSUInteger)instanceCount
+                   baseVertex:(NSInteger)baseVertex
+                 baseInstance:(NSUInteger)baseInstance;
+```
+
+- **eight** arguments, and there is no seven-argument form. The method was declared with seven, so
+`respondsToSelector:` answered no, which is why the encoder's own guard turned it into a named refusal instead
+of a message send with the wrong arity. This is the second time this migration has been bitten by an Objective-C
+arity (`copyFromTexture:toTexture:` was the first), and it is the second time the guard is what made it a
+one-line diagnosis.
+
+The fix is the declaration, the send, and the one place that calls it - the pass now passes the engine's
+`firstInstance` through as the base instance, which is what the game's own `drawIndexed` takes.
+
+**A device proof for indexed geometry exists now**, which the capability matrix had listed as "index PARTLY: no
+probe has drawn indexed geometry yet". `MTL4Probe.canDrawIndexed` builds the one shape where the index buffer's
+contents are the only way to the expected pixel:
+
+- six vertices forming the same covering triangle twice, with two different flat colours - both exact in eight
+  bits - and one index buffer listing all six as `UInt16`;
+- the same pass is encoded twice, once at index 0 and once at index 3, which is six bytes into the buffer:
+
+| the draw | what must be read back | what a wrong implementation reads |
+| --- | --- | --- |
+| `firstIndex = 0` | the first triangle's colour (64, 128, 128, 255) | the clear colour, where the index buffer is not read at all |
+| `firstIndex = 3` | the second triangle's colour (128, 64, 128, 255) | the first triangle's colour, where the first index never becomes an offset |
+
+The draw goes through `MTL4RenderEncoder.drawIndexedPrimitives`, so what is proven is the production method's
+own selector and argument order. Measured on Apple Silicon: **50 of 50 probes (30 cold + 20 warm, `--mode
+raw`)**, with the other ten device smokes passing in the same processes.
+
+**And the client now reaches presentation.** With the binding model and the indexed selector in place, a forced
+Metal 4 launch encodes the frame's draws and stops at the surface instead:
+
+```
+java.lang.IllegalArgumentException: the surface was handed a com.metallum.render.metal4.Metal4FrameEncoder,
+which cannot be presented through; it asks for MetalFramePresentation rather than for a class
+  at com.metallum.render.MetalSurface.blitFromTexture
+  at com.mojang.blaze3d.systems.GpuSurface.blitFromTexture
+  at net.minecraft.client.Minecraft.renderFrame
+```
+
+That is the whole encode path running - passes, clears, copies, fences, named bindings, indexed draws - and the
+next milestone is the one the plan puts at section 38: the drawable and the present, owned by the same frame
+encoder.
+
+`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin all of it: the three recordings, the
+resolved-when-arrived answer, the fault for a name the set pipeline does not declare, the skip for a remembered
+name a new pipeline does not read, the eight-argument selector and the send that carries all eight, the two
+draws' own refusal sentences (counted, because both methods say the same thing on purpose), the smoke's two
+expected pixels, its filled index buffer, its offset arithmetic and its two readings, the per-frame first index,
+the harness's field, the driver's counter and its exit - **34 mutations run against the two milestones of this
+round, 34 caught**, four of them only after the pins were moved to the site that matters (a readback line that
+also appears in the ring smoke, a refusal branch satisfied by its own guard, a fault message satisfied by the
+branch around it, and a duplicate vertex-slot expression).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

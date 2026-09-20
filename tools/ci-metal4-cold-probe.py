@@ -408,8 +408,11 @@ for needle, why in (
      "the encoder cannot be given a table, so nothing can be bound at all"),
     ('"drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:",',
      "the encoder has no draw, so a pass can bind everything and draw nothing"),
-    ('"drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:",',
+    ('"drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:"',
      "the encoder has no indexed draw, so the engine's indexed geometry has nowhere to go"),
+    ('                    + "baseInstance:",',
+     "the indexed draw's selector is one argument short of the eight this SDK declares, so respondsToSelector: "
+     "answers no and every indexed draw refuses - the fault a forced Metal 4 client stopped on"),
 ):
     if needle is not None and needle not in encoder_source:
         raise SystemExit("cold-probe harness: " + why)
@@ -591,6 +594,47 @@ for needle, why in (
     ("fence_failures=\"$(grep -c ' fence=false ' \"$probe_log\" || true)\"",
      "the driver does not count the fence smoke's failures"),
     ("if (( fence_failures > 0 )); then", "the driver counts the fence smoke's failures and does not fail the run"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
+# --- the indexed draw, which is the one command the client stopped on twice --------------------------------
+# The proof is built so the index buffer's contents are the only way to the expected pixel: two covering
+# triangles of different flat colour, all six indices listed, and the same pass encoded at index 0 and at
+# index 3 - which is six bytes in and must draw the second triangle. A first index that never becomes an
+# offset draws the first triangle twice and the second reading fails.
+for needle, why in (
+    ("public static boolean canDrawIndexed(", "nothing measures an indexed draw, which the client reached by "
+     "stopping there"),
+    ("private static final int[] EXPECTED_INDEXED_PIXEL = {64, 128, 128, 255};",
+     "the indexed smoke's first expected pixel is gone or is not exact in eight bits"),
+    ("private static final int[] EXPECTED_INDEXED_OFSET_PIXEL = {128, 64, 128, 255};",
+     "the indexed smoke's second expected pixel is gone, so a first index that never becomes an offset would "
+     "pass"),
+    ("indexData.set(JAVA_SHORT, index * 2L, (short) index);",
+     "the index buffer is not filled with the six indices the draw selects"),
+    ("long address = indexAddress + firstIndex * INDEX_TYPE_BYTES;",
+     "the first index does not become a byte offset into the index buffer's address"),
+    ("MTLTexture.bytes(targets[1], pixel, 4L, 0L, 0L, 1L, 1L);\n"
+     "                    if (!matches(pixel, EXPECTED_INDEXED_OFSET_PIXEL)) {",
+     "the second frame's pixel is not read and compared, so the offset arithmetic is asserted nowhere (the read "
+     "alone appears in the allocator-ring smoke too, which is why the pin is the pair)"),
+    ("indices.gpuAddress(), frame * 3)",
+     "both indexed frames start at the same index, so the offset arithmetic is never exercised"),
+    ("pass.drawIndexedPrimitives(MTLPrimitiveType.Triangle.value, 3L, MTLIndexType.UInt16.value,",
+     "the smoke does not draw through the production encoder's indexed draw, so the proof is of a copy"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " index=" + indexed', "the harness does not print the indexed smoke's answer"),
+    ('+ " indexReason=" + indexedReason', "the harness does not print why the indexed smoke failed"),
+    ("MTL4Probe.canDrawIndexed(device)", "the harness never asks the indexed smoke"),
+    ("index_failures=\"$(grep -c ' index=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the indexed smoke's failures"),
+    ("if (( index_failures > 0 )); then", "the driver counts the indexed smoke's failures and does not fail the "
+     "run"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)

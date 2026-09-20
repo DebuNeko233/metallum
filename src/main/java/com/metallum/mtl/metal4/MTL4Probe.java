@@ -6,6 +6,7 @@ import java.util.List;
 import com.metallum.render.shared.MetalShaderStages;
 import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
+import com.metallum.mtl.MTLIndexType;
 
 import com.metallum.mtl.MTLTexture;
 
@@ -41,6 +42,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
 /**
  * Makes the Metal 4 core objects once, and lets them go.
@@ -900,6 +902,217 @@ public final class MTL4Probe {
                 ring.close();
             }
             releaseIfPresent(queue);
+        }
+    }
+
+    /** What the first indexed triangle's flat colour reads back as. */
+    private static final int[] EXPECTED_INDEXED_PIXEL = {64, 128, 128, 255};
+    /** What the second reads back as, which is what says the first index became an address offset. */
+    private static final int[] EXPECTED_INDEXED_OFSET_PIXEL = {128, 64, 128, 255};
+    /** Two covering triangles and the six indices that select them, in bytes: one UInt16 each. */
+    private static final long INDEX_BUFFER_LENGTH = 12L;
+    /** How many bytes one UInt16 index is, which is the width the first index is multiplied by. */
+    private static final long INDEX_TYPE_BYTES = 2L;
+
+    /**
+     * Whether an indexed draw reads its indices from an address, which is the one thing Metal 4's indexed draw
+     * does differently from Metal 3's.
+     * <p>
+     * The shape is built so the index buffer's <em>contents</em> are the only way to get the expected pixel: two
+     * triangles cover the whole target with different flat colours, the index buffer lists all six vertices, and
+     * the same pass is encoded twice - once at index 0, which must draw the first triangle, and once at index 3,
+     * which is six bytes into the buffer and must draw the second.
+     * <ul>
+     *   <li>an index buffer that is not read at all leaves the clear colour, which no draw in this probe makes;</li>
+     *   <li>a {@code firstIndex} that never becomes an address offset draws the first triangle twice, so the
+     *       second reading is the first triangle's colour and fails;</li>
+     *   <li>the wrong index type reads the six bytes as one 32-bit index and lands nowhere near either
+     *       triangle.</li>
+     * </ul>
+     * The draw itself goes through {@code MTL4RenderEncoder.drawIndexedPrimitives}, so what is proven is the
+     * production encoder's own selector and argument order and not a copy of it. The first version of that
+     * method declared seven arguments where this machine's {@code MTL4RenderCommandEncoder.h} has eight, and the
+     * encoder's own {@code respondsToSelector:} guard is what turned that into a named fault in a client log
+     * rather than a message send with the wrong arity.
+     */
+    public static boolean canDrawIndexed(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("index", "the device does not answer one of the factories the ring's allocators,"
+                    + " command buffer or shared event would come from, so nothing can be indexed");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MTLBuffer vertices = null;
+        MTLBuffer indices = null;
+        MTL4ArgumentTable table = null;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MTL4FrameRing ring = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            if (ObjC.isNil(queue)) {
+                return failed("index", "newMTL4CommandQueue answered nil, so there is nothing to submit an"
+                        + " indexed draw on");
+            }
+            try {
+                ring = MTL4FrameRing.create(device, queue, MTL4FrameRing.FRAMES_IN_FLIGHT, "the indexed proof");
+            } catch (MTL4FrameRing.Refused refused) {
+                return failed("index", "the ring could not be made at stage " + refused.stage() + ": "
+                        + refused.getMessage());
+            }
+
+            target = newTarget(device);
+            if (ObjC.isNil(target)) {
+                return failed("index", "the " + TARGET_SIZE + "x" + TARGET_SIZE + " RGBA8 target came back nil");
+            }
+
+            // Six vertices: the covering triangle twice, with (0.25, 0.5) and (0.5, 0.25) as the colour a flat
+            // fragment shader reads out of the vertex buffer. Both are exact in eight bits.
+            vertices = device.newBuffer(VERTEX_LENGTH * 2L, STORAGE_SHARED);
+            if (vertices.gpuAddress() == 0L) {
+                return failed("index", "the device gave the vertex buffer no GPU address");
+            }
+            MemorySegment vertexData = vertices.contents().reinterpret(VERTEX_LENGTH * 2L);
+            float[][] corners = {{-1.0f, 1.0f, 0.25f, 0.5f}, {3.0f, 1.0f, 0.25f, 0.5f},
+                                 {-1.0f, -3.0f, 0.25f, 0.5f},
+                                 {-1.0f, 1.0f, 0.5f, 0.25f}, {3.0f, 1.0f, 0.5f, 0.25f},
+                                 {-1.0f, -3.0f, 0.5f, 0.25f}};
+            for (int corner = 0; corner < corners.length; corner++) {
+                for (int part = 0; part < corners[corner].length; part++) {
+                    vertexData.set(JAVA_FLOAT, corner * 16L + part * 4L, corners[corner][part]);
+                }
+            }
+
+            // And the six indices that select them, in order, as UInt16 - the type the draw is told.
+            indices = device.newBuffer(INDEX_BUFFER_LENGTH, STORAGE_SHARED);
+            if (indices.gpuAddress() == 0L) {
+                return failed("index", "the device gave the index buffer no GPU address");
+            }
+            MemorySegment indexData = indices.contents().reinterpret(INDEX_BUFFER_LENGTH);
+            for (int index = 0; index < 6; index++) {
+                indexData.set(JAVA_SHORT, index * 2L, (short) index);
+            }
+
+            table = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+            if (table == null || !table.address(vertices.gpuAddress(), 16L, 0L)) {
+                return failed("index", "the vertex table could not be made, or refused the vertex buffer at"
+                        + " stride 16");
+            }
+
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(VERTEX_BUFFER_MSL, "metallum_vb_probe_vs",
+                    "metallum_vb_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(pipeline)) {
+                return failed("index", "the vertex-colour pipeline this probe draws indexed geometry with came"
+                        + " back nil, so the probe's own MSL does not compile here");
+            }
+
+            MemorySegment[] targets = new MemorySegment[2];
+            for (int frame = 0; frame < 2; frame++) {
+                targets[frame] = newTarget(device);
+                if (ObjC.isNil(targets[frame])) {
+                    return failed("index", "frame " + frame + "'s readback target came back nil");
+                }
+            }
+            try {
+                for (int frame = 0; frame < 2; frame++) {
+                    if (!ring.beginFrame()) {
+                        return failed("index", "frame " + frame + " could not begin on the ring: "
+                                + ring.refusal());
+                    }
+                    if (!encodeIndexedDraw(device, ring.commandBuffer(), targets[frame], table, pipeline,
+                            indices.gpuAddress(), frame * 3)) {
+                        return false;
+                    }
+                    if (!ring.endAndSubmit()) {
+                        return failed("index", "frame " + frame + " could not be submitted: " + ring.refusal());
+                    }
+                }
+                if (!ring.awaitAll()) {
+                    return failed("index", "the indexed frames did not complete: " + ring.refusal());
+                }
+
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment pixel = arena.allocate(4);
+                    MTLTexture.bytes(targets[0], pixel, 4L, 0L, 0L, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_INDEXED_PIXEL)) {
+                        return failed("index", "an indexed draw of the first three indices reads "
+                                + describe(pixel) + " where the first triangle " + describe(EXPECTED_INDEXED_PIXEL)
+                                + " was asked for, so the indices did not select the vertices");
+                    }
+                    MTLTexture.bytes(targets[1], pixel, 4L, 0L, 0L, 1L, 1L);
+                    if (!matches(pixel, EXPECTED_INDEXED_OFSET_PIXEL)) {
+                        return failed("index", "an indexed draw starting at the fourth index reads "
+                                + describe(pixel) + " where the second triangle "
+                                + describe(EXPECTED_INDEXED_OFSET_PIXEL) + " was asked for, so the first index did"
+                                + " not become an offset into the index buffer's address");
+                    }
+                }
+                return true;
+            } finally {
+                for (MemorySegment readback : targets) {
+                    releaseIfPresent(readback);
+                }
+            }
+        } catch (RuntimeException threw) {
+            return failed("index", "the indexed proof threw " + threw);
+        } finally {
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            releaseIfPresent(vertices);
+            releaseIfPresent(indices);
+            releaseIfPresent(target);
+            if (ring != null) {
+                ring.close();
+            }
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * One indexed draw into a target of its own, through the pass encoder a frame opens.
+     *
+     * @param firstIndex which index the draw starts at, which the encoder has to turn into a byte offset
+     * @return whether the pass was encoded and ended
+     */
+    private static boolean encodeIndexedDraw(final MTLDevice device, final MemorySegment commandBuffer,
+                                             final MemorySegment target, final MTL4ArgumentTable table,
+                                             final MemorySegment pipeline, final long indexAddress,
+                                             final long firstIndex) {
+        MTL4RenderEncoder pass;
+        try {
+            pass = MTL4RenderEncoder.open(device, commandBuffer, TARGET_SIZE, TARGET_SIZE,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target,
+                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    null, "the indexed pass at index " + firstIndex);
+        } catch (MTL4RenderEncoder.Refused refused) {
+            return failed("index", "the indexed pass at index " + firstIndex + " could not be opened at stage "
+                    + refused.stage() + ": " + refused.getMessage());
+        }
+        try {
+            if (!pass.setArgumentTable(table, STAGE_VERTEX)) {
+                return failed("index", "the encoder refused the vertex table the indexed draw reads through");
+            }
+            if (!pass.setRenderPipelineState(pipeline)) {
+                return failed("index", "the encoder refused the vertex-colour pipeline");
+            }
+            // The engine's first index is per draw, so it becomes the offset into the address the draw takes -
+            // the arithmetic the Metal 3 encoder does by binding a buffer and an offset instead.
+            long address = indexAddress + firstIndex * INDEX_TYPE_BYTES;
+            long length = INDEX_BUFFER_LENGTH - firstIndex * INDEX_TYPE_BYTES;
+            if (!pass.drawIndexedPrimitives(MTLPrimitiveType.Triangle.value, 3L, MTLIndexType.UInt16.value,
+                    address, length, 1L, 0L, 0L)) {
+                return failed("index", "the encoder refused an indexed draw of three UInt16 indices at " + address
+                        + " of " + length + " bytes: " + pass.refusal());
+            }
+            return true;
+        } finally {
+            pass.endEncoding();
+            pass.close();
         }
     }
 
