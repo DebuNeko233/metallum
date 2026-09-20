@@ -58,17 +58,31 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
     /**
      * How many submissions may be in flight before the render thread waits for one of them to finish.
      * <p>
-     * <strong>Three is measured, not assumed, and it stays three.</strong> The reference scene was run at
-     * three, four and five in one session (two arms at three, one each at the others, all on the pinned
-     * 1056x660 target): the render thread's submit-window wait is real at three - p50 0.00 ms but p95
+     * <strong>Three is measured, not assumed, and the measurement is what keeps it.</strong> The reference
+     * scene was run at three, four and five - ten arms over three sessions, all on the pinned 1056x660
+     * target, two of the sessions in the reverse order so that the arm's position could not be mistaken for
+     * its depth: the render thread's submit-window wait is real at three - p50 0.00 ms but p95
      * 6.11 and 6.18 ms against a 7.26 ms frame, 3303 and 3343 ms over 1200 calls - and vanishes at five
-     * (p95 0.00, 0.12 ms in total), while <strong>the frame does not move at all</strong>: gpuMs 4368.27
+     * (p95 0.00, 0.12 ms in total), while <strong>the frame's medians do not move</strong>: gpuMs 4368.27
      * and 4368.25 at three, 4376.60 at four, 4369.25 at five, and wallP50 7.26 / 7.27 / 7.28. The frame
-     * is GPU-bound, so a render thread that is allowed further ahead catches up with nothing; what the
-     * wait is, is the CPU being held to the card's pace. The deeper windows are not free either: every
-     * slot holds a command buffer and its share of the transient allocator's blocks, and the CPU runs
-     * one to two frames further ahead of the picture the player sees, which is latency paid for no frame
-     * time.
+     * is GPU-bound and the frame is flat across all three depths, which is consistent with the wait being the
+     * render thread held to the submission rate of a saturated frame - an explanation the arms fit and do
+     * not prove, since "the CPU is paced by the GPU" and "this is where the frame's throttle appears" both
+     * predict a vanishing wait and a frame that does not move. The deeper windows are not free either: every
+     * slot holds a command buffer and its share of the transient allocator's blocks, and the render thread
+     * runs about one to two and a half submissions further ahead of the picture the player sees, which is
+     * latency and memory paid for a better tail and no better median.
+     * <p>
+     * <strong>The depth counts submissions and not frames.</strong> This client submits twice a frame, so
+     * three is about a frame and a half of slack rather than three frames; a reading of "three frames"
+     * would overstate what the window holds by half.
+     * <p>
+     * <strong>Five is better on the tail and is still not the answer.</strong> `wallP99` reads 8.53 to 8.78
+     * in all five depth-five samples against 8.69 to 9.58 at depth three - about 0.5 ms, 5.6 per cent, and
+     * repeatably so, with five of six adjacent comparisons favouring five and the sixth a tie. What keeps three is the cost the arms do not measure: two more command
+     * buffers and their transient blocks held, and about half a frame more input latency in a
+     * configuration already running unlimited frames ahead. If input latency at the two depths ever reads
+     * flat, five is the better window on all the evidence there is.
      * <p>
      * Every ring in this encoder is derived from this one number - the in-flight records, the semaphores,
      * the signal blocks, the destruction queue's queue count, the slot arithmetic and the completion wait

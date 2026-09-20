@@ -74,14 +74,14 @@ Every structure the plan names was checked against this checkout before anything
 
 | Candidate | Cost observed? | Candidate implemented? | Result | Decision |
 | --- | --- | --- | --- | --- |
-| Argument-buffer allocation | yes: 2 native buffers a frame, 0.192 MiB a frame | no | measured; too small to justify an arena | **REJECTED** |
+| Argument-buffer allocation | yes: 2 native buffers a frame of 168 bytes, 336 bytes a frame | no | measured; too small to justify an arena | **REJECTED** |
 | Render encoder churn | yes: 20928 of 66318 attempts, 31.6 % | no | every recreation is a colour-attachment change | **REJECTED** |
 | Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | yes | calls 14400 to 1200 (-91.7 %), writes and bindings unchanged | **KEPT** (`e2a221d`) |
 | Per-pass allocations | yes: profiled, `MetalRenderPass` is 0.34 % of allocation | no | not a CPU/GC hotspot | **REJECTED** |
 | Render-pass descriptor | yes: ~36 a frame, one per encoder opened | no | gate in §49 not met | **REJECTED** |
 | Texel-buffer views | yes: **0 a frame** | no | the pack uses no texel buffer | **NOT APPLICABLE** |
 | Fence synchronisation | no evidence of cost | no | GPU saturated 97.3 % in the trace | **REJECTED** |
-| Submit window | yes: p95 6.11 ms against a 7.26 ms frame at depth 3; gone at 5 | no | the frame does not move at 3, 4 or 5 | **3 KEPT** |
+| Submit window | yes: p95 6.11 ms against a 7.26 ms frame at depth 3; gone at 5; P99 5.6 % better at 5, repeatably | no | medians flat at 3, 4 and 5; latency cost unmeasured | **3 KEPT** |
 
 ## Argument Buffers (`run/m3-census`, c1 and c2)
 
@@ -89,7 +89,7 @@ Every structure the plan names was checked against this checkout before anything
 wide passes/frame:           1.0
 layouts/frame:               2.0
 native allocations/frame:    2.0      (168 bytes each)
-native bytes/frame:          0.192 MiB
+native bytes/frame:          336 bytes  (0.192 MiB over the 600-frame window)
 setArgumentBuffer calls/frame:  2.0 after the kept change, 24.0 before it
 actual changes/frame:        2.0      (unchanged by the kept change)
 ```
@@ -138,18 +138,85 @@ drawable      p50/p95/max      0.05 / 0.79 / 1.17      0.05 / 0.81 / 2.22
                                0.05 / 0.81 / 1.30      0.05 / 0.86 / 3.03
 ```
 
-**Decision: three kept.** The wait is not idle chatter - at three it is 3303 and 3343 ms over 1200 calls,
-a p95 of 6.11 and 6.18 ms against a 7.26 ms frame - and at five it disappears entirely (p95 0.00, 0.12 ms
-in total). **And the frame does not move at all**: `gpuMs` 4368.27 and 4368.25 at three, 4376.60 at four,
-4369.25 at five, `wallP50` 7.26 / 7.27 / 7.28. Depth four does not even remove the wait, which is why the
-trial was worth running rather than reasoning about: 4 sits between the two and behaves like neither
-prediction.
+**And the repeat found something the design had not controlled.** The test the plan's own "reverse the
+order for a claim that matters" rule asks for was run as 3, 5, 3, 5 (`run/m3-submits-repeat`), and its
+first arm is an outlier at either depth:
 
-What that says is that the wait *is* the CPU being held to the card's pace on a GPU-bound frame: letting
-the render thread further ahead catches up with nothing, and what it buys is a queue, not a frame. The
-tradeoff §65 asks to be recorded with it: each slot holds a command buffer and its share of the
-transient allocator's blocks (512 KiB blocks, rotated per submit), and the CPU ends up one to two frames
-further ahead of the picture the player sees - memory and input latency paid for no frame time.
+```
+            depth  gpuMs     wallP50  wallP95  wallP99   (first arm of the session flagged)
+s3a            3   4298.41     7.13     8.05     8.46    <-- first arm
+s5a            5   4368.85     7.29     8.40     8.73
+s3b            3   4369.82     7.27     8.60     9.23
+s5b            5   4366.76     7.27     8.04     8.53
+```
+
+Pooled with the first session and with the first arm set aside, `wallP99` is **9.23, 9.48 and 9.58 at
+depth three** against **8.53, 8.67 and 8.73 at depth five** - the two sets did not overlap, and depth five
+was about 0.8 ms (8 per cent) lower on the worst frame in a hundred. **But depth five was never measured
+first in either session, and the one arm that read better than every depth-five arm was a depth-three
+first arm**, so the two effects were entangled in that design and the difference could not be attributed
+to the depth from it. The reversed order below settles it.
+
+**The reversed order (5, 3, 5, 3) settles it** (`run/m3-submits-reversed`):
+
+```
+            depth  gpuMs     wallP50  wallP95  wallP99  wallMax   submitWindow total
+s5c            5   4389.81     7.31     8.27     8.71     8.99     0.12 ms   <-- first arm
+s3c            3   4368.49     7.25     8.51     9.29    10.52  3358.61 ms
+s5d            5   4378.58     7.29     8.51     8.78    10.41     0.15 ms
+s3d            3   4372.37     7.25     8.39     8.69     9.36  3380.00 ms
+```
+
+**Depth five is measured first here and still lands in its own band (8.71), while a depth-three arm
+measured fourth reads 8.69 - inside that band.** So the effect is real and the first-arm effect is not
+what produced it, but the two distributions are not cleanly separated either:
+
+```
+wallP99 at depth 5 (five samples, none discarded): 8.53 8.67 8.71 8.73 8.78   mean 8.68
+wallP99 at depth 3 (first arms excluded, four samples): 8.69 9.23 9.29 9.58   mean 9.20
+wallP99 at depth 3 (the two first arms): 8.46 9.48
+```
+
+**So: the P99 improvement repeats, it is about 0.5 ms (5.6 per cent) at the mean, five of the six
+adjacent depth-three-against-depth-five comparisons in the three sessions favour depth five and the sixth
+is a 0.09 ms tie - and one depth-three sample out of four lands inside the depth-five band.** It is not
+noise, and it is not a clean separation either. `gpuMs`, `wallP50` and `wallP95` are flat across every
+arm at every depth, including the reversed order.
+
+
+**Decision: three kept, on the tradeoff and not on the frame.** The wait is not idle chatter - at three it is 3303 and 3343 ms over 1200 calls,
+a p95 of 6.11 and 6.18 ms against a 7.26 ms frame - and at five it disappears entirely (p95 0.00, 0.12 ms
+in total). **And the frame does not move**: `gpuMs` 4368.27 and 4368.25 at three, 4376.60 at four, 4369.25
+at five, `wallP50` 7.26 / 7.27 / 7.28. Depth four does not even remove the wait, which is why the trial
+was worth running rather than reasoning about: 4 sits between the two and behaves like neither prediction.
+
+**What the depth counts, said precisely, because the obvious reading is wrong.** It is a depth in
+**submissions**, not in frames: this client submits twice a frame (1200 submit-window calls over 600
+frames), so three submissions is about one and a half frames of slack and five is about two and a half.
+A reading of "three frames" would overstate what the window holds by half and would make the tradeoff
+below sound larger than it is.
+
+**Why three keeps, stated as an inference and not as a fact.** The measurement is that the wait moves and
+the frame does not: 3300 ms of waiting becomes 0.12 ms, and `gpuMs`, `wallP50` and `wallP95` are flat
+across all three depths. The explanation that fits is that the wait is the render thread being held to
+the submission rate of a frame the card is already saturated on, so running further ahead buys a queue
+rather than a frame - but **the arms establish the flatness and not the reason for it**. They cannot
+separate "the CPU is paced by the GPU" from "the throttle is what the frame costs and this is merely
+where it appears", because both predict a wait that vanishes when the ring is deep enough and a frame
+that does not move. What would separate them is a measurement this programme did not take: a frame whose
+`gpuMs` is below its `wallP50`, where a deeper window would have slack to use.
+
+**Why three and not five, with the P99 result on the table.** Depth five is better on both things this
+programme can measure: the stall goes, and the tail improves by about 5.6 per cent repeatably. What §65
+asks to be weighed is what was *not* measured, and it points the other way: each slot holds a command
+buffer and its share of the transient allocator's blocks (512 KiB blocks, rotated per submit), and the
+render thread ends up about one to two and a half submissions further ahead of the picture the player
+sees, so two more slots is more memory and roughly half a frame more input latency in a configuration
+that already runs unlimited frames ahead. The frame's medians do not move, so the change would buy a
+tail metric with an unmeasured latency cost - and §65's instruction is precisely not to decide that on
+frame numbers alone. **Production therefore stays at three**, and what would reopen it is one
+measurement this backend does not have: input latency at the two depths. If that reads flat, five is the
+better window on all the evidence there is, and the trial is one property away.
 
 The trial's mechanism was a `-Dmetallum.submitsInFlight=N` read, which is **reverted**: production code
 holds `public static final int MAX_SUBMITS_IN_FLIGHT = 3` with the measurement written beside it. Nothing
@@ -321,14 +388,17 @@ and `waitForFence` on the next. Nothing about it was changed, and nothing about 
 ## Phase 1 - Argument buffer allocation census (`run/m3-census`, c1 and c2)
 
 Two arms, identical to each other, with the census added to the frame probe and nothing else changed.
-Per window of 600 frames, so these are also per-frame figures divided by 600:
+**Every figure in this block is the whole 600-frame window**, which is what the probe's line reports; the
+per-frame figure is beside it in brackets. The one place that distinction bites is `allocationMiB`, the
+memory the window's allocations asked the device for: 0.192 MiB over 600 frames is **336 bytes a frame**,
+not 0.192 MiB a frame.
 
 ```
                     c1          c2
 passes:             600         600    (1 wide pass a frame)
 layouts:           1200        1200    (2 a frame)
 allocations:       1200        1200    (2 native MTLBuffer allocations a frame)
-allocationMiB:    0.192       0.192    (168 bytes each)
+allocationMiB:    0.192       0.192    (168 bytes an allocation, 336 bytes a frame)
 setCalls:         14400       14400    (24 a frame)
 setChanges:        1200        1200    (2 a frame)
 textureWrites:    12000       12000    (20 a frame)
@@ -339,9 +409,10 @@ draws:              600         600    (1 wide draw a frame)
 ```
 
 **Decision: REJECTED, on the plan's own Phase 1 gate.** The gate stops the candidate at "about one
-allocation a frame and small bytes"; this is two allocations a frame of 168 bytes each, 0.192 MiB a
-frame, and the gate's reason to continue is "several allocations a frame, especially 10+, 20+, 30+".
-Two is neither, and an arena to remove 0.19 MiB a frame from a 7.30 ms GPU-bound frame is complexity
+allocation a frame and small bytes"; this is two allocations a frame of 168 bytes each - **336 bytes a
+frame**, which is the 0.192 MiB the census line reports for the whole 600-frame window - and the gate's
+reason to continue is "several allocations a frame, especially 10+, 20+, 30+".
+Two is neither, and an arena to remove 336 bytes a frame from a 7.30 ms GPU-bound frame is complexity
 bought on a number too small to pay for it. The measurement is what the plan asks for, so this is a
 finished candidate and not an unmeasured one.
 
@@ -508,7 +579,7 @@ frame result:       none claimed - gpuMs moved 0.3 to 0.6 per cent, inside a flo
 
 | Candidate | measurement | why the complexity was not justified |
 | --- | --- | --- |
-| Argument-buffer arena / suballocation | 2 native allocations a frame of 168 bytes, 0.192 MiB/frame, one wide pass and one wide draw a frame | Sections 14 and 22: the gate is about one allocation a frame, and an arena that removes 0.19 MiB from a 7.30 ms GPU-bound frame is complexity bought on a number too small to pay for it |
+| Argument-buffer arena / suballocation | 2 native allocations a frame of 168 bytes, 336 bytes a frame (0.192 MiB over the whole 600-frame window), one wide pass and one wide draw a frame | Sections 14 and 22: the gate is about one allocation a frame, and an arena that removes 336 bytes a frame from a 7.30 ms GPU-bound frame is complexity bought on a number too small to pay for it |
 | Render-encoder reuse by preserving a clear or by a looser contents policy | 20928 recreations, **every one** with a colour-attachment mismatch; onlyClear 0, onlyContents 0 | The churn is what the frame's own attachment changes require, and both candidates have no passes to work on |
 | Per-pass allocation reduction (4A unchanged binding record, 4C scratch arrays, 4B clone removal) | JFR steady state: `MetalRenderPass` 0.34 per cent of allocation pressure, `TextureViewAndSampler` below the sampling floor, the attachment arrays absent | Not a CPU or GC hotspot, so there is no measured cost for a pool or a scratch array to remove |
 | Render-pass descriptor reuse | 21738/21744 descriptors a window, one per encoder opened | Section 49's gate is that the native cost be visible in the CPU profile; it is not, and reuse would owe the whole reset contract of sections 50/51 to save one alloc/release pair per open |
@@ -540,7 +611,7 @@ depthAttachments:      4800       4800
 pipelineIdentities 345 == pipelineKeys 345 · compiles 0 · compileMs 0.00
 
 setArgumentBuffer calls/frame:   2.0 (1200)      skipped/frame: 22.0 (13200)
-native argument allocations/frame: 2.0 (0.192 MiB)
+native argument allocations/frame: 2.0 (336 bytes)
 descriptor writes/frame: 20 texture + 20 sampler + 2 buffer
 passDescriptors/frame: 35.88 / 35.87   texelViews/frame: 0
 argument layouts/frame: 2.0    wide passes/frame: 1.0    wide draws/frame: 1.0
@@ -585,8 +656,8 @@ decomposed. What remains is not backend overhead:
 - **11 copy-backs and 1 clear a frame**, which the Vitrail programme measured as removable bytes that
   move no time on this scene.
 - **the required synchronisation**, retained conservatively and with no evidence it costs anything.
-- **the submit-window wait**, which is the CPU being paced by the card rather than a cost that can be
-  removed: widening the window moves the wait and not the frame.
+- **the submit-window wait**, which widening the window moves without moving the frame (the reasoning
+  behind that is an inference and is labelled as one in the Submit Window block above).
 
 Further optimisation stopped because there is no remaining candidate with both a measured cost and a
 provable correctness argument. The plan's closing condition is met: the residual is shader execution,
@@ -606,7 +677,15 @@ modified:
 | Per-pass allocation | `MetalRenderPass` 0.34 per cent of allocation pressure - **REJECTED**, not a hotspot |
 | Texel-buffer views | 0 a frame - **NOT APPLICABLE** |
 | Fence / synchronisation significance | no evidence of significant cost - **REJECTED**, conservative model retained |
-| Submit-window significance | real at 3 (p95 6.11 ms), gone at 5, frame unchanged at all three - **3 kept** |
+| Submit-window significance | real at 3 (p95 6.11 ms), gone at 5, medians flat at 3, 4 and 5, P99 repeatably 5.6 % better at 5 (10 arms over three sessions) - **3 kept**, on the unmeasured latency tradeoff |
+
+**And the tail question the last round left open is answered: the P99 improvement at depth five repeats.**
+Ten arms over three sessions, two of them run in the reverse order to control the arm-position effect the
+same test discovered: depth five reads 8.53 to 8.78 in all five of its samples, three of four non-first
+depth-three samples sit above that band, and five of six adjacent comparisons favour depth five with the
+sixth a tie. So this is not a candidate to close as unmeasurable, and the line is not closed on that
+criterion; it is closed on the decision, which is that the two things this programme can measure both
+favour depth five and the one it cannot measure - input latency - is what keeps production at three.
 
 
 
