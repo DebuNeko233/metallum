@@ -407,7 +407,18 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Override
     public void waitForSubmittedGpuWork() {
-        if (!this.ring.awaitAll()) {
+        long waitedFor = this.ring.submissions();
+        long began = System.nanoTime();
+        boolean complete = this.ring.awaitAll();
+        // Said every time, and the teardown is why. This method runs on a resource reload and on the way out, so
+        // two lines a cache clear is not noise - and a wait whose outcome is only reported when it fails cannot
+        // answer "which wait timed out" when the same ring is waited on twice in a row and only one of them
+        // fails. Measured: after `Minecraft`'s `Stopping!`, the encoder's own close-time wait was complete and
+        // this one reported submission 3813 as a timeout, which is only readable at all if both say what they
+        // waited for and what the ring looked like when they did.
+        Metallum.LOGGER.info("Metal 4 frame encoder: waited {} ms for {} submission(s); complete={}, {}",
+                (System.nanoTime() - began) / 1_000_000L, waitedFor, complete, this.ring.describe());
+        if (!complete) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: the submitted work was not observed complete within the"
                     + " ring's own timeout - {}", this.ring.refusal());
         }
@@ -452,7 +463,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.currentPass != null) {
             submitRenderPass();
         }
-        if (!this.ring.awaitAll()) {
+        // This wait's own line, for the reason `waitForSubmittedGpuWork`'s has one: the device waits on the same
+        // ring again straight after this returns, so a timeout in either place is only localised if both say what
+        // they waited for and what the ring looked like when they did.
+        long closingWaitedFor = this.ring.submissions();
+        long closingBegan = System.nanoTime();
+        boolean closingComplete = this.ring.awaitAll();
+        Metallum.LOGGER.info("Metal 4 frame encoder: closing - waited {} ms for {} submission(s); complete={}, {}",
+                (System.nanoTime() - closingBegan) / 1_000_000L, closingWaitedFor, closingComplete,
+                this.ring.describe());
+        if (!closingComplete) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: closing with work that was not observed complete - {}",
                     this.ring.refusal());
         }

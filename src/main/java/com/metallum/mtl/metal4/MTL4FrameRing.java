@@ -315,6 +315,30 @@ public final class MTL4FrameRing implements AutoCloseable {
     }
 
     /**
+     * The ring's own state in one line, for a wait that has to be read rather than guessed at.
+     * <p>
+     * It exists because a teardown waits on this ring twice in a row - the encoder's own close and then the
+     * device's cache clear - and "one of them timed out" is not a finding until the line says which value was
+     * being waited for and what each slot last signalled. The slots' values are the part that matters: a slot
+     * whose recorded value is ahead of every value the queue has been told to signal is a commit whose signal
+     * was never sent, and that is a different fault from a GPU that has not finished.
+     */
+    public String describe() {
+        StringBuilder state = new StringBuilder();
+        state.append("ring state: submissions=").append(signalled)
+                .append(" begun=").append(begun)
+                .append(" slot=").append(slot)
+                .append(" awaited=[");
+        for (int index = 0; index < this.awaited.length; index++) {
+            if (index > 0) {
+                state.append(", ");
+            }
+            state.append(this.awaited[index]);
+        }
+        return state.append(']').toString();
+    }
+
+    /**
      * The value the next commit will signal, which is the submission a fence made while a frame is open is
      * about.
      */

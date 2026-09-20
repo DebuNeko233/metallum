@@ -1777,4 +1777,46 @@ for needle, why in (
     if needle not in table_source:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- the device waits for completion once, and not again on a ring the encoder has released -----------------
+# Section 71's lifecycle gate had never run, because every session so far was *stopped* rather than quit. Driving
+# the quit from inside the client gave the teardown its first real-device reading, and the reading was a false
+# alarm: `MetalDevice.close()` waited for submitted work, closed the frame encoder - which submits any open pass,
+# waits, and releases the ring - and then cleared the pipeline cache, whose own wait landed on that released ring.
+# Measured after `Minecraft`'s `Stopping!`: the encoder's wait proved submission 3813 complete in 0 ms with
+# `awaited=[3811, 3812, 3813]`, and the next wait read the same value as a timeout while the ring said
+# `awaited=[0, 0, 0]`. The clear was also redundant - `executionState.close()` clears the same caches at the end -
+# so the pin is the order: the device's close waits, closes the encoder, and does not clear the caches itself.
+DEVICE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "MetalDevice.java"
+device_source = DEVICE.read_text(encoding="utf-8")
+device_close = body_of(device_source, "public synchronized void close()")
+if device_close is None:
+    raise SystemExit("metal 4 provider: MetalDevice.close() was not found, so the teardown that runs once a "
+                     "session is not pinned at all")
+waited_at = device_close.find("this.waitForSubmittedGpuWork();")
+encoder_at = device_close.find("this.commandEncoder.close();")
+state_at = device_close.find("this.executionState.close();")
+if min(waited_at, encoder_at, state_at) < 0 or not waited_at < encoder_at < state_at:
+    raise SystemExit("metal 4 provider: the device's teardown no longer waits for submitted work, closes the "
+                     "encoder that releases the ring, and releases the state that owns the caches - in that order")
+if "this.clearPipelineCache();" in device_close:
+    raise SystemExit("metal 4 provider: the device's teardown clears the pipeline cache after the encoder's close, "
+                     "so the wait inside that clear lands on a released ring and reports a completion that already "
+                     "arrived as a timeout - measured as submission 3813 with awaited=[0, 0, 0]")
+for needle, why in (
+    ("this.ring.describe()",
+     "the ring's state is not printed, so a wait that times out cannot say which value it waited for"),
+    ("public String describe() {", "the ring has no state description to print"),
+):
+    if needle not in encoder and needle not in (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl"
+                                                / "metal4" / "MTL4FrameRing.java").read_text(encoding="utf-8"):
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ('Metallum.LOGGER.info("Metal 4 frame encoder: waited {} ms for {} submission(s); complete={}, {}",',
+     "the device-side wait reports nothing when it succeeds, so two waits on one ring cannot be told apart"),
+    ('Metallum.LOGGER.info("Metal 4 frame encoder: closing - waited {} ms for {} submission(s); complete={}, {}",',
+     "the encoder's close-time wait reports nothing when it succeeds"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

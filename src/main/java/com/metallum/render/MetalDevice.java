@@ -378,9 +378,16 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
 
     @Override
     public synchronized void close() {
+        // Once, and before the encoder goes: this is the wait that proves completion, and it is on a live ring.
         this.waitForSubmittedGpuWork();
+        // The encoder's close ends any open pass, waits for that submission and releases the ring - and after it
+        // there is no ring to ask. A cache clear used to sit here, which waited on that released ring a second
+        // time. Measured on a lifecycle session, after `Minecraft`'s `Stopping!`: the encoder's own wait proved
+        // submission 3813 complete in 0 ms with `awaited=[3811, 3812, 3813]`, and the wait from the cache clear
+        // reported the same value as a timeout that never arrived while the ring read `awaited=[0, 0, 0]` - the
+        // released ring's own state, and a false alarm rather than a stall. The clear was also unnecessary:
+        // `executionState.close()` at the end of this method clears exactly the same caches, after this wait.
         this.commandEncoder.close();
-        this.clearPipelineCache();
         try {
             this.cocoa.clearViewLayer();
             // The view only ever borrowed the layer; this is the reference this code was given.
