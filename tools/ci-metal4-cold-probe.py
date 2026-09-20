@@ -38,6 +38,9 @@ for needle, why in (
                     "population - the one the intermittent fault lives in - is not selectable"),
     ("--warm-runs", "the harness cannot be told how many probes to repeat in one process, so there is no "
                     "control for cold first use"),
+    ('--probes-per-process) probes_per_process="$2"; shift 2 ;;',
+     "the harness cannot be told to run more than one probe in a cold process, so a process that is bad and a "
+     "draw that went wrong cannot be told apart - which is the question a cold-only fault turns on"),
     ("--out", "the harness cannot be asked to keep its raw lines, so a run's evidence cannot be re-read"),
 ):
     if needle not in script:
@@ -77,12 +80,29 @@ if "MTLBuiltinPipelines.close()" not in probe:
 if "M4_PROBE_RESULT" not in probe:
     raise SystemExit("cold-probe harness: the result is not printed as a machine-readable line, so a run of "
                      "thirty processes would need a log parser")
-for field in ("process=", "attempt=", "success=", "stage=", "reason=", "canMakeAndSubmit=",
+# The loop that gives each cold process its probes: a harness that always passed 1 would run the flag and
+# ignore it, which is the shape a pin on the usage text cannot see.
+if 'line="$(run_one "$index" "$probes_per_process")"' not in script:
+    raise SystemExit("cold-probe harness: the cold loop does not pass the per-process probe count to the "
+                     "process, so the flag is parsed and ignored and every process still runs one probe")
+
+for field in ("process=", "attempt=", "success=", "stage=", "reason=", "epochMs=", "canMakeAndSubmit=",
               "canBindAndDraw=", "familyMetal4=", "queueSelector=", "argumentTableSelector=",
               "deviceCreation=", "deviceName=", "probeMs=", "elapsedMs="):
     if field not in probe:
         raise SystemExit(f"cold-probe harness: the result line has no {field.rstrip('=')} field, which the "
                          "plan asks every attempt to report")
+# A fault that clusters in a burst of consecutive processes is a fact about the machine as much as about the
+# probe, and a per-process duration cannot show a cluster: absolute time is what lines a failure up against
+# whatever else was running.
+for needle, why in (
+    ('+ " epochMs=" + System.currentTimeMillis()',
+     "the result line carries no absolute time, so a cluster of failures cannot be lined up against anything "
+     "the machine was doing"),
+):
+    if needle not in probe:
+        raise SystemExit("cold-probe harness: " + why)
+
 if "System.exit(allPassed ? 0 : 1)" not in probe:
     raise SystemExit("cold-probe harness: the process exit code does not carry the verdict, so a failure can "
                      "only be found by reading output")

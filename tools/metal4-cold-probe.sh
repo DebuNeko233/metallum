@@ -21,6 +21,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cold_runs=30
 warm_runs=20
+probes_per_process=1
 keep=false
 out_file=""
 
@@ -30,6 +31,11 @@ Usage: metal4-cold-probe.sh [options]
 
   --cold-runs N     how many separate processes to probe in (default 30). Each is a fresh JVM.
   --warm-runs M     how many probes to run inside ONE process (default 20), as the control.
+  --probes-per-process K
+                    how many probes each COLD process runs (default 1). One probe a process cannot tell a
+                    process that is bad from a draw that went wrong: with K probes, a bad process fails
+                    most of its own K and an isolated fault fails one of them, which is the question a
+                    cold-only fault turns on.
   --out FILE        write the raw M4_PROBE_RESULT lines here as well as summarising them.
   --keep            leave the compiled probe class in place instead of clearing it.
 USAGE
@@ -39,6 +45,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--cold-runs) cold_runs="$2"; shift 2 ;;
 		--warm-runs) warm_runs="$2"; shift 2 ;;
+		--probes-per-process) probes_per_process="$2"; shift 2 ;;
 		--out) out_file="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
 		-h|--help) usage; exit 0 ;;
@@ -90,13 +97,18 @@ run_one() {
 	java -cp "$classes:$classpath" Metal4ColdProbe "$index" "$attempts" 2>/dev/null | grep '^M4_PROBE_RESULT' || true
 }
 
-echo "cold runs: $cold_runs processes, one probe each" >&2
+echo "cold runs: $cold_runs processes, $probes_per_process probe(s) each" >&2
 cold_failures=0
 for (( index = 1; index <= cold_runs; index++ )); do
-	line="$(run_one "$index" 1)"
+	line="$(run_one "$index" "$probes_per_process")"
 	[[ -n "$line" ]] || line="M4_PROBE_RESULT process=$index attempt=1 success=false stage=no-output reason=process-printed-nothing"
 	printf '%s\n' "$line" >> "$probe_log"
-	[[ "$line" == *" success=true "* ]] || cold_failures=$(( cold_failures + 1 ))
+	# Counted per probe line and not per process: with more than one probe a process, a process can hold both
+	# answers, and the question is how many of its own probes a bad process failed.
+	while IFS= read -r one; do
+		[[ -n "$one" ]] || continue
+		[[ "$one" == *" success=true "* ]] || cold_failures=$(( cold_failures + 1 ))
+	done <<< "$line"
 done
 
 echo "warm runs: $warm_runs probes in one process" >&2
@@ -112,7 +124,10 @@ fi
 
 # ---------------------------------------------------------------- summary
 echo
-echo "cold processes: $cold_runs   failures: $cold_failures"
+cold_probes="$(grep -c '^M4_PROBE_RESULT' "$probe_log" || true)"
+warm_only="$(grep -c '^M4_PROBE_RESULT process=warm' "$probe_log" || true)"
+cold_probes=$(( cold_probes - warm_only ))
+echo "cold processes: $cold_runs ($probes_per_process probe(s) each, $cold_probes probes)   failures: $cold_failures"
 if (( cold_failures > 0 )); then
 	echo "cold failure stages:"
 	grep ' success=false ' "$probe_log" | sed -n 's/.*stage=\([^ ]*\).*/  \1/p' | sort | uniq -c

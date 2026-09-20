@@ -241,6 +241,37 @@ second target **exactly as it was created**, so the second render pass contribut
 draw and not its clear - while the first pass's own check passed in the same attempt, on its own target,
 through the same table mechanism.
 
+**And it is the FIRST probe in a process, which is what the next instrument settled.** One probe a process
+cannot tell a process that is bad from a draw that went wrong, so the harness was given
+`--probes-per-process K`: sixty cold processes, twenty probes each, twelve hundred probes, with the absolute
+time (`epochMs`) recorded too. It produced **one failure**, and that process answers the question by itself:
+
+```
+process 47:  attempt 1  FAILED   (pixel, (0,0,0,0))
+             attempts 2 to 20  all passed      <- same process, same device, milliseconds later
+```
+
+Every failure in every run has been at `attempt=1`: four of them, across ten processes of one shape and sixty
+of this one, and never a second attempt. So the fault is **first-probe-in-a-process**, not a per-process state
+and not a per-draw event: the identical sequence, on the identical device, a few milliseconds later in the
+same process, works. That is a within-process control, and it is much stronger evidence than a rate.
+
+**Which reinstates the hypothesis this document withdrew two rounds ago, and says why it was withdrawn
+wrongly.** The original note said the flips were "often observed on a session's first arm" and called that a
+hypothesis about cold first use. It was then withdrawn on a reading of 1 of 50 cold against 1 of 20 warm taken
+with the **one-target probe**, whose failure could not distinguish a missing draw from a missing pass. The
+better instrument now says the first reading was right about the *when* and wrong about the *what*: it is the
+first probe in a process, and what fails is the second render pass's whole contribution - its clear included -
+to its target.
+
+**What that leaves open, exactly.** Something about the first command buffer a process submits can drop the
+second render encoder's work, and it does so in about one cold first probe in twenty-five (4 of 160). The
+candidate that fits, and that §13's list allows as a hypothesis, is lazy driver initialisation during the first
+use of the new command structure. **It is not yet a root cause**, and the experiment that would settle it is
+named rather than guessed: give the first probe a throwaway commit before the real sequence, or run only the
+first pass in a process's first probe - if either makes the fault vanish, it is first-command-buffer
+warm-up, and the fix is a warm-up rather than anything in the frame path.
+
 **The three failures were three of the last five processes of run A, and the next run did not reproduce
 them.** Fifty more cold processes, none failed. A per-process constant failure probability would put three in
 five at about 0.07 per cent; a state that builds over a burst of consecutive process starts, or an

@@ -19,7 +19,7 @@ import com.metallum.mtl.metal4.MTL4Probe;
  * M4_PROBE_RESULT process=&lt;n&gt; attempt=&lt;n&gt; success=&lt;bool&gt; stage=&lt;ok|stage&gt; reason=&lt;text&gt;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
- *                 probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
+ *                 epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
  * <p>Exit code 0 when every attempt in this process passed, 1 when a probe attempt failed, 2 when the
@@ -55,7 +55,7 @@ public final class Metal4ColdProbe {
                     + " canMakeAndSubmit=false canBindAndDraw=false"
                     + " familyMetal4=false queueSelector=false argumentTableSelector=false"
                     + " deviceCreation=" + deviceCreation + " deviceName=none"
-                    + " probeMs=0 elapsedMs=" + millis(startNanos));
+                    + " epochMs=0 probeMs=0 elapsedMs=" + millis(startNanos));
             System.exit(2);
         }
 
@@ -96,6 +96,10 @@ public final class Metal4ColdProbe {
                     + " argumentTableSelector=" + argumentTableSelector
                     + " deviceCreation=" + deviceCreation
                     + " deviceName=" + deviceName
+                    // The absolute time, so a failure can be lined up against whatever else the machine was
+                    // doing: a fault that clusters in a run of consecutive processes is a fact about the
+                    // environment as much as about the probe, and a per-process duration cannot show that.
+                    + " epochMs=" + System.currentTimeMillis()
                     + " probeMs=" + millis(probeStart)
                     + " elapsedMs=" + millis(startNanos));
         }

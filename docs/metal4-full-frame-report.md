@@ -35,9 +35,11 @@ what it does:     create device -> run the probe once -> one machine-readable li
 cost a probe:     about 240-460 ms cold; about 4 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        100 (two runs of 50)        failures: 3     (processes 46, 48, 49 of the first run)
-warm probes:      400 (300 then 100)          failures: 0
-rate:             3 of 100 cold = 3 %;  0 of 400 warm
+cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
+                  failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      500 in three processes      failures: 0
+rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
+within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
 AUTO blocker:     REGISTERED. AUTO must not promote Metal 4 full-frame execution while this is open.
                   Forced Metal 4 development continues.
@@ -65,12 +67,20 @@ one that proves a uniform bound by GPU address reaches a draw - was never checke
 own target, the second is cleared to a known colour, and both pixels are read. That is the plan's own Smoke 5
 shape, and it is why the first pass has 500 attempts of evidence behind it today and none yesterday.
 
-**Not cold first use of the argument table, and not a capability gap.** Every selector answers true in every
-failure, and `selected`/`executing` are untouched by any of this. What is left is what differs on a cold
-process: the fault appears in cold processes only (3 of 100 against 0 of 400), it clustered in three of the
-last five processes of one run and did not reproduce in the next fifty, and its probe times were ordinary
-(227, 362, 438 and 463 ms), so it is not a timeout. Driver state accumulated over a burst of process starts,
-and a low-frequency race, both remain candidates and neither is distinguished yet.
+**It is the first probe in a process, and that is now measured rather than suspected.** The harness was given
+`--probes-per-process K` so that a bad process and a bad draw could be told apart, and the answer is neither:
+sixty cold processes ran twenty probes each and the one failure was attempt 1 of a process whose attempts 2 to
+20 all passed - same process, same device, milliseconds later. Every failure in every run has been at attempt
+1; none has ever been at a later attempt. So the fault is **first-probe-in-a-process**, not a per-process state
+and not a per-draw event.
+
+**Not a capability gap** - every selector answers true in every failure - **and not a timeout**: probe times
+were ordinary (227, 362, 438, 326 and 463 ms). What is left is something about the first command buffer a
+process submits, which can drop the second render encoder's entire contribution, in about one cold first probe
+in twenty-five. Lazy driver initialisation on first use is the candidate that fits and is recorded as a
+hypothesis; the experiment that would settle it is a first probe with a throwaway commit before the real
+sequence, or a first probe that runs only the first pass. Either result is a fix in the probe's warm-up rather
+than in the frame path, and neither has been run yet.
 
 **Rates are not comparable across the two rounds**, because the probe's shape changed between them: round two
 measured 1 of 50 cold and 1 of 20 warm with a one-target probe, and the sentence in this report that read that
