@@ -483,9 +483,10 @@ process with no window is not the same claim as a capability proven through the 
    slice of the frame's own transient arena, bound by name) and stops at **`drawIndexedIndirect`**, the indirect
    indexed form Sodium's terrain draw reaches through `VKIndirectDrawBatch.draw` - a named refusal and the next
    milestone. Two further findings are recorded rather than papered over: one binding disagrees about its kind
-   in the terrain pass (`u_SectionTimeInfo`, a buffer in the frame path and a texture in the layout - a skip
-   under the reference's rule, but a name that reads like a uniform buffer, so either the translation's metadata
-   or this plan's kind is wrong); and a three-slot run of the same frame still ends in a GPU fault
+   in the terrain pass (`u_SectionTimeInfo`, a buffer in the frame path and a texture in the layout - the kind
+   comes from the translation's own bind-group metadata, and the Metal 3 pass skips it in exactly the same way,
+   which the control run proves by rendering thirty world frames of the same terrain through the same
+   translation); and a three-slot run of the same frame still ends in a GPU fault
    (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`) where the one-slot run reaches the refusal - so
    something the terrain draw reads by address is still not resident in time. The residency smoke passes 50 of
    50 cold-probe processes (30 cold + 20 warm). AUTO stays blocked on the remaining list below.

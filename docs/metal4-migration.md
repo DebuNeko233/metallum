@@ -1492,12 +1492,17 @@ and both are recorded here rather than fixed in passing:
    arguments (`MTLDrawIndexedPrimitivesIndirectArguments`) live in a buffer, and the header declares the
    selector as `drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:`. That is the next
    milestone.
-2. **One binding disagrees about its kind.** The trace says, in the terrain pass:
-   `'u_SectionTimeInfo' is a buffer in the frame path's binding and a texture in the pipeline's layout, so it is
-   not encoded`. Under the rule the reference follows, that is a skip and the run continues - but the name reads
-   like a uniform buffer, so either the translation's metadata or this plan's kind for it is wrong, and a skipped
-   binding a shader needs is a wrong image rather than a fault. It is recorded as an open question with the
-   evidence, to be settled by reading what the artifact publishes for that resource.
+2. **One binding disagrees about its kind, and the reference skips it too.** The trace says, in the terrain
+   pass: `'u_SectionTimeInfo' is a buffer in the frame path's binding and a texture in the pipeline's layout, so
+   it is not encoded`. The kind comes from the translation's own bind-group metadata
+   (`MetalCrossShaderTranslator`: `UNIFORM_BUFFER`, `SAMPLED_IMAGE` or `TEXEL_BUFFER` per entry), so this is a
+   fact about that pipeline's translated layout and not about this plan - and the Metal 3 pass does exactly the
+   same thing with it: it keeps its uniforms and its textures in two maps and encodes only what the layout
+   declares. The evidence that the skip is harmless on the reference is the control run: a Metal 3 frame with
+   the Metal 4 present sidecar rendered thirty world frames - the same Sodium terrain, through the same
+   translation - with that binding skipped in the same place. So it is written down as a note about the
+   translation's metadata for `sodium:pipeline/solid_terrain`, not as a difference between the two generations,
+   and the next milestone does not depend on it.
 
 **And one fault is still open.** In a three-slot run the same terrain frame ended in a GPU fault again -
 `MTL4CommandQueueErrorTimeout` with a kernel `GPURestart` - while the one-slot run reached the
