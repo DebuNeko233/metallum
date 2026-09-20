@@ -3569,6 +3569,78 @@ still the reference shell's presenter - which is a session whose frame is encode
 own queue is the session's second submission structure there by design, and that is the configuration section 19
 calls `referenceShell=true`.
 
+### The wide pipeline, and the ceiling the stages of this migration had already named
+
+The real-pack ladder's third rung is where the binding design stopped being a design question and became a
+measurement. `photon_v1.3b` served 251 of its 607 pack units and then threw, in one exception, that
+`vitrail:pipeline/pack/2/world0/deferred4` requires wide resources and that argument-buffer tier 2 is unavailable
+- a sentence that names the pipeline and nothing about *why* it is wide.
+
+**So the refusal was made to say what it refused, and that alone was the round's measurement.** The decision that
+gates it answered with a boolean, and a boolean has no reader but a throw: the layout went into the code and never
+into the log, so the only way to learn it was to print it and run the pack again. `wideReason(...)` now returns
+null where the resources fit and a sentence naming the counts and the overflowing slot where they do not, the
+vertex-layout span moved into its own method so the decision and the sentence cannot disagree about it, and the
+same run reads:
+
+```text
+Pipeline vitrail:pipeline/pack/2/world0/deferred4 requires wide Metal resources, but Argument Buffer Tier 2 is
+unavailable: 20 entries (1 buffers, 19 sampled images, 0 texel buffers) and 1 vertex layouts: the last sampled
+image sits at entry 19 and a sampler index is capped at 15
+```
+
+Nineteen sampled images, not the sixteen the comment there had recorded, and the buffer rule nowhere near its
+ceiling of thirty-one. That number is the whole of the argument that follows.
+
+**The ceiling is the compiler's and the table cannot lift it, which this migration had already asked three ways.**
+`MTL4ArgumentTable.h` caps a descriptor at sixteen sampler slots; the cold probe's census reports the device
+agreeing from its own side ("seventeen direct samplers refused ... a sampler by resource id refused, a texture by
+resource id refused, a table asking for twenty sampler slots accepted"); MSL declares one `[[sampler(n)]]`
+attribute per sampled image with no way to put two images on one; and the Metal 3 direct API is capped at the same
+sixteen. So section 51's warning - do not conflate the argument table's capacity with the shader's sampler indexing
+limit - is now a measurement rather than a caution, and past sixteen sampled images the **argument buffer** is the
+only shape there is, on both generations. This generation's first reading of section 46 was that the table
+*replaces* the argument buffer, and for everything that fits it does; what it does not replace is the layout.
+
+**So the compiler stopped deciding and started asking, and the pass learned the half that is Metal 4's.** The
+compiler hands the shared translator `compilation.device().supportsArgumentBuffersTier2()` where it used to hand it
+a literal `false`, and keeps one guard where that literal was: a translation that came back wide on a device with
+no tier 2 is refused, because the buffer its resources were laid out in could not be made. The artifact grows the
+generation's own half - one `MTLArgumentEncoder` per descriptor set per stage, asked of **that stage's function**
+so the buffer length is the shader's own layout and not a number this class guessed, released with the artifact -
+and the pass fills a shared-storage, hazard-tracked `MTLBuffer` of that length through the encoder and writes its
+GPU address into the table slot the shared layout recorded. The reference generation hands the same buffer to the
+encoder directly; this one hands the table its address. That difference is the whole of the generation boundary
+here, and it is why no Metal 3 type crosses into `render.metal4`.
+
+Three smaller facts are load-bearing and each was a mistake waiting to be made:
+
+- **A binding an argument buffer carries is not a table slot.** Its metal index is its position *inside* the
+  buffer, and the shared translation numbers those two at a time - buffer and texture - so a twenty-entry layout
+  reaches thirty-nine. A plan that counted them would size a table of forty buffer slots, which Metal caps at
+  thirty-one: a wide pipeline would have failed on the table instead of on the pipeline. The plan counts the
+  argument buffer's own slot instead, at the index the shared layout recorded.
+- **Every layout is made when the pipeline is set.** A wide pipeline's table carries one buffer slot per
+  descriptor set and the shader dereferences whatever address is in it, so a set whose resources are bound after
+  the first draw - or never - would still be read. `ensureArgumentBuffers()` runs where the tables are made.
+- **A binding no layout carries is a fault, not a skip.** The plan and the artifact are two halves of one
+  translation, and a resource in neither is a disagreement between them rather than an unbound resource to be
+  tolerated.
+
+**Measured on the pack, both arms, same world and width, 600 frames of counters.** The arm that failed now draws
+the chain, with the reference arm's program set (345 pipeline identities on both arms, 345 keys, 736 compiles), one
+wide pipeline in each log, and both readback roads agreeing to the byte on a 5x5 grid of a 2560x1440 frame -
+drawable mean BGRA `(44, 62, 55, 0)` on both and picture mean `(53, 60, 42, 0)` on both. The three MSL failures in
+the arm's log are the cold probe's own negative tests and not the frame's. The rung below was re-run on both arms
+to check that the direct path had not moved, and it had not: `ComplementaryReimagined_r5.9.1` reads 334 identities
+and 714 compiles on both arms, no wide pipeline in either log, both chains drawn. **The ladder is MakeUp PASS,
+Complementary PASS, Photon PASS**, and section 67 no longer stops it.
+
+What this is **not** is a proof that the wide shape generalises: it is one wide pipeline deep, Vitrail's
+`wide-resources-contract` fixture - thirty-three sampled images through a single pipeline - has not been run on
+this path, and the buffer writes are re-encoded per binding rather than deduplicated, which is section 50's
+correctness-first order and explicitly not the finished shape.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
@@ -3579,8 +3651,13 @@ calls `referenceShell=true`.
   is accepted**, so the header's "maximum value is 16" is a statement about the documented range rather
   than a limit the runtime enforces. So the ceiling belongs to MSL, the engine's argument-buffer path is
   what carries a program with more sampled images than slots, and under Metal 4 that path is **a buffer
-  bound by address** - which is the shape already proven above. What is left for those programs is
-  residency, not binding.
+  bound by address** - which is the shape already proven above. **This risk is now realised rather than
+  predicted**: photon's `deferred4` is nineteen sampled images, and the wide path above is the answer it
+  got. What is left for those programs is generality - one pack's worth of evidence - and residency.
+- **The wide path has one real-device reading.** `deferred4` is the only wide pipeline in the ladder, so the
+  plan's slot arithmetic, the up-front `ensureArgumentBuffers` order and the per-artifact buffer lifetime have
+  been exercised once. `wide-resources-contract` (thirty-three sampled images, one pipeline) is the fixture
+  that would exercise them harder and has not been run on this path.
 - **Residency.** Every texture in the engine is created with `hazardTrackingMode` untracked; Metal 4 asks
   for residency sets and the present has so far worked without one. Whether a pack's frame needs a set is
   a measurement, not an assumption.

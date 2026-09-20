@@ -400,6 +400,25 @@ vertex/index:     vertex PROVEN on the device (address + attribute stride throug
                   own triangle (50 of 50), and implemented in the pass as an address the draw offsets
 argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
                   setArgumentTable:atStages:, and the draw reads every slot
+wide resources:   PROVEN AND MEASURED IN A REAL PACK - a pipeline whose resources do not fit MSL's direct slots
+                  is laid out by the shared translation for an argument buffer, and this generation carries
+                  that buffer in one of the table's buffer slots: the artifact asks the stage's own function
+                  for an `MTLArgumentEncoder`, the pass makes a shared-storage, hazard-tracked buffer of the
+                  encoded length, fills it through that encoder and writes its GPU address into the table slot
+                  the shared layout recorded. The ceiling is the header's and not a guess: this machine's
+                  `MTL4ArgumentTable.h` caps a descriptor at sixteen sampler slots, the cold probe reports it
+                  as "seventeen direct samplers refused ... a table asking for twenty sampler slots accepted",
+                  and MSL declares one sampler attribute per sampled image with no way to pack them - so a
+                  program past sixteen samplers cannot be expressed by table slots at all. Measured:
+                  photon_v1.3b's `deferred4` reads 19 sampled images behind one uniform buffer, and on the
+                  Metal 4 arm it now compiles, draws and presents with the reference arm's program set (345
+                  pipeline identities on both arms, 345 keys, 736 compiles) and the reference arm's picture
+                  (drawable mean BGRA `(44, 62, 55, 0)` on both, picture mean `(53, 60, 42, 0)` on both, over a
+                  5x5 grid of a 2560x1440 frame). One wide pipeline on both arms - and no wide pipeline
+                  anywhere else in the ladder, MakeUp and Complementary being direct-only, which their re-run
+                  confirms (334 identities on both arms). The direct path is unchanged: the compiler asks the
+                  DEVICE for its argument-buffer answer where it used to ask for direct bindings by literal,
+                  and a wide translation on a device with no tier 2 is refused rather than carried.
 residency:        PROVEN AND REQUIRED - the frame encoder owns one `MTL4ResidencySet` and declares every
                   resource the frame binds by address or id (attachments, sampled textures, uniforms, vertex
                   layouts, index buffers, the copies' staging blocks and textures); the set is committed and
@@ -743,6 +762,25 @@ answered rather than only what is left.
    (`ShadowTargets`, `copyTextureToTexture(depth, noTranslucents, ...)`) is the next candidate to read under the
    same instrument, and any pack that copies one target over another had been silently doing nothing on this path.
 
+12. ~~A pipeline that does not fit MSL's direct slots refuses to compile, so Photon stops~~ - **fixed, and the
+   fix is the wide binding path**. `photon_v1.3b`'s `deferred4` is nineteen sampled images behind one uniform
+   buffer, so the last sampler it asks for sits at index 19; `MTL4ArgumentTable.h` caps a descriptor at sixteen
+   sampler slots, MSL declares one sampler attribute per sampled image, and so the wide shape - an argument
+   buffer - is the only shape there is, on both generations. This path asked the shared translator for direct
+   bindings by literal, which made that shape a throw. The compiler now asks the **device** for its
+   argument-buffer answer and keeps one guard where the literal was (a wide translation on a device with no tier
+   2 is refused, because the buffer the resources were laid out in could not be made); the artifact asks the
+   stage's own function for an `MTLArgumentEncoder` per set per stage; and the pass makes a shared-storage,
+   hazard-tracked buffer of the encoded length, fills it through that encoder, and writes its GPU address into
+   the table slot the shared layout recorded. The plan stops counting an indirect binding's index as a table
+   slot - those are positions inside the argument buffer, and counting them would size a table past Metal's
+   thirty-one buffer slots - and counts the argument buffer itself instead. MEASURED: photon draws on this path
+   with the reference arm's program set (345/345 identities, 345/345 keys, 736/736 compiles) and the reference
+   arm's readback means to the byte, with one wide pipeline in each arm's log and no error of its own in this
+   arm's. **What is NOT PROVEN**: that the shape holds for a pipeline wider than one pack's; the writes are not
+   deduplicated (section 50's correctness-first order); and Vitrail's `wide-resources-contract` fixture, which
+   drives thirty-three sampled images through one pipeline, has not been run on this path.
+
 ## Metal 4 full-frame implementation complete?
 
 **NO, and the first full-frame milestone is behind it.** A forced Metal 4 launch loads a world, renders it and
@@ -779,10 +817,13 @@ closed - all seven of section 60's fixtures and all three of section 61's direct
 every field 50 of 50 in the cold census. What is **not** done is the rest of the Definition of Done: the rest of
 the smoke-pack staircase (the deferred, shadow and history packs beyond the three fixtures whose pixels have been
 read), blit inside a live frame, resize, pack reload, dimension change, shutdown, the lifecycle gate, MetalFX
-Spatial on this generation, GPU counters and Metal 4 performance. **The real-pack ladder has started and its
-first rung passes**: `MakeUp-UltraFast-9.5e` runs on both arms with the same **330 pipeline identities**, the
-same gross picture and no fault of any kind in either log, and the differences it shows are this path's known
-ones (a pass per clear, 1.18x/1.29x attachment traffic, drawable-wait pacing) registered for the performance
+Spatial on this generation, GPU counters and Metal 4 performance. **The real-pack ladder passes on all three rungs**: `MakeUp-UltraFast-9.5e` runs on both arms with the same
+**330 pipeline identities**, the same gross picture and no fault of any kind in either log;
+`ComplementaryReimagined_r5.9.1` with **334 identities and 714 compiles on both arms**, its compute dispatching
+on both; and `photon_v1.3b` with **345 identities, 345 keys and 736 compiles on both arms** and both readback
+roads agreeing to the byte, which needed the wide binding path below. The differences each rung shows are this
+path's known ones (a pass per clear, 1.18x/1.29x attachment traffic, drawable-wait pacing) registered for the
+performance
 phase rather than read as verdicts. **and its second rung passes too**: `ComplementaryReimagined_r5.9.1`, a 219-file pack with deferred passes,
 shadows and compute, runs on both arms with **334 pipeline identities on each**, a dispatching compute road on
 each and no fault of any kind. That reading needed one instrument fix first - this path opened its dispatch
@@ -802,3 +843,59 @@ section 67 stopped at the first M3 PASS / M4 FAIL - can resume from where it sto
 are the list; AUTO stays off this path on the intermittent capability probe, and the migration's own success
 criterion cannot be claimed until the pictures that have been read agree with the frames they are supposed to be -
 which they now do, with two differences registered and neither of them a claim of correctness.
+
+### And the real-pack ladder's third rung passes, on the wide binding path
+
+`photon_v1.3b` was where the staircase stopped: M3 served the pack's whole chain in about ten seconds and drew it,
+this path served 251 of its 607 units and then threw `requires wide Metal resources, but Argument Buffer Tier 2 is
+unavailable`. That refusal was a design decision and not a gap - this generation asked the shared translator for
+direct bindings unconditionally, on the reading that the argument *table* replaces the argument *buffer* - and the
+measurement that ended it is in the refusal's own message once the message says what the layout was: photon's
+`deferred4` is **nineteen sampled images behind one uniform buffer**, so the last sampler it asked for sat at index
+19.
+
+The table cannot hold that, and no amount of it can. `MTL4ArgumentTable.h` caps a descriptor at **sixteen** sampler
+slots, the cold probe reports the same ceiling from the device's side ("seventeen direct samplers refused ... a
+table asking for twenty sampler slots accepted"), and MSL declares one `[[sampler(n)]]` attribute per sampled
+image with no way to pack two images onto one. That is section 51's distinction measured rather than argued:
+argument-table capacity is not the shader's sampler indexing limit, and past sixteen the wide shape is the only
+shape there is - on **both** generations. So the compiler now hands the translator the device's argument-buffer
+answer, and what this generation adds is only how the buffer is handed over: the artifact asks the stage's own
+function for an `MTLArgumentEncoder`, the pass makes a shared-storage, hazard-tracked buffer of the encoded length,
+fills it through that encoder, and writes its GPU address into the table slot the shared layout recorded.
+
+Measured on the same world, same width, both arms, 600 frames of counters:
+
+```text
+                        Metal 3      Metal 4 (before)   Metal 4 (after)
+chain can draw            yes              no                 yes
+Vitrail stopped           no              yes                  no
+wide pipelines              1               0                   1
+pipeline identities       345             167                 345
+pipeline keys             345             167                 345
+compiles                  736              --                 736
+drawable mean BGRA   (44,62,55,0)         --          (44,62,55,0)
+picture mean BGRA    (53,60,42,0)         --          (53,60,42,0)
+```
+
+Both readback roads agree with the reference arm to the byte on the 5x5 grid of a 2560x1440 frame, the program set
+matches at 345 identities and 736 compiles, and the arm's log carries no error of its own - the three MSL failures
+in it are the cold probe's own negative tests. The differences that remain are the registered ones and section 70's
+exclusions: attachment traffic, one native encoder per logical pass, and far fewer per-resource binding calls
+because one table slot now stands for a whole set (82,175 buffer binds against 111,340). The rung below was re-run
+on both arms to check that the direct path did not move, and it did not: `ComplementaryReimagined_r5.9.1` reads
+**334 pipeline identities and 714 compiles on both arms**, no wide pipeline in either log, both chains drawn, and
+the same picture inside a temporal pack's cross-launch tolerance. MakeUp is direct-only by the same argument and
+its previous rung reading stands.
+
+So the ladder is **MakeUp PASS, Complementary PASS, Photon PASS**, and section 67 no longer stops it. What Photon's
+pass does not say is that its frame is *right*: the readback grid is a 25-sample mean of a temporal pack across two
+process launches, which section 116 forbids reading as a regression test. It says the pack compiles, draws and
+presents with the reference arm's program set and the reference arm's gross picture.
+
+**What this leaves open.** The wide path is one wide pipeline deep. Nothing else in the ladder is wide, so its
+table sizing, its `ensureArgumentBuffers` order and its per-artifact buffer lifetime have one real-device reading
+behind them and no second pack; Vitrail's `wide-resources-contract` fixture, which drives **thirty-three** sampled
+images through a single pipeline, is the one that would test the shape harder, and it has not been run on this
+path. And the argument-buffer writes are not deduplicated - every binding write re-encodes into the buffer, which
+is correctness-first and section 50's order, not the finished shape.

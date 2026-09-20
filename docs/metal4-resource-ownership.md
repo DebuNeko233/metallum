@@ -33,6 +33,7 @@ Two rules run through every row:
 | `Metal4ComputePipeline` (the handle a pack holds) | `Metal4ExecutionState.compileCompute` | the caller (a pack) | until the caller closes it | `Metal4ComputePipeline.close()`, which hands its reference to the state back through `MetalDevice.queueResourceRelease` |
 | `MTLDepthStencilState` | `Metal4CompilationContext.depthStencilState` | the compilation context | keyed by compare and write | `Metal4ExecutionState.close()` |
 | `Metal4CompiledRenderPipeline` (native pipelines + key) | `Metal4PipelineCompiler.compile` | the compilation context | cached per `RenderPipeline`; a profile mismatch retires it | `clearCachesAfterGpuCompletion()`, via retirement |
+| `MTLArgumentEncoder` (one per descriptor set per stage, wide pipelines only) | `Metal4CompiledRenderPipeline.createArgumentBuffers`, from the stage's own function | the artifact | as long as the artifact, which is what makes the encoded length available to every pass that draws the pipeline | `Metal4CompiledRenderPipeline.close()`, with the two pipeline states |
 | the render pipeline state's cached depth-stencil state | the compilation context (shared) | the compilation context | as long as the context | `Metal4ExecutionState.close()` - **not** by the artifact, which is why an artifact's `close()` does not touch it |
 
 ## The frame's objects
@@ -44,6 +45,7 @@ Two rules run through every row:
 | `MTL4ComputeCommandEncoder` (one per dispatch) | `Metal4FrameEncoder.dispatchEncoder` | the frame encoder | **one per table-binding dispatch**, ended where it is encoded | `endDispatchEncoder` files `close` on the slot's destruction queue |
 | `MTL4ArgumentTable` (per dispatch, per clear) | `Metal4ComputePipeline.newTable`, `MTL4FrameEncoder.clearStorageTexture` | the frame encoder | one per dispatch and per clear - never re-pointed and handed over twice | `queueForDestroy(table::close)`, run when the slot completes |
 | `MTL4ArgumentTable` (the present's) | `Metal4FrameEncoder.presentTable()` | the frame encoder | one per frame encoder | `Metal4FrameEncoder.close()` |
+| `MTLBuffer` (the argument buffers, wide pipelines only) | `Metal4RenderPass.bindArgumentBuffer` | **the pass that fills it**, one per descriptor set per stage, made when a wide pipeline is set | the buffer is read when the frame's command buffer runs, which is after the pass has ended | `queueForDestroy(() -> ObjC.release(...))`, filed where it is made, so the slot's completion is the proof |
 | `MTL4ResidencySet` | `Metal4FrameEncoder` (first `useResource`) | the frame encoder | the session's; committed and attached once | `Metal4FrameEncoder.close()` |
 | `MTL4StorageTexturePipelines` (the zeroing kernels) | `Metal4FrameEncoder`'s constructor | the frame encoder | the encoder's | `Metal4FrameEncoder.close()` |
 | `MetalTransientMemory` (staging arena) | the frame encoder's constructor | the frame encoder | the encoder's | `Metal4FrameEncoder.close()`, after the deferred releases |
@@ -101,3 +103,11 @@ MEASURED**, and the next session that can be quit by hand closes it.
   the residency set, the storage pipelines and the compilation caches are all owned by the frame encoder or the
   execution state, so a second device in one process gets its own. The one static state left in the path is the
   probe's own (`MTL4Probe`, `MTLBuiltinPipelines`), which no session frame path uses.
+- **the wide path splits one object's lifetime across two owners, deliberately** (added with the argument-buffer
+  binding path): the `MTLArgumentEncoder` belongs to the artifact, because the encoded length is the shader's own
+  layout and every pass that draws the pipeline needs it; the `MTLBuffer` it writes belongs to the pass, because
+  the pass's bindings are its contents. The pass drops its map when the pipeline's artifact changes - a buffer
+  made for another layout is the wrong length - and does not close the buffers there, because at that moment the
+  GPU may still be reading them; they are filed with the frame where they are made. The artifact releases the
+  encoders with its pipeline states, which is why an artifact's `close()` now touches two kinds of object. Both
+  rows are one real-device reading deep: `deferred4` is the only wide pipeline the ladder has.
