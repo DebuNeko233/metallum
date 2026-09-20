@@ -399,6 +399,22 @@ public final class MTLBuiltinPipelines {
      */
     public static MemorySegment buildPipelineForProbe(final String mslSource, final String vertexEntry,
                                                       final String fragmentEntry, final long[] colorFormats) {
+        return buildPipelineForProbe(mslSource, vertexEntry, fragmentEntry, colorFormats,
+                MTLPixelFormat.Invalid.value);
+    }
+
+    /**
+     * The same, with a depth attachment format the pass will carry.
+     * <p>
+     * A pipeline that declares a depth format is the whole of what makes {@code setDepthStencilState:} and a
+     * depth compare observable: the format is what the pass is told to expect, and a state set on a pass whose
+     * pipeline declared none is a call the driver has nothing to apply. The depth format goes through
+     * {@code setDepthAttachmentPixelFormat:} and the stencil format stays invalid, because the engine does not
+     * carry stencil yet.
+     */
+    public static MemorySegment buildPipelineForProbe(final String mslSource, final String vertexEntry,
+                                                      final String fragmentEntry, final long[] colorFormats,
+                                                      final long depthFormat) {
         MemorySegment vertexFunction = device.newFunction(mslSource, vertexEntry);
         MemorySegment fragmentFunction = device.newFunction(mslSource, fragmentEntry);
         if (ObjC.isNil(vertexFunction) || ObjC.isNil(fragmentFunction)) {
@@ -413,12 +429,21 @@ public final class MTLBuiltinPipelines {
                 descriptor.setColorAttachmentFormat(slot, colorFormats[slot]);
                 descriptor.disableBlending(slot, MTLColorWriteMask.All.value);
             }
-            descriptor.setDepthStencilFormats(MTLPixelFormat.Invalid.value, MTLPixelFormat.Invalid.value);
+            descriptor.setDepthStencilFormats(depthFormat, MTLPixelFormat.Invalid.value);
             pipeline = device.newRenderPipelineState(descriptor);
         }
         ObjC.release(vertexFunction);
         ObjC.release(fragmentFunction);
         return pipeline;
+    }
+
+    /**
+     * One cached depth-stencil state, for a smoke that needs a compare function and a write decision rather than
+     * the always-pass state the engine's clears use.
+     */
+    public static MemorySegment depthStencilStateForProbe(final MTLCompareFunction compareFunction,
+                                                          final boolean writeDepth) {
+        return ensureDepthStencilState(compareFunction, writeDepth);
     }
 
     public static MemorySegment ensureClearPipeline(final long colorFormat, final long depthFormat, final boolean writeColor) {

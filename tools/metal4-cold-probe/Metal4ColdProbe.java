@@ -36,6 +36,7 @@ import java.util.Optional;
  *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 multiTarget=&lt;bool&gt; multiTargetReason=&lt;text&gt;
+ *                 depthDraw=&lt;bool&gt; depthDrawReason=&lt;text&gt;
  *                 layout=&lt;bool&gt; layoutReason=&lt;text&gt;
  *                 copy=&lt;bool&gt; copyReason=&lt;text&gt;
  *                 depth=&lt;bool&gt; depthReason=&lt;text&gt;
@@ -201,6 +202,8 @@ public final class Metal4ColdProbe {
         String indirectReason = "-";
         boolean multiTarget = false;
         String multiTargetReason = "-";
+        boolean depthDraw = false;
+        String depthDrawReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -234,6 +237,14 @@ public final class Metal4ColdProbe {
             multiTarget = makeAndSubmit && MTL4Probe.canDrawMultipleTargets(device);
             if (!multiTarget) {
                 multiTargetReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The depth half a depth attachment alone cannot say: two triangles at known depths, one compare
+            // function, one write, and the overlap read back as the winner's colour AND the winner's depth. A
+            // pass that merely carries a depth attachment passes the clear smoke; a pass whose compare does
+            // nothing paints the whole target with the later draw.
+            depthDraw = makeAndSubmit && MTL4Probe.canDrawWithDepth(device);
+            if (!depthDraw) {
+                depthDrawReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The new model's core: a whole layout bound through one table a stage - a vertex buffer with its
             // stride and a uniform on one stage, a uniform, a texture and a sampler on the other - then a draw,
@@ -338,6 +349,8 @@ public final class Metal4ColdProbe {
                     + " attachmentsReason=" + attachmentsReason.replace(' ', '_')
                     + " multiTarget=" + multiTarget
                     + " multiTargetReason=" + multiTargetReason.replace(' ', '_')
+                    + " depthDraw=" + depthDraw
+                    + " depthDrawReason=" + depthDrawReason.replace(' ', '_')
                     + " layout=" + layout
                     + " layoutReason=" + layoutReason.replace(' ', '_')
                     + " copy=" + copy

@@ -401,6 +401,15 @@ for needle, why in (
      "the driver does not count the multi-target draw smoke's failures"),
     ("if (( multi_target_failures > 0 )); then",
      "the driver counts the multi-target draw smoke's failures and does not fail the run on them"),
+    # The depth DRAW smoke, counted apart from the depth clear: a pass that carries a depth attachment and
+    # clears it says nothing about a compare function or a write.
+    ('+ " depthDraw=" + depthDraw', "the harness does not print the depth draw smoke's answer"),
+    ('+ " depthDrawReason=" + depthDrawReason', "the harness does not print why the depth draw smoke failed"),
+    ("MTL4Probe.canDrawWithDepth(device)", "the harness never asks the depth draw smoke"),
+    ("depth_draw_failures=\"$(grep -c ' depthDraw=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the depth draw smoke's failures"),
+    ("if (( depth_draw_failures > 0 )); then",
+     "the driver counts the depth draw smoke's failures and does not fail the run on them"),
 ):
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
@@ -453,6 +462,64 @@ for needle, why in (
                                "not say which pass"),
 ):
     if needle not in engine_probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+if "public static boolean canDrawWithDepth(" not in engine_probe_source:
+    raise SystemExit("cold-probe harness: the depth draw smoke is gone, so the harness's depthDraw field would "
+                     "report a call that is not there")
+depth_probe = engine_probe_source[engine_probe_source.index("public static boolean canDrawWithDepth("):]
+depth_probe = depth_probe[:depth_probe.index("private static float[] depthClearColor()")]
+for needle, why in (
+    ("MTLBuiltinPipelines.depthStencilStateForProbe(MTLCompareFunction.Less, true)",
+     "the depth smoke no longer asks for a less-than compare with writing enabled, so a depth buffer that "
+     "rejected everything or wrote nothing would pass it"),
+    ("setDepthStencilState(depthState)",
+     "the depth smoke never assigns the depth-stencil state to the encoder, so the compare it asks for is "
+     "never applied"),
+    ("new MTL4RenderEncoder.Depth(depth, 1.0)", "the depth smoke's pass carries no depth attachment"),
+    ("DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);\n            "
+     "DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 3L, 3L);",
+     "the depth smoke no longer draws the near triangle before the far one, and the order is what makes the "
+     "overlap a test of the compare rather than of the draw order"),
+    ("MTLTexture.bytes(target, pixel, 4L, 8L, 32L, 1L, 1L);",
+     "the overlap pixel is not the one inside both triangles - the failure this smoke was first written with, "
+     "which reported a depth compare that had never been asked to reject anything"),
+    ("float overlapDepth = pixel.get(JAVA_FLOAT, 0L);",
+     "the depth buffer is not read at the overlap, so a compare that rejected the later draw without writing "
+     "the winner would pass"),
+    ("float farDepth = pixel.get(JAVA_FLOAT, 0L);",
+     "the depth buffer is not read where only the far triangle is, so a pass whose compare rejected everything "
+     "would pass"),
+    ("MTLPixelFormat.Depth32Float.value)",
+     "the depth smoke's pipeline declares no depth format, and a pipeline that declares none has no depth test "
+     "to apply whatever state the encoder is given"),
+):
+    if needle not in depth_probe:
+        raise SystemExit("cold-probe harness: " + why)
+if "releaseIfPresent(depthState);" in depth_probe:
+    raise SystemExit("cold-probe harness: the depth smoke releases the depth-stencil state, which is cached and "
+                     "shared with the engine's own clears - measured as a SIGSEGV inside objc_msgSend with the "
+                     "selector `release` on the next probe of a warm process, which is the fault only the "
+                     "repeated-probe population can see")
+if "The depth-stencil state is NOT released" not in depth_probe:
+    raise SystemExit("cold-probe harness: the reason the depth-stencil state is not released is not written "
+                     "down, so the next reader will release it again")
+# And the state itself: the compare and the write decision have to be the caller's, all the way to the
+# descriptor. A probe whose state silently wrote nothing would pass a smoke that only reads colour back.
+builtin = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "MTLBuiltinPipelines.java")
+if not builtin.is_file():
+    raise SystemExit("cold-probe harness: MTLBuiltinPipelines.java is gone, so the probe has no built-in "
+                     "pipelines and no depth-stencil state factory")
+builtin_source = builtin.read_text(encoding="utf-8")
+for needle, why in (
+    ("return ensureDepthStencilState(compareFunction, writeDepth);",
+     "the probe's depth-stencil state factory does not forward the caller's compare and write decision"),
+    ("descriptor.depthWriteEnabled(writeDepth);",
+     "the depth-stencil state is built without the write decision, so a caller asking for depth writes gets a "
+     "state that writes nothing"),
+    ("descriptor.depthCompareFunction(compareOp);",
+     "the depth-stencil state is built without the caller's compare function"),
+):
+    if needle not in builtin_source:
         raise SystemExit("cold-probe harness: " + why)
 if "EXPECTED_MRT_PIXELS = {" not in engine_probe_source:
     raise SystemExit("cold-probe harness: the multi-target smoke has no table of the values its slots are "

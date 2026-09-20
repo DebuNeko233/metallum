@@ -26,6 +26,7 @@ import com.metallum.mtl.MTLBuffer;
 import com.metallum.mtl.MTLPrimitiveType;
 
 import com.metallum.mtl.MTLBuiltinPipelines;
+import com.metallum.mtl.MTLCompareFunction;
 
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
@@ -1657,6 +1658,226 @@ public final class MTL4Probe {
     private static float[] mrtClearColor() {
         return new float[]{MRT_CLEAR_PIXEL[0] / 255.0f, MRT_CLEAR_PIXEL[1] / 255.0f,
                 MRT_CLEAR_PIXEL[2] / 255.0f, MRT_CLEAR_PIXEL[3] / 255.0f};
+    }
+
+    /** The two depths the depth smoke draws at, and what each triangle's colour is. */
+    private static final float NEAR_DEPTH = 0.25f;
+    private static final float FAR_DEPTH = 0.75f;
+    /** What the depth smoke's colour target is cleared to, so an untouched pixel is a known colour. */
+    private static final int[] DEPTH_CLEAR_PIXEL = {0, 0, 0, 255};
+    /** What the near triangle writes where it wins, and what the far one writes where nothing occludes it. */
+    private static final int[] NEAR_PIXEL = {255, 0, 0, 255};
+    private static final int[] FAR_PIXEL = {0, 255, 0, 255};
+
+    /**
+     * The two triangles the depth smoke draws, and the order they are drawn in.
+     * <p>
+     * The first three vertices are the near, lower-left triangle and the next three the far one, which covers
+     * the whole target. The <strong>far</strong> triangle is drawn <em>second</em> on purpose: the near one has
+     * already written 0.25 where they overlap, so a depth test rejects the later 0.75 fragments there and the
+     * overlap stays red - and a pass whose depth state did nothing would paint the whole target green. That is
+     * the difference this smoke reads, and it is why the order is not the convenient one.
+     */
+    private static final String DEPTH_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct DepthOut {
+              float4 position [[position]];
+              float4 color;
+            };
+
+            vertex DepthOut metallum_depth_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 nearCorners[3] = {
+                float2(-1.0,  1.0),
+                float2( 0.0,  1.0),
+                float2(-1.0, -1.0)
+              };
+              const float2 farCorners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+
+              bool far = vertexId >= 3;
+              uint corner = far ? vertexId - 3 : vertexId;
+              float2 xy = far ? farCorners[corner] : nearCorners[corner];
+              float z = far ? 0.75 : 0.25;
+
+              DepthOut out;
+              out.position = float4(xy, z, 1.0);
+              out.color = far ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+              return out;
+            }
+
+            fragment float4 metallum_depth_probe_fs(DepthOut in [[stage_in]]) {
+              return in.color;
+            }
+            """;
+
+    /**
+     * The depth attachment with a compare function and a write decision: two triangles, one depth buffer, and
+     * the winner read back together with the depth it left.
+     * <p>
+     * The plan's depth smoke is "two overlapping triangles, known depths, known expected winner", and what makes
+     * it a measurement rather than a call count is the draw order and the two numbers read at the same pixel:
+     * the overlap must read the near triangle's colour <em>and</em> the near triangle's depth, which says the
+     * test rejected the later fragment and the write recorded the winner. A second pixel outside the near
+     * triangle's extent reads the far triangle's colour and depth, so a depth buffer that rejected everything
+     * fails here too - the two readings are a pair and neither alone can pass.
+     * <p>
+     * The depth attachment is cleared to 1.0 before the draws, so both triangles pass the initial test and the
+     * only thing that can reject one is the other.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a depth compare and a depth write decide which of two triangles is seen
+     */
+    public static boolean canDrawWithDepth(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("depthDraw", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment depth = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MemorySegment depthState = MemorySegment.NULL;
+        MTL4RenderEncoder pass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("depthDraw", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            target = newTarget(device);
+            depth = newDepthTarget(device);
+            if (ObjC.isNil(target) || ObjC.isNil(depth)) {
+                return failed("depthDraw", "the colour target or the depth attachment came back nil from"
+                        + " newTextureWithDescriptor:");
+            }
+
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(DEPTH_MSL, "metallum_depth_probe_vs",
+                    "metallum_depth_probe_fs", new long[]{MTLPixelFormat.RGBA8Unorm.value},
+                    MTLPixelFormat.Depth32Float.value);
+            if (ObjC.isNil(pipeline)) {
+                return failed("depthDraw", "a pipeline declaring a Depth32Float attachment came back nil, so this"
+                        + " device's Metal 4 pipeline objects cannot carry a depth format");
+            }
+            depthState = MTLBuiltinPipelines.depthStencilStateForProbe(MTLCompareFunction.Less, true);
+            if (ObjC.isNil(depthState)) {
+                return failed("depthDraw", "newDepthStencilStateWithDescriptor: answered nil for a less-than"
+                        + " compare with writing enabled");
+            }
+
+            BEGIN.send(buffer, allocator);
+            pass = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target, depthClearColor())},
+                    new MTL4RenderEncoder.Depth(depth, 1.0), "the depth draw");
+            if (pass == null) {
+                END.send(buffer);
+                return false;
+            }
+
+            SET_RENDER_PIPELINE_STATE.send(pass.encoder(), pipeline);
+            if (!pass.setDepthStencilState(depthState)) {
+                END.send(buffer);
+                return failed("depthDraw", "the pass's encoder did not answer setDepthStencilState: for a"
+                        + " less-than compare with writing enabled");
+            }
+            // Near first, far second - see DEPTH_MSL: the order is what makes the overlap a test of the depth
+            // compare rather than of the draw order.
+            DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+            DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 3L, 3L);
+            pass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("depthDraw", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " pass never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // (8, 32) is inside both triangles. The near one is the lower-left triangle whose interior is
+                // x in [-1, 0], y <= 1 and y >= 2x + 1 - so its own middle-height pixel is on the overlap,
+                // while the pixel below it is the far triangle's alone. Getting this wrong is how the first
+                // version of this smoke failed: it read (8, 56), which is inside the far triangle only, and
+                // reported a depth compare that had never been asked to reject anything.
+                MTLTexture.bytes(target, pixel, 4L, 8L, 32L, 1L, 1L);
+                if (!matches(pixel, NEAR_PIXEL)) {
+                    return failed("depthDraw", "the overlap reads " + describe(pixel) + " where the near triangle"
+                            + " drew " + describe(NEAR_PIXEL) + " first, so the later far draw was not rejected by"
+                            + " the depth compare");
+                }
+                MTLTexture.bytes(depth, pixel, 4L, 8L, 32L, 1L, 1L);
+                float overlapDepth = pixel.get(JAVA_FLOAT, 0L);
+                if (!(Math.abs(overlapDepth - NEAR_DEPTH) <= 0.0001f)) {
+                    return failed("depthDraw", "the overlap's depth reads " + overlapDepth + " where the near"
+                            + " triangle was drawn at " + NEAR_DEPTH + ", so the winning fragment did not write"
+                            + " the depth buffer");
+                }
+
+                // (48, 16) is outside the near triangle, so it says the far draw happened at all.
+                MTLTexture.bytes(target, pixel, 4L, 48L, 16L, 1L, 1L);
+                if (!matches(pixel, FAR_PIXEL)) {
+                    return failed("depthDraw", "the far-only pixel reads " + describe(pixel) + " where the far"
+                            + " triangle drew " + describe(FAR_PIXEL) + ", so the draw that the overlap rejected"
+                            + " was rejected everywhere or never drew");
+                }
+                MTLTexture.bytes(depth, pixel, 4L, 48L, 16L, 1L, 1L);
+                float farDepth = pixel.get(JAVA_FLOAT, 0L);
+                if (!(Math.abs(farDepth - FAR_DEPTH) <= 0.0001f)) {
+                    return failed("depthDraw", "the far-only pixel's depth reads " + farDepth + " where the far"
+                            + " triangle was drawn at " + FAR_DEPTH + ", so its fragment did not write the depth"
+                            + " buffer");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("depthDraw", "describing or reading back the depth draw threw " + threw);
+        } finally {
+            if (pass != null) {
+                pass.close();
+            }
+            releaseIfPresent(pipeline);
+            // The depth-stencil state is NOT released, and that is the whole difference between it and the
+            // pipeline above: buildPipelineForProbe makes a fresh object per call, while
+            // MTLBuiltinPipelines.depthStencilStateForProbe hands back a cached one that the engine's own
+            // clears use for the life of the process. Measured: releasing it here crashed the SECOND probe of
+            // a warm process inside objc_msgSend with the selector `release` and a receiver that was already a
+            // freed pointer - a fault only the repeated-probe population can see.
+            releaseIfPresent(depth);
+            releaseIfPresent(target);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** The depth smoke's colour clear, as the descriptor's four components. */
+    private static float[] depthClearColor() {
+        return new float[]{DEPTH_CLEAR_PIXEL[0] / 255.0f, DEPTH_CLEAR_PIXEL[1] / 255.0f,
+                DEPTH_CLEAR_PIXEL[2] / 255.0f, DEPTH_CLEAR_PIXEL[3] / 255.0f};
     }
 
     /**
