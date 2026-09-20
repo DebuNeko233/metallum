@@ -288,4 +288,24 @@ for needle, why in (
     if needle not in comparison:
         raise SystemExit(why)
 
+# And the target the world is really drawn at, which is the one thing the arms of a session can share
+# while the whole session sits on a target the baseline never used. Measured: a JFR crash left the
+# display on another fullscreen mode and every later run inherited it, so a session collected two arms
+# of 1760x990 where the baseline is 1056x660 and every one of its numbers was about another frame -
+# and the comparison above could not see it, because that pair agreed with each other.
+harness = (ROOT / "tools/run-vitrail-performance.sh").read_text(encoding="utf-8")
+for needle, why in (
+    ("--expect-target) expect_target=\"$2\"; shift 2 ;;",
+     "the harness has no way to be told which render target a session must be measured on"),
+    ('if [[ -n "$expect_target" ]]; then',
+     "the target guard does not run when a target was asked for, so a window on another target passes"),
+    ('elif [[ "$drawn_target" != "$expect_target" ]]; then',
+     "the harness reads the size the world was drawn at and does not compare it with the one asked for"),
+    ("The world renders at [0-9]*x[0-9]*",
+     "the target is not read from the log's own line, which is the only place that says which size the "
+     "world was really drawn at"),
+):
+    if needle not in harness:
+        raise SystemExit(why)
+
 print("Vitrail performance harness contract: PASS")

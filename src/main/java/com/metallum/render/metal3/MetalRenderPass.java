@@ -933,6 +933,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             );
         }
         long texelCount = texelByteLength / pixelSize;
+        MetalFrameProbe.texelViewCreated();
         MemorySegment texelTexture = MTLTexture.newBufferTextureView(
                 texelBuffer.nativeHandle(), pixelFormat, texelSlice.offset(), texelCount, texelByteLength
         );

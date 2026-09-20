@@ -179,6 +179,7 @@ public final class MTLCommandBuffer {
 
         try (AutoreleasePool _ = AutoreleasePool.push()) {
             MTLRenderCommandEncoder encoder;
+            MetalFrameProbe.passDescriptorCreated();
             try (MTLRenderPassDescriptor renderPass = new MTLRenderPassDescriptor()) {
                 for (int index = 0; index < colorTextures.length; index++) {
                     MemorySegment colorTexture = colorTextures[index];

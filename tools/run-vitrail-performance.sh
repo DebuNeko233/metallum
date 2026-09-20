@@ -46,6 +46,7 @@ fresh_world=true
 no_pack=false
 fixture_pack=false
 fullscreen=false
+expect_target=""
 
 usage() {
 	cat >&2 <<'USAGE'
@@ -80,6 +81,14 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          a separate setting from the render scale because it moves a different
                          half of the frame: shadows are geometry and vertex work, which the render
                          scale does not touch.
+  --expect-target WxH    refuse a run whose world is not drawn at this size, read from the log's own
+                         "The world renders at WxH" line. The render target is not pinned by anything
+                         else: the display has several fullscreen modes, the game takes the one the
+                         display is already in, and a crashed client can leave it on another - measured,
+                         one JFR crash moved every later run from 1056x660 to 1760x990 and two arms of
+                         one session were measured on a target 2.2x the baseline's. Two arms that agree
+                         with each other are still not comparable with the baseline, which the compare
+                         script cannot see because it only compares the arms with each other.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --settle S             how long to keep drawing between the frame that says the chain is up and the
@@ -116,6 +125,7 @@ while [[ $# -gt 0 ]]; do
 		--renderscale) renderscale="$2"; shift 2 ;;
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
 		--fullscreen) fullscreen=true; shift ;;
+		--expect-target) expect_target="$2"; shift 2 ;;
 		--no-pack) no_pack=true; shift ;;
 		--fixture) fixture_pack=true; shift ;;
 		--at) aim_args+=(--at "$2"); shift 2 ;;
@@ -509,6 +519,21 @@ for run in "${runs[@]}"; do
 		if [[ "$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)" != "$pack_fingerprint" ]]; then
 			echo "Run '$name' had its pack selection changed while it was counting (pack.txt was $([ "$enabled" == true ] && echo 'enabled for '"$pack_name" || echo 'disabled') when the run started): another writer owns that file, so this window measured whatever the change left behind" >&2
 			scene_bad=1
+		fi
+
+		# And the render target, where the caller asked for one. The world's drawn size is the only thing
+		# that says which target a window measured, and the display's mode is machine state that a crash
+		# can move: without this a session can collect two arms that agree with each other on a target the
+		# baseline never used, and every number in them is about a different frame.
+		if [[ -n "$expect_target" ]]; then
+			drawn_target="$(grep -o 'The world renders at [0-9]*x[0-9]*' "$run_dir/latest.log" | tail -1 | sed 's/.*renders at //')"
+			if [[ -z "$drawn_target" ]]; then
+				echo "Run '$name' never said what size it drew the world at, so the target it measured cannot be checked against $expect_target" >&2
+				scene_bad=1
+			elif [[ "$drawn_target" != "$expect_target" ]]; then
+				echo "Run '$name' drew the world at $drawn_target and not at $expect_target: the display's mode is machine state, a crash can move it, and a window on another target is not comparable with the baseline - restore the display mode and run again" >&2
+				scene_bad=1
+			fi
 		fi
 
 		if [[ "${scene_bad:-0}" == 0 ]]; then

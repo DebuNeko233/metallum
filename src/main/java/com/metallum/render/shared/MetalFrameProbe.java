@@ -264,6 +264,18 @@ public final class MetalFrameProbe {
     private static long argBufferDraws;
 
     /**
+     * Texel-buffer texture views made, and native render-pass descriptors made.
+     * <p>
+     * The first is the Phase 6 question in its smallest form: a view is a native object created per descriptor
+     * push and released through the destruction queue, so a workload that uses no texel buffer at all answers
+     * the phase with a nought and needs no cache. The second is the Phase 5 question, and it is recorded rather
+     * than inferred because it is meant to equal the render encoders opened and a number that only equals
+     * another number is worth reading from the source it is claimed to equal.
+     */
+    private static long texelViews;
+    private static long passDescriptors;
+
+    /**
      * Why a logical render pass could not join the native render encoder already open, counted once per
      * attempt so that the share of reuses is read and not assumed.
      * <p>
@@ -434,6 +446,24 @@ public final class MetalFrameProbe {
         }
 
         argBufferDraws++;
+    }
+
+    /** One texel-buffer texture view created for a descriptor push. */
+    public static void texelViewCreated() {
+        if (!armed()) {
+            return;
+        }
+
+        texelViews++;
+    }
+
+    /** One native render-pass descriptor created, which is one render encoder being opened. */
+    public static void passDescriptorCreated() {
+        if (!armed()) {
+            return;
+        }
+
+        passDescriptors++;
     }
 
     /** A logical render pass took the native render encoder already open. */
@@ -898,11 +928,12 @@ public final class MetalFrameProbe {
                 percentile(gpuTimes, gpuSamples, 0.99),
                 percentile(gpuTimes, gpuSamples, 1.00)
         );
-        if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0) {
+        if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0
+                || texelViews > 0 || passDescriptors > 0) {
             Metallum.LOGGER.info(
-                    "frame-probe argbuffers passes={} layouts={} allocations={} allocationMiB={} "
+                    "frame-probe m3cost passes={} layouts={} allocations={} allocationMiB={} "
                             + "setCalls={} setSkipped={} textureWrites={} samplerWrites={} bufferWrites={} "
-                            + "useResourceCalls={} draws={}",
+                            + "useResourceCalls={} draws={} texelViews={} passDescriptors={}",
                     argBufferPasses,
                     argBufferLayouts,
                     argBufferAllocations,
@@ -913,7 +944,9 @@ public final class MetalFrameProbe {
                     argBufferSamplerWrites,
                     argBufferBufferWrites,
                     argBufferUseResourceCalls,
-                    argBufferDraws
+                    argBufferDraws,
+                    texelViews,
+                    passDescriptors
             );
         }
         if (encReuseAttempts > 0) {
@@ -1045,6 +1078,8 @@ public final class MetalFrameProbe {
         argBufferBufferWrites = 0;
         argBufferUseResourceCalls = 0;
         argBufferDraws = 0;
+        texelViews = 0;
+        passDescriptors = 0;
         encReuseAttempts = 0;
         encReuseReused = 0;
         encReuseNoEncoder = 0;

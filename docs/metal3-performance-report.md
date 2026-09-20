@@ -94,6 +94,133 @@ MAX_SUBMITS_IN_FLIGHT" condition is `p50 ~0 AND p95 << frame time`; the first ha
 does not, so this is back-pressure worth an A/B rather than a closed question - recorded here and taken
 in Phase 8's own turn, not now.
 
+## Phase 4 - Per-Pass Allocation Census (JFR, `run/m3-alloc`)
+
+The plan asks for a real allocation profiler before any counter, and one was armed
+(`-XX:StartFlightRecording=filename=/tmp/m3-alloc.jfr,settings=profile,dumponexit=true`), on the reference
+scene, as the first arm of a session.
+
+**The instrument crashed the client, and that is recorded rather than worked around.** The launch died
+with `Internal Error (signals_posix.cpp:1793) ... ShouldNotReachHere()` at 22.3 s elapsed, after the
+pack's first full frame and about twelve seconds of steady play - a JVM fault in the signal handler, not
+a Java exception and not this engine's code (the command line in `run/hs_err_pid33650.log` shows the
+recording armed). The crash wrote its own emergency recording, `run/hs_err_pid33650.jfr`, and that is
+what the profile below is read from: 3280 `jdk.ObjectAllocationSample` events over the whole 22 s, of
+which **918 fall inside the steady-state window** (first full frame to the crash, about 1600 frames).
+The second arm of that session never ran.
+
+**What the steady-state window says** (sampled weight, 3040.0 MB total):
+
+```
+class                                                      MB        %   samples
+int[]                                                 1037.80   34.14 %      173
+byte[]                                                 410.06   13.49 %      171
+long[]                                                 309.14   10.17 %       60
+java.lang.Object[]                                     168.58    5.55 %       28
+Sodium BlockRenderer lambda                            130.15    4.28 %       97
+com.mojang.serialization.DataResult$Success             94.86    3.12 %       39
+java.lang.ScopedValue$Snapshot                          75.79    2.49 %       30
+net.minecraft.nbt.CompoundTag                           58.61    1.93 %        6
+java.lang.ScopedValue$Carrier                           57.51    1.89 %       31
+java.util.HashMap                                       56.95    1.87 %       16
+Sodium ChunkVertexEncoder$Vertex                        54.82    1.80 %       42
+...
+com.mojang.blaze3d.util.TransientBlockAllocator         31.73    1.04 %        1
+com.mojang.blaze3d.buffers.GpuBufferSlice               15.52    0.51 %        7
+com.mojang.blaze3d.systems.CommandEncoder                12.14    0.40 %        4
+com.metallum.render.metal3.MetalRenderPass              10.26    0.34 %        3
+GpuBufferSlice[]                                         9.29    0.31 %        2
+MetalTransientMemory$TransientGpuBuffer                   6.23    0.21 %        3
+org.joml.Matrix4f                                        4.55    0.15 %        2
+```
+
+**Decision: REJECTED - the per-pass objects are not a CPU or GC hotspot.** `MetalRenderPass` - the
+object §39 puts at ~35 a frame and ~5000 a second, with its `ScissorState`, its three maps, its `BitSet`
+and its three cloned attachment arrays - is **0.34 per cent** of the steady-state allocation pressure,
+and its attachment arrays do not appear in the sampled set at all. `TextureViewAndSampler`, the record
+§41 proposes to stop allocating when a binding has not moved, **does not appear either**, so §41's
+candidate has no measured cost to remove. What the sample is dominated by is Sodium's meshing (`int[]`,
+`byte[]`, `long[]`, its vertex and lambda objects) and Mojang's own data structures, none of which this
+backend owns.
+
+**What would change this answer**: an allocation profile of the *whole* play window rather than the
+twelve seconds before a crash, and a JVM that can run the profiler. The sampling floor is the other
+limit and is stated: a class at 0.34 per cent is three samples, so the figure is an order of magnitude
+and not a precise share - which is all the decision needs, because a hotspot would be tens of per cent.
+
+**The instrument itself is now a known quantity**: JFR armed on this client (Temurin 25, macOS 27,
+FFM/ObjC) crashed it once out of one attempt, and the retry in `run/m3-census2` is recorded with its
+outcome. Nothing in this programme depends on it, because the counters it was meant to replace came in
+at no measurable cost.
+
+## Phase 5 - Native render-pass descriptor census (`run/m3-census2`, c1 and c2)
+
+```
+                        c1        c2
+passDescriptors:     21738     21744      (~36.2 a frame)
+encoders:            21615     21620      (the encoder ends of the same window)
+renderPasses:        21138     21144
+blit / compute / clear encoders:  3000 / 1800 / 600
+```
+
+**One descriptor per render encoder opened**, which is what §48 says it should be; the residual between
+opens and ends (about 122 over 600 frames) is the window's own boundary - an encoder still open when the
+line was written is counted as an open and not as an end.
+
+**Decision: REJECTED, on §49's own gate.** Reuse of one descriptor per `MetalCommandEncoder` is
+permitted only where the native allocation cost is *clearly visible in the CPU profile*, and it is not:
+the descriptor's Java side does not appear in the steady-state allocation profile of Phase 4, and its
+native side is one `alloc`/`release` pair per encoder open. What reuse would buy is 36 ObjC allocations
+a frame on a frame that is GPU-bound at 7.30 ms, and what it would cost is the whole reset contract of
+§50/§51 - every colour slot, both actions, the clear values, the depth attachment and the render-target
+size, with the 8-attachments-to-2 case pinned by a fixture - so that a stale slot cannot be read. The
+plan's gate is not met, and this candidate is not one of §88's completion requirements either.
+
+**The arms ran on another render target and the report says so**: 1760x990 for a 3200x1800 window,
+`loadedMiB` 202946.9 against the anchor's 93943.3, `gpuP50` 10.27 against 7.30. The two arms agree with
+each other (0.01 per cent on `loadedMiB`), and the counters read here are per-pass structural ones, so
+the answer stands - but the session is not a baseline and could not have been compared with one. The
+cause is recorded under Phase 4: the JFR crash left the display on another fullscreen mode.
+
+## Phase 6 - Texel-buffer texture view census (`run/m3-census`, c1 and c2)
+
+```
+texelViews:            0        0        (both arms, anchor target)
+```
+
+**Decision: NOT APPLICABLE.** §82's rule is that a nought ends the direction immediately: `Photon v1.3b`
+binds no texel buffer at all, so `createTexelBufferTexture` and its `MTLTexture.newBufferTextureView`
+never run on this pack and there is nothing to cache. The counter is a per-descriptor-push count of a
+structural event, so the zero is a property of the pack and not of the target it was measured on: the
+same nought appears in the sessions on the anchor target and, in the same session, beside the Phase 5
+arms on the other one.
+
+What remains is the *possibility* rather than the measurement, and it is named: a pack that binds a
+buffer as `TEXTURE_BUFFER` would create one view per descriptor push per pass, and §54/§55's cache (with
+a `backingGeneration` on `MetalGpuBuffer` so a `swapBacking` invalidates the key) is what it would need.
+No such pack is on this machine, so the candidate is closed as NOT APPLICABLE rather than built for a
+workload nobody has.
+
+## Phase 7 - Fence and encoder synchronisation
+
+**Decision: REJECTED - no evidence of significant cost; the conservative model is retained.** §83 makes
+exactly this a complete answer, and §57 gates any change on one of three pieces of evidence, none of
+which exists here:
+
+- **No GPU capture attributes cost to a fence.** The GPU trace this repository already has reads 13.65 s
+  of shader-core activity in a 14.04 s window - 97.3 per cent, every second between 0.99 and 1.03 - so
+  the card is saturated and there is no idle time in which a fence wait could be hiding.
+- **The pass table cannot supply the second**, because on this backend its rows are CPU encode time
+  (`MetalDevice.getTimestampNow()` is `System.nanoTime()`), so a gap between its stamps is not a GPU
+  wait and cannot be attributed to an encoder transition.
+- **No controlled A/B exists**, and one could not be read cleanly anyway: §60 forbids changing the fence
+  model and the hazard-tracking mode in the same change, so a trial would have to be fence-only with the
+  resources left `Untracked` - a shape that is safe to run but whose result would still need the
+  resource-dependency proof of §59 to be kept.
+
+The conservative model stays: 23 fence sites, `Untracked` resources, `updateFence` on the closing encoder
+and `waitForFence` on the next. Nothing about it was changed, and nothing about it is claimed.
+
 ## Candidate table
 
 | Candidate | Cost observed? | Candidate implemented? | Result | Decision |
@@ -101,10 +228,10 @@ in Phase 8's own turn, not now.
 | Argument-buffer allocation | yes: 2 native buffers a frame, 0.192 MiB a frame | no | measured; too small to justify an arena | **REJECTED** |
 | Render encoder churn | yes: 20928 of 66318 attempts, 31.6 % | no | every recreation is a colour-attachment change | **REJECTED** |
 | Argument encoder rebinding | yes: 14400 set calls against 1200 real changes | yes | calls 14400 to 1200 (-91.7 %), writes and bindings unchanged | **KEPT** (`e2a221d`) |
-| Per-pass allocations | not yet | no | | pending |
-| Render-pass descriptor | not yet | no | | pending |
-| Texel-buffer views | not yet | no | | pending |
-| Fence synchronisation | not yet | no | | pending |
+| Per-pass allocations | yes: profiled, `MetalRenderPass` is 0.34 % of allocation | no | not a CPU/GC hotspot | **REJECTED** |
+| Render-pass descriptor | yes: ~36 a frame, one per encoder opened | no | gate in §49 not met | **REJECTED** |
+| Texel-buffer views | yes: **0 a frame** | no | the pack uses no texel buffer | **NOT APPLICABLE** |
+| Fence synchronisation | no evidence of cost | no | GPU saturated 97.3 % in the trace | **REJECTED** |
 | Submit window | yes: p95 5.82 ms against a 7.30 ms frame | no | | pending |
 
 ## Phase 1 - Argument buffer allocation census (`run/m3-census`, c1 and c2)
