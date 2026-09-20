@@ -175,6 +175,22 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * Seven arguments after the receiver: three longs, the pointer, then three more longs.
+     * <p>
+     * It exists for Metal 4's indexed draw, whose index buffer is an address rather than a bound object:
+     * {@code drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:}
+     * takes three integers, a GPU address and three more integers, which is one argument short of the overload
+     * beside this one.
+     */
+    public void send(MemorySegment self, long a, long b, long c, MemorySegment d, long e, long f, long g) {
+        try {
+            handle.invokeExact(self, sel, a, b, c, d, e, f, g);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, long a, long b, long c, MemorySegment d, long e, long f, long g, long h) {
         try {
             handle.invokeExact(self, sel, a, b, c, d, e, f, g, h);

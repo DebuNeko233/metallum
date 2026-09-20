@@ -12,6 +12,7 @@ import com.metallum.mtl.MTLStorageMode;
 
 import com.metallum.mtl.MTLPixelFormat;
 
+import com.metallum.mtl.MTLCullMode;
 import com.metallum.mtl.MTLDevice;
 
 import com.metallum.mtl.MTLTextureDescriptor;
@@ -810,6 +811,59 @@ public final class MTL4Probe {
         }
     }
 
+    /** What the layout smoke's draw produces where the scissor lets it through: texture + tint + bias. */
+    private static final int[] EXPECTED_LAYOUT_PIXEL = {191, 128, 191, 255};
+
+    /**
+     * The colour the layout smoke's sampled source is cleared to. It is chosen so that every sum the shader adds
+     * is exact in eight bits: 0.25 + 0.5 is 0.75 and 0.25 + 0.25 is 0.5, so the expected pixel is the answer to
+     * the bindings and not to a rounding question. The first version used 128 as the base and expected 191 from
+     * 128/255 + 0.25, which is 0.75196 and lands on 192 - measured, and the reason these numbers are written
+     * down rather than picked.
+     */
+    private static final int[] LAYOUT_SOURCE_PIXEL = {64, 64, 191, 255};
+
+    /**
+     * The layout smoke's pipeline: a vertex stage that reads a vertex buffer and a uniform, and a fragment stage
+     * that samples a texture through a sampler and reads a second uniform.
+     * <p>
+     * Every one of the four bindings changes the answer, which is what makes the readback a reading of the whole
+     * table rather than of one slot: the texture is the base, the vertex-stage tint adds to red, the
+     * fragment-stage bias adds to green, and the vertices - positions and uvs - come out of the buffer. Drop any
+     * one of them and the expected pixel is a different one.
+     */
+    private static final String LAYOUT_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct LayoutProbeOut {
+              float4 position [[position]];
+              float2 uv;
+              float4 tint;
+            };
+
+            vertex LayoutProbeOut metallum_layout_probe_vs(
+              uint vertexId [[vertex_id]],
+              const device float4* vertices [[buffer(0)]],
+              constant float4& tint [[buffer(1)]]
+            ) {
+              LayoutProbeOut out;
+              out.position = float4(vertices[vertexId].xy, 0.0, 1.0);
+              out.uv = vertices[vertexId].zw;
+              out.tint = tint;
+              return out;
+            }
+
+            fragment float4 metallum_layout_probe_fs(
+              LayoutProbeOut in [[stage_in]],
+              constant float4& bias [[buffer(0)]],
+              texture2d<float> source [[texture(0)]],
+              sampler nearest [[sampler(0)]]
+            ) {
+              return source.sample(nearest, in.uv) + in.tint + bias;
+            }
+            """;
+
     /** What the four-attachment smoke's first pass clears its slots to: red, green, blue and white. */
     private static final int[][] EXPECTED_ATTACHMENTS = {
             {255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}, {255, 255, 255, 255}};
@@ -1003,6 +1057,265 @@ public final class MTL4Probe {
     private static float[] reclearedColor() {
         return new float[]{RECLEARED_PIXEL[0] / 255.0f, RECLEARED_PIXEL[1] / 255.0f,
                 RECLEARED_PIXEL[2] / 255.0f, RECLEARED_PIXEL[3] / 255.0f};
+    }
+
+
+    /**
+     * Whether a whole layout can be bound through one table a stage and drawn, which is the new model's core.
+     * <p>
+     * There is no per-resource setter on a Metal 4 encoder: a pass fills a table and assigns it for the stages
+     * that read it. This smoke is that shape end to end - a vertex table carrying a vertex buffer <em>with its
+     * attribute stride</em> and a vertex-stage uniform, a fragment table carrying a fragment-stage uniform, a
+     * texture and a sampler, both assigned at their own stages, one pipeline, one draw - and the pixel read back
+     * is one only the whole chain can produce: the texture is the base, the vertex uniform adds to red, the
+     * fragment uniform adds to green, and the vertices themselves come out of the buffer (devices 191, 128, 191
+     * and 255, each of which changes if one binding is missing).
+     * <p>
+     * Two more commands are exercised with a reading rather than a call count: a scissor rectangle set to the
+     * left half, so a pixel inside it holds the colour and a pixel outside it holds the pass's clear (which is
+     * what makes the scissor a measurement), and an explicit cull mode, whose <em>effect</em> is not asserted
+     * here - that needs a deliberately back-facing triangle, which is a milestone of its own - but whose call
+     * has to be accepted.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether a two-stage, four-binding layout draws the pixel that only it can produce
+     */
+    public static boolean canBindALayout(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("layout", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment target = MemorySegment.NULL;
+        MemorySegment source = MemorySegment.NULL;
+        MemorySegment sampler = MemorySegment.NULL;
+        MemorySegment vertexPipeline = MemorySegment.NULL;
+        MTLBuffer vertices = null;
+        MTLBuffer tint = null;
+        MTLBuffer bias = null;
+        MTLBuffer clearUniform = null;
+        MTL4ArgumentTable vertexTable = null;
+        MTL4ArgumentTable fragmentTable = null;
+        MTL4ArgumentTable clearTable = null;
+        MTL4RenderEncoder clearPass = null;
+        MTL4RenderEncoder layoutPass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("layout", "a Metal 4 queue, allocator, command buffer or shared event came back nil");
+            }
+
+            target = newTarget(device);
+            source = newTarget(device);
+            if (ObjC.isNil(target) || ObjC.isNil(source)) {
+                return failed("layout", "one of the two " + TARGET_SIZE + "x" + TARGET_SIZE + " RGBA8 textures came"
+                        + " back nil: target=" + !ObjC.isNil(target) + " source=" + !ObjC.isNil(source));
+            }
+
+            try (MTLSamplerDescriptor descriptor = MTLSamplerDescriptor.create()) {
+                descriptor.minFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.magFilter(MTLSamplerMinMagFilter.Nearest);
+                descriptor.supportArgumentBuffers(true);
+                sampler = device.newSamplerState(descriptor);
+            }
+            if (ObjC.isNil(sampler)) {
+                return failed("layout", "newSamplerStateWithDescriptor: answered nil, so the layout's sampler has"
+                        + " nothing to bind");
+            }
+
+            // Three vertices of position and uv, so the draw's geometry comes out of the buffer and not out of a
+            // literal in the shader.
+            vertices = device.newBuffer(VERTEX_LENGTH, STORAGE_SHARED);
+            if (vertices.gpuAddress() == 0L) {
+                return failed("layout", "the vertex buffer has no GPU address");
+            }
+            MemorySegment vertexData = vertices.contents().reinterpret(VERTEX_LENGTH);
+            float[][] corners = {{-1.0f, 1.0f, 0.5f, 0.5f}, {3.0f, 1.0f, 0.5f, 0.5f},
+                                 {-1.0f, -3.0f, 0.5f, 0.5f}};
+            for (int corner = 0; corner < corners.length; corner++) {
+                for (int part = 0; part < corners[corner].length; part++) {
+                    vertexData.set(JAVA_FLOAT, corner * 16L + part * 4L, corners[corner][part]);
+                }
+            }
+
+            // The vertex-stage tint adds to red; the fragment-stage bias adds to green. Each one is a different
+            // component, so a binding that did not reach the shader is a different pixel rather than a dimmer one.
+            // The layout's own shaders read a float4 at offset 0; the builtin clear shader reads its colour at
+            // offset 32, because that struct carries a depth first. Two layouts, so the offset is a parameter.
+            tint = newUniform(device, 0.5f, 0.0f, 0.0f, 0.0f, 0L);
+            bias = newUniform(device, 0.0f, 0.25f, 0.0f, 0.0f, 0L);
+            clearUniform = newUniform(device, LAYOUT_SOURCE_PIXEL[0] / 255.0f, LAYOUT_SOURCE_PIXEL[1] / 255.0f,
+                    LAYOUT_SOURCE_PIXEL[2] / 255.0f, 1.0f, 32L);
+            if (tint == null || bias == null || clearUniform == null) {
+                return failed("layout", "one of the three uniform buffers has no GPU address");
+            }
+
+            // A table is sized to what the stage binds, and the indices are the shader's own attribute indices:
+            // the vertex stage binds a buffer with a stride and a plain uniform, the fragment stage a uniform, a
+            // texture and a sampler.
+            vertexTable = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
+            fragmentTable = MTL4ArgumentTable.create(device, 1L, 1L, 1L);
+            clearTable = MTL4ArgumentTable.create(device, 1L, 0L, 0L);
+            if (vertexTable == null || fragmentTable == null || clearTable == null) {
+                return failed("layout", "a table this layout needs came back null: vertex=" + (vertexTable != null)
+                        + " fragment=" + (fragmentTable != null) + " clear=" + (clearTable != null));
+            }
+            if (!vertexTable.address(vertices.gpuAddress(), 16L, 0L)
+                    || !vertexTable.address(tint.gpuAddress(), 1L)
+                    || !fragmentTable.address(bias.gpuAddress(), 0L)
+                    || !fragmentTable.texture(source, 0L)
+                    || !fragmentTable.sampler(sampler, 0L)
+                    || !clearTable.address(clearUniform.gpuAddress(), 1L)) {
+                return failed("layout", "one of the layout's bindings was refused by the table made to hold it,"
+                        + " which is the failure this smoke exists to name");
+            }
+
+            vertexPipeline = MTLBuiltinPipelines.buildPipelineForProbe(LAYOUT_MSL, "metallum_layout_probe_vs",
+                    "metallum_layout_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            MemorySegment clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(
+                    MTLPixelFormat.RGBA8Unorm.value, MTLPixelFormat.Invalid.value, true);
+            if (ObjC.isNil(vertexPipeline) || ObjC.isNil(clearPipeline)) {
+                return failed("layout", "a pipeline this smoke draws with came back nil: layout="
+                        + !ObjC.isNil(vertexPipeline) + " clear=" + !ObjC.isNil(clearPipeline));
+            }
+
+            BEGIN.send(buffer, allocator);
+
+            // The source is filled the same way the sampled smoke fills its pattern, so what the layout samples
+            // is a colour this sequence wrote rather than one the texture happened to be created with.
+            clearPass = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(source, new float[]{
+                            LAYOUT_SOURCE_PIXEL[0] / 255.0f, LAYOUT_SOURCE_PIXEL[1] / 255.0f,
+                            LAYOUT_SOURCE_PIXEL[2] / 255.0f, 1.0f})}, "the layout source's clear");
+            if (clearPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!clearPass.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                clearPass.close();
+                return failed("layout", "the pass that fills the sampled source does not answer the producer"
+                        + " barrier, so the layout's sample has no encoded dependency on it");
+            }
+            clearPass.endEncoding();
+
+            layoutPass = openPass(device, buffer,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f,
+                            0.0f, 1.0f})}, "the layout draw");
+            if (layoutPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            // The scissor is set to the left half, so the right half must read the pass's clear: that is the
+            // reading that says the scissor reached the encoder rather than being accepted and ignored.
+            if (!layoutPass.setScissorRect(0L, 0L, TARGET_SIZE / 2L, TARGET_SIZE)
+                    || !layoutPass.setCullMode(MTLCullMode.None.value)
+                    || !layoutPass.setRenderPipelineState(vertexPipeline)
+                    || !layoutPass.setArgumentTable(vertexTable, STAGE_VERTEX)
+                    || !layoutPass.setArgumentTable(fragmentTable, STAGE_FRAGMENT)) {
+                END.send(buffer);
+                layoutPass.close();
+                return failed("layout", "the layout draw's encoder refused one of the commands it needs - the"
+                        + " scissor, the cull mode, the pipeline or one of the two tables");
+            }
+            if (!layoutPass.drawPrimitives(MTLPrimitiveType.Triangle.value, 0L, 3L, 1L, 0L)) {
+                END.send(buffer);
+                layoutPass.close();
+                return failed("layout", "the encoder does not answer the draw selector, so nothing would be drawn"
+                        + " even with every binding in place");
+            }
+            layoutPass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("layout", "the shared event did not reach 1 within 2000 ms, so the submitted draw"
+                        + " never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // Inside the scissor: the whole layout's answer.
+                MTLTexture.bytes(target, pixel, 4L, 8L, 8L, 1L, 1L);
+                if (!matches(pixel, EXPECTED_LAYOUT_PIXEL)) {
+                    return failed("layout", "the layout draw produced " + describe(pixel) + " where "
+                            + describe(EXPECTED_LAYOUT_PIXEL) + " was asked for, so one of the four bindings - the"
+                            + " vertex buffer, the vertex tint, the sampled texture or the fragment bias - did not"
+                            + " reach the shader");
+                }
+
+                // Outside it: the pass's clear, so the rectangle was honoured and not merely accepted.
+                MTLTexture.bytes(target, pixel, 4L, TARGET_SIZE - 8L, 8L, 1L, 1L);
+                if (!matches(pixel, CLEAR_PIXEL)) {
+                    return failed("layout", "the pixel outside the scissor rectangle reads " + describe(pixel)
+                            + " where the pass's clear " + describe(CLEAR_PIXEL) + " was expected, so the scissor"
+                            + " did not reach the encoder");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("layout", "binding or drawing the layout threw " + threw);
+        } finally {
+            if (clearPass != null) {
+                clearPass.close();
+            }
+            if (layoutPass != null) {
+                layoutPass.close();
+            }
+            if (vertexTable != null) {
+                vertexTable.close();
+            }
+            if (fragmentTable != null) {
+                fragmentTable.close();
+            }
+            if (clearTable != null) {
+                clearTable.close();
+            }
+            releaseIfPresent(vertexPipeline);
+            releaseIfPresent(sampler);
+            releaseIfPresent(source);
+            releaseIfPresent(target);
+            releaseIfPresent(bias);
+            releaseIfPresent(tint);
+            releaseIfPresent(clearUniform);
+            releaseIfPresent(vertices);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** A 48-byte uniform buffer with one float4 colour at the offset the shader that reads it declares. */
+    private static MTLBuffer newUniform(final MTLDevice device, final float red, final float green, final float blue,
+                                        final float alpha, final long colourOffset) {
+        MTLBuffer uniform = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
+        if (uniform.gpuAddress() == 0L) {
+            return null;
+        }
+        MemorySegment contents = uniform.contents().reinterpret(UNIFORM_LENGTH);
+        contents.set(JAVA_FLOAT, colourOffset, red);
+        contents.set(JAVA_FLOAT, colourOffset + 4L, green);
+        contents.set(JAVA_FLOAT, colourOffset + 8L, blue);
+        contents.set(JAVA_FLOAT, colourOffset + 12L, alpha);
+        return uniform;
     }
 
     /** The name of one of the pattern's quadrants, for a message that says which one a readback landed in. */

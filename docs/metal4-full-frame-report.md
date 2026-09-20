@@ -40,15 +40,16 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. The drawn sampled-texture
-                  smoke, the allocator-slot ring and the colour-attachment smoke passed in all of them, and
-                  the compilation chain's own answer is the `compile=` field above: 50 of 50 probed compiled
-                  a pipeline through the game's GLSL compiler, the shared SPIR-V-to-MSL translator and this
-                  generation's native pipeline state (`compile=ok(valid=true)`). The pass object is still
-                  NOT reachable here - it needs the engine's device and real texture views - so its evidence
-                  remains the structural contract plus the measured layer underneath (the attachment smoke's
-                  own evidence: 50 of 50 in the round that added it; the ring's: 56 of 56; the drawn smoke's:
-                  100 of 100)
+this round:       50 probes (30 cold + 20 warm, `--mode raw`) with 0 failures. All four device smokes passed
+                  in every one of them - the drawn sampled texture, the allocator-slot ring, the four
+                  colour attachments and the new bound layout - and the compilation chain compiled a pipeline
+                  in every process (`compile=ok(valid=true)`). The layout smoke is the new one: two argument
+                  tables in one pass, one per stage, carrying a vertex buffer with its stride, two uniforms,
+                  a texture and a sampler, drawn with a scissor and read back on both sides of it (50 of 50).
+                  The pass object itself is still NOT reachable here - it needs the engine's device and real
+                  texture views - so its evidence remains the structural contract plus the measured layer
+                  underneath (the attachment smoke's own evidence: 50 of 50 in the round that added it; the
+                  ring's: 56 of 56; the drawn smoke's: 100 of 100)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -248,12 +249,20 @@ scissor: NOT STARTED
 ## Resource Binding
 
 ```
-textures:        NOT STARTED
-samplers:        NOT STARTED
-uniform buffers: NOT STARTED
-vertex/index:    NOT STARTED   (the probe binds one vertex buffer by address; no production path does)
-argument tables: NOT STARTED   (probe only)
-residency:       NOT STARTED
+textures:         PROVEN as a layout, NOT through a frame - the layout smoke binds a texture through a table at
+                  the slot its shader declares and reads the sampled colour back; the pass object still refuses
+                  bindTexture by name
+samplers:         PROVEN as a layout, NOT through a frame - a sampler at the slot the shader declares, bound in
+                  the same table as the texture it is used with
+uniform buffers:  PROVEN as a layout, NOT through a frame - two uniforms on two stages (a vertex-stage tint and
+                  a fragment-stage bias), each at its own buffer index, each changing the readback
+vertex/index:     PARTLY - a vertex buffer is bound by address AND attribute stride through a table and drawn
+                  (device-proven); an index buffer is an address in the draw selector rather than state, and no
+                  probe has drawn indexed geometry yet
+argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
+                  setArgumentTable:atStages:, and the draw reads every slot
+residency:        NOT STARTED - nothing declares residency yet; the argument table has been enough on this
+                  device so far, and whether it is enough for a pack is a measurement, not an assumption
 ```
 
 ## Blit
@@ -325,11 +334,11 @@ CI, which is where every smoke here was run.
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
 | MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a | yes |
 | depth           | yes         | no                                | n/a           | no          |
-| sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants | n/a | yes |
+| sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants; and a whole layout's texture is sampled at the slot its shader declares | n/a | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
-| uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255) | n/a | yes |
-| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255); index no | n/a | yes (vertex) |
-| argument table  | n/a (M3 uses argument buffers) | yes - buffer, texture and sampler tables made, bound and used | n/a | yes |
+| uniform         | yes         | yes - `setAddress:atIndex:` then a draw, read back (64, 128, 191, 255); and two uniforms on two stages at their own buffer indices, each changing a channel of the layout smoke's pixel | n/a | yes |
+| vertex/index    | yes         | vertex yes - address + stride 16, colour out of the buffer, read back (64, 128, 128, 255), and a second vertex buffer bound with its stride inside a whole layout; index no - the draw selector takes an address, and no probe has drawn indexed geometry yet | n/a | yes (vertex) |
+| argument table  | n/a (M3 uses argument buffers) | yes - two tables in one pass, one per stage, sized to what each stage binds, assigned with setArgumentTable:atStages:, with a draw reading every slot | n/a | yes |
 | blit            | yes         | no                                | n/a           | no          |
 | mipmap          | yes         | no                                | n/a           | no          |
 | compute         | yes         | no                                | n/a           | no          |
@@ -351,7 +360,11 @@ process with no window is not the same claim as a capability proven through the 
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
-3. **No draw path, and no blit, compute or full synchronization matrix** - the encoder owns the frame's
+3. **The pass object does not use the draw path yet** - the encoder's commands (arguments tables, pipeline,
+   cull, scissor, both draw selectors) are device-proven by the layout smoke, and the compilation chain compiles
+   an artifact on the device, but `Metal4RenderPass` still refuses every bind and draw by name: what is missing
+   is the binding plan that maps an artifact's footprint to table slots and the pass's use of it, which is the
+   next milestone. And with it, **no blit, compute or full synchronization matrix** - the encoder owns the frame's
    lifetime (the ring, the deferred releases, the one commit), the pass's attachment half is measured on the
    device (`MTL4RenderEncoder`), `createRenderPass` builds a real pass from the game's descriptor, and the
    compilation chain compiles a Metal 4 artifact on the device (50 of 50 probes) with its binding footprint.

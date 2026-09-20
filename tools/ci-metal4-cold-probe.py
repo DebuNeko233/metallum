@@ -396,4 +396,66 @@ if 'echo "pipeline compile: $(grep -m1 -o \' compile=[^ ]*\' \"$probe_log\" | cu
     raise SystemExit("cold-probe harness: the driver does not print what the compilation chain answered, so a "
                      "run of it leaves the chain's first device proof unread")
 
+# --- a whole layout bound through one table a stage -----------------------------------------------------
+# This is the new model's core and the thing that makes a draw possible: there is no per-resource setter, so a
+# pass fills a table and assigns it. The pins below are the shape of that - a table per stage, the stride on the
+# vertex buffer, the indices the shader declares, the draw's selector, and the two readings that make the smoke
+# a measurement rather than a call count.
+encoder_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                  / "MTL4RenderEncoder.java").read_text(encoding="utf-8")
+for needle, why in (
+    ('Msg.ofVoid("setArgumentTable:atStages:", ADDRESS, JAVA_LONG)',
+     "the encoder cannot be given a table, so nothing can be bound at all"),
+    ('"drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:",',
+     "the encoder has no draw, so a pass can bind everything and draw nothing"),
+    ('"drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:",',
+     "the encoder has no indexed draw, so the engine's indexed geometry has nowhere to go"),
+):
+    if needle is not None and needle not in encoder_source:
+        raise SystemExit("cold-probe harness: " + why)
+# The index buffer is an ADDRESS on this model, not a bound object: that is the whole difference from Metal 3's
+# indexed draw and the thing a later port of the engine's draws has to know.
+if "MemorySegment.ofAddress(indexBufferAddress)" not in encoder_source:
+    raise SystemExit("cold-probe harness: the indexed draw no longer passes the index buffer as an address, so "
+                     "the selector's indexBuffer argument is something else than the header declares")
+
+for needle, why in (
+    ("public static boolean canBindALayout(",
+     "the layout binding is measured nowhere, so the new model's core has no run behind it"),
+    # Pinned with its assignment, because the same call appears in canBindAndDraw's own table and a bare pin
+    # would be satisfied by that one while the layout smoke's table stopped covering its bindings.
+    ("vertexTable = MTL4ArgumentTable.create(device, 2L, 0L, 0L);",
+     "the smoke does not make a table sized to the vertex stage's own bindings"),
+    ("MTL4ArgumentTable.create(device, 1L, 1L, 1L)",
+     "the smoke does not make a fragment table carrying a buffer, a texture and a sampler together"),
+    ("vertexTable.address(vertices.gpuAddress(), 16L, 0L)",
+     "the vertex buffer is bound without its attribute stride, so an indexed vertex read has no layout"),
+    ("layoutPass.setArgumentTable(vertexTable, STAGE_VERTEX)",
+     "the vertex table is never assigned to the stage that reads it"),
+    ("layoutPass.setArgumentTable(fragmentTable, STAGE_FRAGMENT)",
+     "the fragment table is never assigned to the stage that reads it"),
+    ("layoutPass.setScissorRect(0L, 0L, TARGET_SIZE / 2L, TARGET_SIZE)",
+     "the scissor is not set, so the outside-the-rectangle reading has nothing to disagree with"),
+    ("the pixel outside the scissor rectangle reads ",
+     "a scissor that was accepted and ignored would not be reported as that: the reading outside the rectangle "
+     "is what makes the scissor a measurement"),
+    ("expected to the bindings and not to a rounding question" if False else "0.25 + 0.5 is 0.75",
+     "the smoke's colours are no longer explained as exact sums, which is what keeps its expected pixel a "
+     "reading of the bindings and not of rounding"),
+):
+    if needle not in ring_probe:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " layout=" + layout', "the harness does not print the layout smoke's answer"),
+    ('+ " layoutReason=" + layoutReason', "the harness does not print why the layout smoke failed"),
+    ("MTL4Probe.canBindALayout(device)", "the harness never asks the layout smoke"),
+    ("layout_failures=\"$(grep -c ' layout=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the layout smoke's failures"),
+    ("if (( layout_failures > 0 )); then",
+     "the driver counts the layout smoke's failures and does not fail the run on them"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

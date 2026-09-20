@@ -192,11 +192,21 @@ public final class MTL4ArgumentTable implements AutoCloseable {
 
     /** Points the table's one sampler slot at a sampler state, the same way. */
     public boolean sampler(final MemorySegment samplerHandle) {
+        return sampler(samplerHandle, 0L);
+    }
+
+    /**
+     * The same, at the slot the layout binds: a stage that samples more than one image fills more than one
+     * sampler slot, and the slot is the index the shader's own {@code [[sampler(n)]]} attribute names.
+     *
+     * @return whether there was a resource id to bind
+     */
+    public boolean sampler(final MemorySegment samplerHandle, final long index) {
         if (ObjC.isNil(samplerHandle) || !responds(samplerHandle, "gpuResourceID")) {
             return false;
         }
 
-        SET_SAMPLER.send(handle, RESOURCE_ID.sendLong(samplerHandle), 0L);
+        SET_SAMPLER.send(handle, RESOURCE_ID.sendLong(samplerHandle), index);
         return true;
     }
 

@@ -790,6 +790,56 @@ buffers, the artifact builds its own native states with a depth variant and a ve
 builds a fixture and reports what the chain answered - sixteen mutations against the chain and four against its
 proof, all caught.
 
+### The binding model, measured: a layout through one table a stage
+
+Metal 4's encoders have no per-resource setters at all. A pass binds by filling an argument **table** and
+assigning it to the stages that read it, which is the whole reason this migration exists rather than a port of
+`setVertexTexture:atIndex:` to a new class. `MTL4RenderEncoder` now carries that path - `setArgumentTable:atStages:`,
+the pipeline, the depth-stencil state, the cull and fill modes, `setScissorRect:`, and the two draw selectors
+(`drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:` and
+`drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:`) - and
+`MTL4Probe.canBindALayout` measures it end to end on the device.
+
+The smoke is the production shape rather than a convenience:
+
+- a **vertex table** sized to what the vertex stage binds, carrying a vertex buffer **with its attribute stride**
+  at index 0 and a vertex-stage uniform at index 1;
+- a **fragment table** carrying a uniform at buffer 0, a texture at texture 0 and a sampler at sampler 0;
+- both tables assigned at their own stages, one pipeline built from the probe's own MSL, one draw;
+- a **scissor** rectangle over the left half of the target, and two readings: the pixel inside it must be the
+  layout's colour and the pixel outside it must be the pass's clear. That second reading is what makes the
+  scissor a measurement rather than a call count;
+- an explicit **cull mode**, whose call has to be accepted; its *effect* is deliberately not asserted, because
+  that needs a back-facing triangle and is a milestone of its own.
+
+Every one of the four bindings changes the answer, which is what makes the readback a reading of the table
+rather than of one slot: the texture is the base, the vertex uniform adds to red, the fragment uniform adds to
+green, and the geometry and uvs come out of the vertex buffer. Measured on Apple Silicon: **50 of 50 probes**
+passed in 30 cold processes and 20 warm repeats.
+
+**Two things the first attempts taught, both recorded because they are the shape of this work.**
+
+1. The expected pixel has to be an exact sum in eight bits. The first version cleared the sampled source to 128
+   and added 0.25 to its red, expecting 191: 128/255 + 0.25 is 0.75196, which lands on **192** - measured, and
+   the reason the smoke's colours are now 0.25 and 0.5 (0.25 + 0.5 = 0.75, 0.25 + 0.25 = 0.5) with the
+   arithmetic written beside them.
+2. A stale build reads as a device fault. One run reported the texture's own colour with the uniforms missing,
+   which looked like a binding that did not arrive; the source had been edited but not recompiled, so the probe
+   was running the previous shader. The harness asks the build only for its classpath, so a source change needs
+   a compile before a measurement - the same class of mistake as the earlier warm-up bug, and worth writing
+   down.
+
+**What is still refused, and therefore still unproven through a frame**: the pass object does not call any of
+this yet. `Metal4RenderPass.setPipeline`/`bindTexture`/`setUniform`/`setVertexBuffer`/`setIndexBuffer`/`draw*`
+still refuse by name, so the encoder's commands have a device proof and the pass's use of them does not. Wiring
+the pass - pipeline lookup through the artifact, the binding plan that maps a layout to table slots, and the
+draws - is the next milestone, and the fixture that would prove it needs the engine's device.
+
+`tools/ci-metal4-cold-probe.py` pins the encoder's commands, the address form of the indexed draw, the tables'
+shapes, the stride, the stage each table is assigned to, the scissor and its two readings, and the harness's
+field, count and exit code - seventeen mutations run, sixteen caught by the pins themselves and one after a pin
+was strengthened (a table-size pin satisfied by another smoke's identical call).
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

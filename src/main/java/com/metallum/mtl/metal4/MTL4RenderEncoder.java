@@ -1,6 +1,7 @@
 package com.metallum.mtl.metal4;
 
 import com.metallum.mtl.MTLDevice;
+import com.metallum.mtl.MTLScissorRect;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
@@ -8,6 +9,8 @@ import com.metallum.render.shared.AttachmentContents;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
+
+import org.lwjgl.system.MemoryStack;
 
 import java.lang.foreign.MemorySegment;
 
@@ -74,6 +77,20 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     private static final Msg BARRIER = Msg.ofVoid("barrierAfterStages:beforeQueueStages:visibilityOptions:",
             JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
+    private static final Msg SET_ARGUMENT_TABLE = Msg.ofVoid("setArgumentTable:atStages:", ADDRESS, JAVA_LONG);
+    private static final Msg SET_PIPELINE_STATE = Msg.ofVoid("setRenderPipelineState:", ADDRESS);
+    private static final Msg SET_DEPTH_STENCIL_STATE = Msg.ofVoid("setDepthStencilState:", ADDRESS);
+    private static final Msg SET_CULL_MODE = Msg.ofVoid("setCullMode:", JAVA_LONG);
+    private static final Msg SET_TRIANGLE_FILL_MODE = Msg.ofVoid("setTriangleFillMode:", JAVA_LONG);
+    private static final Msg SET_SCISSOR_RECT = Msg.ofVoid("setScissorRect:", ADDRESS);
+    private static final Msg DRAW = Msg.ofVoid(
+            "drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:",
+            JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+    // The index buffer is an address on this model, and it is declared as one rather than as a long: the two are
+    // the same register either way, but the header says MTLGPUAddress and the declaration should say so too.
+    private static final Msg DRAW_INDEXED = Msg.ofVoid(
+            "drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferLength:instanceCount:baseVertex:",
+            JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG);
     private static final long STAGE_ALL = Long.MAX_VALUE;
     private static final long VISIBILITY_DEVICE = 1L;
 
@@ -256,6 +273,119 @@ public final class MTL4RenderEncoder implements AutoCloseable {
         }
         this.ended = true;
         END_ENCODING.send(this.encoder);
+    }
+
+    // ---------------------------------------------------------------- the commands a draw needs
+
+    /**
+     * Hands the encoder a filled table for the stages that will read it.
+     * <p>
+     * This is the whole binding mechanism of the new model: there is no per-resource setter, so a pass binds by
+     * filling a table and assigning it. The assignment is checked rather than assumed, because an encoder that
+     * answered no here would leave the draw reading whatever the last table held.
+     */
+    public boolean setArgumentTable(final MTL4ArgumentTable table, final long stages) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || table == null) {
+            return false;
+        }
+        if (!responds(open, SET_ARGUMENT_TABLE.name())) {
+            return false;
+        }
+        SET_ARGUMENT_TABLE.send(open, table.handle(), stages);
+        return true;
+    }
+
+    /** The pipeline state the draws use, which comes from the compiled artifact for this pass's attachments. */
+    public boolean setRenderPipelineState(final MemorySegment pipelineState) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || ObjC.isNil(pipelineState)) {
+            return false;
+        }
+        SET_PIPELINE_STATE.send(open, pipelineState);
+        return true;
+    }
+
+    /** The depth-stencil state the draws use, which the compiled artifact already owns. */
+    public boolean setDepthStencilState(final MemorySegment depthStencilState) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || ObjC.isNil(depthStencilState)) {
+            return false;
+        }
+        SET_DEPTH_STENCIL_STATE.send(open, depthStencilState);
+        return true;
+    }
+
+    /** {@code MTLCullMode}, as the compiled pipeline's own culling answer. */
+    public boolean setCullMode(final long cullMode) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null) {
+            return false;
+        }
+        SET_CULL_MODE.send(open, cullMode);
+        return true;
+    }
+
+    /** {@code MTLTriangleFillMode}, the pipeline's polygon mode taken to the encoder. */
+    public boolean setTriangleFillMode(final long fillMode) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null) {
+            return false;
+        }
+        SET_TRIANGLE_FILL_MODE.send(open, fillMode);
+        return true;
+    }
+
+    /**
+     * One scissor rectangle, passed the way the header declares it: {@code MTLScissorRect} is four unsigned
+     * integers, which arm64 hands over as a pointer to the struct - the same shape the Metal 3 encoder sends.
+     */
+    public boolean setScissorRect(final long x, final long y, final long width, final long height) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            SET_SCISSOR_RECT.send(open, MTLScissorRect.on(stack, x, y, width, height));
+        }
+        return true;
+    }
+
+    /**
+     * A non-indexed draw, in the shape the engine's own draws take: vertex count, instance count, where the
+     * vertices start, and which instance the first one is.
+     */
+    public boolean drawPrimitives(final long primitiveType, final long vertexStart, final long vertexCount,
+                                  final long instanceCount, final long baseInstance) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || vertexCount <= 0L) {
+            return false;
+        }
+        if (!responds(open, DRAW.name())) {
+            return false;
+        }
+        DRAW.send(open, primitiveType, vertexStart, vertexCount, instanceCount, baseInstance);
+        return true;
+    }
+
+    /**
+     * An indexed draw, whose index buffer is an <em>address</em> on the new model rather than a bound buffer:
+     * the engine's first index becomes an offset into that address and its base vertex is the draw's own
+     * {@code baseVertex}, which is why both are parameters here and neither is state.
+     */
+    public boolean drawIndexedPrimitives(final long primitiveType, final long indexCount, final long indexType,
+                                         final long indexBufferAddress, final long indexBufferLength,
+                                         final long instanceCount, final long baseVertex) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null || indexCount <= 0L || indexBufferAddress == 0L) {
+            return false;
+        }
+        if (!responds(open, DRAW_INDEXED.name())) {
+            return false;
+        }
+        DRAW_INDEXED.send(open, primitiveType, indexCount, indexType, MemorySegment.ofAddress(indexBufferAddress),
+                indexBufferLength, instanceCount, baseVertex);
+        return true;
     }
 
     /** Whether an object answers a selector, which is the question to ask before reaching for one. */
