@@ -264,6 +264,35 @@ better instrument now says the first reading was right about the *when* and wron
 first probe in a process, and what fails is the second render pass's whole contribution - its clear included -
 to its target.
 
+**And the blocker is mitigated on the path the capability record reads, with the cause still open.**
+`MTL4Probe.canBindAndDrawPersistently` asks once more where the first answer is no, and logs the first
+attempt's stage and reason either way - a retry that swallowed the first answer would take a registered
+intermittent off the record, which is the one thing this issue may not do. `Metal4.available` reads the
+persistent answer, so what `MetalDeviceCapabilities.argumentTable`/`render` report is the device's answer
+rather than the first command buffer's. Both halves are pinned by `tools/ci-metal4-cold-probe.py` and
+mutation-proven: a harness that stops taking the persistent path, and a capability record that stops asking
+persistently, each fail the contract for their own reason.
+
+Why a retry is the right shape and not a workaround: **the fault has never been observed at any attempt but
+the first.** Across 160 cold processes and 1100 later probes, every failure was a process's first attempt, and
+the one process that failed at attempt one passed attempts two to twenty - same process, same device, same
+sequence, milliseconds later. A capability answer is a fact about the device; the first attempt in a process
+is not.
+
+What was verified, and what was not:
+
+```
+production path, 40 cold processes (1 probe each) + 20 warm   0 failures   <- the path the record reads
+raw path,        40 cold processes (1 probe each) + 20 warm   0 failures   <- the fault did not fire here
+```
+
+**The second line is the honest limit of this verification.** The raw arm - the one that measures the fault -
+did not reproduce it in those forty processes, so this round did **not** observe the retry firing. What
+justifies the retry is the earlier evidence and not these two runs: a process's first attempt can fail at about
+one in twenty-five cold starts, and a process's later attempts have never failed. What would close it is a run
+in which the retry is *observable* - the probe reporting that its first attempt failed and its second
+succeeded - which is a small change to the harness's result line and is the next task here.
+
 **What that leaves open, exactly.** Something about the first command buffer a process submits can drop the
 second render encoder's work, and it does so in about one cold first probe in twenty-five (4 of 160). The
 candidate that fits, and that §13's list allows as a hypothesis, is lazy driver initialisation during the first

@@ -1,5 +1,6 @@
 package com.metallum.mtl.metal4;
 
+import com.metallum.Metallum;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 
 import com.metallum.mtl.MTLTexture;
@@ -207,6 +208,41 @@ public final class MTL4Probe {
      */
     public static String lastFailureStage() {
         return failureStage;
+    }
+
+    /**
+     * Whether a table-bound draw works, asked once and once more if the first answer is no.
+     * <p>
+     * The first {@link #canBindAndDraw} of a process can fail at stage {@code pixel} - the second render
+     * pass's whole contribution, its clear included, never reaching its target - and no later one ever has.
+     * Measured: over 160 cold processes and 1100 later probes, every failure was the first attempt of its
+     * process, and the one process that failed at attempt one passed attempts two to twenty. A capability
+     * answer is a fact about the device and not about the first command buffer a process happens to submit,
+     * so the question is put again once where that first answer is no.
+     * <p>
+     * <strong>The first attempt is logged either way, and its stage and reason are what the second attempt
+     * is judged against.</strong> A retry that swallowed the first answer would take the fault off the
+     * record, which is the one thing a registered intermittent must not do.
+     * <p>
+     * <strong>And the cause is not known.</strong> What is measured is that the first attempt in a process
+     * can fail and later ones do not - with a command buffer already committed and completed in the same
+     * process immediately before the failing sequence, which is what rules out a first-commit explanation.
+     * The retry rests on that behaviour and not on an explanation of it.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return the second answer where the first was no, and the first where it was yes
+     */
+    public static boolean canBindAndDrawPersistently(final MTLDevice device) {
+        if (canBindAndDraw(device)) {
+            return true;
+        }
+
+        String stage = lastFailureStage();
+        String reason = lastFailure();
+        boolean second = canBindAndDraw(device);
+        Metallum.LOGGER.warn("Metal 4 probe: the first attempt in this process failed at {} ({}), and the"
+                + " second answered {} - the capability record reads the second", stage, reason, second);
+        return second;
     }
 
     private static boolean failed(final String stage, final String why) {

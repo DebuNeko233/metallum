@@ -22,6 +22,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cold_runs=30
 warm_runs=20
 probes_per_process=1
+mode="raw"
 keep=false
 out_file=""
 
@@ -31,6 +32,11 @@ Usage: metal4-cold-probe.sh [options]
 
   --cold-runs N     how many separate processes to probe in (default 30). Each is a fresh JVM.
   --warm-runs M     how many probes to run inside ONE process (default 20), as the control.
+  --mode raw|production
+                    which path each probe takes. raw is one attempt, which is how the intermittent fault
+                    is measured; production is the capability record's path, which asks once more where
+                    the first answer is no (default: raw, because the fault is what this harness exists to
+                    keep measuring).
   --probes-per-process K
                     how many probes each COLD process runs (default 1). One probe a process cannot tell a
                     process that is bad from a draw that went wrong: with K probes, a bad process fails
@@ -46,6 +52,7 @@ while [[ $# -gt 0 ]]; do
 		--cold-runs) cold_runs="$2"; shift 2 ;;
 		--warm-runs) warm_runs="$2"; shift 2 ;;
 		--probes-per-process) probes_per_process="$2"; shift 2 ;;
+		--mode) mode="$2"; shift 2 ;;
 		--out) out_file="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
 		-h|--help) usage; exit 0 ;;
@@ -94,10 +101,10 @@ javac -nowarn -cp "$classpath" -d "$classes" "$repo_root/tools/metal4-cold-probe
 
 run_one() {
 	local index="$1" attempts="$2"
-	java -cp "$classes:$classpath" Metal4ColdProbe "$index" "$attempts" 2>/dev/null | grep '^M4_PROBE_RESULT' || true
+	java -cp "$classes:$classpath" Metal4ColdProbe "$index" "$attempts" "$mode" 2>/dev/null | grep '^M4_PROBE_RESULT' || true
 }
 
-echo "cold runs: $cold_runs processes, $probes_per_process probe(s) each" >&2
+echo "cold runs: $cold_runs processes, $probes_per_process probe(s) each, mode $mode" >&2
 cold_failures=0
 for (( index = 1; index <= cold_runs; index++ )); do
 	line="$(run_one "$index" "$probes_per_process")"
@@ -137,7 +144,7 @@ fi
 echo "warm probes:     $warm_total   failures: $warm_failures"
 echo
 echo "per-process results (success, stage, probe ms):"
-grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).*probeMs=\([^ ]*\).*/  process \1 attempt \2 success \3 stage \4 \5 ms/p'
+grep '^M4_PROBE_RESULT' "$probe_log" | sed -n 's/.*process=\([^ ]*\) attempt=\([^ ]*\) mode=\([^ ]*\) success=\([^ ]*\) stage=\([^ ]*\).*probeMs=\([^ ]*\).*/  process \1 attempt \2 mode \3 success \4 stage \5 \6 ms/p'
 
 if (( cold_failures > 0 )); then
 	exit 1

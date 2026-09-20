@@ -16,7 +16,8 @@ import com.metallum.mtl.metal4.MTL4Probe;
  * distribution over processes and nothing here should need a log parser:
  *
  * <pre>
- * M4_PROBE_RESULT process=&lt;n&gt; attempt=&lt;n&gt; success=&lt;bool&gt; stage=&lt;ok|stage&gt; reason=&lt;text&gt;
+ * M4_PROBE_RESULT process=&lt;n&gt; attempt=&lt;n&gt; mode=&lt;raw|production&gt; success=&lt;bool&gt;
+ *                 stage=&lt;ok|stage&gt; reason=&lt;text&gt;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
  *                 epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
@@ -38,6 +39,13 @@ public final class Metal4ColdProbe {
         // process that repeats the probe, so the field says which population a line belongs to.
         String index = args.length > 0 ? args[0] : "0";
         int attempts = args.length > 1 ? Integer.parseInt(args[1]) : 1;
+        // Two populations and they answer different questions. `raw` is one attempt, which is how the fault
+        // itself is measured - the first multi-encoder sequence of a process, and nothing else. `production`
+        // is the path the capability record now reads, which asks once more where the first answer is no.
+        // Measuring only the fixed path would hide the fault; measuring only the raw one would say nothing
+        // about what the client decides.
+        String mode = args.length > 2 ? args[2] : "raw";
+        boolean production = "production".equals(mode);
 
         long startNanos = System.nanoTime();
         String deviceCreation = "ok";
@@ -78,7 +86,8 @@ public final class Metal4ColdProbe {
             boolean makeAndSubmit = MTL4Probe.canMakeAndSubmit(device);
             // Mirrors the capability record's own order: the bind probe is only asked where the first one
             // passed, so a failure here reports the stage that really stopped the sequence.
-            boolean bindAndDraw = makeAndSubmit && MTL4Probe.canBindAndDraw(device);
+            boolean bindAndDraw = makeAndSubmit
+                    && (production ? MTL4Probe.canBindAndDrawPersistently(device) : MTL4Probe.canBindAndDraw(device));
             String stage = MTL4Probe.lastFailureStage();
             String reason = MTL4Probe.lastFailure();
             boolean success = makeAndSubmit && bindAndDraw;
@@ -86,6 +95,7 @@ public final class Metal4ColdProbe {
 
             System.out.println("M4_PROBE_RESULT process=" + index
                     + " attempt=" + attempt
+                    + " mode=" + mode
                     + " success=" + success
                     + " stage=" + (stage == null ? "ok" : stage)
                     + " reason=" + (reason == null ? "-" : oneLine(reason))

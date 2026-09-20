@@ -41,8 +41,18 @@ warm probes:      500 in three processes      failures: 0
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
-AUTO blocker:     REGISTERED. AUTO must not promote Metal 4 full-frame execution while this is open.
-                  Forced Metal 4 development continues.
+fix:              MTL4Probe.canBindAndDrawPersistently - one more attempt where the first answer is no,
+                  with the first attempt's stage and reason logged either way. Metal4.available reads it,
+                  so the capability record reports the device and not the first command buffer. Both halves
+                  are pinned and mutation-proven.
+verified:         production path, 40 cold processes + 20 warm: 0 failures
+                  raw path,        40 cold processes + 20 warm: 0 failures (the fault did not fire in them)
+not verified:     the retry has NOT been observed firing - that arm caught nothing in forty processes, so
+                  this rests on the earlier evidence (every failure ever seen was a process's first
+                  attempt; 1100 later probes passed) and not on these two runs
+AUTO blocker:     MITIGATED on the capability-record path, and AUTO stays blocked on what section 74 lists:
+                  there is no Metal 4 full-frame implementation for it to promote. Forced Metal 4
+                  development continues.
 ```
 
 **What a failure now says.** Every failure reads stage `pixel` and

@@ -99,7 +99,11 @@ public final class Metal4 {
         // by address. The engine's own clear pass is drawn on the new path with its uniform bound that way
         // and the pixel it produced is read back, so this is whether the pass *used* the binding rather
         // than whether the calls were accepted.
-        boolean binding = MTL4Probe.canBindAndDraw(device);
+        // Asked once and once more if the first answer is no, because the first probe of a process can fail
+        // at stage `pixel` and no later one ever has (measured: every failure in 160 cold processes was its
+        // first attempt, and 1100 later probes passed). The capability record is a fact about the device, and
+        // the first attempt is logged by the probe whether or not the retry succeeds.
+        boolean binding = MTL4Probe.canBindAndDrawPersistently(device);
 
         // The cold/warm question needs the probe called more than once in one process, which is the one thing
         // the client never does: the answer is cached here and every capability record reads the cache. With

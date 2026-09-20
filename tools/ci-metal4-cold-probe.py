@@ -38,6 +38,9 @@ for needle, why in (
                     "population - the one the intermittent fault lives in - is not selectable"),
     ("--warm-runs", "the harness cannot be told how many probes to repeat in one process, so there is no "
                     "control for cold first use"),
+    ('--mode) mode="$2"; shift 2 ;;',
+     "the harness cannot be told whether to measure the fault itself (one attempt) or the path the "
+     "capability record reads (with its retry), so one of the two questions goes unanswered"),
     ('--probes-per-process) probes_per_process="$2"; shift 2 ;;',
      "the harness cannot be told to run more than one probe in a cold process, so a process that is bad and a "
      "draw that went wrong cannot be told apart - which is the question a cold-only fault turns on"),
@@ -82,11 +85,15 @@ if "M4_PROBE_RESULT" not in probe:
                      "thirty processes would need a log parser")
 # The loop that gives each cold process its probes: a harness that always passed 1 would run the flag and
 # ignore it, which is the shape a pin on the usage text cannot see.
+if 'Metal4ColdProbe "$index" "$attempts" "$mode"' not in script:
+    raise SystemExit("cold-probe harness: the mode the harness was told is never passed to the process, so "
+                     "--mode is parsed and ignored and every run measures the same path")
+
 if 'line="$(run_one "$index" "$probes_per_process")"' not in script:
     raise SystemExit("cold-probe harness: the cold loop does not pass the per-process probe count to the "
                      "process, so the flag is parsed and ignored and every process still runs one probe")
 
-for field in ("process=", "attempt=", "success=", "stage=", "reason=", "epochMs=", "canMakeAndSubmit=",
+for field in ("process=", "attempt=", "mode=", "success=", "stage=", "reason=", "epochMs=", "canMakeAndSubmit=",
               "canBindAndDraw=", "familyMetal4=", "queueSelector=", "argumentTableSelector=",
               "deviceCreation=", "deviceName=", "probeMs=", "elapsedMs="):
     if field not in probe:
@@ -115,4 +122,24 @@ if "canMakeAndSubmit" not in probe or "canBindAndDraw" not in probe:
     raise SystemExit("cold-probe harness: the two probe stages are not both asked, so a failure cannot be "
                      "attributed to the command structure or to the binding and draw")
 
+# --- and the fix itself, in both halves ---------------------------------------------------------------
+# The retry exists because the FIRST probe of a process can fail and no later one ever has (measured: every
+# failure in 160 cold processes was its first attempt, and 1100 later probes passed). Both halves are pinned
+# because either one alone would leave the capability record answering from a single attempt again - and the
+# harness's own mode is how the two paths are told apart, so a harness that stopped taking the retry would
+# report a fault the client no longer has.
+if "canBindAndDrawPersistently" not in probe:
+    raise SystemExit("cold-probe harness: the harness never takes the persistent path, so --mode production "
+                     "measures one attempt and reports it as the capability record's answer")
+if "production ? MTL4Probe.canBindAndDrawPersistently(device)" not in probe:
+    raise SystemExit("cold-probe harness: the harness knows the mode and does not choose the path by it, so "
+                     "the two populations it counts are the same population")
+
+metal4 = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "Metal4.java").read_text(encoding="utf-8")
+if "MTL4Probe.canBindAndDrawPersistently(device)" not in metal4:
+    raise SystemExit(
+        "cold-probe harness: the capability record asks the probe once and not persistently, so the first "
+        "attempt in a process can still be recorded as `this device cannot` - which is the whole of the AUTO "
+        "blocker; the retry belongs on this path and not only in the harness"
+    )
 print("Metal 4 cold-probe harness contract: PASS")
