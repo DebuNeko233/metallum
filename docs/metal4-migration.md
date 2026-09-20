@@ -2276,17 +2276,31 @@ so it is a state that persists inside the round rather than a first-command-afte
 | `plain-destination` (not a render target) | 3/6 | clean | the usage bits are not it |
 | `copy-to-unbound` (the copy's target is in no table) | 3/6 | clean | the destination being bound is not it |
 
-**So the ingredient is the texture-to-texture copy command, and nothing else in the shape.** Everything around
-it was removed one at a time and the fault stayed; remove the command itself, or make the copy move *buffers*
-instead of textures, and the fault is gone completely. What is still not known is the mechanism: the victim's
-*second* dispatch is the one whose result is missing (the texture holds the first dispatch's red where the
-second's green was asked for), and the whole thing **alternates per round** - which is a fact about a state
-that flips, not about data that is lost once. The next experiment is a victim of our own with a **third**
-dispatch through a third table between the two: if the third's colour is what the texture holds, the *second
-command* was dropped; if the texture still holds the first's, the *binding* was stale for both. That separates
-"a command the encoder dropped" from "a re-point the driver did not see", which is the difference between a
-scheduling fault and the exact property `Metal4FrameEncoder.clearStorageTexture` and
-`Metal4ComputePipeline`'s per-dispatch table re-point depend on.
+**Correction: the copy is a phase, not the cause.** That table was measured before the reproducer had a victim
+of its own, and adding one showed the reading to be incomplete - with the own victim in the loop, `full` was
+clean and `no-copy` failed, which is the same phenomenon with the sign flipped. What the copy does is change
+the *phase* the process is in; it is not what is broken. The victim is: **two dispatches in one compute
+encoder, through one table object re-pointed and handed over again between them.** With the own victim written
+to that shape, the answer is stable and it is the mechanism:
+
+| own victim's shape (one command buffer, one commit) | result, eight rounds |
+| --- | --- |
+| one encoder, one table **re-pointed** between the dispatches | **red (1 of 2) on every even round** - the second dispatch's binding is stale |
+| one encoder, a **fresh table** for the second dispatch | green (2 of 2), every round |
+| one table re-pointed, a **new encoder** per dispatch | green, every round |
+| one table re-pointed, a **commit** per dispatch | green, every round |
+
+So the driver's snapshot for a dispatch is not taken from the table as it stands at that dispatch when the same
+table object has already been handed to the same encoder: the second dispatch reads what the table held when it
+was first handed over. **A table of its own per dispatch is safe** (and so is an encoder per dispatch, which is
+the expensive version of the same thing).
+
+**This is the engine's own pattern, and that makes it a defect to fix rather than a curiosity.**
+`Metal4ComputePipeline` holds one table per compiled kernel (`table(device)`) and `Metal4FrameEncoder` hands it
+over again on every dispatch of that kernel, and `clearStorageTexture` re-points the single `storageTable` for
+every clear in a frame - so two dispatches of one kernel in a frame, or two storage clears, can bind what the
+first one bound. The reproducer is where that is proven and where the fix will be measured; the fix itself is
+one table per dispatch, released through the frame's destruction queue so its lifetime is still the slot's.
 
 **Measured, and with one honest fault in it.** Two 30-cold + 20-warm censuses and a six-process hunt
 (6 × 31 probes) were run: **286 probes**, of which `computeSample` and `computeVertex` are **286 of 286** -

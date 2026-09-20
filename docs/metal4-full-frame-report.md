@@ -603,13 +603,16 @@ answered rather than only what is left.
    fourth probe, a ten-warm run failed probes 3, 5, 7 and 9 - and four bisects put the ingredient on the
    **region copy encoded in a compute encoder between two render encoders**, not on the table, the re-point or
    the barrier. **The reproducer is now a committed artifact**: `tools/metal4-cold-probe/CopyThenDispatchRepro.java`
-   under `tools/metal4-cold-probe.sh --repro N [--variant NAME]`, with thirteen variants measured - the
-   ingredient is the **texture-to-texture copy command** and nothing around it (removing it, or copying buffers
-   instead, is clean 6 of 6; every other part of the shape removed one at a time still fails 3 of 6), and the
-   victim's own second call fails with its first, so the state persists inside a round. The mechanism is still
-   unknown and it is the second reason AUTO stays off Metal 4 - the frame path encodes texture copies between
-   passes every frame, and the property it breaks is the table re-point the storage clear and every compute
-   dispatch use.
+   under `tools/metal4-cold-probe.sh --repro N [--variant NAME]`, and **the mechanism is now measured**: two
+   dispatches in one compute encoder through one table object re-pointed between them, where the second
+   dispatch reads what the table held when it was first handed over - red instead of green, on every even
+   round, in a victim of the reproducer's own. A **fresh table per dispatch** is clean, and so is an encoder or
+   a commit per dispatch. **The engine does exactly the unsafe thing**: `Metal4ComputePipeline` keeps one table
+   per compiled kernel and hands it over again per dispatch, and `Metal4FrameEncoder.clearStorageTexture`
+   re-points one table for every clear in a frame - so two dispatches of one kernel, or two storage clears, can
+   bind what the first bound. This is a correctness defect in the Metal 4 compute path with a measured
+   workaround, and it is the second reason AUTO stays off Metal 4 until it is fixed and the fix is measured in
+   the same reproducer.
 7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,

@@ -862,6 +862,37 @@ if len(release_orders) != 2 or release_orders[1].index("release(source);") > \
     raise SystemExit("cold-probe harness: the reproducer's two release orders are the same code, so the "
                      "variant that reorders them measures nothing")
 
+# The own victim and its modes: the mechanism this artifact exists to measure is "one table object re-pointed
+# and handed to the same encoder twice", so a pin checks the victim can be asked in that shape and in the two
+# shapes that are safe, or the measured answer would be unfalsifiable.
+for needle, why in (
+    ("private static String ownVictim(final MTLDevice device, final String ownMode)",
+     "the reproducer has no victim of its own, so the phase sensitivity it exposed cannot be measured apart "
+     "from the probe's smoke"),
+    ("if (ownMode.equals(\"one-encoder\")) {",
+     "the unsafe shape - one encoder, one table re-pointed - cannot be asked for"),
+    ("} else if (ownMode.equals(\"fresh-table\")) {",
+     "the fresh-table control is gone, so the workaround this round measured has no experiment"),
+    ("if (ownMode.equals(\"two-commits\") && index == 1) {",
+     "the commit-per-dispatch control is gone"),
+    ("private static boolean repoint(final MTL4ComputeEncoder dispatch, final MTL4ArgumentTable table,",
+     "the re-point is not a step of its own, so the fault's shape is not expressible"),
+    ("long signalled = 0L;",
+     "the own victim signals one event value for two commits, so its second wait returns immediately and its "
+     "readback is a race rather than a measurement"),
+    ("if (matches(seen, OWN_COLOURS[0])) {",
+     "the own victim does not say which colour survived, so a stale binding and a dropped command read alike"),
+):
+    if needle not in repro:
+        raise SystemExit("cold-probe harness: " + why)
+for needle, why in (
+    ("--own) own_mode=\"$2\"; shift 2 ;;", "the harness cannot select the own victim's mode"),
+    ("CopyThenDispatchRepro \"$repro_rounds\" \"$variant\" \"$own_mode\"",
+     "the own victim's mode does not reach the reproducer"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 # And the native calls themselves, where the commands live.
 compute_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
                    / "MTL4ComputeEncoder.java")

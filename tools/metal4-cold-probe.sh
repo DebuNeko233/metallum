@@ -24,6 +24,7 @@ warm_runs=20
 probes_per_process=1
 repro_rounds=0
 variant="full"
+own_mode="one-encoder"
 mode="raw"
 keep=false
 out_file=""
@@ -47,6 +48,8 @@ Usage: metal4-cold-probe.sh [options]
   --out FILE        write the raw M4_PROBE_RESULT lines here as well as summarising them.
   --keep            leave the compiled probe class in place instead of clearing it.
 
+  --own MODE        how the reproducer's own victim encodes its two dispatches: one-encoder (default),
+                    two-encoders, two-commits.
   --variant NAME    which part of the reproducer's shape to remove: full, no-copy, no-copy-encoder,
                     no-sampled-pass, no-source-pass, no-destination-clear, separate-commit, no-residency,
                     textures-released-last.
@@ -67,6 +70,7 @@ while [[ $# -gt 0 ]]; do
 		--keep) keep=true; shift ;;
 		--repro) repro_rounds="$2"; shift 2 ;;
 		--variant) variant="$2"; shift 2 ;;
+		--own) own_mode="$2"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "unknown option: $1" >&2; usage; exit 2 ;;
 	esac
@@ -120,7 +124,7 @@ if (( repro_rounds > 0 )); then
 	echo "reproducing the copy-then-dispatch fault for $repro_rounds rounds, variant $variant" >&2
 	repro_out="$(mktemp -t m4-repro)"
 	set +e
-	java -cp "$classes:$classpath" CopyThenDispatchRepro "$repro_rounds" "$variant" | tee "$repro_out"
+	java -cp "$classes:$classpath" CopyThenDispatchRepro "$repro_rounds" "$variant" "$own_mode" | tee "$repro_out"
 	set -e
 	if grep -q 'storageFailures=0 ' "$repro_out"; then
 		echo "the storage-image smoke passed every round, so the fault did not reproduce" >&2

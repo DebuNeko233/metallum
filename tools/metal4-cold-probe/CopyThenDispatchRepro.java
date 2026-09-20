@@ -103,6 +103,21 @@ public final class CopyThenDispatchRepro {
             }
             """;
 
+    /** The three colours the own victim's three dispatches write, in order: red, green, blue. */
+    private static final int[][] OWN_COLOURS = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}};
+
+    /** The own victim's kernel: one colour per dispatch, written over the whole image. */
+    private static final String OWN_VICTIM_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            kernel void repro_write(texture2d<float, access::write> image [[texture(0)]],
+                                    constant float4& colour [[buffer(0)]],
+                                    uint2 xy [[thread_position_in_grid]]) {
+              image.write(colour, xy);
+            }
+            """;
+
     private CopyThenDispatchRepro() {
     }
 
@@ -169,6 +184,7 @@ public final class CopyThenDispatchRepro {
     public static void main(final String[] args) {
         int rounds = args.length > 0 ? Integer.parseInt(args[0]) : 8;
         String variant = args.length > 1 ? args[1] : "full";
+        String ownMode = args.length > 2 ? args[2] : "one-encoder";
         Shape shape = shape(variant);
         if (shape == null) {
             System.out.println("M4_REPRO device=failed reason=unknown-variant(" + variant + ")");
@@ -200,6 +216,11 @@ public final class CopyThenDispatchRepro {
             // The same smoke again, immediately: a first call that fails where the second passes is a stale
             // state a second attempt clears, and a pair that both fail is the state itself.
             boolean storageAgain = MTL4Probe.canWriteStorageImage(device);
+            // The own victim, beside the probe's: three dispatches, each through a table of its own, each
+            // writing the whole image its own colour. The colour that is left says how many of the three
+            // commands landed - blue is all three, green is two, red is one - which is what separates a dropped
+            // command from a binding that went stale.
+            String ownVictim = ownVictim(device, ownMode);
             String copyReason = trigger(device, shape);
             boolean copy = copyReason == null;
             if (!storage) {
@@ -212,6 +233,7 @@ public final class CopyThenDispatchRepro {
                     + " round=" + round
                     + " storage=" + storage
                     + " storageAgain=" + storageAgain
+                    + " ownVictim=" + ownVictim
                     + " copy=" + copy
                     + " storageReason=" + oneLine(storageReason).replace(' ', '_')
                     + " copyReason=" + oneLine(copyReason == null ? "-" : copyReason).replace(' ', '_'));
@@ -219,6 +241,223 @@ public final class CopyThenDispatchRepro {
         System.out.println("M4_REPRO SUMMARY variant=" + variant + " rounds=" + rounds
                 + " storageFailures=" + storageFailures + " copyFailures=" + copyFailures);
         System.exit(0);
+    }
+
+    /**
+     * The victim with a counter in it: three dispatches of the same kernel through three tables of their own,
+     * each writing the whole image its own colour.
+     * <p>
+     * The colour left in the image is the answer to "how many commands landed": blue is all three, green is the
+     * first two, red is the first alone. A re-pointed table would fail differently - the later dispatches would
+     * write the first colour, which reads as red with the *third* command having run - so this is what tells
+     * the two apart, and it is why the own victim exists beside the probe's smoke rather than instead of it.
+     *
+     * @return which colour the image holds, or why the sequence could not be run
+     */
+    private static String ownVictim(final MTLDevice device, final String ownMode) {
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment image = MemorySegment.NULL;
+        MemorySegment function = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        com.metallum.mtl.MTLBuffer[] colours = new com.metallum.mtl.MTLBuffer[2];
+        MTL4ArgumentTable table = null;
+        MTL4ArgumentTable secondTable = null;
+        MTL4ResidencySet resident = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return "no-queue";
+            }
+
+            try (MTLTextureDescriptor descriptor = MTLTextureDescriptor.create()) {
+                descriptor.pixelFormat(MTLPixelFormat.RGBA8Unorm);
+                descriptor.width(8L);
+                descriptor.height(8L);
+                descriptor.usage(USAGE_SHADER_WRITE | USAGE_SHADER_READ);
+                descriptor.storageMode(MTLStorageMode.Shared);
+                image = device.newTexture(descriptor);
+            }
+            if (ObjC.isNil(image)) {
+                return "no-image";
+            }
+
+            for (int index = 0; index < 2; index++) {
+                colours[index] = device.newBuffer(16L, STORAGE_SHARED);
+                if (colours[index] == null || colours[index].gpuAddress() == 0L) {
+                    return "no-colour-buffer";
+                }
+                MemorySegment words = colours[index].contents().reinterpret(16L);
+                for (int channel = 0; channel < 4; channel++) {
+                    words.set(java.lang.foreign.ValueLayout.JAVA_FLOAT, channel * 4L,
+                            OWN_COLOURS[index][channel] / 255.0f);
+                }
+            }
+
+            // One table, handed the first colour, re-pointed at the second between the dispatches: the probe
+            // smoke's own shape, which is what makes this victim comparable to it.
+            table = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            if (table == null || !table.address(colours[0].gpuAddress(), 0L) || !table.texture(image, 0L)) {
+                return "no-table";
+            }
+
+            function = device.newFunction(OWN_VICTIM_MSL, "repro_write");
+            if (ObjC.isNil(function)) {
+                return "no-function";
+            }
+            pipeline = device.newComputePipelineState(function);
+            if (ObjC.isNil(pipeline)) {
+                return "no-pipeline";
+            }
+
+            resident = MTL4ResidencySet.create(device, 4L, "the own victim");
+            if (resident == null || !resident.add(image) || !resident.add(colours[0].handle())
+                    || !resident.add(colours[1].handle())
+                    || !resident.commit() || !resident.requestResidency()
+                    || !responds(queue, "addResidencySet:")) {
+                return "no-residency";
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            // One command buffer, one commit, and the encoder count is the switch: one encoder carrying both
+            // dispatches (what the engine does), one encoder each, or a commit each.
+            // The event's value advances with every commit, which is what makes each wait a wait for its own
+            // submission: signalling 1 twice would make the second wait return immediately and read an image
+            // the second dispatch had not written yet.
+            long signalled = 0L;
+            MTL4ComputeEncoder dispatch = null;
+            BEGIN.send(buffer, allocator);
+            for (int index = 0; index < 2; index++) {
+                if (index == 1) {
+                    if (!table.address(colours[1].gpuAddress(), 0L)) {
+                        END.send(buffer);
+                        return "no-repoint";
+                    }
+                }
+                if (ownMode.equals("two-commits") && index == 1) {
+                    END.send(buffer);
+                    signalled++;
+                    try (Arena arena = Arena.ofConfined()) {
+                        MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                        buffers.set(ADDRESS, 0L, buffer);
+                        COMMIT.send(queue, buffers, 1L);
+                    }
+                    SIGNAL_EVENT.send(queue, event, signalled);
+                    if (WAIT_UNTIL_SIGNALED.sendLong(event, signalled, 2000L) == 0L) {
+                        return "no-completion";
+                    }
+                    BEGIN.send(buffer, allocator);
+                }
+                // The switch that matters: `one-encoder` is the probe smoke's own shape - one encoder
+                // carrying both dispatches, with the table re-pointed between them - while `two-encoders`
+                // gives each dispatch its own.
+                if (ownMode.equals("one-encoder")) {
+                    if (index == 0) {
+                        dispatch = MTL4ComputeEncoder.open(device, buffer, "the own victim's one encoder");
+                        if (!prepare(dispatch, pipeline, table)) {
+                            END.send(buffer);
+                            return "no-dispatch";
+                        }
+                    } else if (ownMode.equals("fresh-table")) {
+                        // The same encoder, a table of its own for the second dispatch: this is the question of
+                        // whether a table may be re-pointed inside an encoder at all, or whether the encoder's
+                        // snapshot is what is cached.
+                        secondTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+                        if (secondTable == null || !secondTable.texture(image, 0L)
+                                || !secondTable.address(colours[1].gpuAddress(), 0L)
+                                || !prepare(dispatch, pipeline, secondTable)) {
+                            END.send(buffer);
+                            return "no-fresh-table";
+                        }
+                    } else if (!repoint(dispatch, table, colours[1])) {
+                        END.send(buffer);
+                        return "no-repoint";
+                    }
+                } else {
+                    try (MTL4ComputeEncoder one = MTL4ComputeEncoder.open(device, buffer,
+                            "the own victim's dispatch " + (index + 1))) {
+                        if (!prepare(one, pipeline, table)) {
+                            END.send(buffer);
+                            return "no-dispatch";
+                        }
+                    }
+                }
+            }
+            if (dispatch != null) {
+                dispatch.close();
+                dispatch = null;
+            }
+            if (false) {
+            }
+            END.send(buffer);
+
+            signalled++;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, signalled);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, signalled, 2000L) == 0L) {
+                return "no-completion";
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                MTLTexture.bytes(image, pixel, 4L, 0L, 0L, 1L, 1L);
+                int[] seen = read(pixel);
+                if (matches(seen, OWN_COLOURS[1])) {
+                    return "green(2-of-2)";
+                }
+                if (matches(seen, OWN_COLOURS[0])) {
+                    return "red(1-of-2)";
+                }
+                return "other" + describe(seen);
+            }
+        } catch (RuntimeException threw) {
+            return "threw";
+        } finally {
+            if (resident != null) {
+                resident.close();
+            }
+            if (secondTable != null) {
+                secondTable.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            release(pipeline);
+            release(function);
+            release(image);
+            release(colours[0]);
+            release(colours[1]);
+            release(event);
+            release(buffer);
+            release(allocator);
+            release(queue);
+        }
+    }
+
+    /** Hands an encoder the pipeline and the table, and dispatches one group over the whole image. */
+    private static boolean prepare(final MTL4ComputeEncoder dispatch, final MemorySegment pipeline,
+                                   final MTL4ArgumentTable table) {
+        return dispatch != null
+                && dispatch.setComputePipelineState(pipeline)
+                && dispatch.setArgumentTable(table)
+                && dispatch.dispatchThreads(8L, 8L, 1L, 8L, 8L, 1L);
+    }
+
+    /** Points the table at the second colour and hands it to the encoder again, which is the re-point. */
+    private static boolean repoint(final MTL4ComputeEncoder dispatch, final MTL4ArgumentTable table,
+                                   final com.metallum.mtl.MTLBuffer colour) {
+        return table.address(colour.gpuAddress(), 0L)
+                && dispatch.setArgumentTable(table)
+                && dispatch.dispatchThreads(8L, 8L, 1L, 8L, 8L, 1L);
     }
 
     /**
