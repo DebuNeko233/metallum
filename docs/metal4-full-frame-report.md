@@ -480,10 +480,17 @@ compute->render: PROVEN - `canSampleComputeOutput` (a pass samples what a dispat
                 making "the kernel never wrote" and "the sample never arrived" two different failures) and
                 `canDrawFromComputeWrittenBuffer` (a draw reads vertices a dispatch wrote, from a buffer that
                 starts as three copies of the origin so an early draw paints nothing)
-picture:        MEASURED through the readback road rather than an F2 press - on the `compute-storage-contract`
-                fixture both arms present the fixture's acceptance colour (pure green, with red and blue at
-                zero) and the picture read is the drawable written frame for frame, which is the reading the
-                capability matrix's presentation row carries. The one thing still not localised is the alpha byte
+picture:        MEASURED through the readback road rather than an F2 press, and the two arms AGREE ON THE
+                VERDICT but not on the brightness. On the `compute-storage-contract` fixture, both arms are
+                overwhelmingly GREEN with **red and blue at zero in every sampled cell** - no magenta anywhere,
+                which is the fixture's acceptance criterion (`final.fsh` writes green or magenta and nothing
+                else) - and the picture read is the drawable written frame for frame. What differs is the green
+                itself: this path presents a **uniform** green (mean G 255, flat from 200 readbacks in) while the
+                reference arm presents a **radial green ramp** (mean G 199, stable for the last 2000 of its 4948
+                readbacks). Since `final.fsh` can only write (0,1,0) or (1,0,1), neither a ramp nor a dimming
+                can come from the pack, and the two arms therefore differ in what else writes the game's target.
+                **The mechanism is NOT LOCALISED** and it is registered as blocker 13; the sequential readings
+                are in that blocker, and the alpha byte is the separate residual it always was
 ```
 
 **A note on these two blocks, because they are how a report goes wrong.** They read "NOT STARTED" long after the
@@ -857,6 +864,30 @@ answered rather than only what is left.
    arm's. **What is NOT PROVEN**: that the shape holds for a pipeline wider than one pack's; the writes are not
    deduplicated (section 50's correctness-first order); and Vitrail's `wide-resources-contract` fixture, which
    drives thirty-three sampled images through one pipeline, has not been run on this path.
+
+13. **The two arms disagree about how bright a fixture's frame is, and neither reading comes from the pack.**
+   `compute-storage-contract`'s `final.fsh` writes pure green `(0,1,0,1)` where it judges the compute chain's
+   marker correct and pure magenta `(1,0,1,1)` where it does not - nothing else, at any brightness. Measured
+   through the drawable and picture readbacks on both arms in one round, 40 s of settle after each chain drew:
+
+   ```text
+                              readbacks   green over the run        red/blue   picture == drawable
+   Metal 3  (comp8-compute-metal3)  4948   60 -> 194 -> 199, flat    zero       yes, ramp for ramp
+   Metal 4  (comp8-compute-metal4)  4960   50 -> 255, flat           zero       yes, green for green
+   ```
+
+   Both arms pass the fixture's verdict - overwhelmingly green, red and blue at zero in every sampled cell, no
+   magenta - and both read the same thing on both roads, so the present pass is the identity on this fixture on
+   both generations. What differs is the green: this path is **uniform at 255**, the reference arm is a **stable
+   radial ramp** whose centre reads 255 and whose corners read 67, and each is a plateau rather than a fade
+   (Metal 4 reaches 255 within 200 readbacks and stays; Metal 3 converges to 199 within 400 and holds it for the
+   last 2000). A ramp cannot come from the pack, so something else is writing the game's target on one arm and
+   not the other - **an overlay multiplied in, or a write this path skips, and which of the two is not
+   localised.** It is the third residual of the same family and it is registered rather than resolved: the sky
+   strip and the alpha channel both want a copy of the target at a pass boundary, and so does this. What would
+   localise it is the pass-by-pass attachment trace of a session that reads the target's *mean* rather than its
+   sampled cells, because a multiply by a radial mask is exactly what a per-pass readback would separate from
+   the pack's own write.
 
 ## Metal 4 full-frame implementation complete?
 

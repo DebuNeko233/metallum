@@ -3718,6 +3718,37 @@ mixin the config names, every mixin the config names must be admitted by the plu
 group the sodium diagnostics are admitted as - and the schedule type lives in `render.shared`, which is where a
 type that is only *used* belongs.
 
+### The compute fixture's picture, and the arm difference it exposed
+
+The compute road's picture was the one reading the report carried as unreachable, and it was unreachable only
+because the fixture's acceptance was written as an F2 press. The drawable and picture readbacks read it instead,
+and the fixture turns out to be a near-ideal instrument for them: `final.fsh` writes pure green `(0,1,0,1)` or
+pure magenta `(1,0,1,1)` and nothing else, so "which colour is on the screen" is the whole verdict.
+
+Both arms pass it - overwhelmingly green, red and blue at zero in every sampled cell, no magenta, and the
+picture read is the drawable written on both, so the present pass is the identity here - and the two arms do
+**not** agree about the green:
+
+```text
+                              readbacks   green over the run        red/blue   picture == drawable
+Metal 3  (comp8-compute-metal3)  4948   60 -> 194 -> 199, flat    zero       yes, ramp for ramp
+Metal 4  (comp8-compute-metal4)  4960   50 -> 255, flat           zero       yes, green for green
+```
+
+This path is uniform at 255; the reference arm is a stable radial ramp from 255 at the centre to 67 at the
+corners, and both are plateaus rather than fades. **A ramp cannot come from the pack** - it has two colours and
+this is neither - so on one arm something else is writing the game's target: an overlay multiplied in, or a write
+this path does not make. Which of the two it is **is not localised**, and it is registered as the third member of
+a family the migration already carries (the sky strip and the alpha channel, both of which want a copy of the
+target at a pass boundary). What would separate them is a pass-by-pass trace that reads the target's mean rather
+than twenty-five sampled cells, because a radial multiply is exactly the shape such a trace would attribute to a
+pass.
+
+It is worth writing down how the reading nearly went wrong, because the same trap is in the presentation row:
+the first thing the numbers show is the *fade*, both arms starting at 50-60 as the loading screen clears, and a
+single reading taken during it says the arms disagree wildly. Read as a sequence, the two converge to their own
+plateaus - which is a difference that survives, and a different claim from the one the first frame supports.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
