@@ -639,6 +639,8 @@ for needle, why in (
 RING = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4FrameRing.java"
 ring = RING.read_text(encoding="utf-8")
 for needle, why in (
+    ("MTL4CommitOptions.error(feedback)", "the commit handler reads no error, so a GPU fault reaches the frame "
+     "path as a completion value that never arrives instead of as the account the queue actually gave"),
     ("private static final long WAIT_MILLIS = 5000L;",
      "the ring does not wait the Metal 3 encoder's own five seconds for a slot's completion, so a legitimate "
      "stall would be reported as a lifetime fault"),
@@ -673,6 +675,43 @@ for needle, why in (
 if 'throw unimplemented("createFence")' in encoder:
     raise SystemExit("metal 4 provider: the frame encoder still refuses createFence, which the client asked for "
                      "by stopping there")
+
+# The GPU's own account of a fault, which is the one thing a Metal 4 queue says about a submission that went
+# wrong: a Metal 3 command buffer carries an errorDescription, and a Metal 4 queue reports nothing unless the
+# commit was given options. Without this a GPU fault reads as a lifetime fault - measured, and the reason it
+# exists: the first forced Metal 4 run that reported one said MTL4CommandQueueErrorDomain error 1, which the SDK
+# header names MTL4CommandQueueErrorTimeout.
+COMMIT_OPTIONS = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4CommitOptions.java"
+if not COMMIT_OPTIONS.is_file():
+    raise SystemExit("metal 4 provider: MTL4CommitOptions.java is gone, so a commit's GPU time and its fault "
+                     "have no reader")
+commit_options = COMMIT_OPTIONS.read_text(encoding="utf-8")
+for needle, why in (
+    ('Msg.of("error", ADDRESS)', "the feedback's error is not read, so a GPU fault cannot be named"),
+    ("public static String error(final MemorySegment feedback) {",
+     "the feedback's error is not turned into words a log can carry"),
+    ('LOCALIZED_DESCRIPTION.sendPtr(failure)', "the error's own description is not read"),
+):
+    if needle not in commit_options:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ('Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG,\n            ADDRESS)',
+     "the ring has no commit-with-options form, so the queue's feedback can never be asked for"),
+    ("private MTL4CommitOptions commitOptions;", "the ring holds no commit options"),
+    ("commitOptions.feedbackHandler(feedbackBlock);\n                COMMIT_WITH_OPTIONS.send(queue, buffers, 1L,"
+     " commitOptions.handle());",
+     "the commit does not carry the options, so its feedback is never delivered"),
+    ("block = ObjCBlock.withConsumer(MTL4FrameRing::reportFeedback);",
+     "nothing reads the feedback, so a fault is still a silent timeout"),
+    ("if (!faultReported) {\n            faultReported = true;",
+     "a dead GPU is reported once per commit instead of once"),
+    ('Integer.getInteger("metallum.metal4RingSlots", MTL4FrameRing.FRAMES_IN_FLIGHT)',
+     "the ring's depth cannot be asked for, which is how a fault is correlated with the submission that caused "
+     "it: at one slot the commands a trace prints before the fault report are the faulting submission's"),
+):
+    if needle not in ring and needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two

@@ -37,6 +37,9 @@ public final class MTL4CommitOptions implements AutoCloseable {
     private static final Msg ADD_FEEDBACK_HANDLER = Msg.ofVoid("addFeedbackHandler:", ADDRESS);
     private static final Msg GPU_START_TIME = Msg.of("GPUStartTime", JAVA_DOUBLE);
     private static final Msg GPU_END_TIME = Msg.of("GPUEndTime", JAVA_DOUBLE);
+    private static final Msg ERROR = Msg.of("error", ADDRESS);
+    private static final Msg LOCALIZED_DESCRIPTION = Msg.of("localizedDescription", ADDRESS);
+    private static final Msg CODE = Msg.of("code", JAVA_LONG);
     private static final Msg RESPONDS_TO_SELECTOR = Msg.of("respondsToSelector:", JAVA_LONG, ADDRESS);
 
     private final MemorySegment handle;
@@ -100,6 +103,29 @@ public final class MTL4CommitOptions implements AutoCloseable {
         }
 
         return (ended - started) * 1000.0;
+    }
+
+    /**
+     * The GPU's own account of a submission that went wrong, or null where it reported none.
+     * <p>
+     * This is the one place the new command model says anything about a fault. A Metal 3 command buffer carries
+     * an {@code errorDescription} the caller can read after it completes; a Metal 4 queue reports nothing back
+     * unless the commit was given options, and then this field is the account: "A description of an error when
+     * the GPU encounters an issue as it runs the committed command buffers". Without it a GPU fault reaches the
+     * frame path as a completion value that never arrives - a lifetime sentence for a machine-level fault, which
+     * is what a forced Metal 4 run reported until this existed.
+     */
+    @Nullable
+    public static String error(final MemorySegment feedback) {
+        if (ObjC.isNil(feedback) || !responds(feedback, "error")) {
+            return null;
+        }
+        MemorySegment failure = ERROR.sendPtr(feedback);
+        if (ObjC.isNil(failure)) {
+            return null;
+        }
+        String words = ObjC.javaString(LOCALIZED_DESCRIPTION.sendPtr(failure));
+        return words + " (code " + CODE.sendLong(failure) + ")";
     }
 
     public MemorySegment handle() {

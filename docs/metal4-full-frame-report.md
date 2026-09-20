@@ -451,14 +451,22 @@ process with no window is not the same claim as a capability proven through the 
    drawable road (take, wait, signal, present) is sound and the fault is in what the Metal 4 frame encodes for
    the world. Not yet known: which pass or draw. Candidates are hypotheses only (a wrong attachment or
    depth-stencil description for a terrain pass; a table slot the shader does not declare; wrong address
-   arithmetic in a draw; an ordering mistake between a copy and a pass). **Instruments tried**: Metal API
-   validation is unusable on this client (with `MTL_DEBUG_LAYER=1` the engine's own Metal 4 probe fails and the
-   game falls back to OpenGL); a pass-and-draw trace (`-Dmetallum.metal4Trace=true`, off by default) localized
-   the last commands to the loading-screen GUI pass and the present; the argument tables' lifetime was the first
-   candidate and is **refuted** - releasing them with the frame instead of at pass end changes nothing about this
-   fault (same value 31, same `GPURestart`), so the deferred release is kept on its own merits and not as a fix.
-   The next milestone is a device capture of the failing frame or a bisection that refuses command classes one at
-   a time. Blocks the no-pack frame and therefore AUTO.
+   arithmetic in a draw; an ordering mistake between a copy and a pass). **What the GPU itself says, now**: the
+   ring commits with `MTL4CommitOptions` where the queue offers them, and reports `MTL4CommitFeedback.error` once
+   - the run says `MTL4CommandQueueErrorDomain error 1`, which this machine's `MTL4CommandQueue.h` names
+   **`MTL4CommandQueueErrorTimeout`**. The submission did not fail validation; it never finished, and the driver
+   reset the GPU. **Instruments**: Metal API validation is unusable on this client (with `MTL_DEBUG_LAYER=1` the
+   engine's own Metal 4 probe fails and the game falls back to OpenGL); a pass-and-draw trace
+   (`-Dmetallum.metal4Trace=true`) plus a one-slot ring (`-Dmetallum.metal4RingSlots=1`) put the faulting
+   submission at a loading-screen frame (the atlas-animation passes and the `GUI before blur` pass), because at
+   one slot the commands printed before the fault report are that submission's. **Three candidates refuted by
+   A/B**: the argument tables' lifetime (deferred with the frame instead of closed at pass end - same timeout),
+   the present (the present draw removed entirely - same timeout), and the drawable wait gating the frame on the
+   display (`waitForDrawable:` removed - same timeout). So the fault is in the frame's own encoded passes and
+   copies, and the leading hypothesis is the one part of Metal 4's resource model this path does not use:
+   **residency** (the header requires an `MTLResidencySet` for the buffers an address-taking draw references, and
+   the device reports `residency=true`; this path declares nothing). Blocks the no-pack frame and therefore
+   AUTO.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

@@ -1371,9 +1371,45 @@ first world frame is **BLOCKED** on a GPU fault whose cause is not known yet.
   the A/B says it is not this fault: with the release deferred, the same run stops at the same place
   (`slot 0's completion value 31 did not arrive within 5000 ms`) and the kernel logs the same `GPURestart`.
 
-So the fault is still open, and the next narrowing has to be a device capture of the failing frame (or a
-bisection that refuses command classes one at a time). Nothing is claimed until one of those says which command;
-the list above is hypotheses, not a diagnosis.
+**The frame path now reads the GPU's own account of a fault.** A Metal 3 command buffer carries an
+`errorDescription` the caller reads after it completes; a Metal 4 queue reports nothing back unless the commit
+was given options, and then `MTL4CommitFeedback.error` is "a description of an error when the GPU encounters an
+issue as it runs the committed command buffers". `MTL4FrameRing` commits with those options where the queue
+offers them and reports the fault once, and `MTL4CommitOptions.error` is the reader. The first forced Metal 4
+run with it said:
+
+```text
+Metal 4 frame: the GPU reported a fault in a committed submission -
+The operation couldn't be completed. (MTL4CommandQueueErrorDomain error 1.) (code 1).
+```
+
+**`MTL4CommandQueueErrorTimeout`** - read off this machine's `MTL4CommandQueue.h`, where the enum's second case
+is `MTL4CommandQueueErrorTimeout = 1`. So the submission did not fail validation; it **did not finish**, and the
+driver reset the GPU in response. That reframes the search completely: what is wanted is a command the GPU waits
+on for ever, not a command it rejects.
+
+**A ring depth can now be asked for** (`-Dmetallum.metal4RingSlots=N`, default the migration's three) for one
+diagnostic purpose: with a single slot a frame is committed only after the previous one has completed, so the
+commands the pass trace prints immediately before the fault report *are* the faulting submission's. With one
+slot, the faulting submission is a loading-screen frame: the atlas-animation passes (render passes into the
+atlas textures, 34 draws in the blocks atlas) and the `GUI before blur` pass with its depth attachment and two
+indexed draws - and, in the runs that still presented, the present pass after them.
+
+**Three candidates are now refuted, each by an A/B that changed one thing:**
+
+| candidate | the A/B | the answer |
+| --- | --- | --- |
+| the argument tables are closed when a pass ends, before the commit | filed with the frame's deferred queue instead | same stop, same value, same `GPURestart` - kept on its own merits, refuted as this fault |
+| the present is what stalls the queue | the present draw removed entirely (the drawable is still taken, signalled and presented) | same timeout, same value |
+| the drawable wait gates the frame on the display | `waitForDrawable:` removed (and the present pass's producer barrier with it) | same timeout, same value |
+
+So the fault is in the frame's **own encoded work** - the passes the loading screen makes and the copies that
+feed them - and the next milestone is named by the one part of Metal 4's resource model this path does not use
+at all: **residency**. The header says it in as many words for the address-taking commands this path already
+uses ("Use an instance of `MTLResidencySet` to mark residency of the index buffer the `indexBuffer` parameter
+references"), and the device reports `residency=true`. The frame path declares nothing resident: it binds
+addresses and resource ids and leaves residency to the driver's default, which is the leading hypothesis and
+the next thing to measure - not to assume.
 
 ## The API mapping
 

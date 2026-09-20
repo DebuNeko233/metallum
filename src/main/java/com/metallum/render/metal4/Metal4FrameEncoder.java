@@ -80,8 +80,16 @@ import java.util.List;
 @Environment(EnvType.CLIENT)
 final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentation {
 
-    /** The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth. */
-    private static final int FRAMES_IN_FLIGHT = MTL4FrameRing.FRAMES_IN_FLIGHT;
+    /**
+     * The frame model the ring runs, which the migration's section 31 fixes at the present path's own depth.
+     * <p>
+     * Overridable with {@code -Dmetallum.metal4RingSlots=N} for one diagnostic purpose, and only that: with a
+     * single slot a frame is committed only after the previous one has completed, so the commands a trace prints
+     * immediately before the GPU's own fault report <em>are</em> the faulting submission's. The default is the
+     * migration's number, and a session that does not ask gets it.
+     */
+    private static final int FRAMES_IN_FLIGHT = Math.max(1,
+            Integer.getInteger("metallum.metal4RingSlots", MTL4FrameRing.FRAMES_IN_FLIGHT));
 
     private final MetalDevice device;
     private final Metal4ExecutionState executionState;

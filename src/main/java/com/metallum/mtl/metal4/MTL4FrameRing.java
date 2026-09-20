@@ -1,7 +1,9 @@
 package com.metallum.mtl.metal4;
 
+import com.metallum.Metallum;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.objc.Msg;
+import com.metallum.objc.ObjCBlock;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -75,6 +77,8 @@ public final class MTL4FrameRing implements AutoCloseable {
     private static final Msg END = Msg.ofVoid("endCommandBuffer");
     private static final Msg RESET = Msg.ofVoid("reset");
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
+    private static final Msg COMMIT_WITH_OPTIONS = Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG,
+            ADDRESS);
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg WAIT_DRAWABLE = Msg.ofVoid("waitForDrawable:", ADDRESS);
     private static final Msg SIGNAL_DRAWABLE = Msg.ofVoid("signalDrawable:", ADDRESS);
@@ -96,6 +100,22 @@ public final class MTL4FrameRing implements AutoCloseable {
     private int slot = -1;
     private boolean begun;
     private boolean closed;
+
+    /**
+     * The commit feedback this ring asks for where the queue offers it, and the block Metal calls with it.
+     * <p>
+     * The one account of a submission that went wrong: a Metal 4 queue reports nothing back to the caller, and
+     * the feedback object's {@code error} is "a description of an error when the GPU encounters an issue as it
+     * runs the committed command buffers". Without it a GPU fault reaches the frame path as a completion value
+     * that never arrives, which reads as a lifetime fault on a machine that has actually restarted its GPU -
+     * measured, and the reason this exists.
+     */
+    @Nullable
+    private MTL4CommitOptions commitOptions;
+    @Nullable
+    private MemorySegment feedbackBlock;
+    /** Whether a GPU fault has already been reported, so a dead GPU is one line and not one a commit. */
+    private static volatile boolean faultReported;
 
     @Nullable
     private String refusal;
@@ -155,7 +175,25 @@ public final class MTL4FrameRing implements AutoCloseable {
                         + " proved with");
             }
 
-            return new MTL4FrameRing(queue, event, commandBuffer, allocators);
+            // Asked for, and made where the queue has it: a submission's own account of a fault is worth one
+            // extra message per commit, and a queue without the options form commits exactly as before.
+            MTL4CommitOptions options = null;
+            MemorySegment block = MemorySegment.NULL;
+            if (responds(queue, "commit:count:options:")) {
+                options = MTL4CommitOptions.create();
+                if (options != null) {
+                    block = ObjCBlock.withConsumer(MTL4FrameRing::reportFeedback);
+                    if (!options.feedbackHandler(block)) {
+                        options.close();
+                        options = null;
+                    }
+                }
+            }
+
+            MTL4FrameRing ring = new MTL4FrameRing(queue, event, commandBuffer, allocators);
+            ring.commitOptions = options;
+            ring.feedbackBlock = block;
+            return ring;
         } catch (Refused refused) {
             releaseIfPresent(commandBuffer);
             releaseIfPresent(event);
@@ -228,7 +266,14 @@ public final class MTL4FrameRing implements AutoCloseable {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment buffers = arena.allocate(ADDRESS, 1);
             buffers.set(ADDRESS, 0L, commandBuffer);
-            COMMIT.send(queue, buffers, 1L);
+            if (commitOptions != null) {
+                // Registered for every commit, because the handler is taken once: measured on the present
+                // sidecar, where a handler given to one commit was called for that commit and never again.
+                commitOptions.feedbackHandler(feedbackBlock);
+                COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, commitOptions.handle());
+            } else {
+                COMMIT.send(queue, buffers, 1L);
+            }
         }
         awaited[slot] = ++signalled;
         SIGNAL_EVENT.send(queue, event, signalled);
@@ -350,6 +395,25 @@ public final class MTL4FrameRing implements AutoCloseable {
         return true;
     }
 
+    /**
+     * One commit's feedback, on the dispatch queue Metal owns: the fault it reports, where it reports one.
+     * <p>
+     * Reported once and not once a commit: a GPU that has faulted reports it for every submission after it, and
+     * a log that repeats the same sentence per frame is a log nobody reads.
+     */
+    private static void reportFeedback(final MemorySegment feedback) {
+        String error = MTL4CommitOptions.error(feedback);
+        if (error == null) {
+            return;
+        }
+        if (!faultReported) {
+            faultReported = true;
+            Metallum.LOGGER.error("Metal 4 frame: the GPU reported a fault in a committed submission - {}. The"
+                    + " submissions after it will not complete either, so a completion value that never arrives"
+                    + " is this and not a lifetime fault", error);
+        }
+    }
+
     /** How many times a slot was found still in flight and waited for before it was reset. */
     public long waits() {
         return waits;
@@ -395,6 +459,10 @@ public final class MTL4FrameRing implements AutoCloseable {
             return;
         }
         closed = true;
+        if (commitOptions != null) {
+            commitOptions.close();
+            commitOptions = null;
+        }
         releaseIfPresent(commandBuffer);
         releaseIfPresent(event);
         commandBuffer = MemorySegment.NULL;
