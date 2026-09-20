@@ -3101,6 +3101,60 @@ is the gate on a path with a SIGABRT in its history (`signalOnCommandQueue:` was
 against the same baseline - not a single run. Both arms are already routine here; the work is the pair, plus
 the picture check that says the presented image is the frame's either way.
 
+### One submission structure per session, measured before it was enforced
+
+Section 63 asks the migration to converge on **one** Metal 4 queue, one command ownership model, one commit a
+frame, one retirement model and one presentation path, and section 38 forbids the shape by name: the full-frame
+path must not be a frame queue beside a present sidecar. The policy above moved *who decides*; this is the step
+that makes the decision **exclusive**, and it was taken only after the state it removes was measured.
+
+**Measured first**: a forced Metal 4 launch with `-Dmetallum.metal4Present=true` starts the sidecar *as well as*
+the frame encoder's ring - `Metal 4 path: carrying the frame's present, one command buffer and one commit a
+frame, 3 allocators and a shared event bounding the frames in flight` once, and
+`Metal 4 path: commit feedback registered` once - while the frame encoder's own present road does all the work
+(1964 drawable readbacks labelled `[metal4]`, and none from the Metal 3 present road, which that session never
+uses). So the session held two Metal 4 queues, two allocator rings, two command buffers, two shared events, two
+commit-feedback registrations and two frame retirement models, and the sidecar was **never asked for a picture**:
+`Metal4Path.presenting` is reached from the Metal 3 encoder's gate, and a session that executes Metal 4 does not
+call that encoder at all. The cost of the shape is not a wrong pixel; it is an object graph that lies about who
+presents, and one more queue per session on the way to production.
+
+**The step**: the present road is chosen from the policy *and* the generation that executes, in the one seam that
+holds both facts - `MetalExecutionServices`:
+
+```java
+private boolean presentingThroughTheSidecar() {
+    return presentsThroughMetal4() && executing != MetalApiGeneration.METAL4;
+}
+```
+
+`startPresentPath` starts the sidecar when that is true and returns the do-nothing gate otherwise, and
+`closePresentPath` now asks **the same question the start asked** rather than the policy alone, which is the
+asymmetry that would otherwise leave a road that was never started being closed, or a started one behind. The
+elsewhere-unchanged property still decides *whether* the sidecar road is used at all, so nothing about the
+reference shell moves: a Metal 3-executing session with the property on starts the sidecar exactly as it did.
+
+**Measured after**, three arms on the settled scene:
+
+| arm | execution | sidecar started | presented by |
+| --- | --- | --- | --- |
+| before | `metal4` + property on | **1** (+1 commit-feedback registration) | the frame encoder, 1964 readbacks |
+| after | `metal4` + property on | **0** | the frame encoder, 2182 readbacks |
+| after | `metal4`, property off | 0 | the frame encoder, 1959 readbacks |
+| after | `metal3` + property on | **1** | the sidecar (one Metal 3 readback, which is the frame before the gate takes the picture) |
+
+The Metal 4 arms load a world, dispatch Vitrail's chain every frame and present through the frame encoder's ring
+with no `GPURestart`, no refusal and no fault; the Metal 3 arm with the property on still starts the present-only
+road, which is the reference shell section 39 says must not be removed early. Four pins hold the shape - the
+helper, its condition, the start that asks it and the close that asks it - **all four mutation-proved**, and the
+contract file records the measurement the pins exist for rather than only the code they reject.
+
+What this does **not** do is remove `Metal4Path`: section 107's order is new path proven, presentation moved,
+capabilities covered, *then* the sidecar becomes unused and is removed in an isolated cleanup commit. Today it is
+still the reference shell's presenter - which is a session whose frame is encoded by Metal 3 - so the sidecar's
+own queue is the session's second submission structure there by design, and that is the configuration section 19
+calls `referenceShell=true`.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

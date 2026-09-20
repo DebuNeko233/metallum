@@ -1156,6 +1156,30 @@ if "switch (executing)" not in services:
 if "case METAL4 -> new com.metallum.render.metal4.Metal4ExecutionProvider();" not in services:
     raise SystemExit("metal 4 provider: the executing generation's Metal 4 case does not name this provider")
 
+# --- and the present road is not started beside a frame path that already presents -------------------------
+# Measured before it was written down: a forced Metal 4 session with `-Dmetallum.metal4Present=true` started the
+# sidecar as well as the frame encoder's ring - two Metal 4 submission structures in one session, two
+# commit-feedback registrations, one frame retirement model each - while only the frame encoder ever presented
+# (1964 readbacks labelled with this generation's name, and none from the Metal 3 present road). Section 38
+# forbids that shape by name and section 63 asks the migration to converge out of it, so the sidecar is started
+# only for a session whose frame is encoded by a generation that does not present for itself, and its close asks
+# the question its start asked.
+for needle, why in (
+    ("private boolean presentingThroughTheSidecar() {",
+     "the present road is chosen from the policy alone, so a session that executes Metal 4 would start a second "
+     "Metal 4 submission structure beside the frame encoder's own"),
+    ("return presentsThroughMetal4() && executing != MetalApiGeneration.METAL4;",
+     "the present road does not consider which generation executes, which is the fact that decides whether the "
+     "sidecar is this session's present or a second one"),
+    ("this.presentGate = presentingThroughTheSidecar()",
+     "the present road is started without asking the question the helper states"),
+    ("if (presentingThroughTheSidecar()) {",
+     "the present road's close does not ask the question its start did, so a road that was never started could "
+     "be closed, or a started one left behind"),
+):
+    if needle not in services:
+        raise SystemExit("metal 4 provider: " + why)
+
 # --- and the skeleton has real-device evidence -----------------------------------------------------------
 if "provider=" not in harness or "Metal4ExecutionProvider" not in harness:
     raise SystemExit("metal 4 provider: the harness does not ask the provider on the real device, so the "

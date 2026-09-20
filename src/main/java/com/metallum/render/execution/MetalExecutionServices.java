@@ -57,6 +57,10 @@ public interface MetalExecutionServices {
      * **not** yet consult {@link #selected()}: that would silently change which road a forced-Metal-3 session
      * presents through, and the change that ties the policy to the selection is the one that makes the Metal 4
      * frame path the frame's own road.
+     * <p>
+     * It is the policy half only. The readiness half belongs with the objects, and the <em>executing
+     * generation</em> half is conjoined with this policy in the one place that holds both, so that a session
+     * which executes Metal 4 does not start a present road its own frame encoder already is.
      */
     default boolean presentsThroughMetal4() {
         return false;
@@ -159,11 +163,29 @@ public interface MetalExecutionServices {
             private com.metallum.render.shared.MetalFramePresentGate presentGate =
                     com.metallum.render.shared.MetalFramePresentGate.NONE;
 
+            /**
+             * Whether this session's picture is shown by the present-only Metal 4 road.
+             * <p>
+             * The policy is not the whole answer any more, because the second fact this seam is the only place to
+             * hold is the generation that <em>executes</em>. That road is a present for a session whose frame is
+             * encoded by something that does not present for itself - the reference shell, where Metal 3 encodes
+             * and this road shows the picture. A session that executes Metal 4 presents inside its own frame
+             * encoder, and starting the sidecar beside it would put **two Metal 4 submission structures in one
+             * session** - two queues, two allocator rings, two command buffers, two commit-feedback
+             * registrations, one frame retirement model each - with the sidecar never being asked for a picture.
+             * That is the shape section 38 forbids ("the full-frame path must not be a frame queue beside a
+             * present sidecar") and section 63 asks to converge away from, so the sidecar is not started for it,
+             * and {@link #closePresentPath()} asks the same question it was started under.
+             */
+            private boolean presentingThroughTheSidecar() {
+                return presentsThroughMetal4() && executing != MetalApiGeneration.METAL4;
+            }
+
             @Override
             public com.metallum.render.shared.MetalFramePresentGate startPresentPath(final MTLDevice device) {
                 // Chosen once, here, from the same policy the encoder used to ask per frame, and kept: which road
                 // presents is a property of the session, not of a frame.
-                this.presentGate = presentsThroughMetal4()
+                this.presentGate = presentingThroughTheSidecar()
                         ? com.metallum.render.Metal4PresentGate.start(device)
                         : com.metallum.render.shared.MetalFramePresentGate.NONE;
                 return this.presentGate;
@@ -171,7 +193,7 @@ public interface MetalExecutionServices {
 
             @Override
             public void closePresentPath() {
-                if (presentsThroughMetal4()) {
+                if (presentingThroughTheSidecar()) {
                     com.metallum.render.Metal4PresentGate.close();
                 }
             }

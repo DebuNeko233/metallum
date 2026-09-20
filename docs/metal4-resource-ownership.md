@@ -59,9 +59,17 @@ Two rules run through every row:
 | the sidecar's allocators, frame event, table, commit options | `Metal4Path.start` | `Metal4Path` | the session's | `Metal4Path.stop` |
 
 The sidecar is off unless `-Dmetallum.metal4Present=true`, which now selects the **old** road: the frame
-encoder's own present is the one that runs by default. Section 107 keeps the sidecar in place until the frame's
-own present is real-device proven, and this ledger is where its objects are listed so the cleanup commit can be
-checked against them rather than remembered.
+encoder's own present is the one that runs by default. **And it is not started at all for a session that executes
+Metal 4**, whatever the property says, because that session's present is the frame encoder's own and one session
+must not hold two Metal 4 submission structures: the queue, the allocator ring, the command buffer, the shared
+event and the commit-feedback registration in the rows above are made for a session whose *frame* is encoded by a
+generation that does not present for itself - the reference shell - and that is the only configuration in which
+they exist. Measured before the rule and after it: an `execution=metal4` launch with the property on started this
+road once (and registered commit feedback once) while the frame encoder presented 1964 frames, and after the
+change the same launch starts none of it and presents 2182, while an `execution=metal3` launch with the property
+on still starts it exactly as before. Section 107 keeps the sidecar in place until the frame's own present is
+real-device proven, and this ledger is where its objects are listed so the cleanup commit can be checked against
+them rather than remembered.
 
 ## What the ledger has not been able to check: the teardown has never run in a session
 
