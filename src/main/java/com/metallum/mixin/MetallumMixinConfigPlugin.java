@@ -14,6 +14,16 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
             "com.metallum.mixin.render.PreferredGraphicsApiMixin";
     private static final String VIDEO_SETTINGS_SCREEN_MIXIN =
             "com.metallum.mixin.render.VideoSettingsScreenMixin";
+    /**
+     * The lifecycle driver, which section 71's gate needs and this machine's input cannot drive.
+     * <p>
+     * It is named here because this plugin is a gate and not a formality: a mixin listed in the config but not
+     * named below is never applied, and the failure is silent - the session runs, the property has no effect, and
+     * the log carries no line to say why. That cost a measurement round, so the list is where a new diagnostic has
+     * to be added and the reason lives rather than being remembered.
+     */
+    private static final String LIFECYCLE_PROBE_MIXIN =
+            "com.metallum.mixin.render.LifecycleProbeMixin";
 
     private boolean isMacOs;
 
@@ -37,7 +47,8 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
             return FabricLoader.getInstance().isModLoaded("sodium");
         }
         return PREFERRED_GRAPHICS_API_MIXIN.equals(mixinClassName)
-                || VIDEO_SETTINGS_SCREEN_MIXIN.equals(mixinClassName);
+                || VIDEO_SETTINGS_SCREEN_MIXIN.equals(mixinClassName)
+                || LIFECYCLE_PROBE_MIXIN.equals(mixinClassName);
     }
 
     @Override

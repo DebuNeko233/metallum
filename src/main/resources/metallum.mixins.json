@@ -6,6 +6,7 @@
   "mixins": [
   ],
   "client": [
+    "render.LifecycleProbeMixin",
     "render.PreferredGraphicsApiMixin",
     "render.VideoSettingsScreenMixin",
     "sodium.ChunkUploadMixin",

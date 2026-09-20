@@ -315,6 +315,71 @@ if "useResource:usage:stages:" not in render_encoder:
     raise SystemExit("Indirect Argument Buffer resources are not declared resident")
 forbid("Wide fixture semantics in Metallum", backend, ("wide-resources-contract", "customTexture.wide", "wide00", "wide32"))
 
+# ---------------------------------------------------------------------------
+# The mixin surface: two rules, and both were paid for.
+#
+# The mixin config names the classes Mixin may transform, and the config plugin is a second gate over them - a
+# mixin in the config that the plugin does not name is never applied, silently: the session runs, the property
+# has no effect, and the log carries no line to say why. That cost a measurement round, so the two lists have to
+# agree.
+#
+# The second rule is the one that cost a build. Mixin transforms every class in its configured package, so a
+# plain helper placed beside a mixin rather than inside it ends in
+# `ExceptionInInitializerError: Mixin transformation of ... failed` before the client loads. Every source file
+# under the mixin package therefore has to be a mixin the config names - there is no such thing as a non-mixin
+# class in that package.
+# ---------------------------------------------------------------------------
+import json as _json  # noqa: E402  (the rules above do not need it; this one reads a config)
+
+mixin_config = _json.loads(
+    (ROOT / "src/main/resources/metallum.mixins.json").read_text(encoding="utf-8")
+)
+declared = {name.rsplit(".", 1)[-1] for name in mixin_config.get("client", []) + mixin_config.get("mixins", [])}
+# The plugin is in the package and is not a mixin: the config names it as its `plugin`, which is how Mixin reads
+# it too, so it is the one file beside the mixins that is allowed not to be one.
+plugin_class = str(mixin_config.get("plugin", "")).rsplit(".", 1)[-1]
+mixin_root = ROOT / "src/main/java/com/metallum/mixin"
+mixin_sources = sorted(path for path in mixin_root.rglob("*.java"))
+unlisted = [path.name for path in mixin_sources if path.stem not in declared and path.stem != plugin_class]
+if unlisted:
+    raise SystemExit(
+        "the mixin package holds source files that are not mixins the config names, so Mixin would transform "
+        "them and the client would fail to load: " + ", ".join(unlisted)
+    )
+for name in sorted(declared):
+    if not any(path.stem == name for path in mixin_sources):
+        raise SystemExit(f"the mixin config names {name}, which no source file in the mixin package provides")
+
+plugin_source = read("src/main/java/com/metallum/mixin/MetallumMixinConfigPlugin.java")
+# Admission is read as the plugin's own code and not as the presence of a string: naming a constant whose value
+# holds the mixin's class name is not admitting it, and that was the first version of this rule's mistake - a
+# plugin that declares `LIFECYCLE_PROBE_MIXIN = "com.metallum.mixin.render.LifecycleProbeMixin"` and then never
+# compares it still contains the name.
+plugin_constants = dict(re.findall(r'String\s+(\w+)\s*=\s*\n?\s*"([\w.]+)"', plugin_source))
+admitted = {
+    constant
+    for constant, qualified in plugin_constants.items()
+    if f"{constant}.equals(mixinClassName)" in plugin_source
+}
+configured = mixin_config.get("client", []) + mixin_config.get("mixins", [])
+for entry in configured:
+    name = entry.rsplit(".", 1)[-1]
+    group = entry.rsplit(".", 2)[-2] if "." in entry else ""
+    by_constant = any(
+        constant in admitted and qualified.rsplit(".", 1)[-1] == name
+        for constant, qualified in plugin_constants.items()
+    )
+    # The sodium diagnostics are admitted as one group, by a `contains` test on the package they sit in - and the
+    # test itself is what is looked for, because the constant declarations also spell `.mixin.render.` out and a
+    # rule that accepted that would admit every mixin in the package it names.
+    by_group = bool(group) and f'mixinClassName.contains(".mixin.{group}.")' in plugin_source
+    if by_constant or by_group:
+        continue
+    raise SystemExit(
+        f"the mixin config names {entry} and the config plugin admits neither {name} nor the {group} group, so "
+        "it is configured but never applied - and the failure is silent"
+    )
+
 marker = 'private static final String DEPTH_MIP_MSL = """'
 start = depth_bridge.index(marker) + len(marker)
 end = depth_bridge.index('""";', start)
