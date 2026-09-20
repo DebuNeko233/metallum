@@ -2253,6 +2253,40 @@ paint. The three passes, the pack parse and the absence of a fault are the same 
 mipmap step of the staircase is **M3 PASS / M4 PASS** on the picture and not only on the counters, and the
 staircase - which section 67 stopped at the depth fixture - has resumed one rung past where it stopped.
 
+### The history rung fails on this path, and the failure is one dependency deep
+
+The next rung after deferred/mipmap is history, and `composite-history-contract` is a chain rather than a colour:
+its three passes read and write **one** target, `colortex2`, declared `colortex2Clear = false`, so each pass sees
+what the pass before it wrote and the last one seen becomes the next frame's history. The fixture makes the chain
+legible - dark history means "first" and paints red, cyan history means "steady" and paints cyan, anything else
+paints magenta - and the last pass hands its verdict to `colortex0`, which `final.fsh` copies to the game's target.
+
+**Read on both arms: Metal 3 passes, Metal 4 fails.** Forty seconds of settle, 4943 and 4950 readbacks. Metal 3
+presents the fixture's steady state - cyan - with red only during the frames before the chain settles. Metal 4
+presents **magenta for 119975 of its 121675 grid samples and never once cyan**: the chain breaks on its first
+evaluation and latches, because magenta is what the next frame's "first" test also fails.
+
+Where it breaks was then measured rather than argued, with a diagnostic fixture (`history-value-contract`) whose
+last pass hands the value it is judging to the screen instead of its verdict. On Metal 3 that value is **yellow**
+(253, 253, 0) - the steady state the chain is supposed to be in - and on Metal 4 it is **dark** (13, 7, 6) on the
+first frames and magenta afterwards. Dark at that point means the pass read a copy of `colortex2` that *no earlier
+pass of the same frame had written*, and the trace says which copies those are. Every pass's colour attachments are
+now printed, and the three pack passes write **two different textures for one logical target** - `composite` writes
+`0x7502559e00`, `composite1` writes `0x7502559b80`, `composite2` writes `0x7502559900` and `0x7502559e00` - which is
+the pack's doubled-history ping-pong working exactly as Vitrail schedules it, with each pass writing the copy the
+next one reads. The one candidate that is *eliminated* by the same reading is a clear: `Vitrail pending colour
+clears` attaches `0x7502558f00`, `0x7502559680` and `0x7502559900` every frame (and `0x7502559b80` once at
+startup), and **never** attaches `0x7502559e00` or `0x7502559b80` - so the pack's `colortex2Clear = false` is
+honoured and the history target is not being emptied between frames.
+
+So the failure is one dependency deep: on this path the second pass's sampler does not see what the first pass
+wrote to the target, and reads a copy that holds its initial content instead - while the native smoke for exactly
+that dependency (`canSampleAfterCopy`, "a pass writes a texture, the next samples it") is 50 of 50 on this device.
+What the trace does not print is the *sampled* texture each pass bound, only the ones it attached, and that is the
+next instrument: the two together say whether the binding points at the wrong copy of a doubled target or at the
+right copy whose write did not land. Section 67 says the staircase stops at an M3 PASS / M4 FAIL, so it stops here
+- one rung past depth and deferred/mipmap, at history.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it

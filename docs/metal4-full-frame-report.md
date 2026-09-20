@@ -706,6 +706,22 @@ answered rather than only what is left.
    counters, so a pass that draws the world through Sodium's indirect batches read as an empty pass (`draws=0`);
    pinned now, and the same trace reads 337, 678 and 584 draws per terrain ending.
 
+11. **The history rung fails on this path: a pass does not see what the pass before it wrote.** Vitrail's
+   `composite-history-contract` is a chain of three passes over one target declared `colortex2Clear = false`, and
+   its verdict is legible in the presented frame - cyan when the chain is in its steady state, magenta whenever it
+   is not. Metal 3 presents cyan (with red only while the chain settles); Metal 4 presents **magenta for 119975 of
+   121675 grid samples and never cyan**, because the chain breaks on its first evaluation and latches. Measured one
+   step deeper with a diagnostic fixture that hands the *value* being judged to the screen: Metal 3 reads **yellow**
+   (the steady state) where Metal 4 reads **dark** (13, 7, 6) on the first frames and magenta after. Dark at that
+   point means the pass read a copy of the doubled history target that no earlier pass of the same frame had
+   written - and the trace's new per-pass attachment list shows the doubling working as Vitrail schedules it
+   (`composite` writes `0x7502559e00`, `composite1` writes `0x7502559b80`, `composite2` writes both `0x7502559900`
+   and `0x7502559e00`), while the clear pass attaches `0x7502558f00`, `0x7502559680` and `0x7502559900` every frame
+   and never the history target, so `colortex2Clear = false` is honoured and a clear is **eliminated** as the cause.
+   The native smoke for this exact dependency (`canSampleAfterCopy`) is 50 of 50 on this device, so what is missing
+   is in the frame path - and the instrument that names it is the *sampled* texture per pass, which the trace does
+   not print yet. Section 67 stops the staircase here.
+
 ## Metal 4 full-frame implementation complete?
 
 **NO, and the first full-frame milestone is behind it.** A forced Metal 4 launch loads a world, renders it and

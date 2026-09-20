@@ -289,10 +289,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         // answer "what did a frame cost", and a pass is the unit a cost is attributed to.
         this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         if (TRACE) {
-            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={} colour0={}"
+            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={} colours={}"
                             + " load={} store={} clear={}",
                     label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled,
-                    colour0(), load0(), store0(), this.cleared0);
+                    colours(), load0(), store0(), this.cleared0);
         }
         releaseTables();
         if (!this.encoder.open()) {
@@ -310,12 +310,25 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private MemorySegment @Nullable [] colourHandles;
     private boolean cleared0;
 
-    /** The texture slot 0 wrote, as a handle, or `none` where the pass carried no colour slot. */
-    private String colour0() {
+    /**
+     * Every colour texture this pass attached, as handles, so a reader can tell which target a pass wrote - and,
+     * for a clear pass, which targets it emptied. One is not enough for the second question: a pass that clears
+     * four targets is four attachments, and a pack's history target that must *not* be cleared is only visible as
+     * an absence from this list.
+     */
+    private String colours() {
         MemorySegment[] handles = this.colourHandles;
-        return handles == null || handles.length == 0 || handles[0] == null
-                ? "none"
-                : "0x" + Long.toHexString(handles[0].address());
+        if (handles == null || handles.length == 0) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        for (MemorySegment handle : handles) {
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(handle == null ? "-" : "0x" + Long.toHexString(handle.address()));
+        }
+        return text.toString();
     }
 
     /** The load action the pass's first colour slot was given, in the layer's own vocabulary. */
