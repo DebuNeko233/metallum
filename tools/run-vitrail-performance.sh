@@ -199,8 +199,40 @@ if [[ "$no_pack" == false && "$(cd "$(dirname "$pack_path")" && pwd -P)/$(basena
 fi
 
 echo "Preparing the dev instance at $game_dir"
+
+# A client left over from an earlier session draws into the same GPU and the same display, so a session that
+# starts with one running is not the scene it says it is - and this is measured, not hypothetical: three
+# clients whose render threads had stopped (the shape a GPU fault leaves behind) were still resident thirty to
+# forty-seven minutes later, through two later sessions' windows, because `stop_run` sends SIGTERM and a client
+# that is no longer drawing does not act on it. Refused rather than measured around: the numbers of a run made
+# beside another client are not that run's numbers.
+if pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1; then
+	echo "Another Minecraft client is already running, and it would draw into the GPU and display this run measures:" >&2
+	pgrep -fl "quickPlaySingleplayer" >&2 || true
+	echo "Stop it first, then run this again: pkill -9 -f quickPlaySingleplayer" >&2
+	exit 6
+fi
+
 mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" \
 	"$game_dir/logs" "$out_dir"
+
+# The picture evidence this harness produces is a screenshot of the display, and a locked, asleep or absent
+# display captures as a single flat colour. Measured rather than imagined: every capture of two sessions was
+# one black colour, and the comparison then printed "0.00% of pixels differ" for two pictures of nothing - the
+# strongest verdict it can print, about no evidence at all. The instrument is checked here, before a session
+# spends its launches, and a display that cannot be photographed is carried as a void picture column rather
+# than as a refusal of the session: the counters are the measurement and the picture is the aid, and a harness
+# that refused to measure at all whenever a screen was asleep would not be the harness this is.
+picture_void=0
+capture_probe="$out_dir/capture-probe.png"
+if ! screencapture -x "$capture_probe" 2>/dev/null || [[ ! -s "$capture_probe" ]]; then
+	echo "The display could not be captured at all, so this session's picture column will be void." >&2
+	picture_void=1
+elif ! python3 "$repo_root/tools/vitrail-performance-compare.py" --capture-check "$capture_probe"; then
+	echo "The display captures as one flat colour, which is what a locked or asleep screen does, so this session's picture column will be void: its counters are measurements and its pictures are not." >&2
+	picture_void=1
+fi
+rm -f "$capture_probe"
 
 # The pack is copied rather than moved or linked: a run must not be able to write to the owner's
 # copy of it, and the harness must be re-runnable against the same archive.
@@ -372,7 +404,24 @@ wait_for_log() {
 stop_run() {
 	# The client is stopped by the arguments it was launched with rather than by a signal to Gradle,
 	# because Gradle's own process is the parent and killing it leaves the game running.
+	#
+	# Terminate, and then insist. A client that is still drawing exits on SIGTERM, and one whose render
+	# thread has stopped does not - measured: three of those from earlier sessions were resident thirty to
+	# forty-seven minutes later, holding the GPU and a window while later sessions measured, which is the
+	# scene fact the pre-flight check above now refuses. SIGKILL is what takes them, so it is sent here
+	# rather than left to the operator, and a client even that does not take is said out loud.
 	pkill -f "quickPlaySingleplayer $world_name" 2>/dev/null || true
+	for _ in $(seq 1 20); do
+		pgrep -f "quickPlaySingleplayer $world_name" >/dev/null 2>&1 || return 0
+		sleep 0.5
+	done
+	echo "A client from the last run did not act on SIGTERM; killing it" >&2
+	pkill -9 -f "quickPlaySingleplayer $world_name" 2>/dev/null || true
+	sleep 1
+	if pgrep -f "quickPlaySingleplayer $world_name" >/dev/null 2>&1; then
+		echo "A client from the last run is still resident after SIGKILL, so the next run's numbers would be read with it drawing" >&2
+		stale_client=1
+	fi
 }
 
 : > "$out_dir/order.txt"
@@ -581,7 +630,11 @@ if [[ "$keep" == false ]]; then
 	rm -f "$marker"
 fi
 
-python3 "$repo_root/tools/vitrail-performance-compare.py" "$out_dir"
+# The comparison's own refusal is kept rather than re-raised through `set -e`, so that the checks below still
+# report what they know: a compare that exits 4 over flat captures and a harness that exits 5 over a run that
+# never armed are two different faults, and a reader wants both.
+compare_status=0
+python3 "$repo_root/tools/vitrail-performance-compare.py" "$out_dir" || compare_status=$?
 
 if [[ "$met_all" == 1 ]]; then
 	echo "At least one run did not come up on Metal; the comparison above is about another engine." >&2
@@ -596,4 +649,19 @@ fi
 if [[ "${run_failed:-0}" == 1 ]]; then
 	echo "At least one run never armed, so the comparison above is missing it entirely." >&2
 	exit 5
+fi
+
+if [[ "${stale_client:-0}" == 1 ]]; then
+	echo "A client could not be stopped and was still resident, so the arms after it were measured beside another drawing client." >&2
+	exit 7
+fi
+
+if [[ "$compare_status" == 4 || "${picture_void:-0}" == 1 ]]; then
+	echo "No picture evidence: the display is not a screen this session could photograph (a locked or asleep display captures one flat colour), so the picture column above is not a verdict - the counters are." >&2
+	exit 9
+fi
+
+if [[ "$compare_status" != 0 ]]; then
+	echo "The comparison refused these runs with exit $compare_status; its own line above says why." >&2
+	exit "$compare_status"
 fi

@@ -149,6 +149,85 @@ if "-print -quit" in launcher:
     raise SystemExit("the harness picks its jar out of a directory listing, which is not the one it built")
 
 # ---------------------------------------------------------------------------
+# One session at a time
+#
+# The numbers of a run are the numbers of the machine it was made on, so another client drawing into the
+# same GPU and the same display is a scene fact and not a nuisance. Measured, not hypothetical: three
+# clients whose render threads had stopped - the shape a GPU fault leaves behind - were still resident
+# thirty to forty-seven minutes later, through two later sessions' windows, because the stop sent SIGTERM
+# and a client that is no longer drawing does not act on it. So the harness refuses to start beside one,
+# and its stop escalates to SIGKILL and says so if even that does not take.
+# ---------------------------------------------------------------------------
+if 'pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1' not in launcher:
+    raise SystemExit(
+        "the harness does not check for a client left over from an earlier session, so a run can be measured "
+        "beside another one drawing into the same GPU and display"
+    )
+before(
+    'pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1',
+    "./gradlew runClient",
+    "the leftover-client check runs after the client is launched, which is not a check",
+)
+if 'pkill -9 -f "quickPlaySingleplayer $world_name"' not in launcher:
+    raise SystemExit(
+        "the stop does not escalate to SIGKILL, and a client whose render thread has stopped does not act on "
+        "SIGTERM - measured, and it was still resident while later sessions measured"
+    )
+before(
+    'pkill -f "quickPlaySingleplayer $world_name"',
+    'pkill -9 -f "quickPlaySingleplayer $world_name"',
+    "SIGKILL is sent before the client has had its chance to exit on SIGTERM",
+)
+if "stale_client=1" not in launcher or "exit 7" not in launcher:
+    raise SystemExit(
+        "a client that could not be stopped is not reported, so the arms after it would be compared as if they "
+        "had been measured alone"
+    )
+
+# ---------------------------------------------------------------------------
+# A picture the harness can actually take
+#
+# The picture evidence is a screenshot of the display, and a locked or asleep display captures as one flat
+# colour. Measured: every capture of two sessions was black, and the comparison printed "0.00% of pixels
+# differ" for two pictures of nothing twice - the strongest verdict the tool can print, about no evidence.
+# So the instrument is checked before the session spends its launches, and the comparison's refusal is
+# carried to the harness's own exit code rather than being swallowed.
+# ---------------------------------------------------------------------------
+if "--capture-check" not in launcher:
+    raise SystemExit(
+        "the harness does not check that the display can be captured before it measures, so a locked display "
+        "produces a session of pictures of nothing that compares as perfect agreement"
+    )
+before(
+    'python3 "$repo_root/tools/vitrail-performance-compare.py" --capture-check',
+    "./gradlew runClient",
+    "the display is checked for a picture after the first launch, which is where the cost of finding out is",
+)
+if "compare_status" not in launcher or "exit 9" not in launcher:
+    raise SystemExit(
+        "the comparison's refusal over flat captures is not carried to the harness's exit code, so a session "
+        "whose pictures were never photographed can still end zero"
+    )
+# And each way of finding out has to be carried to that flag: said out loud, and remembered inside its own
+# branch. A message with no flag behind it is worse than no message, because the session that follows it reads
+# as a photographed one. Presence is checked before position, so a line an edit deleted is reported as the
+# defect it is instead of as a traceback from this file.
+for said, terminator, why in (
+    ('echo "The display could not be captured', "elif ! python3", "a capture that failed"),
+    ('echo "The display captures as one flat colour', "\nfi", "the display capturing flat"),
+):
+    if said not in launcher:
+        raise SystemExit(f"the harness no longer says {why} out loud, so a session whose picture column is void "
+                         f"is not told about it")
+    at = launcher.index(said)
+    if "picture_void=1" not in launcher[at:launcher.index(terminator, at)]:
+        raise SystemExit(f"the harness says {why} and then carries on without marking the session's picture "
+                         f"column void, so photographs of nothing read as photographs of the frame")
+if 'if [[ "$compare_status" == 4 || "${picture_void:-0}" == 1 ]]; then' not in launcher:
+    raise SystemExit("the harness does not end non-zero when its picture column is void, so a session whose "
+                     "pictures were never photographed can still read as a session that agreed")
+
+# ---------------------------------------------------------------------------
 # The window is the harness's length and not the probe's
 #
 # Two windows of different lengths are not two windows of one thing, so --frames has to reach the
@@ -284,6 +363,19 @@ for needle, why in (
     ("so the two arms did not render the same window",
      "the comparison does not judge the window the two arms were photographed at, which a fullscreen arm "
      "takes from the display and --width/--height cannot pin"),
+    ("def flat_colour(",
+     "the comparison does not ask whether a capture has a picture in it at all"),
+    ("if first.name in flat or run.name in flat:",
+     "a flat capture is compared anyway, and two of them print the strongest agreement this tool can report "
+     "about two photographs of nothing"),
+    ("NOT COMPARABLE - the capture is one flat",
+     "a flat capture is not refused in as many words, so its verdict reads as a result"),
+    ('if len(sys.argv) == 3 and sys.argv[1] == "--capture-check":',
+     "the comparison cannot answer the harness's pre-flight question about one capture"),
+    ("picture evidence is void: ",
+     "the comparison does not end non-zero when no arm's screen was photographed"),
+    ("        return 4\n", "flat picture evidence does not end the comparison non-zero, so a session of "
+                         "photographs of nothing reads as a session that agreed"),
 ):
     if needle not in comparison:
         raise SystemExit(why)

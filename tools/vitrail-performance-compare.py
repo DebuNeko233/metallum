@@ -126,14 +126,29 @@ def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int]]]:
     return width, height, pixels
 
 
-def compare_pictures(first: Path, other: Path) -> str:
-    if not first.is_file() or not other.is_file():
-        return "no picture on one side"
-    try:
-        left = read_png(first)
-        right = read_png(other)
-    except (ValueError, OSError, zlib.error) as error:
-        return f"not compared: {error}"
+def flat_colour(png: tuple[int, int, list[tuple[int, int, int]]]) -> tuple[int, int, int] | None:
+    """The one colour a capture that has nothing in it is made of, or None for a picture with anything in it.
+
+    A screenshot of a locked, asleep or absent display is a single flat colour, and two of those compare as
+    byte-identical - which is the strongest verdict this tool can print, about two pictures of nothing.
+    Measured: every capture of two sessions was black, and the comparison below was run on them for two
+    rounds before anybody looked at the file. So a flat capture is a fact about the instrument and is
+    reported as one, rather than being compared.
+    """
+    pixels = png[2]
+    if not pixels:
+        return (0, 0, 0)
+
+    first = pixels[0]
+    for pixel in pixels:
+        if pixel != first:
+            return None
+
+    return first
+
+
+def compare_pictures(left: tuple[int, int, list[tuple[int, int, int]]],
+                     right: tuple[int, int, list[tuple[int, int, int]]]) -> str:
     if left[0] != right[0] or left[1] != right[1]:
         return f"different sizes: {left[0]}x{left[1]} against {right[0]}x{right[1]}"
 
@@ -167,6 +182,24 @@ def compare_pictures(first: Path, other: Path) -> str:
 
 
 def main() -> int:
+    # The harness's pre-flight question, asked of one file: is this capture a picture at all? A session that
+    # cannot photograph its own screen cannot produce picture evidence, and it is cheaper to find that out
+    # before four launches than after them.
+    if len(sys.argv) == 3 and sys.argv[1] == "--capture-check":
+        try:
+            png = read_png(Path(sys.argv[2]))
+        except (ValueError, OSError, zlib.error) as error:
+            print(f"the capture could not be read: {error}", file=sys.stderr)
+            return 5
+
+        colour = flat_colour(png)
+        if colour is not None:
+            print(f"the capture is one flat colour ({colour[0]},{colour[1]},{colour[2]})", file=sys.stderr)
+            return 3
+
+        print(f"the capture has a picture in it: {png[0]}x{png[1]}")
+        return 0
+
     if len(sys.argv) != 2:
         print(__doc__.strip().split("Usage: ")[1], file=sys.stderr)
         return 2
@@ -234,18 +267,35 @@ def main() -> int:
                 drift.append(f"{counter} of {run.name} is {change:+.1f}% against {runs[0].name}")
     # And the window itself: a fullscreen arm renders the display's own mode, so the resolution is a scene
     # property the harness cannot pin with --width/--height and has to judge here. Measured: two arms of one
-    # configuration photographed 1920x1200 and 3600x2338.
-    first_screen = first / "screen.png"
-    if first_screen.is_file():
-        first_size = read_png(first_screen)[:2]
+    # configuration photographed 1920x1200 and 3600x2338 - but only a capture with a picture in it is a
+    # photograph of a window at all, so a flat one is left out of this check and reported as its own fault.
+    captures: dict[str, tuple[int, int, list[tuple[int, int, int]]]] = {}
+    unreadable: dict[str, str] = {}
+    for run in runs:
+        screen = run / "screen.png"
+        if not screen.is_file():
+            unreadable[run.name] = "no picture"
+            continue
+        try:
+            captures[run.name] = read_png(screen)
+        except (ValueError, OSError, zlib.error) as error:
+            unreadable[run.name] = f"not read: {error}"
+
+    flat: dict[str, tuple[int, int, int]] = {
+        name: colour
+        for name, png in captures.items()
+        if (colour := flat_colour(png)) is not None
+    }
+    first_capture = captures.get(first.name)
+    if first_capture is not None and first.name not in flat:
+        first_size = first_capture[:2]
         for run in runs[1:]:
-            screen = run / "screen.png"
-            if not screen.is_file():
+            capture = captures.get(run.name)
+            if capture is None or run.name in flat:
                 continue
-            size = read_png(screen)[:2]
-            if size != first_size:
+            if capture[:2] != first_size:
                 drift.append(
-                    f"{run.name} was photographed at {size[0]}x{size[1]} against "
+                    f"{run.name} was photographed at {capture[0]}x{capture[1]} against "
                     f"{first_size[0]}x{first_size[1]}, so the two arms did not render the same window"
                 )
 
@@ -292,8 +342,26 @@ def main() -> int:
     if len(runs) > 1:
         print()
         for run in runs[1:]:
+            if first.name in unreadable or run.name in unreadable:
+                print(f"picture, {first.name} against {run.name}: no picture on one side")
+                continue
+            if first.name in flat or run.name in flat:
+                # Said as NOT COMPARABLE rather than as a number, because the number two flat captures
+                # produce is "0.00% of pixels differ" - the strongest agreement this tool can report, from
+                # two photographs of nothing. That is how this went unnoticed for two rounds.
+                colour = flat.get(first.name, flat.get(run.name))
+                print(f"picture, {first.name} against {run.name}: NOT COMPARABLE - the capture is one flat"
+                      f" colour ({colour[0]},{colour[1]},{colour[2]}), so there is no picture to compare and"
+                      f" no arm's screen was photographed")
+                continue
             print(f"picture, {first.name} against {run.name}: "
-                  f"{compare_pictures(first / 'screen.png', run / 'screen.png')}")
+                  f"{compare_pictures(captures[first.name], captures[run.name])}")
+
+    if flat:
+        print(f"picture evidence is void: {', '.join(sorted(flat))} captured a single colour, so no arm's "
+              f"picture was photographed at all. A locked or asleep display captures black - unlock it, or "
+              f"keep it awake, and run the session again.", file=sys.stderr)
+        return 4
 
     if drift:
         # A drifted arm's time column is not comparable with the first arm's, and a refusal is the only
