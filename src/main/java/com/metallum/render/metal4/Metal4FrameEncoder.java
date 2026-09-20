@@ -844,33 +844,33 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                 || dimensions < 1 || dimensions > 3) {
             return false;
         }
-        // A pass the game still has open ends first: one encoder may be open on a command buffer, and the
-        // compute encoder cannot be opened under a render pass that has not ended.
-        if (this.currentPass != null) {
-            submitRenderPass();
-        }
-        beginFrameIfNeeded();
-        MTL4ComputeEncoder copies = copyEncoder();
-        if (copies == null || !copies.open()) {
-            return false;
-        }
-
-        // A clear is a dispatch too, so its table is its own for the same measured reason the compute path's is:
-        // the frame's clears used to share one re-pointed table, which is exactly the shape that reads what the
-        // first clear bound.
+        // A clear is a dispatch, so it gets what every dispatch gets: a table of its own and an encoder of its
+        // own. The frame's clears used to share one re-pointed table in one encoder, which is the shape that
+        // reads what the first clear bound.
         MTL4ArgumentTable table = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);
         if (table == null) {
             return false;
         }
         queueForDestroy(table::close);
+        MTL4ComputeEncoder copies = dispatchEncoder("the storage clear of a " + dimensions + "D texture");
+        if (copies == null) {
+            return false;
+        }
         long width = texture.getWidth(0);
         long height = dimensions == 1 ? 1L : texture.getHeight(0);
         long depth = dimensions == 3 ? texture.getDepthOrLayers() : 1L;
         // The image is written through an address this frame hands over, so it has to stay resident - the same
         // declaration every other resource this path touches gets.
         useResource(metal.nativeHandle());
-        return this.storagePipelines.clearZero(copies, table, metal.nativeHandle(), zeroingKind(texture.getFormat()),
-                dimensions, width, height, depth);
+        boolean cleared;
+        try {
+            cleared = this.storagePipelines.clearZero(copies, table, metal.nativeHandle(),
+                    zeroingKind(texture.getFormat()), dimensions, width, height, depth);
+            copies.barrierForSubsequentEncoders();
+        } finally {
+            endDispatchEncoder(copies);
+        }
+        return cleared;
     }
 
     /**
@@ -952,31 +952,79 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             }
         }
 
+        MTL4ComputeEncoder compute = dispatchEncoder("the dispatch of " + resource.label());
+        if (compute == null) {
+            return false;
+        }
+        try {
+            if (!compute.setComputePipelineState(resource.pipelineState())) {
+                throw new IllegalStateException("The Metal 4 compute encoder would not take the pipeline for "
+                        + resource.label());
+            }
+            // The table is handed over after it was filled: the header snapshots the resources in it when the
+            // dispatch is encoded, so what this dispatch reads is what the table held at the call below.
+            if (!compute.setArgumentTable(table)) {
+                throw new IllegalStateException("The Metal 4 compute encoder would not take the argument table for "
+                        + resource.label());
+            }
+            if (!compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)) {
+                throw new IllegalStateException("The Metal 4 compute encoder would not dispatch "
+                        + groupsX + "x" + groupsY + "x" + groupsZ + " threadgroups for " + resource.label());
+            }
+            // Everything this encoder wrote has to be visible to whatever encoder follows it, and the encoder
+            // that follows is a different object: this one ends here rather than being kept for the next
+            // dispatch, which is the measured rule rather than a preference.
+            compute.barrierForSubsequentEncoders();
+        } finally {
+            endDispatchEncoder(compute);
+        }
+        return true;
+    }
+
+    /**
+     * The encoder one table-binding dispatch is encoded into, and the rule that it is a new one every time.
+     * <p>
+     * <strong>One encoder per dispatch, and this is measured rather than preferred.</strong> The cold probe's
+     * storage-image smoke - two dispatches, a table each - loses its second dispatch in one encoder carrying
+     * both (three of eight warm probes, with the copy dependency smoke in the suite), while an encoder per
+     * dispatch is 93 of 93 probes in three processes and 50 of 50 in the census with every smoke green. The
+     * same smoke's older re-pointed-table form had already shown the table to be the wrong unit to reuse; the
+     * encoder is the unit the driver honours.
+     * <p>
+     * A copy encoder the frame already has open is ended here with its producer barrier, so the copies this
+     * dispatch reads are ordered against it and the one-encoder-open rule holds. The encoder itself is ended by
+     * {@link #endDispatchEncoder(MTL4ComputeEncoder)} and released once this frame's slot has completed: an
+     * encoder released before the command buffer it encoded is committed aborts the driver (SIGSEGV in
+     * {@code -[AGXG17XFamilyComputeContext_mtlnext dispatchThreads:threadsPerThreadgroup:]}), which is a
+     * lifetime this path has already paid for once.
+     */
+    @Nullable
+    private MTL4ComputeEncoder dispatchEncoder(final String which) {
+        if (this.closed) {
+            return null;
+        }
         // A pass the game still has open ends first: one encoder may be open on a command buffer, and the
         // compute encoder cannot be opened under a render pass that has not ended.
         if (this.currentPass != null) {
             submitRenderPass();
         }
         beginFrameIfNeeded();
-        MTL4ComputeEncoder compute = copyEncoder();
-        if (compute == null || !compute.open()) {
-            return false;
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.barrierForSubsequentEncoders();
+            this.copyEncoder.endEncoding();
         }
-        if (!compute.setComputePipelineState(resource.pipelineState())) {
-            throw new IllegalStateException("The Metal 4 compute encoder would not take the pipeline for "
-                    + resource.label());
+        try {
+            return MTL4ComputeEncoder.open(this.executionState.device(), this.ring.commandBuffer(), which);
+        } catch (MTL4ComputeEncoder.Refused refused) {
+            throw new IllegalStateException("The Metal 4 dispatch encoder could not be opened at stage "
+                    + refused.stage() + ": " + refused.getMessage(), refused);
         }
-        // The table is handed over after it was filled: the header snapshots the resources in it when the
-        // dispatch is encoded, so what this dispatch reads is what the table held at the call below.
-        if (!compute.setArgumentTable(table)) {
-            throw new IllegalStateException("The Metal 4 compute encoder would not take the argument table for "
-                    + resource.label());
-        }
-        if (!compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)) {
-            throw new IllegalStateException("The Metal 4 compute encoder would not dispatch "
-                    + groupsX + "x" + groupsY + "x" + groupsZ + " threadgroups for " + resource.label());
-        }
-        return true;
+    }
+
+    /** Ends a dispatch's encoder and files its release against the slot that may still be reading it. */
+    private void endDispatchEncoder(final MTL4ComputeEncoder compute) {
+        compute.endEncoding();
+        queueForDestroy(compute::close);
     }
 
     /** Binds one buffer of a dispatch by the address of the slice, which is what this command model takes. */

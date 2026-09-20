@@ -623,10 +623,17 @@ answered rather than only what is left.
    frame rather than by the kernel). **And the smoke that carried the same shape has been corrected too** -
    `canWriteStorageImage` now makes a table per dispatch, because its old green was phase-dependent and
    therefore a false green: 50 of 50 in this round's census and 124 of 124 in a four-process hunt, against 18
-   failures in one warm process of the round that found it. What is still **not measured** is the fix *changing
-   an outcome* in the client: Vitrail's compute fixture dispatches two different kernels, so the
-   stale-hand-over shape is not in its frame - a fixture that dispatches one kernel twice per frame is what
-   would show it, and the reproducer is what shows it native.
+   failures in one warm process of the round that found it. **And a second shape was wrong too**, found with the
+   copy fixture in the suite: a fresh table is not enough, because the unit the driver honours is the
+   **encoder** - one encoder carrying two dispatches lost the second one, three of eight warm probes, while one
+   encoder per dispatch is 93 of 93 in three processes and 50 of 50 in the census. **The engine was fixed the
+   same way**: `dispatchCompute` and `clearStorageTexture` each open an encoder of their own, end it with a
+   producer barrier and file its release through the frame's destruction queue, while copies and mip
+   generations keep the frame's shared encoder because they bind no table - and the client still dispatches
+   both of the fixture's programs with no refusal. What is still **not measured** is the fix *changing an
+   outcome* in the client: Vitrail's compute fixture dispatches two different kernels, so the shapes that lose
+   a dispatch are not in its frame - a fixture that dispatches one kernel twice per frame is what would show
+   it, and the reproducer is what shows it native.
 7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,

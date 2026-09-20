@@ -148,15 +148,19 @@ for needle, why in (
     # whole road: the shape checks, the table, the residency declaration, and the dispatch the helper encodes.
     ("|| dimensions < 1 || dimensions > 3) {\n            return false;",
      "clearing a storage texture no longer refuses a dimensionality this engine does not carry"),
-    ("return this.storagePipelines.clearZero(copies, table, metal.nativeHandle(), zeroingKind(texture.getFormat()),",
-     "the frame path does not dispatch the zeroing kernel, so the operation is still a refusal with a longer body"),
-    ("useResource(metal.nativeHandle());\n        return this.storagePipelines.clearZero(",
+    ("cleared = this.storagePipelines.clearZero(copies, table, metal.nativeHandle(),",
+     "the frame path does not dispatch the zeroing kernel, so the operation is still a refusal with a longer"
+     " body"),
+    ("MTL4ComputeEncoder copies = dispatchEncoder(\"the storage clear of a \" + dimensions + \"D texture\");",
+     "the storage clear shares the frame's copy encoder instead of getting one of its own - the shape that lost"
+     " a dispatch in the probe"),
+    ("useResource(metal.nativeHandle());\n        boolean cleared;",
      "the image is not declared resident before it is written by a kernel, and an undeclared resource makes a"
      " command of this kind do nothing at all - measured"),
     ("MTL4ArgumentTable table = MTL4ArgumentTable.create(this.executionState.device(), 0L, 1L, 0L);",
      "there is no table for a storage dispatch to bind its image through, and this command model has no"
      " per-resource setter on the encoder"),
-    ("queueForDestroy(table::close);\n        long width = texture.getWidth(0);",
+    ("queueForDestroy(table::close);\n        MTL4ComputeEncoder copies = dispatchEncoder(",
      "the clear's table is not given back through the frame's destruction queue, so it would outlive the slot"
      " that may still read it - or leak"),
     ("name.endsWith(\"_UINT\") ? com.metallum.mtl.metal4.MTL4StorageTexturePipelines.ScalarKind.UINT",
@@ -1311,14 +1315,17 @@ for needle, why in (
      "sampled images are not bound with their samplers"),
     ("case STORAGE_IMAGE -> bindDispatchStorageImage(table, binding, textures);",
      "storage images are not bound, so a kernel that writes one writes nothing"),
-    ("MTL4ComputeEncoder compute = copyEncoder();",
-     "the dispatch opens its own encoder instead of the frame's compute encoder, so the copies it depends on "
-     "are not ordered against it"),
+    ("MTL4ComputeEncoder compute = dispatchEncoder(\"the dispatch of \" + resource.label());",
+     "the dispatch does not open an encoder of its own, and one encoder carrying two dispatches is the shape"
+     " that lost the second one in the probe"),
     ("compute.setComputePipelineState(resource.pipelineState())",
      "the dispatch never hands the encoder the pipeline"),
     ("compute.setArgumentTable(table)", "the dispatch never hands the encoder the table it filled"),
     ("compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)",
      "the dispatch is not encoded as workgroups, which is the shape a pack's vkCmdDispatch has"),
+    ("compute.barrierForSubsequentEncoders();",
+     "the dispatch's encoder ends without its producer barrier, so whatever encoder follows it - and an encoder"
+     " per dispatch means something always does - may not see what the dispatch wrote"),
 ):
     if needle not in dispatch_body:
         raise SystemExit("metal 4 provider: " + why)
@@ -1326,6 +1333,23 @@ for needle, why in (
 # The order of the three encoder calls is the API's: a pipeline, then the table it reads through, then the
 # dispatch that snapshots it. Any other order encodes a dispatch the driver has nothing to run or nothing to
 # bind, which is why this is a position check and not three presence checks.
+# The one-encoder-per-dispatch rule lives in two helpers beside the dispatch, so it is pinned against the file.
+for needle, why in (
+    ("private MTL4ComputeEncoder dispatchEncoder(final String which) {",
+     "there is no one place that says a table-binding dispatch gets a new encoder, so the rule could be lost"
+     " one call site at a time"),
+    ("private void endDispatchEncoder(final MTL4ComputeEncoder compute) {",
+     "a dispatch encoder is not ended and filed for release in one place, so one of the two could be missed"),
+    ("queueForDestroy(compute::close);",
+     "a dispatch's encoder is released where it stands, and an encoder released before its command buffer is"
+     " committed aborts the driver - measured"),
+    ("this.copyEncoder.barrierForSubsequentEncoders();\n            this.copyEncoder.endEncoding();",
+     "a copy encoder left open is not ended with its barrier before a dispatch opens its own, so the copies the"
+     " dispatch reads are not ordered against it - or two encoders end up open at once"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 _pipeline_at = dispatch_body.index("compute.setComputePipelineState(resource.pipelineState())")
 _table_at = dispatch_body.index("compute.setArgumentTable(table)")
 _dispatch_at = dispatch_body.index("compute.dispatchThreadgroups(groupsX, groupsY, groupsZ, localX, localY, localZ)")
@@ -1349,8 +1373,8 @@ if "((MetalGpuTexture) view.texture()).markContentsDirty();" \
 
 _first_binding = min(dispatch_body.index(call) for call in
                      ("bindDispatchBuffer(", "bindDispatchSampledImage(", "bindDispatchStorageImage("))
-if dispatch_body.index("copyEncoder()") < _first_binding:
-    raise SystemExit("metal 4 provider: the dispatch opens the encoder before the bindings are resolved, so a "
+if dispatch_body.index("dispatchEncoder(") < _first_binding:
+    raise SystemExit("metal 4 provider: the dispatch opens its encoder before the bindings are resolved, so a "
                      "missing binding would be found with the pipeline already set")
 # The address of a slice is one addition, and it is not this class's to repeat.
 if "Metal4RenderPass.addressOf(slice.buffer(), slice.offset())" not in body_of(encoder, "private void bindDispatchBuffer("):

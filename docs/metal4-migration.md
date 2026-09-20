@@ -2355,12 +2355,24 @@ buffer has completed** - releasing the first one before the commit crashed the d
 framework rather than a Java-level failure, which is why the smoke keeps both and closes them after its wait;
 and a table may be re-pointed between *encoders*, which the reproducer's `two-encoders` mode measured clean.
 
-**The engine still has the shape this rules out.** `Metal4FrameEncoder.dispatchCompute` and
-`clearStorageTexture` both encode into the frame's shared `copyEncoder()`, so two table-binding dispatches -
-or a dispatch and a clear - in one frame share one encoder, which is exactly the shape that lost a dispatch in
-the probe six times in eight warm probes with another smoke in the process. The round-42 fix (a table per
-dispatch) removed the re-point and is still right, but it is not sufficient on its own: the encoder has to be
-per dispatch too, and that is the next change, with the client fixture as its regression check.
+**And the engine had the shape this rules out, so it was fixed the same round.** `Metal4FrameEncoder`'s
+`dispatchCompute` and `clearStorageTexture` both encoded into the frame's shared `copyEncoder()`, so two
+table-binding dispatches - or a dispatch and a clear - in one frame shared one encoder, which is exactly the
+shape that lost a dispatch in the probe. Both now go through `dispatchEncoder(which)`, which ends a copy
+encoder the frame already has open (with its producer barrier, so the copies the dispatch reads are ordered
+against it) and opens a fresh encoder for this dispatch alone; `endDispatchEncoder` ends it and files its
+release through the frame's destruction queue, because an encoder released before the command buffer it
+encoded is committed aborts the driver. A dispatch's encoder also barriers before it ends: with an encoder per
+dispatch, whatever follows a dispatch is always another encoder, and that is what the barrier is for. The
+mipmap generation and the copies keep the frame's own copy encoder - they bind no table, which is the property
+that matters here.
+
+Measured after the change, on the client: a forced Metal 4 session with Vitrail's `compute-storage-contract`
+dispatches both of its programs, clears its storage image through a kernel, and reports no refusal of any kind.
+The cost is one encoder per dispatch instead of one per frame, and one table per dispatch and per clear; the
+log's own count of `Metal 4 argument table: made` lines is a function of the session's length (5708 in one run,
+18135 in a longer one), so the per-frame number and what the encoder churn costs are phase-21 measurements with
+the counters, not numbers to be read off a log.
 
 **Measured this round, in full.** Two 30-cold + 20-warm censuses (one without the copy smoke, one with it) and
 two hunts (four processes of 31 warm probes, and three of 31): **317 probes, no field failure**, with the copy
