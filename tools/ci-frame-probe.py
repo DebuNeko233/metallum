@@ -242,6 +242,13 @@ require("frame-probe pacing", probe, (
     "wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;",
     "worstWallFrame = wallSamples;",
     "gpuTimes[gpuSamples++] = milliseconds;",
+    # The Metal 4 queue's own samples, which had no percentile path at all: the first forced Metal 4 run the
+    # harness collected reported gpuM4Ms with every gpuP* at zero, and a comparison between the generations is
+    # made of exactly these four numbers.
+    "private static final double[] gpuM4Times = new double[BUDGET + 1];",
+    "gpuM4Times[gpuM4Samples++] = milliseconds;",
+    "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={}",
+    "percentile(gpuM4Times, gpuM4Samples, 0.50),",
     "private static String percentile(final double[] times, final int count, final double fraction) {",
     "java.util.Arrays.sort(sorted);",
     "int rank = (int) Math.ceil(fraction * count) - 1;",

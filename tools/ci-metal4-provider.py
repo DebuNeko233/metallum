@@ -848,6 +848,39 @@ if "SET_INITIALIZE.send(descriptor, 1L);" not in ARGUMENT_TABLE.read_text(encodi
                      " slot this path skips by design holds undefined data and a shader that reads it faults the"
                      " GPU - measured, and the first world frame was doing exactly that")
 
+# The frame probe, fed by the full-frame path. The probe is how the standard harness collects a run at all - it
+# waits for the probe's window line - and it was fed by the Metal 3 encoder alone, so a forced Metal 4 run was
+# "never collected" no matter how well it rendered. Every counter the probe prints is reported from where the
+# Metal 4 path has the fact, and the frame boundary is what opens the window.
+for needle, why in (
+    ("MetalFrameProbe.frameSubmitted();", "the full-frame path never reports a frame boundary, so the probe's"
+     " window never opens and the harness cannot collect a forced Metal 4 run"),
+    ("MetalFrameProbe.encoderOpened(0);", "a render pass the full-frame path opened is not counted"),
+    ("MetalFrameProbe.encoderOpened(1);", "a copy encoder is not counted"),
+    ("MetalFrameProbe.encoderOpened(3);", "a clear pass is not counted"),
+    ("MetalFrameProbe.attachment(attachmentTexture, pixelSize(view), true, true);",
+     "a colour attachment is not counted, so the probe's load and store traffic reports nothing"),
+    ("MetalFrameProbe.depthAttachment(depthTexture, pixelSize(view), true, true);",
+     "a depth attachment is not counted"),
+    ("MetalFrameProbe.pipelineBound();", "a pipeline bind is not counted"),
+    ("MetalFrameProbe.textureBound();", "a texture bind is not counted"),
+    ("MetalFrameProbe.samplerBound();", "a sampler bind is not counted"),
+    ("MetalFrameProbe.bufferBound();", "a buffer bind is not counted"),
+    ("MetalFrameProbe.scissorSet();", "a scissor is not counted"),
+    ("MetalFrameProbe.blit(width, height, textureOf(destination).pixelSize());",
+     "a texture copy is not counted as a blit"),
+    ("MetalFrameProbe.metal4Present();", "a present the full-frame path made is not counted"),
+    ("MetalFrameProbe.submitWindowWait(System.nanoTime() - waitBegan);",
+     "the ring's slot-reuse wait is not timed, so the waits line reports nothing for this path"),
+    ("MetalFrameProbe.gpuFrameMetal4(millis);", "the queue's per-commit GPU time is read but not reported to the"
+     " probe, so a Metal 4 frame has no GPU time at all"),
+):
+    if needle not in encoder and needle not in pass_source and needle not in ring:
+        raise SystemExit("metal 4 provider: " + why)
+if "private static int pixelSize(final GpuTextureView view) {" not in pass_source:
+    raise SystemExit("metal 4 provider: the pass cannot say how large an attachment's pixels are, so the probe's"
+                     " attachment accounting would count nothing")
+
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two
 # are deliberately different facts. AUTO must not promote a frame path the migration has not finished (section

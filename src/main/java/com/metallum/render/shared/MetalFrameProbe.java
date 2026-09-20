@@ -109,6 +109,16 @@ public final class MetalFrameProbe {
      */
     private static final double[] wallTimes = new double[BUDGET + 1];
     private static final double[] gpuTimes = new double[BUDGET + 1];
+    /**
+     * The same, for the Metal 4 queue's per-commit feedback.
+     * <p>
+     * A second set rather than one, because the two sums already carry generation names (`gpuM3Ms` and
+     * `gpuM4Ms`) and a percentile read off a mixed set would describe neither. The first forced Metal 4 run the
+     * harness collected reported `gpuM4Ms=62.65` over thirty frames with every `gpuP*` at zero, which is this
+     * gap: the sum was accumulated and the samples were not.
+     */
+    private static final double[] gpuM4Times = new double[BUDGET + 1];
+    private static int gpuM4Samples;
     private static int wallSamples;
     private static int gpuSamples;
     private static long lastFrameAt;
@@ -655,6 +665,9 @@ public final class MetalFrameProbe {
 
         metal4GpuFrames.incrementAndGet();
         metal4GpuNanos.addAndGet((long) (milliseconds * 1_000_000.0));
+        if (gpuM4Samples < gpuM4Times.length) {
+            gpuM4Times[gpuM4Samples++] = milliseconds;
+        }
     }
 
     /**
@@ -884,7 +897,8 @@ public final class MetalFrameProbe {
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
                         + "pipelineIdentities={} pipelineKeys={} "
-                        + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={}",
+                        + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
+                        + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={}",
                 frames,
                 BUDGET,
                 windowFrames,
@@ -926,7 +940,11 @@ public final class MetalFrameProbe {
                 percentile(gpuTimes, gpuSamples, 0.50),
                 percentile(gpuTimes, gpuSamples, 0.95),
                 percentile(gpuTimes, gpuSamples, 0.99),
-                percentile(gpuTimes, gpuSamples, 1.00)
+                percentile(gpuTimes, gpuSamples, 1.00),
+                percentile(gpuM4Times, gpuM4Samples, 0.50),
+                percentile(gpuM4Times, gpuM4Samples, 0.95),
+                percentile(gpuM4Times, gpuM4Samples, 0.99),
+                percentile(gpuM4Times, gpuM4Samples, 1.00)
         );
         if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0
                 || texelViews > 0 || passDescriptors > 0) {

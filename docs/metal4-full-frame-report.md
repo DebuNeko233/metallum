@@ -255,6 +255,13 @@ render passes:       PROVEN as an object and NOT run: `createRenderPass` builds 
                      evidence is the structural contract and the measured layer under it - no pass has been
                      encoded inside a client frame yet
 commits/frame:       one, PROVEN in the ring proof and the plan's own target (section 30); no frame yet
+frame probe:         FED by the full-frame path - the frame boundary that opens the probe's window, the encoders
+                     it opens by kind, every attachment with its pixel size and load/store, every binding, the
+                     scissor, each texture copy as a blit, each present, the ring's slot-reuse wait and the
+                     queue's own per-frame GPU time from its commit feedback. MEASURED: the standard harness now
+                     collects a forced Metal 4 run, and the first one showed the Metal 4 GPU samples had no
+                     percentile path (a gpuM4Ms total with every gpuP* at zero), which is now fixed with
+                     gpuM4P50/P95/P99/Max
 presentation:        IMPLEMENTED by the frame encoder and OBSERVED ON SCREEN - Metal4FrameEncoder implements
                      MetalFramePresentation: the picture is drawn into the layer's next drawable by the engine's
                      present triangle, encoded into the frame's own command buffer before its one commit, with
@@ -404,7 +411,15 @@ performance:          NOT STARTED
 
 ## Performance
 
-No Metal 4 frame exists to time. The Metal 3 reference on the pinned scene is
+**A Metal 4 frame exists to time now.** The first measured no-pack Metal 4 frame, 1280x720 windowed on the pinned
+world: `wallP50 8.48`, `wallP95 8.96`, `wallP99 9.00`, `8.02 ms a frame, 124.7 frames a second`, GPU from the
+queue's own commit feedback `gpuM4P50 2.08`, `gpuM4P95 2.31`, `gpuM4P99 2.34`, and `drawable wait p50 7.39 ms` -
+so the frame is paced by the display, not by the GPU or by the frame path's own work. NOT a comparison: the
+Metal 3 arm has not been run on the same scene in the same session (section 114), the picture has not been
+compared (section 37), and one measured difference is unexplained - this path loads and stores every attachment
+every pass (about 313 MiB a frame) where the Metal 3 arm reports 32 and 88 MiB a frame on the same scene.
+
+The Metal 3 reference on the pinned scene is
 `wallP50 7.25-7.26 ms`, `gpuP50 7.28-7.29`, `gpuMs 4366.72 / 4368.05` over two arms of
 `run/m3-final`, and it is the baseline any Metal 4 frame will be read against - always with
 `--fullscreen-size` and `--expect-target` set, and with nothing else running on the machine.
@@ -448,95 +463,37 @@ process with no window is not the same claim as a capability proven through the 
 
 ## Remaining blockers
 
-0. ~~The first world frame hangs the GPU~~ - **found and fixed**: an argument table's bindings are not
-   initialised unless you ask (`MTL4ArgumentTable.h`: `initializeBindings` defaults to **false**), so a slot this
-   path never fills - and this path skips a binding by design where a layout declares it as the other kind of
-   resource - held undefined data, and the first frame that drew the clouds read one. Tables are now created
-   with their bindings initialised to nil. MEASURED: a forced Metal 4 launch loads a world
-   (`Time elapsed: 1783 ms`) and renders it for nine thousand frames with no fault, no `GPURestart` and no
-   refusal - 300.6 fps, 3.33 ms a frame, 15.0 passes, 15.0 encoders, 22.3 argument tables, 33.8 draws and 5.0
-   indexed draws a frame. NOT claimed: that the picture is right (nothing has compared it with Metal 3's), and
-   the standard harness cannot collect the run yet because the frame probe is fed by the Metal 3 encoder only -
-   feeding it from the full-frame path is the next milestone.
-1. **The first world frame hangs the GPU** - a forced Metal 4 launch presents its own loading screen for
-   more than thirty frames and then, on the first frame of the loaded world, stops with the ring waiting for a
-   submission that never completes. The machine's own log is the finding: the kernel logged a `GPURestart` for
-   that process's channel at that moment (`Deny submissions/ignore app[java] with 2 GPURestarts in 86
-   submissions`). The GPU is dead, not slow, and the frame-level sentence the ring printed was describing a
-   machine-level fault. **How it was narrowed**: the same world and harness with a Metal 3 frame and the Metal 4
-   present sidecar ran thirty world frames with no restart in that window and a drawable wait of 7-18 ms, so the
-   drawable road (take, wait, signal, present) is sound and the fault is in what the Metal 4 frame encodes for
-   the world. Not yet known: which pass or draw. Candidates are hypotheses only (a wrong attachment or
-   depth-stencil description for a terrain pass; a table slot the shader does not declare; wrong address
-   arithmetic in a draw; an ordering mistake between a copy and a pass). **What the GPU itself says, now**: the
-   ring commits with `MTL4CommitOptions` where the queue offers them, and reports `MTL4CommitFeedback.error` once
-   - the run says `MTL4CommandQueueErrorDomain error 1`, which this machine's `MTL4CommandQueue.h` names
-   **`MTL4CommandQueueErrorTimeout`**. The submission did not fail validation; it never finished, and the driver
-   reset the GPU. **Instruments**: Metal API validation is unusable on this client (with `MTL_DEBUG_LAYER=1` the
-   engine's own Metal 4 probe fails and the game falls back to OpenGL); a pass-and-draw trace
-   (`-Dmetallum.metal4Trace=true`) plus a one-slot ring (`-Dmetallum.metal4RingSlots=1`) put the faulting
-   submission at a loading-screen frame (the atlas-animation passes and the `GUI before blur` pass), because at
-   one slot the commands printed before the fault report are that submission's. **Three candidates refuted by
-   A/B**: the argument tables' lifetime (deferred with the frame instead of closed at pass end - same timeout),
-   the present (the present draw removed entirely - same timeout), and the drawable wait gating the frame on the
-   display (`waitForDrawable:` removed - same timeout). So the fault is in the frame's own encoded passes and
-   copies, and the leading hypothesis is the one part of Metal 4's resource model this path does not use:
-   **residency** - and that hypothesis is now **confirmed and fixed**: the new command model binds by GPU
-   address and nothing keeps the allocation behind an address resident unless the path declares it, so
-   `MTL4ResidencySet` now holds every resource the frame binds or reads, owned by the frame encoder and handed to
-   its queue. **The A/B**: with the declarations a forced Metal 4 launch runs with no `GPURestart` in the
-   machine's log and no `MTL4CommandQueueErrorTimeout`; without them, both within two seconds of the same frame.
-   With residency in place the path then matched the reference's binding model (a name the pipeline does not
-   declare, or declares as the other kind, is skipped rather than fatal - the engine's own `Fog` on the panorama
-   pipeline and `CloudFaces` on the clouds pipeline are the two measured cases), and the forced Metal 4 launch
-   now **renders the world**: the sky passes draw (disc, sun, moon - each with its own indexed draw) and the
-   terrain pass is entered, where the pass implements `MetalPassUniformWriter` (push constants: a mapped slice of
-   the frame's own transient arena, bound by name) and **`drawIndexedIndirect`** - the indirect indexed form
-   Sodium's terrain draw reaches through `VKIndirectDrawBatch.draw`, one command per draw with the arguments
-   twenty bytes apart in a buffer that is declared resident, proven on the device (50 of 50 cold-probe
-   processes) by a smoke whose arguments' own `indexStart` selects which triangle is drawn. Two further findings are recorded rather than papered over: one binding disagrees about its kind
-   in the terrain pass (`u_SectionTimeInfo`, a buffer in the frame path and a texture in the layout - the kind
-   comes from the translation's own bind-group metadata, and the Metal 3 pass skips it in exactly the same way,
-   which the control run proves by rendering thirty world frames of the same terrain through the same
-   translation); and a three-slot run of the same frame still ends in a GPU fault
-   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`). **The loading screen's fault is fixed and the
-   world frame's is not**: a forced Metal 4 launch renders the loading screen for four minutes with no restart,
-   no fault and no refusal, and a run that loads a world reaches `Time elapsed: 1783 ms`, joins the player and
-   then faults on the first world frame (`MTL4CommandQueueErrorDomain error 1`, two kernel `GPURestart`s in that
-   window). So residency was necessary and is not yet sufficient; isolating what the world frame reads is the
-   next milestone, and the candidates the run itself names are the dynamic uniform buffer it resizes during that
-   frame and the resources only the world frame touches (indirect terrain, the cubemap and cloud passes, the
-   terrain region buffers). **The first narrowing is done and it is negative**: the same frame faults with one
-   slot in flight, so it is not an overlap between frames but one frame's own content. **The frame path is not the slow part**: with the per-frame counters on, the loading
-   screen runs at 440 frames a second after a 60-frame startup at 13 (75 ms a frame, seventy-six residency
-   declarations a frame as the atlas and the pipelines arrive). The residency smoke passes 50 of 50 cold-probe
-   processes (30 cold + 20 warm), as does the indirect one. AUTO stays blocked on the remaining list below.
-2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
+The list is current, and fixed items are kept as one-line records so a reader can see what the migration already
+answered rather than only what is left.
+
+0. ~~The world frame hung the GPU~~ - **fixed**: an argument table's bindings are not initialised unless you ask
+   (`MTL4ArgumentTable.h`: `initializeBindings` defaults to **false**), so a slot this path never fills - and this
+   path skips a binding by design where a layout declares it as the other kind of resource - held undefined data,
+   and the first frame that drew the clouds read one. Tables are created with their bindings initialised to nil.
+   MEASURED: a forced Metal 4 launch loads a world and renders it for nine thousand frames with no fault, no
+   `GPURestart` and no refusal.
+1. ~~The frame probe was fed by Metal 3 only~~ - **fixed**: the full-frame path reports the frame boundary that
+   opens the probe's window, its encoders by kind, every attachment with its pixel size and load/store, every
+   binding, the scissor, its texture copies as blits, its presents, the ring's slot-reuse wait and the queue's
+   own per-frame GPU time from its commit feedback. The first collected run also exposed that the Metal 4 GPU
+   samples had no percentile path (a `gpuM4Ms` total with every `gpuP*` at zero); they have their own
+   `gpuM4P50/P95/P99/Max` now.
+2. **The comparison has not been run** - the Metal 4 no-pack frame is measured (8.02 ms a frame, 124.7 fps,
+   `wallP50 8.48`/`wallP99 9.00`, `gpuM4P50 2.08`/`gpuM4P99 2.34`, drawable wait 7.39 ms - the frame is paced by
+   the display), and the Metal 3 arm of the same scene in the same session is not: section 114 asks for exactly
+   that alternation, and no claim about which generation is faster is made until it is run. The picture has not
+   been compared either (section 37).
+3. **One measured difference is unexplained** - this path loads and stores every attachment every pass
+   (`loadedMiB 9387.8`, `storedMiB 9387.8` over thirty frames, about 313 MiB a frame) where the Metal 3 arm
+   reports 32 and 88 MiB a frame on the same scene, because the per-attachment contents facts the Metal 3 pass
+   carries do not reach this path yet. It is a measurement to understand, not yet a defect.
+4. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
-2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
-   all exist, and each refuses, by name, exactly what it does not have.
-3. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw
-   over a rectangle, not a load action) and `writeTimestamp` (the counter path, which the plan puts after
-   correctness). Neither is on the no-pack frame's critical path.
-4. ~~The drawable road~~ - **measured sound**: the Metal 3 frame with the Metal 4 present sidecar presents
-   thirty world frames with a 7-18 ms drawable wait and no GPU fault, which is what separates the present from
-   the hang above.
-5. **The pass object's wiring is unproven on the device** - the plan, the encoder's draw commands and the
-   compilation chain each have a device proof, and `Metal4RenderPass` now implements the no-pack binding subset
-   over them, but the pass itself is built from the engine's device and from real texture views, so its wiring
-   rests on the structural contract plus those measured layers. What is left before a no-pack frame is the
-   client path (a forced Metal 4 execution) and whatever that first real frame reports. And with it, **no blit,
-   compute or full synchronization matrix** - the encoder owns the frame's
-   lifetime (the ring, the deferred releases, the one commit), the pass's attachment half is measured on the
-   device (`MTL4RenderEncoder`), `createRenderPass` builds a real pass from the game's descriptor, and the
-   compilation chain compiles a Metal 4 artifact on the device (50 of 50 probes) with its binding footprint.
-   What is missing is the binding path that fills an argument table from that footprint and the draw calls that
-   use it, so every bind and draw still refuses by name and no draw has been encoded through the client's own
-   frame yet. One milestone remains unproven on the device and is named as such: the pass object's wiring, which
-   needs the engine's device and real texture views. All five of the plan's Phase 3 native render smokes are measured and passing on this device
-   (`canMakeAndSubmit`'s pass, `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample
-   sequence with its encoded barrier), so what is ahead is the render-pass path and the later blit, compute and
-   dependency fixtures rather than the render contract.
+5. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
+   rectangle, not a load action) and `writeTimestamp` (the counter path, which the plan puts after correctness).
+6. **Everything the Definition of Done asks for beyond the no-pack frame** - the Vitrail smoke pack, MRT and
+   depth draws, blit and compute fixtures, the synchronization matrix, resize, reload, dimension, shutdown, the
+   real packs, and the lifecycle gate. None of them is claimed; each is its own milestone in the plan's order.
 
 ## Metal 4 full-frame implementation complete?
 

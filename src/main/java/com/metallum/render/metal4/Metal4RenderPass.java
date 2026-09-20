@@ -8,7 +8,9 @@ import com.metallum.mtl.metal4.MTL4RenderEncoder;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuSampler;
+import com.metallum.render.shared.MetalGpuTexture;
 import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalPassUniformWriter;
 import com.metallum.render.shared.MetalShaderStages;
 import com.mojang.blaze3d.buffers.GpuBuffer;
@@ -171,6 +173,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             // names by object: this is the half of residency that is not about addresses, and the frame path
             // declares both from the same place.
             this.owner.useResource(attachmentTexture);
+            MetalFrameProbe.attachment(attachmentTexture, pixelSize(view), true, true);
             colors[index] = new MTL4RenderEncoder.Color(attachmentTexture, AttachmentContents.CARRIED,
                     clear == null ? null : new float[]{clear.x(), clear.y(), clear.z(), clear.w()});
         }
@@ -188,6 +191,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             }
             MemorySegment depthTexture = nativeHandle(view);
             this.owner.useResource(depthTexture);
+            MetalFrameProbe.depthAttachment(depthTexture, pixelSize(view), true, true);
             depth = new MTL4RenderEncoder.Depth(depthTexture,
                     depthAttachment.clearValue().isPresent() ? depthAttachment.clearValue().getAsDouble() : null);
         }
@@ -213,6 +217,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
         try {
             owner.statEncoder();
+            MetalFrameProbe.encoderOpened(0);
             this.encoder = MTL4RenderEncoder.open(owner.nativeDevice(), owner.commandBuffer(), width, height,
                     colors, depth, label());
         } catch (MTL4RenderEncoder.Refused refused) {
@@ -456,6 +461,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     /** Points every table that reads this name at the buffer's GPU address, offset included. */
     private void fillAddress(final String name, final Metal4BindingPlan.Slot slot, final long address) {
+        MetalFrameProbe.bufferBound();
         for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
             MTL4ArgumentTable table = tableFor(stage);
             if (table == null || !slot.readBy(stage)) {
@@ -470,6 +476,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     /** The same for a texture and, where the plan has one beside it, the sampler that goes with it. */
     private void fillTexture(final String name, final Metal4BindingPlan.Slot slot, final Sampled sampled) {
+        MetalFrameProbe.textureBound();
+        if (slot.sampled()) {
+            MetalFrameProbe.samplerBound();
+        }
         for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
             MTL4ArgumentTable table = tableFor(stage);
             if (table == null || !slot.readBy(stage)) {
@@ -693,6 +703,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             }
             this.tablesAssigned = true;
         }
+        MetalFrameProbe.pipelineBound();
         if (!this.encoder.setRenderPipelineState(this.artifact.pipelineState(this.depthAttached))) {
             throw new IllegalStateException("the Metal 4 encoder refused the pipeline state for "
                     + this.pipeline.getLocation());
@@ -701,6 +712,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.encoder.setCullMode(this.artifact.cullMode().value);
         this.encoder.setTriangleFillMode(this.artifact.fillMode().value);
         if (this.scissorEnabled || this.scissorWidth > 0L || this.scissorHeight > 0L) {
+            MetalFrameProbe.scissorSet();
             this.encoder.setScissorRect(this.scissorX, this.scissorY, this.scissorWidth, this.scissorHeight);
         }
         return true;
@@ -736,6 +748,11 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         if (buffer instanceof MetalGpuBuffer metal) {
             this.owner.useResource(metal.metalBuffer().handle());
         }
+    }
+
+    /** How many bytes one pixel of this attachment is, which is what its load and store are counted in. */
+    private static int pixelSize(final GpuTextureView view) {
+        return view.texture() instanceof MetalGpuTexture texture ? texture.pixelSize() : 0;
     }
 
     /** The GPU address a slice of an engine buffer starts at, which is what a table binds. */

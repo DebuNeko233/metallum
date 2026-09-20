@@ -4,6 +4,7 @@ import com.metallum.Metallum;
 import com.metallum.mtl.MTLDevice;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjCBlock;
+import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.objc.ObjC;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -228,12 +229,14 @@ public final class MTL4FrameRing implements AutoCloseable {
 
         int next = (slot + 1) % allocators.length;
         if (awaited[next] != 0L) {
+            long waitBegan = System.nanoTime();
             if (WAIT_UNTIL_SIGNALED.sendLong(event, awaited[next], WAIT_MILLIS) == 0L) {
                 refusal = "slot " + next + "'s completion value " + awaited[next] + " did not arrive within "
                         + WAIT_MILLIS + " ms, so its allocator is not known to be free and is not reset";
                 return false;
             }
             waits++;
+            MetalFrameProbe.submitWindowWait(System.nanoTime() - waitBegan);
         }
 
         RESET.send(allocators[next]);
@@ -418,6 +421,12 @@ public final class MTL4FrameRing implements AutoCloseable {
      * a log that repeats the same sentence per frame is a log nobody reads.
      */
     private static void reportFeedback(final MemorySegment feedback) {
+        // The GPU time of the submission this feedback belongs to, which is the only per-frame GPU account a
+        // Metal 4 queue gives at all: the probe's gpuM4 columns are what the two generations are compared on.
+        double millis = MTL4CommitOptions.gpuMillis(feedback);
+        if (millis > 0.0) {
+            MetalFrameProbe.gpuFrameMetal4(millis);
+        }
         String error = MTL4CommitOptions.error(feedback);
         if (error == null) {
             return;

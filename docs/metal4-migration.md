@@ -1616,6 +1616,50 @@ path's own counters and nothing else, and **feeding the frame probe from the ful
 that makes the two generations comparable in the standard way - which is what the plan's sections 37, 70 and 94
 ask for before any performance claim.
 
+### The probe is fed by the full-frame path, and the first Metal 4 frame is measured
+
+The standard harness waits for the frame probe's window line before it counts anything, and the probe was fed by
+the Metal 3 encoder alone - so a forced Metal 4 run was "never collected" however well it rendered. Every
+counter the probe prints is now reported from where the Metal 4 path has the fact: the frame boundary
+(`frameSubmitted`, which opens the window), the encoders it opens by kind (render pass, copy, clear), each
+attachment with its pixel size and its load and store, every binding it fills (pipeline, texture, sampler,
+buffer), the scissor, each texture copy as a blit, each present the frame makes, the ring's slot-reuse wait, and
+**the queue's own per-commit GPU time** from the commit feedback the ring already reads. The Metal 3-specific
+columns (`encoders`, `submit`, `passChanged`, `viewport`) stay zero for this path and say so rather than
+pretending: they count a mechanism this generation does not have.
+
+**The first collected run found a gap in the probe itself.** It reported `gpuM4Ms=62.65` over thirty frames with
+every `gpuP*` at zero: the queue's feedback times were being accumulated and never made into percentiles, so a
+Metal 4 frame had a GPU total and no distribution. The probe now keeps those samples too and prints
+`gpuM4P50/P95/P99/Max` beside the Metal 3 ones - a *second* set rather than one, because the two sums already
+carry generation names and a percentile read off a mixed set would describe neither.
+
+**The first measured no-pack Metal 4 frame** (1280x720, windowed, no pack, the pinned world):
+
+```text
+m4: 8.02 ms a frame, 124.7 frames a second
+frame-probe 30/30 windowFrames=30 windowMs=240.65
+  selectedGeneration=metal4 executingGeneration=metal4
+  gpuM4Feedbacks=30 gpuM4Frames=30 gpuM4Ms=63.48
+  wallP50=8.48 wallP95=8.96 wallP99=9.00 wallMax=9.00
+  gpuM4P50=2.08 gpuM4P95=2.31 gpuM4P99=2.34 gpuM4Max=2.34
+  loadedMiB=9387.8 storedMiB=9387.8 depthLoadedMiB=4640.6 depthStoredMiB=4640.6
+  pipeline=1960 texture=745 sampler=745 buffer=2450 scissor=90
+  waits: drawable calls=30 p50=7.39ms p95=7.57ms max=7.58ms total=209.49ms
+```
+
+**What those numbers say, and what they do not.** The frame costs 8.02 ms of wall time, of which **7.39 ms is the
+drawable wait** - the layer handing out a drawable at the display's rate - and **2.08 ms is the GPU's own time**
+from the queue's feedback. So this frame is paced by the display and not by the GPU or by the frame path's own
+work, which is the shape a first full-frame path should have and is worth knowing before anyone asks whether
+Metal 4 is faster. What is *not* claimed: a comparison. The Metal 3 arm has not been run on the same scene in the
+same session (the plan's section 114 asks for exactly that alternation), the picture has not been compared
+(section 37), and one difference is visible and unexplained: **9387.8 MiB loaded and stored over thirty frames**
+is about 313 MiB a frame, where the Metal 3 arm of the present sidecar reported 971.6 and 2659.1 MiB over thirty
+(32 and 88 a frame). This path marks every attachment `CARRIED` - load and store, every pass - because the
+per-attachment contents facts the Metal 3 pass carries do not reach it yet, and that is a *measured* difference
+to understand later rather than a number to explain away.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

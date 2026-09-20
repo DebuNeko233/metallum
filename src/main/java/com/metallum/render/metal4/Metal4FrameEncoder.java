@@ -16,6 +16,7 @@ import com.metallum.render.MetalDevice;
 import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalDestructionQueue;
 import com.metallum.render.shared.MetalFrameEncoder;
+import com.metallum.render.shared.MetalFrameProbe;
 import com.metallum.render.shared.MetalFramePresentation;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuTexture;
@@ -287,6 +288,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (!this.ring.endAndSubmit()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: a frame could not be submitted - {}", this.ring.refusal());
         }
+        // The frame boundary, reported to the frame probe so that a forced Metal 4 session produces the same
+        // window line a Metal 3 session does - which is what makes the two generations comparable in the
+        // standard harness at all. Every counter the probe prints is fed from the places below.
+        MetalFrameProbe.frameSubmitted();
         // After the commit, which is the half that comes second: the queue is told the drawable may be shown
         // once the work it just committed has run.
         presentAll();
@@ -421,6 +426,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             // A copy that arrives before any pass still needs a frame: the command buffer has to be begun before
             // anything can be encoded into it, and beginning it is also where the slot's completion is proved.
             beginFrameIfNeeded();
+            MetalFrameProbe.encoderOpened(1);
             this.copyEncoder = MTL4ComputeEncoder.open(this.executionState.device(), this.ring.commandBuffer(),
                     "the frame's copies");
         }
@@ -572,6 +578,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             throw new IllegalStateException("the Metal 4 copy pass refused a " + width + "x" + height
                     + " texture-to-texture copy");
         }
+        MetalFrameProbe.blit(width, height, textureOf(destination).pixelSize());
     }
 
     /** The engine's buffer wrapper, or a named fault where something else was handed over. */
@@ -774,6 +781,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         for (CAMetalDrawable drawable : drawables) {
             // The drawable has already been waited for, at the moment it was taken: this is the other half, and
             // it has to be sent after the commit that carries the picture and before the presentation.
+            MetalFrameProbe.metal4Present();
             if (!this.ring.signalDrawable(drawable.handle())) {
                 Metallum.LOGGER.warn("Metal 4 frame encoder: the queue would not signal a drawable, so the frame"
                         + " just committed may not be shown");
@@ -894,6 +902,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.copyEncoder.endEncoding();
         }
 
+        MetalFrameProbe.encoderOpened(3);
         MTL4RenderEncoder pass;
         try {
             pass = MTL4RenderEncoder.open(this.executionState.device(), this.ring.commandBuffer(), width, height,
