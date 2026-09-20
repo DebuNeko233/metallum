@@ -778,9 +778,12 @@ attachments have been read off the presented frame on both arms; and the read/wr
 closed - all seven of section 60's fixtures and all three of section 61's directions measured on the device, with
 every field 50 of 50 in the cold census. What is **not** done is the rest of the Definition of Done: the rest of
 the smoke-pack staircase (the deferred, shadow and history packs beyond the three fixtures whose pixels have been
-read), the depth picture (depth writes and depth sampling are smoke-proven, not picture-read), blit inside a live
-frame, resize, pack reload, dimension change, shutdown, the real-pack ladder, the lifecycle gate, MetalFX Spatial
-on this generation, GPU counters and Metal 4 performance. **And the pictures that have been read agree, now that blocker
+read), blit inside a live frame, resize, pack reload, dimension change, shutdown, the lifecycle gate, MetalFX
+Spatial on this generation, GPU counters and Metal 4 performance. **The real-pack ladder has started and its
+first rung passes**: `MakeUp-UltraFast-9.5e` runs on both arms with the same **330 pipeline identities**, the
+same gross picture and no fault of any kind in either log, and the differences it shows are this path's known
+ones (a pass per clear, 1.18x/1.29x attachment traffic, drawable-wait pacing) registered for the performance
+phase rather than read as verdicts. Complementary Reimagined and Photon are the rungs after it. **And the pictures that have been read agree, now that blocker
 10 is fixed**: the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four
 MRT attachments, the orientation), the frames the *game* draws are right too - the no-pack Metal 4 frame is a world
 whose sampled terrain cells are the Metal 3 arm's own, and the depth fixture reads green at the geometry's edges on

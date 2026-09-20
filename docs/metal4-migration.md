@@ -2360,6 +2360,42 @@ doing nothing - Vitrail's history swap-back is the one that has a fixture, and i
 (`ShadowTargets`, `copyTextureToTexture(depth, noTranslucents, ...)`) is the next candidate to read under the same
 instrument.
 
+### The real-pack ladder starts: MakeUp runs on both arms with the same program set
+
+Every rung before this one was a fixture written to be legible. The ladder's first rung is a pack somebody wrote to
+look good, and with the world rendering it can finally be read as a pack rather than as a fullscreen pass.
+
+**`MakeUp-UltraFast-9.5e`, both arms, same world, same spawn, same anchor, forty seconds of settle.** No fault of
+any kind in either log - no `GPURestart`, no `SIGSEGV`, no `Unimplemented`, and no refusal line - and the numbers
+that §70 asks to be equal are equal:
+
+| | Metal 3 | Metal 4 |
+| --- | --- | --- |
+| **pipeline identities** | **330** | **330** |
+| render passes / 600 frames | 10727 | 11344 |
+| blit encoders | 3951 | 4468 |
+| clear encoders | 535 | 3409 |
+| depth attachments | 4198 | 7624 |
+| loaded / stored MiB | 279871 / 337410 | 330397 / 435208 |
+| presented frames in the window | 4530 | 4521 |
+| faults | 0 | 0 |
+
+**The same 330 programs** is the structural fact the ladder was waiting for: the pack's whole translation and
+compilation chain produces the same set of native pipelines on both generations, from the same pack, in the same
+session shape. The gross picture agrees too - the most common presented frame's first sample is the same light
+colour on both arms (`243, 247, 250` against `244, 247, 250`), and only a handful of frames are flat - which is
+what §69 allows a cross-launch picture to say and no more.
+
+**And the differences are the ones already registered rather than new ones**: this path opens a native encoder per
+logical pass and a pass of its own for every clear, so `clearEncoders` is 3409 against 535 and the attachment
+traffic is 1.18x loaded and 1.29x stored for the same scene and the same frame count; and the drawable wait's p50 is
+0.03 ms on the reference arm against 3.80 ms here, which is a pacing difference and not a correctness one - it is
+**registered for the performance phase** (§93) and not read as a verdict, because the two arms are two launches of
+a scene that is not deterministic and the only thing being compared today is structure.
+
+So the ladder's first rung is **M3 PASS / M4 PASS**, and the two heavier packs - Complementary Reimagined and
+Photon - are the next rungs rather than this one's work.
+
 ### A compute dispatch, and where the client's compute road stops
 
 The plan's compute smoke is "input buffer, compute transformation, output, readback exact", and the first half of it
