@@ -40,12 +40,12 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
 cold runs:        160 processes, 1260 probes (50 + 50 + 60, the last with 20 probes each)
                   failures: 4, every one of them at ATTEMPT 1 of its process
 warm probes:      500 in three processes      failures: 0
-this round:       53 probes in two runs (2 cold + 1 warm, then 30 cold + 20 warm, `--mode raw`) with 0
-                  failures: the drawn sampled-texture smoke and the allocator-slot ring passed in all of
-                  them, and the provider line above now reports the state's own answers. Each question is
-                  reported in a field of its own and counted apart from the capability sequence, so three
-                  different questions cannot hide behind one number (the drawn smoke's own evidence from
-                  the round that added it: 100 of 100; the ring's: 56 of 56)
+this round:       50 probes in one run (30 cold + 20 warm, `--mode raw`) with 0 failures: the drawn
+                  sampled-texture smoke, the allocator-slot ring and the new colour-attachment smoke passed
+                  in all of them, and the provider line above still reports the state's own answers. Each
+                  question is reported in a field of its own and counted apart from the capability sequence,
+                  so four different questions cannot hide behind one number (the drawn smoke's own evidence
+                  from the round that added it: 100 of 100; the ring's: 56 of 56)
 rate:             4 of 160 first probes = 2.5 %;  0 of 1100 later probes,  0 of 500 warm probes
 within-process control:  process 47 failed attempt 1 and passed attempts 2 to 20
 uniform pass:     0 failures in all 500 attempts, and this round is the first time it was checked at all
@@ -210,9 +210,17 @@ presentation:        EXPERIMENTAL  (the present sidecar, Metal4Path + Metal4Pres
 ## Render
 
 ```
-basic:   NOT STARTED
-MRT:     NOT STARTED
-depth:   NOT STARTED
+basic:   PARTLY - a render pass is described and opened on the device through `MTL4RenderEncoder`
+         (attachments, load/store actions, clear colours, target size, the producer barrier between
+         passes), measured by the attachment smoke below; no draw is encoded into one yet, and the frame
+         encoder's `createRenderPass` still refuses, because the pass object that would consume the game's
+         descriptor is the next milestone
+MRT:     PROVEN for the pass's half, and only that half - one pass carries four colour attachments cleared
+         to red, green, blue and white and each slot is read back against the colour that slot was asked
+         for; a second pass loads slot 0's existing contents and re-clears slot 1, so the load, the clear
+         on a reused attachment and the store across a pass boundary are all measured. What is NOT proven
+         is a pipeline writing several targets at once: no draw is encoded yet
+depth:   NOT STARTED - the descriptor path takes a depth attachment and its clear, but no smoke binds one
 blend:   NOT STARTED
 scissor: NOT STARTED
 ```
@@ -295,7 +303,7 @@ CI, which is where every smoke here was run.
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
 | render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | n/a | yes |
-| MRT             | yes         | no - one target per pass          | n/a           | no          |
+| MRT             | yes         | **pass half** - four colour attachments in one pass, cleared per slot and read back slot by slot; no draw writes more than one target yet | n/a | yes |
 | depth           | yes         | no                                | n/a           | no          |
 | sampled texture | yes         | yes - a table-bound source is sampled by a pass and the result is read back, one pixel inside each of the pattern's four quadrants | n/a | yes |
 | sampler         | yes         | yes - a nearest sampler with `supportArgumentBuffers` is made, bound and sampled through | n/a | yes |
@@ -324,9 +332,10 @@ process with no window is not the same claim as a capability proven through the 
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder
    all exist, and each refuses, by name, exactly what it does not have.
 3. **No encode path inside the frame encoder, and no blit, compute or full synchronization matrix** - the
-   encoder owns the frame's lifetime (the ring, the deferred releases, the one commit) but every operation that
-   would render, copy, clear or measure refuses by name, so nothing has been drawn through the client's own
-   frame yet. All five of the plan's Phase 3 native render smokes are measured and passing on this device
+   encoder owns the frame's lifetime (the ring, the deferred releases, the one commit) and the pass's
+   attachment half is measured on the device (`MTL4RenderEncoder`), but every operation that would render,
+   copy, clear or measure still refuses by name and `createRenderPass` is among them, so nothing has been
+   drawn through the client's own frame yet. All five of the plan's Phase 3 native render smokes are measured and passing on this device
    (`canMakeAndSubmit`'s pass, `canBindAndDraw`'s two passes, and `canDrawSampledTexture`'s pattern-then-sample
    sequence with its encoded barrier), so what is ahead is the render-pass path and the later blit, compute and
    dependency fixtures rather than the render contract.

@@ -133,6 +133,8 @@ sampled_draws="$(grep -c ' sampledDraw=true ' "$probe_log" || true)"
 sampled_draw_failures="$(grep -c ' sampledDraw=false ' "$probe_log" || true)"
 ring_passes="$(grep -c ' ring=true ' "$probe_log" || true)"
 ring_failures="$(grep -c ' ring=false ' "$probe_log" || true)"
+attachment_passes="$(grep -c ' attachments=true ' "$probe_log" || true)"
+attachment_failures="$(grep -c ' attachments=false ' "$probe_log" || true)"
 
 if [[ -n "$out_file" ]]; then
 	cp "$probe_log" "$out_file"
@@ -153,6 +155,7 @@ fi
 echo "warm probes:     $warm_total   failures: $warm_failures"
 echo "sampled draws:   $sampled_draws passed   $sampled_draw_failures failed"
 echo "allocator rings: $ring_passes passed   $ring_failures failed"
+echo "colour attaches: $attachment_passes passed   $attachment_failures failed"
 echo
 # The provider line is the same in every attempt, so it is printed once and not per process - which is also
 # what keeps the per-process substitution below to nine capture groups. A tenth would have to be written `\10`,
@@ -174,5 +177,10 @@ fi
 
 if (( ring_failures > 0 )); then
 	echo "the allocator-slot ring failed in $ring_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( attachment_failures > 0 )); then
+	echo "the colour-attachment smoke failed in $attachment_failures probe(s)" >&2
 	exit 1
 fi

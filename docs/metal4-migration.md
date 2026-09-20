@@ -768,6 +768,52 @@ short-circuited by `if (false && ...)`, is the shape a text pin cannot see: it i
 wait-count assertion on the device, which is why that assertion exists and why the two halves are noted
 together in the contract file.
 
+### The render pass's attachments: `MTL4RenderEncoder`, and the mapping answered on the device
+
+A pass is where an attachment's two lifetime facts turn into the load and store actions a tile-based GPU pays
+for, so a mistake there is a wrong image and not a slow frame. `mtl.metal4.MTL4RenderEncoder` is that mapping
+and the descriptor it is described on, and the Metal 3 semantics are kept deliberately identical, because the
+images have to be:
+
+- a clear beats the load question - a pass that asked to be handed a colour is not asking to be handed what
+  stood there;
+- otherwise an attachment this pass overwrites entirely is loaded `DontCare`, and one it does not is loaded;
+- an attachment nothing reads afterwards is stored `DontCare`, and one something reads is stored.
+
+The Metal 3 layer does this in `MTLCommandBuffer`; it is here rather than inside a pass object because the
+actions *are* the descriptor's shape, and a second place that computed them could read the same two facts
+differently. The attachment objects are Metal 3's own classes - `MTL4RenderPass.h:33` declares
+`colorAttachments` as an `MTLRenderPassColorAttachmentDescriptorArray` and line 36 the depth attachment as an
+`MTLRenderPassDepthAttachmentDescriptor` - read off this machine's SDK rather than assumed.
+
+**It is measured on the device.** `MTL4Probe.canCarryColorAttachments` describes one pass with four colour
+attachments cleared to red, green, blue and white, reads every slot back against the colour *that slot* was
+asked for, then runs a second pass that loads slot 0's existing contents and re-clears slot 1, and a third that
+attaches two more slots with the discard answers. What the readbacks assert is exactly what the API defines:
+slot 0 still reads its first pass's colour (so the load and the store both happened across a pass boundary,
+ordered by the producer barrier), and slot 1 reads the new colour (so a clear lands on an attachment that
+already held something). The two discard slots are **not** asserted afterwards, and that is the API's contract
+rather than an omission: a `DontCare` store leaves the contents undefined, so a readback there would be a claim
+about undefined memory. Measured on Apple Silicon: **50 of 50 probes** passed in 30 cold processes and 20 warm
+repeats.
+
+**One fault was paid for here and is worth the paragraph.** The first version held the encoder the command
+buffer handed back across the autorelease pool the factory had pushed, which is a dangling handle rather than a
+nil check: the first message to it was a segfault inside `objc_msgSend`, with the crash log naming
+`MTL4RenderEncoder.responds` and the FFM downcall under it. The fix is one call - `ObjC.retain(encoder)`, the
+same thing `MTLCommandBuffer.makeRenderCommandEncoder` has always done - and it is now a pinned line in the
+contract, because the failure mode is a crash rather than a wrong pixel.
+
+`tools/ci-metal4-cold-probe.py` pins the mapping's two answers, the attachment loop, the retain, the pass's
+end, the header the classes come from, and the smoke's own shape - every slot described from its own texture, an
+attachment loaded and not only cleared, the discard answers sent, the barrier between the passes, and the
+re-clear compared - plus the harness's field, count and exit code. Eighteen mutations were run against those
+pins, and all eighteen were caught.
+
+**What this does not yet do**: no pass object exists in the frame encoder, so no draw is encoded into any of
+these passes and `createRenderPass` still refuses. The attachment half of the plan's MRT smoke is measured; the
+half that needs a pipeline writing several targets is the next one.
+
 ## The frame encoder, and the list its refusals draw
 
 Phase 4's other half is `render.metal4.Metal4FrameEncoder`, and what it is now is a frame's lifetime with an

@@ -24,6 +24,7 @@ import com.metallum.render.shared.MetalExecutionState;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
  *                 sampled=&lt;bool&gt; sampledReason=&lt;text&gt; sampledDraw=&lt;bool&gt; sampledDrawReason=&lt;text&gt;
  *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
+ *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 provider=&lt;text&gt; epochMs=&lt;n&gt; probeMs=&lt;n&gt; elapsedMs=&lt;n&gt;
  * </pre>
  *
@@ -131,6 +132,7 @@ public final class Metal4ColdProbe {
         String sampledReason = "-";
         String sampledDrawReason = "-";
         String ringReason = "-";
+        String attachmentsReason = "-";
         boolean allPassed = true;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             long probeStart = System.nanoTime();
@@ -150,6 +152,12 @@ public final class Metal4ColdProbe {
             boolean ring = makeAndSubmit && MTL4Probe.canReuseAllocatorSlots(device);
             if (!ring) {
                 ringReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The pass's own half of the MRT smoke: four colour attachments described through the frame's own
+            // pass encoder, each with its own load, store and clear, read back slot by slot.
+            boolean attachments = makeAndSubmit && MTL4Probe.canCarryColorAttachments(device);
+            if (!attachments) {
+                attachmentsReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The fourth render smoke's binding half, asked on every attempt: a table made for one texture and
             // one sampler, and both accepted. Reported beside the draw probe rather than folded into it, so a
@@ -189,6 +197,8 @@ public final class Metal4ColdProbe {
                     + " sampledDrawReason=" + sampledDrawReason.replace(' ', '_')
                     + " ring=" + ring
                     + " ringReason=" + ringReason.replace(' ', '_')
+                    + " attachments=" + attachments
+                    + " attachmentsReason=" + attachmentsReason.replace(' ', '_')
                     + " provider=" + provider.replace(' ', '_')
                     // The absolute time, so a failure can be lined up against whatever else the machine was
                     // doing: a fault that clusters in a run of consecutive processes is a fact about the

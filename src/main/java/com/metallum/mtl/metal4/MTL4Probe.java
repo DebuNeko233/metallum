@@ -1,6 +1,7 @@
 package com.metallum.mtl.metal4;
 
 import com.metallum.Metallum;
+import com.metallum.render.shared.AttachmentContents;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
 
 import com.metallum.mtl.MTLTexture;
@@ -807,6 +808,201 @@ public final class MTL4Probe {
             }
             releaseIfPresent(queue);
         }
+    }
+
+    /** What the four-attachment smoke's first pass clears its slots to: red, green, blue and white. */
+    private static final int[][] EXPECTED_ATTACHMENTS = {
+            {255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}, {255, 255, 255, 255}};
+
+    /** What the second pass re-clears the reused slot to: a colour no other clear in this probe produces. */
+    private static final int[] RECLEARED_PIXEL = {16, 32, 48, 255};
+
+    /**
+     * Whether a pass can carry several colour attachments, each with its own load, store and clear.
+     * <p>
+     * The migration plan's MRT smoke is "RT0 red, RT1 green, RT2 blue, RT3 white, read back per attachment", and
+     * the half of it that is about the pass rather than about a shader comes first: one pass with four
+     * attachments described through {@link MTL4RenderEncoder}, and the four answers read back slot by slot. A
+     * picture that merely "looks right" cannot say whether slot 2 was the clear that landed on slot 3, which is
+     * why every slot is compared against the colour that slot was asked for.
+     * <p>
+     * Two more passes follow it, because the interesting half of an attachment's description is what happens to
+     * contents that are already there:
+     * <ul>
+     *   <li>pass two attaches slot 0 with the {@link AttachmentContents#CARRIED} default - loaded and stored -
+     *       and re-clears slot 1. Slot 0 reading its first pass's colour afterwards is the load-and-store path
+     *       surviving a second pass, and slot 1 reading the new colour is a clear landing on a reused
+     *       attachment;</li>
+     *   <li>pass three attaches slots 2 and 3 with the two discard answers - overwritten without being read -
+     *       so {@code DontCare} load and store are sent to this device as well. <strong>Neither of those two
+     *       slots is asserted afterwards</strong>, and the reason is the API's own contract rather than an
+     *       oversight: a {@code DontCare} store leaves the contents undefined, so a readback there would be a
+     *       claim about undefined memory.</li>
+     * </ul>
+     * The passes are separated by the producer barrier, because a pass that reads what an earlier pass wrote
+     * has to say so on the new command model - one command buffer is not by itself an ordering (section 61).
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether four attachments can be described in one pass and read back slot by slot
+     */
+    public static boolean canCarryColorAttachments(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("attachments", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        int slots = EXPECTED_ATTACHMENTS.length;
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment[] targets = new MemorySegment[slots];
+        MTL4RenderEncoder clearPass = null;
+        MTL4RenderEncoder reusedPass = null;
+        MTL4RenderEncoder discardPass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("attachments", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            for (int slot = 0; slot < slots; slot++) {
+                MemorySegment target = newTarget(device);
+                if (ObjC.isNil(target)) {
+                    return failed("attachments", "the " + (slot + 1) + "th of " + slots + " colour attachments came"
+                            + " back nil from newTextureWithDescriptor:");
+                }
+                targets[slot] = target;
+            }
+
+            BEGIN.send(buffer, allocator);
+
+            MTL4RenderEncoder.Color[] cleared = new MTL4RenderEncoder.Color[slots];
+            for (int slot = 0; slot < slots; slot++) {
+                cleared[slot] = MTL4RenderEncoder.Color.cleared(targets[slot], attachmentColor(slot));
+            }
+            clearPass = openPass(device, buffer, cleared, "the four-attachment clear");
+            if (clearPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            if (!clearPass.barrierForSubsequentEncoders()) {
+                END.send(buffer);
+                clearPass.close();
+                return failed("attachments", "the first pass's encoder does not answer "
+                        + "barrierAfterStages:beforeQueueStages:visibilityOptions:, so the pass that loads its"
+                        + " colour cannot be ordered against it");
+            }
+            clearPass.endEncoding();
+
+            MTL4RenderEncoder.Color[] reused = {
+                    new MTL4RenderEncoder.Color(targets[0], AttachmentContents.CARRIED, null),
+                    MTL4RenderEncoder.Color.cleared(targets[1], reclearedColor())};
+            reusedPass = openPass(device, buffer, reused, "the load-and-reclear pass");
+            if (reusedPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            reusedPass.endEncoding();
+
+            // Two slots whose contents are discarded: loaded DontCare and stored DontCare. Their result is not
+            // asserted below, and cannot be - the API leaves it undefined on purpose.
+            MTL4RenderEncoder.Color[] discarded = {
+                    new MTL4RenderEncoder.Color(targets[2], new AttachmentContents(false, true), null),
+                    new MTL4RenderEncoder.Color(targets[3], new AttachmentContents(false, false), null)};
+            discardPass = openPass(device, buffer, discarded, "the discard pass");
+            if (discardPass == null) {
+                END.send(buffer);
+                return false;
+            }
+            discardPass.endEncoding();
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("attachments", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " passes never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // Slot 0: cleared in pass one, loaded and stored by pass two, never written again - so its
+                // colour is the reading that says the load and the store both happened.
+                MTLTexture.bytes(targets[0], pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, EXPECTED_ATTACHMENTS[0])) {
+                    return failed("attachments", "slot 0 reads " + describe(pixel) + " where pass one cleared it to"
+                            + " " + describe(EXPECTED_ATTACHMENTS[0]) + ", so the pass that loaded it either lost"
+                            + " it or was given another slot's texture");
+                }
+
+                // Slot 1: cleared in pass one and re-cleared in pass two, which is a clear landing on an
+                // attachment that already held something.
+                MTLTexture.bytes(targets[1], pixel, 4L, 0L, 0L, 1L, 1L);
+                if (!matches(pixel, RECLEARED_PIXEL)) {
+                    return failed("attachments", "slot 1 reads " + describe(pixel) + " where the second pass"
+                            + " re-cleared it to " + describe(RECLEARED_PIXEL) + ", so a clear on a reused"
+                            + " attachment did not land or landed in another slot");
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("attachments", "describing or reading back the four attachments threw " + threw);
+        } finally {
+            if (clearPass != null) {
+                clearPass.close();
+            }
+            if (reusedPass != null) {
+                reusedPass.close();
+            }
+            if (discardPass != null) {
+                discardPass.close();
+            }
+            for (MemorySegment target : targets) {
+                releaseIfPresent(target);
+            }
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /** Opens one pass of the attachment smoke, turning its refusal into this probe's stage and reason. */
+    private static MTL4RenderEncoder openPass(final MTLDevice device, final MemorySegment buffer,
+                                              final MTL4RenderEncoder.Color[] colors, final String which) {
+        try {
+            return MTL4RenderEncoder.open(device, buffer, TARGET_SIZE, TARGET_SIZE, colors, null, which);
+        } catch (MTL4RenderEncoder.Refused refused) {
+            failed("attachments", which + " could not be opened at stage " + refused.stage() + ": "
+                    + refused.getMessage());
+            return null;
+        }
+    }
+
+    /** The clear colour one attachment slot is asked for, as the descriptor's four components. */
+    private static float[] attachmentColor(final int slot) {
+        int[] pixel = EXPECTED_ATTACHMENTS[slot];
+        return new float[]{pixel[0] / 255.0f, pixel[1] / 255.0f, pixel[2] / 255.0f, pixel[3] / 255.0f};
+    }
+
+    /** The colour the second pass re-clears a reused attachment to. */
+    private static float[] reclearedColor() {
+        return new float[]{RECLEARED_PIXEL[0] / 255.0f, RECLEARED_PIXEL[1] / 255.0f,
+                RECLEARED_PIXEL[2] / 255.0f, RECLEARED_PIXEL[3] / 255.0f};
     }
 
     /** The name of one of the pattern's quadrants, for a message that says which one a readback landed in. */

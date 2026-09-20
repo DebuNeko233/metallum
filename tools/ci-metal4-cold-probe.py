@@ -329,4 +329,64 @@ for needle, why in (
     if needle not in probe and needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- several colour attachments, each with its own load, store and clear ---------------------------------
+# The render pass is where an attachment's two lifetime facts become load and store actions, so it is the one
+# place a mapping mistake is a wrong image rather than a slow frame. The smoke proves the mapping on the device
+# by reading every slot back against the colour that slot was asked for, and by loading a slot a second time.
+render_encoder = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                  / "MTL4RenderEncoder.java")
+if not render_encoder.is_file():
+    raise SystemExit("cold-probe harness: MTL4RenderEncoder.java is gone, so the frame's render passes have no"
+                     " implementation and the attachment mapping has nowhere to live")
+render_encoder_source = render_encoder.read_text(encoding="utf-8")
+for needle, why in (
+    ("COLOR_ATTACHMENTS.sendPtr(descriptor)", "the pass descriptor's colour attachments are never reached"),
+    ("ATTACHMENT_AT.sendPtr(attachments, index)",
+     "only one attachment is ever described, so a second colour target has nowhere to go"),
+    ("SET_LOAD_ACTION.send(attachment, loadAction(color.contents(), color.clear() != null));",
+     "the load action is not the mapping's answer, so a clear and a load are the same call"),
+    ("SET_STORE_ACTION.send(attachment, storeAction(color.contents()));",
+     "the store action is not the mapping's answer"),
+    ("return contents.overwritten() ? LOAD_DONT_CARE : LOAD_LOAD;",
+     "an overwritten attachment no longer skips its load, which is the traffic the fact exists to save"),
+    ("return contents.readAfterwards() ? STORE_STORE : STORE_DONT_CARE;",
+     "an attachment nothing reads is still stored"),
+    ("ObjC.retain(encoder)",
+     "the encoder is held past the pool that made it without a retain, which is a dangling handle rather than a "
+     "nil check - measured as a segfault in objc_msgSend on the first message to it"),
+    ("endEncoding()", "the pass has no end, so a second pass can never be opened in the same command buffer"),
+    ("MTL4RenderPass.h", "the header the attachment classes come from is no longer named"),
+):
+    if needle not in render_encoder_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ("public static boolean canCarryColorAttachments(",
+     "the frame's multi-attachment pass is measured nowhere, so the render pass's own half of the MRT smoke is "
+     "an assumption"),
+    ("MTL4RenderEncoder.Color.cleared(targets[slot], attachmentColor(slot))",
+     "the smoke does not describe one attachment per slot, so it cannot say which slot a clear landed in"),
+    ("new MTL4RenderEncoder.Color(targets[0], AttachmentContents.CARRIED, null)",
+     "the smoke never loads an attachment's existing contents, which is the half of the mapping a clear cannot "
+     "prove"),
+    ("new AttachmentContents(false, true)", "the discard answers are never sent to the device"),
+    ("clearPass.barrierForSubsequentEncoders()",
+     "the pass that loads another pass's colour is not ordered against it, which section 61 forbids"),
+    ("slot 1 reads ", "a clear on a reused attachment is not compared against the colour it was given"),
+):
+    if needle not in ring_probe:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ('+ " attachments=" + attachments', "the harness does not print the attachment smoke's answer"),
+    ('+ " attachmentsReason=" + attachmentsReason', "the harness does not print why the attachment smoke failed"),
+    ("MTL4Probe.canCarryColorAttachments(device)", "the harness never asks the attachment smoke"),
+    ("attachment_failures=\"$(grep -c ' attachments=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the attachment smoke's failures"),
+    ("if (( attachment_failures > 0 )); then",
+     "the driver counts the attachment smoke's failures and does not fail the run on them"),
+):
+    if needle not in probe and needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")
