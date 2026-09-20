@@ -677,6 +677,51 @@ sed bug of its own: with a tenth capture group it had to be written `\10`, which
 a literal `0`, so probe times printed as `10 ms` for every process. The provider line is now printed once and
 the substitution has nine groups, which is also why the fix is written down in the script next to the sed.
 
+### The pass object: `Metal4RenderPass`, and what a frame can now enter
+
+`createRenderPass` no longer refuses. `render.metal4.Metal4RenderPass` implements the game's own
+`RenderPassBackend`, resolves the descriptor's colour and depth attachments, checks the two rules the Metal 3
+pass checks - every attachment agrees on an extent, and the render area lies inside it - and opens the pass
+through `MTL4RenderEncoder`, which is the layer whose attachment mapping is already measured on the device. A
+descriptor that has no area, an area outside its attachments, a view that is not this engine's, or a pass the
+device will not open: each is a named fault rather than a pass that silently draws nothing.
+
+The frame's begin moved with it. A frame is begun at the **first pass** that encodes into it, inside
+`createRenderPass`, because that is the first thing that knows the frame has work; beginning it there is also
+where the slot's previous submission has been proved complete (the ring waits inside `beginFrame`), so that is
+the one place a slot's filed releases may legally run - which is the retirement rule from section 32 finally
+wired end to end rather than described. A second `createRenderPass` before a `submitRenderPass` is a named
+fault, because two open passes are two encoders in one command buffer with no order between them.
+
+**What refuses.** Every operation that would bind a resource or issue work, one name each: `setPipeline`,
+`bindTexture`, `setUniform`, `enableScissor`, `disableScissor`, `setVertexBuffer`, `setIndexBuffer`,
+`drawIndexed`, `multiDrawIndexed`, `drawIndexedIndirect`, `drawMultipleIndexed`, `draw`, `multiDraw`,
+`drawIndirect` and `writeTimestamp`. **One operation is a no-op instead**: `pushDebugGroup`/`popDebugGroup` are
+capture labels and not work, so dropping them costs a reader of a GPU capture something while refusing them
+would break a frame for no correctness reason - the distinction the plan's section 35 draws between an
+operation dropped and a frame half-drawn.
+
+Each pass ends by encoding the **producer barrier** before its encoder closes. Only the pass that *reads* an
+attachment knows whether a dependency exists, and that fact does not reach this generation yet (the Metal 3
+pass learns it through `MetalFrameExtras`, which Metal 4 does not implement), so the migration's section 62
+rule for this stage applies: over-synchronise while the path is being built.
+
+**The evidence, stated exactly.** The pass object cannot run in the cold-probe harness - it is built from the
+engine's device and from `GpuTextureView`s, which a bare process has no way to make - so its evidence is a
+structural contract rather than a device run, and the layer underneath it is the one with the device run: the
+descriptor, the attachment loop, the load and store mapping, the clears and the barrier are all
+`MTL4RenderEncoder`, measured in 50 of 50 probes across 30 cold processes and 20 warm repeats. What that leaves
+unproven is the pass object's own wiring, which the first no-pack frame is what will exercise.
+
+`tools/ci-metal4-provider.py` was extended for it: the pass implements the game's contract and only that
+contract, opens through the measured layer, reads the clear values and the render area, refuses an area outside
+its attachments, encodes the barrier, keeps the debug group a no-op, and refuses each of the fifteen operations
+by name; and the frame encoder begins its frame at the first pass, runs that slot's releases, remembers the open
+pass, ends it on `submitRenderPass` and ends an open one on `close`. Seventeen mutations were run against those
+pins, all caught - two of them only after the pins were strengthened, which is the mutation test doing its job:
+a pin on `pushDebugGroup`'s signature alone was satisfied by a body that refused, and a pin on the frame-begin
+test alone was satisfied by the same test inside `submit()`.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

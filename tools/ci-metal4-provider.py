@@ -113,9 +113,68 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- the render pass, which is the object a client frame would enter through -----------------------------
+# The pass's attachment mapping is measured on the device in the cold probe (four colour attachments, per-slot
+# clears, a load across a pass boundary), so what is pinned here is the object over it: that it is the neutral
+# contract and only that contract, that it resolves the game's attachments and opens through the measured
+# layer, and that every operation it cannot perform refuses by name rather than drawing nothing.
+PASS = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4" / "Metal4RenderPass.java"
+if not PASS.is_file():
+    raise SystemExit("metal 4 provider: Metal4RenderPass.java is gone, so createRenderPass has no pass object "
+                     "and the frame cannot be entered at all")
+pass_source = PASS.read_text(encoding="utf-8")
+
+if "implements RenderPassBackend {" not in pass_source:
+    raise SystemExit("metal 4 provider: the pass does not implement the game's render pass contract")
+if "implements RenderPassBackend, " in pass_source:
+    raise SystemExit("metal 4 provider: the pass claims a second contract, and each of the bridges' optional "
+                     "contracts is an operation this path cannot perform yet")
+for needle, why in (
+    ("MTL4RenderEncoder.open(owner.nativeDevice(), owner.commandBuffer(), width, height,",
+     "the pass does not open through the layer whose attachment mapping is measured on the device, so what ran "
+     "in the cold probe is not what a frame runs"),
+    ("MetalGpuTextureView metal", "the pass does not read the native texture a view names"),
+    ("attachment.clearValue().orElse(null)", "the descriptor's clear value is ignored, so a cleared attachment "
+                                            "would load what stood there instead"),
+    ("descriptor.renderArea", "the render area is not read, so a pass could be opened over an area outside its "
+                              "attachments"),
+    ("is outside Metal attachment extent", "an area outside the attachments is not refused"),
+    ("barrierForSubsequentEncoders()",
+     "the pass ends without the producer barrier, so a later pass that reads what it wrote has no encoded "
+     "dependency - which section 61 forbids"),
+    ("public void pushDebugGroup(final @NonNull Supplier<String> label) {\n    }",
+     "the debug group is no longer a no-op: it is a capture label and not work, and refusing it would break a "
+     "frame for no correctness reason"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
+for operation in ("setPipeline", "bindTexture", "setUniform", "enableScissor", "disableScissor",
+                  "setVertexBuffer", "setIndexBuffer", "drawIndexed", "multiDrawIndexed", "drawIndexedIndirect",
+                  "drawMultipleIndexed", "draw", "multiDraw", "drawIndirect", "writeTimestamp"):
+    if f'throw unimplemented("{operation}")' not in pass_source:
+        raise SystemExit(f"metal 4 provider: the render pass does not refuse {operation} by name, so that "
+                         "operation would be dropped into a pass that draws nothing")
+
+for needle, why in (
+    # Pinned with its body, because the same `begun` test appears in submit() and a bare test would be satisfied
+    # by the other occurrence while the pass path stopped beginning frames.
+    ("if (!this.ring.begun()) {\n            if (!this.ring.beginFrame()) {",
+     "the frame is not begun at the first pass, so a pass has no command buffer"),
+    ("retire(this.ring.slot());", "the slot's filed releases are not run once its completion has been observed"),
+    ("this.currentPass = pass;", "the open pass is not remembered, so nothing can end it"),
+    ("pass.finish();", "submitRenderPass does not end the pass"),
+    ("if (this.currentPass != null) {", "a second pass can be opened while one is still open, which is two "
+                                        "encoders in one command buffer with no order between them"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+
 # Every operation the game can ask for and this path cannot perform is refused by name. The list is the
 # migration's own remaining work, one line per operation.
-for operation in ("transientMemory", "createRenderPass", "submitRenderPass", "clearColorTexture",
+# createRenderPass and submitRenderPass are deliberately NOT in this list any more: they are implemented, and
+# the block below pins what they do. Everything here is still a named refusal.
+for operation in ("transientMemory", "clearColorTexture",
                   "clearColorAndDepthTextures", "clearDepthTexture", "writeToBuffer", "copyToBuffer",
                   "writeToTexture", "copyBufferToTexture", "copyTextureToBuffer", "copyTextureToTexture",
                   "createFence", "writeTimestamp"):

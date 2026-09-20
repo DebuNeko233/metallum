@@ -10,6 +10,7 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPassBackend;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.TransientMemory;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.buffers.GpuFence;
@@ -72,6 +73,13 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
     private boolean closed;
 
     /**
+     * The pass currently open, so that a second {@code createRenderPass} before a {@code submitRenderPass} is a
+     * named fault rather than two encoders writing into one command buffer with no order between them.
+     */
+    @org.jspecify.annotations.Nullable
+    private Metal4RenderPass currentPass;
+
+    /**
      * @param device             the engine's device, which is where the queue address comes from
      * @param executionState     this generation's state, whose device the ring is made on
      * @param defaultShaderSource the session's shader source; held by the compilation chain when that lands,
@@ -111,7 +119,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
      */
     @Override
     public void submit() {
-        if (this.closed || !this.ring.begun()) {
+        if (this.closed) {
+            return;
+        }
+        // A pass still open when the frame is submitted is a pass the game did not end: it is ended here, which
+        // is what the Metal 3 encoder does, because the alternative is a command buffer ended with an encoder
+        // still open and no image at all.
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        if (!this.ring.begun()) {
             return;
         }
         if (!this.ring.endAndSubmit()) {
@@ -169,6 +186,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
             return;
         }
         this.closed = true;
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
         if (!this.ring.awaitAll()) {
             Metallum.LOGGER.warn("Metal 4 frame encoder: closing with work that was not observed complete - {}",
                     this.ring.refusal());
@@ -201,14 +221,63 @@ final class Metal4FrameEncoder implements MetalFrameEncoder {
         throw unimplemented("transientMemory");
     }
 
+    /**
+     * Opens a render pass on this frame's command buffer, beginning the frame at the first one.
+     * <p>
+     * The frame's begin belongs here rather than to the game's frame loop, because the first thing that encodes
+     * into a frame is the first pass that encodes into it: a frame begun for a frame nothing encoded would be an
+     * empty commit a frame, and a frame begun late would be a pass with nowhere to go. Beginning it is also where
+     * the slot's previous submission is proved complete - the ring waits in {@code beginFrame} - so this is the
+     * one place a slot's filed releases may be run.
+     */
     @Override
     public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {
-        throw unimplemented("createRenderPass");
+        if (this.closed) {
+            throw new IllegalStateException("the Metal 4 frame encoder is closed");
+        }
+        if (this.currentPass != null) {
+            throw new IllegalStateException("a Metal 4 render pass is already open; submitRenderPass() ends it,"
+                    + " and two open passes would encode into one command buffer with no order between them");
+        }
+        if (!this.ring.begun()) {
+            if (!this.ring.beginFrame()) {
+                throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
+            }
+            // The wait inside beginFrame is what makes this legal: the slot's previous submission has completed,
+            // so everything filed against it can be released now.
+            retire(this.ring.slot());
+        }
+
+        Metal4RenderPass pass = new Metal4RenderPass(this, descriptor);
+        this.currentPass = pass;
+        return pass;
     }
 
+    /**
+     * Ends the pass the frame is encoding.
+     * <p>
+     * The barrier that lets a later pass read what this one wrote is encoded by the pass itself, before its
+     * encoder ends - the migration's section 61 rule, applied conservatively because whether a dependency exists
+     * is a fact about the pass that reads and that fact does not reach this generation yet.
+     */
     @Override
     public void submitRenderPass() {
-        throw unimplemented("submitRenderPass");
+        Metal4RenderPass pass = this.currentPass;
+        if (pass == null) {
+            return;
+        }
+        this.currentPass = null;
+        pass.finish();
+    }
+
+    /** The command buffer the frame is being encoded into, for the pass that opens on it. */
+    MemorySegment commandBuffer() {
+        return this.ring.commandBuffer();
+    }
+
+    /** The device this frame's passes are described on. */
+    MTLDevice nativeDevice() {
+        return this.executionState.device();
     }
 
     @Override
