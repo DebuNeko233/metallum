@@ -478,10 +478,17 @@ process with no window is not the same claim as a capability proven through the 
    With residency in place the path then matched the reference's binding model (a name the pipeline does not
    declare, or declares as the other kind, is skipped rather than fatal - the engine's own `Fog` on the panorama
    pipeline and `CloudFaces` on the clouds pipeline are the two measured cases), and the forced Metal 4 launch
-   now **renders the world**: it reaches Sodium's chunk renderer and stops at `MetalPassUniformWriter`, the
-   push-constant contract the terrain draw asks the pass for. That is the next milestone, and it is a missing
-   feature rather than a fault. The residency smoke passes 50 of 50 cold-probe processes (30 cold + 20 warm).
-   AUTO stays blocked on the remaining list below.
+   now **renders the world**: the sky passes draw (disc, sun, moon - each with its own indexed draw) and the
+   terrain pass is entered, where the pass now implements `MetalPassUniformWriter` (push constants: a mapped
+   slice of the frame's own transient arena, bound by name) and stops at **`drawIndexedIndirect`**, the indirect
+   indexed form Sodium's terrain draw reaches through `VKIndirectDrawBatch.draw` - a named refusal and the next
+   milestone. Two further findings are recorded rather than papered over: one binding disagrees about its kind
+   in the terrain pass (`u_SectionTimeInfo`, a buffer in the frame path and a texture in the layout - a skip
+   under the reference's rule, but a name that reads like a uniform buffer, so either the translation's metadata
+   or this plan's kind is wrong); and a three-slot run of the same frame still ends in a GPU fault
+   (`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart`) where the one-slot run reaches the refusal - so
+   something the terrain draw reads by address is still not resident in time. The residency smoke passes 50 of
+   50 cold-probe processes (30 cold + 20 warm). AUTO stays blocked on the remaining list below.
 2. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
 2. ~~No Metal 4 execution provider~~ - **the provider is complete**: the queue, the state and the frame encoder

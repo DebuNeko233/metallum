@@ -1471,7 +1471,42 @@ as the other kind of resource, because the Metal 3 pass keeps its uniforms and i
 
 With that, the forced Metal 4 launch renders the world: it reaches **Sodium's chunk renderer** and stops at a
 contract this path does not implement yet - `MetalPassUniformWriter`, the push-constant path the terrain draw
-asks the pass for. That is the next milestone, and it is an ordinary missing feature rather than a fault.
+asks the pass for.
+
+### Push constants, which is a pass that can be written into
+
+The contract is two members, and both are read off the call site rather than guessed:
+`allocateTransient(size, alignment, usage)` returns a mapped slice of transient memory that lives for the
+caller's block, and `setUniform(name, slice)` binds it - which this pass already did. The slice comes from the
+frame's own arena (`MetalTransientMemory`, the same object the frame's copies stage through), so its lifetime
+is the frame's: the arena is rotated by the frame encoder once the submission that reads it has been made, and
+the caller frees its own view. That is the whole change, and it is what makes the sodium chunk renderer's
+twenty-byte camera-translation block reach a shader.
+
+**The ladder after it.** A forced Metal 4 launch now renders the sky - the trace shows `Sky disc`, `Sky sun`
+and `Sky moon` passes with their own indexed draws - and enters the terrain pass, where two things are waiting
+and both are recorded here rather than fixed in passing:
+
+1. **`drawIndexedIndirect`** is the next named refusal. Sodium's terrain draw reaches its pass through
+   `VKIndirectDrawBatch.draw`, which is the indirect indexed form this path does not encode yet: the draw's
+   arguments (`MTLDrawIndexedPrimitivesIndirectArguments`) live in a buffer, and the header declares the
+   selector as `drawIndexedPrimitives:indexType:indexBuffer:indexBufferLength:indirectBuffer:`. That is the next
+   milestone.
+2. **One binding disagrees about its kind.** The trace says, in the terrain pass:
+   `'u_SectionTimeInfo' is a buffer in the frame path's binding and a texture in the pipeline's layout, so it is
+   not encoded`. Under the rule the reference follows, that is a skip and the run continues - but the name reads
+   like a uniform buffer, so either the translation's metadata or this plan's kind for it is wrong, and a skipped
+   binding a shader needs is a wrong image rather than a fault. It is recorded as an open question with the
+   evidence, to be settled by reading what the artifact publishes for that resource.
+
+**And one fault is still open.** In a three-slot run the same terrain frame ended in a GPU fault again -
+`MTL4CommandQueueErrorTimeout` with a kernel `GPURestart` - while the one-slot run reached the
+`drawIndexedIndirect` refusal instead. So something the terrain draw reads **by address** is still not resident
+when the GPU gets there, and the difference between the two runs is when it gets there. The residency model
+declares what the pass binds (attachments, textures, uniforms, vertex layouts, index buffers, the arena blocks)
+and the next step is to find what it misses: the candidates are the indirect arguments buffer the next milestone
+adds, something Sodium binds outside the pass, or the arena's own blocks where their address is reused after a
+rotation. It is not claimed fixed, and the next run's trace is the instrument.
 
 ## The API mapping
 

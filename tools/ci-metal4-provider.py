@@ -152,11 +152,9 @@ if not PASS.is_file():
                      "and the frame cannot be entered at all")
 pass_source = PASS.read_text(encoding="utf-8")
 
-if "implements RenderPassBackend {" not in pass_source:
-    raise SystemExit("metal 4 provider: the pass does not implement the game's render pass contract")
-if "implements RenderPassBackend, " in pass_source:
-    raise SystemExit("metal 4 provider: the pass claims a second contract, and each of the bridges' optional "
-                     "contracts is an operation this path cannot perform yet")
+if "implements RenderPassBackend, MetalPassUniformWriter {" not in pass_source:
+    raise SystemExit("metal 4 provider: the pass does not implement the game's render pass contract and the "
+                     "push-constant contract the sodium draw path asks it for by name")
 for needle, why in (
     ("MTL4RenderEncoder.open(owner.nativeDevice(), owner.commandBuffer(), width, height,",
      "the pass does not open through the layer whose attachment mapping is measured on the device, so what ran "
@@ -769,6 +767,11 @@ for needle, why in (
 # measured: an attachment, a sampled texture, a uniform, a vertex layout and an index buffer are five different
 # call sites and each one is pinned separately, because a pin on one of them would be satisfied by the others.
 for needle, why in (
+    ("public GpuBufferSlice.MappedView allocateTransient(final long size, final long alignment, final int usage) {",
+     "a draw path that writes its own push constants has nowhere to write them, and the terrain draw asks for "
+     "exactly that"),
+    ("return this.owner.transientMemory().allocateGpuMapped(size, alignment, usage);",
+     "the push-constant slice does not come from the frame's own arena, so its lifetime would be nobody's"),
     ("this.owner.useResource(attachmentTexture);", "a colour attachment is not declared resident"),
     ("this.owner.useResource(depthTexture);", "a depth attachment is not declared resident"),
     ("this.owner.useResource(textureView.nativeHandle());", "a sampled texture is not declared resident"),

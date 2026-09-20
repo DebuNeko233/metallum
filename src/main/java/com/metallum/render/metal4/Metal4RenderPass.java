@@ -9,6 +9,7 @@ import com.metallum.render.shared.AttachmentContents;
 import com.metallum.render.shared.MetalGpuBuffer;
 import com.metallum.render.shared.MetalGpuSampler;
 import com.metallum.render.shared.MetalGpuTextureView;
+import com.metallum.render.shared.MetalPassUniformWriter;
 import com.metallum.render.shared.MetalShaderStages;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -62,7 +63,7 @@ import java.util.function.Supplier;
  * when a counter says what the narrowing buys.
  */
 @Environment(EnvType.CLIENT)
-final class Metal4RenderPass implements RenderPassBackend {
+final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWriter {
 
     /** The game's descriptor for this pass, kept for the label and the area a later slice will need. */
     private final RenderPassDescriptor descriptor;
@@ -666,6 +667,21 @@ final class Metal4RenderPass implements RenderPassBackend {
     @Nullable
     private MTL4ArgumentTable tableFor(final int stage) {
         return (stage & MetalShaderStages.VERTEX) != 0 ? this.vertexTable : this.fragmentTable;
+    }
+
+    /**
+     * A mapped slice of the frame's transient arena, for a draw path that writes its own uniforms.
+     * <p>
+     * This is the push-constant half of the pass: the sodium chunk renderer allocates twenty bytes, writes a
+     * region's camera translation and identifiers into them, and binds the slice under a name - so what it needs
+     * from a pass is "somewhere to write" and "a way to bind what you wrote", which is the whole of
+     * {@link MetalPassUniformWriter}. The arena is the frame's own, which is what makes the slice's lifetime the
+     * frame's: it is rotated by the frame encoder once the submission that reads it has been made, and the caller
+     * frees its view at the end of its own block.
+     */
+    @Override
+    public GpuBufferSlice.MappedView allocateTransient(final long size, final long alignment, final int usage) {
+        return this.owner.transientMemory().allocateGpuMapped(size, alignment, usage);
     }
 
     /**
