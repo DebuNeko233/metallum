@@ -2419,10 +2419,14 @@ in the census, **50 of 50 on all seven dependency fields** - and it is the case 
 unmeasured while the client's compute fixture happened to pass, because the picture of that fixture is not
 available on this machine.
 
-What is **not** in the table is section 61's classification of each case as RAW, WAW or WAR - every fixture
-above is a read-after-write, and write-after-write and write-after-read are fixtures of their own - and the
-barrier cost that section 62 refuses to optimise before the counters exist, which is a phase-21 measurement
-rather than a correctness question.
+Section 61 asks for each case to be classified, and the list above is one column of that table: **every
+dependency fixture here is a read-after-write**, which is the direction a producer's barrier is encoded for.
+Write-after-write is measured too, though not as a dependency fixture - `canWriteStorageImage` is two dispatches
+writing the same texture through two tables, and what it reads is the second write, so the write the encoder
+after it must see is the one that landed last. **Write-after-read is not measured at all**: a fixture where a
+pass samples a texture and a later encoder writes it needs its own smoke, and it is the next one in this slice.
+The barrier cost section 62 refuses to optimise before the counters exist is a phase-21 measurement rather than
+a correctness question.
 
 ## The API mapping
 
