@@ -1919,9 +1919,38 @@ m3: 8.03 ms a frame, 124.5 fps, gpuP50 5.60    m4: 8.06 ms a frame, 124.1 fps, g
 
 The same 134 programs, 19 logical passes a frame against Metal 3's 15, 30 presents in the window, no fault
 and no refusal. **What that does not say is that the picture is right**: the fixture's acceptance is four
-coloured quadrants read off a screenshot, and the display cannot be photographed, so its picture column is
-void and the MRT frame's correctness is NOT MEASURED. The execution evidence - the same program set compiled
-into the same number of pipeline identities, the attachments described, the present made - is what exists.
+coloured quadrants read off a screenshot, and the display cannot be photographed, so its picture column was
+void and the MRT frame's correctness was NOT MEASURED at the time.
+
+**The quadrants are now read, and the check the fixture was written for is what closes it.** The readback road
+exists on both arms (the picture the present sampled and the drawable it wrote, five by five, top row first), so
+the fixture's own acceptance is readable without a display. Its `composite.fsh` writes four attachments by name -
+`DRAWBUFFERS:0123`: `gl_FragData[0]` red, `[1]` green, `[2]` blue, `[3]` white - and its `final.fsh` samples one of
+them per quadrant, so **the presented frame is the slot table**: each quadrant of the image is one attachment's
+colour, and a permuted slot ordering would be a permuted picture. Two arms, one scene, this fixture, 25 seconds of
+settle, 3168 and 3163 readbacks:
+
+| | Metal 3 (picture / drawable) | Metal 4 (picture / drawable) |
+| --- | --- | --- |
+| memory-top rows, left \| right | red (`000000fe`, RGBA8) \| green (`0000ff00`) | red (`000000ff`) \| green (`0000ff00`) |
+| memory-bottom rows, left \| right | blue (`fffe0000`) \| white (`fffefefe`) | blue (`00ff0000`) \| white (`00ffffff`) |
+| drawable after the present flip | blue \| white on top, red \| green below | blue \| white on top, red \| green below |
+| frames at that arrangement | 3168 of 3168 (values wobbling 248-255: the fade) | 3008 of 3008 flat frames, exactly |
+
+So **the slot ordering is proven on both arms**: colour target 0 carries red, 1 green, 2 blue and 3 white, they
+are not permuted, the per-quadrant channel is the one the shader wrote, and the Metal 4 arm reproduces the Metal 3
+arm's arrangement sample for sample - the only difference between the arms' frames remains the alpha channel
+already registered (Metal 4 alpha 0 everywhere; the Metal 3 frame's alpha is spatially structured here, 255 in the
+screen's top rows and 0 below the middle, which is a property of the frame's own passes and is what the
+pass-boundary instrument is for). Structural evidence from the same pair agrees: the same four colour targets at
+2560x1440, the same `composite` (4 attachments) and `final` (4 samplers) passes, the same 2 descriptors, no
+`GPURestart` and no refusal in either arm's log.
+
+One cross-arm difference in those logs is **registered and not claimed as a defect**: Vitrail prints its doubled
+targets as `[3, 2, 1, 0]` on the Metal 3 arm and `[0, 3, 2, 1]` on the Metal 4 arm. Those are the same cyclic
+order rotated by one step - the ping-pong phase at the moment the line is printed - and the picture that comes out
+of both is the same arrangement, so nothing measured depends on it; it is written down because a rotation is the
+kind of difference that would matter to a temporal chain, and this fixture is not one.
 
 ### The depth smoke: a compare that rejects, a write that records, and two faults of the smoke's own
 
