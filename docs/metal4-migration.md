@@ -2033,7 +2033,7 @@ nothing in the target for it to show.
 prints what each of its passes ends with, and the same session says two different things at once:
 
 ```text
-Terrain                    depth=true draws=0   indexed=0   22836 passes, every one of them zero draws
+Terrain                    depth=true draws=0   indexed=0   22836 passes, every one of them zero draws*
 Sky sun / Sky moon         depth=true draws=1   indexed=1
 Sky disc                   depth=true draws=1   indexed=0
 Clouds                     depth=true draws=1   indexed=1
@@ -2060,6 +2060,28 @@ on Sodium's OpenGL road, which is not taken here. Vanilla's `RenderPass.multiDra
 `DeviceFeatures.multiDrawDirectSeparate` *before* it reaches any backend, and Metallum advertises that flag true
 (`new DeviceFeatures(false, false, true, true, true, false, true)`), so a call down that road would reach the
 Metal 4 pass and be logged by the refusal line - and none is. The draw side is therefore not what is missing.
+
+`*` and that line is the one reading in this record that was **the instrument's fault**. At the time it was taken
+the pass really did encode no draws, because the world's geometry had not arrived - but the counter could not have
+told anyone when that changed, and it did not: `Metal4RenderPass.drawIndexedIndirect` encoded Sodium's terrain
+batches without incrementing the pass's own `drawsEncoded`/`indexedEncoded`, so the pass that draws the world read
+`draws=0` whether it drew or not. With the counters fixed the same trace reads **337, 678, 584, 583 and 677 draws**
+per terrain ending (Sodium batches hundreds of section draws into one indirect batch) on 5358 endings in a fifteen
+second session. A pass that draws indirectly reads as an empty pass; that is pinned now, and it is why this record
+does not use the zero as evidence of anything after the geometry was fixed.
+
+**And the same trace now says where each pass wrote and what it was told to do with it**, which is what the
+surviving difference needed: its line carries the first colour slot's texture handle and its load, store and clear
+actions. Read on a no-pack Metal 4 session: **every drawn pass loads and stores**, the attachment default is
+`AttachmentContents.CARRIED` (which maps to `LOAD_LOAD`, so a pass that says nothing does not discard what stood
+there), and `Sky sun`, `Sky moon`, `Sky disc`, `Terrain`, `Clouds` and `Blit render target` all write **the same
+colour target** (`colour0=0x7c1693b700`, 26539 of 26539 endings). So the sky strip is neither a `DontCare` load
+wiping pixels a pass does not cover nor a pass writing somewhere else - both of those are now eliminated by
+measurement rather than by argument, and the sky's own content is what has to be looked at next: the sky passes are
+encoded *before* the terrain pass (`Sky sun`, `Sky moon`, `Terrain` in that order), they load and store, they share
+the target, and the region still holds the clear on this path where Metal 3 renders sky. What tells "the sky's
+draws did not rasterise" from "something later overwrote exactly that region" is a copy of the target at a **pass
+boundary**, which is the instrument the alpha channel has been waiting for as well.
 
 **Then the instrument found the meshes, and one boolean found the loss.** The diagnostic above was written as
 this project's own mixin, `com.metallum.mixin.sodium.ChunkUploadMixin`, off unless

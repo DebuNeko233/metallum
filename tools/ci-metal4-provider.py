@@ -1588,4 +1588,18 @@ if "new DeviceFeatures(false, false, true, true, true, false, false)," not in de
                      "that stages through them loses the world's geometry on this path - measured as a no-pack "
                      "frame that is one flat clear while Sodium's arena is never allocated")
 
+# --- and a draw is counted by every path that encodes one -----------------------------------------------
+# The pass's counters are what its own trace line and the frame's `drawsPerFrame` are made of. The indirect
+# indexed path did not increment them, and the world's terrain pass - which Sodium batches as indirect draws -
+# therefore read `draws=0` on every one of 22836 endings in a frame that was drawing the world correctly. That
+# single false reading sent two rounds of localisation after a pass that was never empty, so the count is pinned
+# where the encoders are, not where the numbers are printed.
+for needle, why in (
+    ("            this.indexedEncoded++;\n            this.drawsEncoded++;\n            indirect +=",
+     "the indirect indexed draw is not counted, so a pass that draws through it reads as an empty pass - measured "
+     "as a terrain pass reporting zero draws while the world rendered"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

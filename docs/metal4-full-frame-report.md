@@ -682,7 +682,7 @@ answered rather than only what is left.
    Metal 4 no-pack session presented one flat sky-blue clear (`00b8d2ff` at all twenty-five samples of all 4958
    readbacks, and again after 90 s) where Metal 3 on the same world presented a world, its depth buffer held
    nothing but the clear, and its terrain pass - Sodium's own, whose `DefaultChunkRenderer` carries that label -
-   ended with `draws=0` on every one of 22836 endings. The draw side was ruled out by measurement: two Metallum
+   ended with `draws=0` on every one of 22836 endings (**which was true then and cannot be read as evidence now**: the indirect draw path was not counted, so that instrument would have read zero whether the pass drew or not - it reports 337, 678 and 584 draws per ending once the counters count indirect draws). The draw side was ruled out by measurement: two Metallum
    mixins route Sodium to `DrawBackend.VK_INDIRECT` and `MetalDrawContext extends VKIndirectContext`, so the draw
    it asks for is the *indirect* one this path implements, and vanilla's feature-gated multi-draw road would have
    been logged by the refusal line if it were taken. A diagnostic mixin added for it
@@ -696,9 +696,15 @@ answered rather than only what is left.
    confirmed in a second run - and leaves a Metal 3 launch unchanged. The depth fixture agrees now too. **NOT
    PROVEN**: where the mapped path loses the data on this generation; the claim stays withdrawn until it is, and
    the engine-staged path is the one taken. **And one difference survives**: the sky strip at the top of the frame
-   is the clear colour on this path where Metal 3 renders sky, with the candidate being a `LOAD_DONT_CARE` load
-   leaving the pixels a pass does not cover undefined - which wants a copy of the target at a pass boundary to
-   settle, exactly like the alpha channel.
+   is the clear colour on this path where Metal 3 renders sky, and **its two obvious candidates are eliminated
+   by measurement**: the trace line now carries each pass's first colour target and its load/store/clear actions,
+   and every drawn pass loads and stores (`AttachmentContents.CARRIED`, the default, maps to `LOAD_LOAD`), while
+   the sky, terrain, clouds and blit passes all write the same colour target. The sky passes are encoded before
+   the terrain pass and share its target, so what is left is the sky's own content or a later write over exactly
+   that region - and a copy of the target at a pass boundary settles it, exactly like the alpha channel. One
+   instrument correction came with that reading: `drawIndexedIndirect` did not increment the pass's draw
+   counters, so a pass that draws the world through Sodium's indirect batches read as an empty pass (`draws=0`);
+   pinned now, and the same trace reads 337, 678 and 584 draws per terrain ending.
 
 ## Metal 4 full-frame implementation complete?
 

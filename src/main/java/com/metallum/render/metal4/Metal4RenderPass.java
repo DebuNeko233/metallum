@@ -159,6 +159,12 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         // has to interpret - and the same defaulting the Metal 3 path applies, because the two generations have
         // to agree about what a pass that said nothing gets.
         AttachmentContents[] stated = AttachmentContents.resolve(contents, attachments.size());
+        // Kept for the trace line below: what the pass was told about each slot, and which texture slot 0 wrote.
+        // The question this answers is what the presented frame holds outside the pixels a pass covers - a sky
+        // strip that is rendered on one generation and a clear colour on the other - and neither "which target"
+        // nor "which load action" can be read out of a picture taken at present.
+        this.statedContents = stated;
+        this.colourHandles = new MemorySegment[attachments.size()];
 
         int width = -1;
         int height = -1;
@@ -180,6 +186,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             }
             Vector4fc clear = attachment.clearValue().orElse(null);
             MemorySegment attachmentTexture = nativeHandle(view);
+            this.colourHandles[index] = attachmentTexture;
+            if (index == 0) {
+                this.cleared0 = clear != null;
+            }
             // Declared resident, because an attachment is read and written as a resource the command buffer
             // names by object: this is the half of residency that is not about addresses, and the frame path
             // declares both from the same place.
@@ -279,8 +289,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         // answer "what did a frame cost", and a pass is the unit a cost is attributed to.
         this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         if (TRACE) {
-            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={}",
-                    label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled);
+            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={} colour0={}"
+                            + " load={} store={} clear={}",
+                    label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled,
+                    colour0(), load0(), store0(), this.cleared0);
         }
         releaseTables();
         if (!this.encoder.open()) {
@@ -291,6 +303,48 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     + " a later pass that reads what this one wrote has no encoded dependency", label());
         }
         this.encoder.close();
+    }
+
+    /** What the pass was told about each colour slot, and the texture each slot wrote, for the trace line. */
+    private AttachmentContents @Nullable [] statedContents;
+    private MemorySegment @Nullable [] colourHandles;
+    private boolean cleared0;
+
+    /** The texture slot 0 wrote, as a handle, or `none` where the pass carried no colour slot. */
+    private String colour0() {
+        MemorySegment[] handles = this.colourHandles;
+        return handles == null || handles.length == 0 || handles[0] == null
+                ? "none"
+                : "0x" + Long.toHexString(handles[0].address());
+    }
+
+    /** The load action the pass's first colour slot was given, in the layer's own vocabulary. */
+    private String load0() {
+        AttachmentContents[] contents = this.statedContents;
+        if (contents == null || contents.length == 0) {
+            return "none";
+        }
+        return actionName(MTL4RenderEncoder.loadAction(contents[0], this.cleared0),
+                MTL4RenderEncoder.LOAD_LOAD, MTL4RenderEncoder.LOAD_CLEAR, MTL4RenderEncoder.LOAD_DONT_CARE);
+    }
+
+    /** The store action the pass's first colour slot was given. */
+    private String store0() {
+        AttachmentContents[] contents = this.statedContents;
+        if (contents == null || contents.length == 0) {
+            return "none";
+        }
+        return MTL4RenderEncoder.storeAction(contents[0]) == MTL4RenderEncoder.STORE_STORE ? "store" : "dontcare";
+    }
+
+    private static String actionName(final long action, final long load, final long clear, final long dontCare) {
+        if (action == load) {
+            return "load";
+        }
+        if (action == clear) {
+            return "clear";
+        }
+        return action == dontCare ? "dontcare" : Long.toString(action);
     }
 
     /** Whether this pass is still open, for the frame encoder's own bookkeeping. */
@@ -691,6 +745,13 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                         + " address " + indirect + " (draw " + draw + " of " + drawCount + "): "
                         + this.encoder.refusal());
             }
+            // Counted like the direct and indexed draws, because this *is* an indexed draw and the counters are
+            // what the trace line and the frame's own `drawsPerFrame` are made of. Leaving them out made the
+            // world's terrain pass read `draws=0` on every one of its endings while the world was drawing
+            // perfectly well through this path - Sodium batches its terrain as indirect draws - and that reading
+            // sent two rounds of localisation looking for a pass that was never empty.
+            this.indexedEncoded++;
+            this.drawsEncoded++;
             indirect += INDIRECT_ARGUMENTS_BYTES;
         }
     }
