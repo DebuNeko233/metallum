@@ -112,6 +112,16 @@ for needle, why in (
     if needle not in state:
         raise SystemExit("metal 4 provider: " + why)
 
+# The queue the services hand the encoder is the encoder's to release: the ring explicitly does not own it, and
+# the Metal 3 encoder releases the one the same seam gives it. Pinned because the two encoders' teardowns are
+# where the difference is visible and nowhere else - this was a queue leaked once a session until the ledger.
+if "this.queue = MemorySegment.ofAddress(queue);" not in encoder:
+    raise SystemExit("metal 4 provider: the frame encoder does not keep the queue it was given, so it cannot"
+                     " release it")
+if "ObjC.release(this.queue);" not in encoder:
+    raise SystemExit("metal 4 provider: the frame encoder never releases its queue, and the ring does not own"
+                     " it - the Metal 3 encoder releases the queue the same seam hands it")
+
 # The encoder: the neutral contract, the ring it owns, and a named refusal for every operation it lacks.
 if "implements MetalFrameEncoder, MetalFramePresentation, MetalFrameExtras,\n        MetalFrameResourceCommands, MetalFrameComputeCommands {" \
         not in encoder:
@@ -225,7 +235,7 @@ if "return false;" not in body_of(encoder, "public boolean scaleWithMetalFx("):
     raise SystemExit("metal 4 provider: the encoder no longer answers the scale request with the fallback it took "
                      "before it carried this contract, so a caller would be told a picture was scaled")
 for needle, why in (
-    ("MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,",
+    ("MTL4FrameRing.create(nativeDevice, this.queue, FRAMES_IN_FLIGHT,",
      "the encoder does not make the frame's ring, so the frame's allocator lifetime has no owner"),
     ("device.executionServices().commandQueue(nativeDevice)",
      "the queue no longer comes from the execution services, which is the seam the frame path's isolation "

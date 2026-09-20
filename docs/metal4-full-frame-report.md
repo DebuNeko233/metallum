@@ -643,13 +643,21 @@ answered rather than only what is left.
    outcome* in the client: Vitrail's compute fixture dispatches two different kernels, so the shapes that lose
    a dispatch are not in its frame - a fixture that dispatches one kernel twice per frame is what would show
    it, and the reproducer is what shows it native.
-7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
+7. **The Metal 4 teardown has never run in a session.** Every measurement session so far has been *stopped*,
+   not quit: a forced Metal 4 session sent `SIGTERM` exited within thirty seconds with no teardown line in its
+   log and no driver fault, and the log's last line is an argument table made mid-frame. So the frame encoder's
+   `close()` - the ring's completion wait, the deferred releases, the transient arena, the storage pipelines,
+   the residency set and the queue - has no real-device evidence, and section 71's lifecycle gate lists shutdown
+   among the observations it wants. What it has is the ownership ledger
+   (`docs/metal4-resource-ownership.md`) and the pins over it; what it needs is a session that quits, which
+   needs input this machine's automation permission refuses. **Shutdown: NOT MEASURED.**
+8. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,
    `copyStorageTextureRegion`) - carried so that the capability dispatch installs at all, refused so that no
    caller is told work was done. `generateMipmaps` left that list when the frame's copy encoder learned the
    command, which this SDK declares on `MTL4ComputeCommandEncoder`.
-8. **Everything the Definition of Done asks for beyond the no-pack frame** - the rest of the Vitrail smoke-pack
+9. **Everything the Definition of Done asks for beyond the no-pack frame** - the rest of the Vitrail smoke-pack
    staircase, MRT and depth draws, the blit fixture inside a live frame, the synchronization matrix, resize,
    reload, dimension, shutdown, the real packs, and the lifecycle gate. None of them is claimed; each is its own
    milestone in the plan's order. (The compute fixture's dispatches now run through this path, which is a

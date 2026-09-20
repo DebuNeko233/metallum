@@ -2438,6 +2438,26 @@ instead of the reader's makes it fail, so the readback is live and the assertion
 The barrier cost section 62 refuses to optimise before the counters exist is a phase-21 measurement rather than
 a correctness question.
 
+### The ownership ledger, and the leak it found
+
+Section 105 asks for a ledger rather than a claim, and it is now a document of its own:
+`docs/metal4-resource-ownership.md`. Every object the Metal 4 path makes, with who owns it, where it is made,
+how long it lives and where it is released - written by reading each creation and release site rather than from
+memory.
+
+Writing it found a leak the sessions had not reported: **the frame's queue**. `Metal4FrameEncoder` asked the
+execution services for a `MTL4CommandQueue`, handed it to the ring, and released nothing; the ring is explicit
+that it does not own the queue, and the Metal 3 encoder releases the queue the same seam gives it ("the queue is
+this encoder's own now"). One queue a session, invisible in every counter. The encoder now keeps the queue and
+releases it in `close()` - after the ring, which is the only thing that submits on it - and a pin checks both
+halves, because the difference between the two encoders is visible only in their teardowns.
+
+The ledger also records the price of the encoder-per-dispatch rule in objects (one encoder and one table per
+table-binding dispatch, both released through the slot's destruction queue), and that nothing in the Metal 4
+frame path is a process-global singleton - the queue, the ring, the tables, the residency set, the storage
+pipelines and the compilation caches are all owned by the frame encoder or the execution state, so a second
+device in one process gets its own.
+
 ## The API mapping
 
 Metal 4 has no per-resource binding methods on its encoders at all. Each row is a call the engine makes

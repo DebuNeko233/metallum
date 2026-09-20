@@ -124,6 +124,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             Integer.getInteger("metallum.metal4RingSlots", MTL4FrameRing.FRAMES_IN_FLIGHT));
 
     private final MetalDevice device;
+    /** The queue this encoder was given by the execution services, and which it owns and releases. */
+    private MemorySegment queue = MemorySegment.NULL;
     private final Metal4ExecutionState executionState;
     private final com.mojang.blaze3d.shaders.ShaderSource defaultShaderSource;
     private final MTL4FrameRing ring;
@@ -280,7 +282,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // the seam the frame path's isolation turns on - the same seam the Metal 3 encoder builds its queue
         // through, so neither generation owns the device's queue factory.
         long queue = device.executionServices().commandQueue(nativeDevice);
-        this.ring = MTL4FrameRing.create(nativeDevice, MemorySegment.ofAddress(queue), FRAMES_IN_FLIGHT,
+        this.queue = MemorySegment.ofAddress(queue);
+        this.ring = MTL4FrameRing.create(nativeDevice, this.queue, FRAMES_IN_FLIGHT,
                 "the Metal 4 frame encoder");
         this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         // Owned by this encoder and not by a static keyed on a device: section 106's rule, and the reason a
@@ -423,6 +426,15 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.residency = null;
         }
         this.ring.close();
+        // The queue came from the execution services and nothing else holds it, so this encoder is its owner and
+        // releases it here - after the ring, which is the only thing that submits on it. The Metal 3 encoder does
+        // the same with the queue the same seam hands it ("the queue is this encoder's own now"), and until this
+        // line the Metal 4 path leaked one queue a session: measured by reading the two encoders' teardowns side
+        // by side rather than by watching a number, which is what the ownership ledger is for.
+        if (!ObjC.isNil(this.queue)) {
+            ObjC.release(this.queue);
+            this.queue = MemorySegment.NULL;
+        }
     }
 
     // ---------------------------------------------------------------- and the operations that do not exist
