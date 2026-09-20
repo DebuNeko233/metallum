@@ -96,5 +96,5 @@ echo "  Vitrail stopped:    $(grep -c 'Vitrail stopped drawing' "$out/latest.log
 echo "  teardown timeouts:  $(grep -c 'was not observed complete\|closing with work' "$out/latest.log" 2>/dev/null)"
 echo "  Stopping!:          $(grep -c 'Stopping!' "$out/latest.log" 2>/dev/null)"
 echo "  BUILD SUCCESSFUL:   $(grep -c 'BUILD SUCCESSFUL' "$out/gradle.log" 2>/dev/null)"
-echo "  presented extents:  $(grep -o 'drawable readback \[metal[34]\]: [0-9]*x[0-9]*' "$out/latest.log" 2>/dev/null | awk '{print $NF}' | uniq -c | tr '\n' ' ')"
+echo "  presented extents:  $(grep -o 'drawable readback \[metal[34]\]: [0-9]*x[0-9]*' "$out/latest.log" 2>/dev/null | sed 's/.*: //' | uniq -c | tr -s ' ' | tr '\n' ';')"
 echo "=== $label: log at $out/latest.log; pack restored to $(head -1 "$repo_root/run/vitrail/pack.txt") ==="

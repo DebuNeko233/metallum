@@ -5,6 +5,7 @@ import com.metallum.render.shared.MetalLifecycleSchedule;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -105,10 +106,36 @@ public class LifecycleProbeMixin {
                     Metallum.LOGGER.info("lifecycle probe: 'reload' completed - the compilation caches have been"
                             + " cleared and the pack has been rebuilt through this path"));
             case "leave" -> minecraft.clearClientLevel(new TitleScreen());
+            // The one transition that needs a command rather than a method: a dimension change is a server-side
+            // teleport, and the client's own road to one is the chat command it would send if a player typed it.
+            // It therefore needs a world with cheats on - the log says so plainly when it does not, and the
+            // command's own feedback is what distinguishes "the dimension changed" from "the command was
+            // refused", so both are read out of the same session rather than assumed.
+            case "dimension" -> sendDimensionChange(minecraft);
             // The window's own close flag, which is what the close button sets: the game loop leaves on its own
             // terms and the whole shutdown path runs, which a signal does not do.
             case "close" -> GLFW.glfwSetWindowShouldClose(window.handle(), true);
             default -> Metallum.LOGGER.warn("lifecycle probe: '{}' is not a transition this probe knows", name);
         }
+    }
+
+    /**
+     * Sends the teleport a player would type, and says which road it took.
+     * <p>
+     * The target is stated in the schedule's own terms - the nether, at the origin, high enough to be inside the
+     * world - so the dimension the frame path is asked to render is not this method's opinion. A session with no
+     * connection (the probe's own {@code leave} action ran first) is not a fault of the frame path, and the log
+     * says which of the two it was.
+     */
+    private static void sendDimensionChange(final Minecraft minecraft) {
+        ClientPacketListener connection = minecraft.getConnection();
+        if (connection == null) {
+            Metallum.LOGGER.warn("lifecycle probe: 'dimension' was scheduled with no connection, so there is no"
+                    + " world to change the dimension of - the schedule is at fault, not the frame path");
+            return;
+        }
+        Metallum.LOGGER.info("lifecycle probe: sending the dimension change a player would type -"
+                + " 'execute in minecraft:the_nether run tp @s 0 80 0'");
+        connection.sendCommand("execute in minecraft:the_nether run tp @s 0 80 0");
     }
 }
