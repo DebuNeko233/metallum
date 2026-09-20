@@ -2099,13 +2099,17 @@ and is not a multiple of any threadgroup. And `Metal4FrameEncoder.clearStorageTe
 the image resident - an undeclared resource makes a command of this kind do nothing at all, which the mipmap round
 measured - binds it through a one-texture table and dispatches.
 
-**One table is enough for a frame's clears, and that is measured rather than assumed.** The header says Metal
-snapshots a table's resources when a dispatch is *encoded*, so re-pointing a shared table between two dispatches
-is safe; `canWriteStorageImage` proves it with exactly that shape - a kernel writes a texture through a table,
-twice, with the table re-pointed at a second colour buffer between the dispatches, and the texture read back at
-both corners and the middle. A table read when the GPU runs rather than when the command is encoded would show
-the second colour twice. Measured: 50 of 50 probes in 30 cold processes and 20 warm repeats, nineteen device
-smokes green.
+**CORRECTED: one table is *not* enough for a frame's clears, and this paragraph used to say the opposite.** It
+read the header's sentence - Metal snapshots a table's resources when a dispatch is encoded - as a licence to
+re-point one table between dispatches, and `canWriteStorageImage` was written in that shape. That shape is
+phase-dependent: the round-42 reproducer measured two dispatches in one encoder through one re-pointed table
+reading what the table held when it was first handed over, on every even round, while a table per dispatch is
+clean eight rounds of eight (`tools/metal4-cold-probe.sh --repro 8 --own one-encoder`, and its `fresh-table`
+mode). So the smoke's green was a false green about half the time, the frame path's clears were built on the
+same shape until the engine was fixed, and the smoke itself now makes a table per dispatch. What is measured
+50 of 50 in 30 cold processes and 20 warm repeats is the capability - a kernel writes a texture through a table
+of its own - and the snapshot question lives in the reproducer, where the shape can be varied one part at a
+time.
 
 **And the client gets past it.** The compute-storage fixture now stops one door further on, at the public
 compute bridge's compile path, in its own words:

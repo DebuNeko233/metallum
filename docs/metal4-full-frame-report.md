@@ -37,13 +37,18 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        438 processes, 1905 probes (378 processes and 1619 probes through the compute round, then this
-                  round's two 30-process censuses and a six-process hunt); capability failures: 4, every one of them
-                  at ATTEMPT 1 of its process - and one new fault of a different kind, below
-warm probes:      869 in twenty-three processes  field failures: 18, all in one process, all of them the
-                  storage-image smoke (18 of 286 probes this round; `computeSample` and `computeVertex` are
-                  286 of 286, and the second census and the hunt were clean)
-this round:       **two new smokes, the two cross-encoder dependencies**: a dispatch writes a storage image that
+cold runs:        472 processes, 2079 probes (378 processes and 1619 probes through the compute round, then the
+                  dependency round's two censuses and a six-process hunt, then this round's census and its
+                  four-process hunt); capability failures: 4, every one of them at ATTEMPT 1 of its process
+warm probes:      1043 in twenty-eight processes  field failures: 18 all-time, all in one process of the
+                  dependency round and all of them the storage-image smoke - whose shape was the fault: **174 of
+                  174 probes this round are green** after the smoke and the engine were both moved to a table per
+                  dispatch
+this round:       **the storage smoke's shape was the fault, and it is fixed**: the census is 30 cold + 20 warm
+                  with 50 of 50 on the storage image and on both dependency smokes, and a four-process hunt of 31
+                  warm probes each is 124 of 124 - 174 probes, no field failure, where the same smoke failed 18
+                  of 20 warm probes once and 0 of 20 another time while it depended on a re-pointed table. The
+                  round before this one: **two new smokes, the two cross-encoder dependencies**: a dispatch writes a storage image that
                   the next pass samples, and a dispatch writes a vertex buffer that the next draw reads - each
                   encoding the producer barrier rather than inferring the order from one command buffer. Two
                   30-cold + 20-warm censuses and a six-process hunt: 286 probes, 286 of 286 green for both, and
@@ -541,7 +546,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | mipmap          | yes         | yes - `canGenerateMipmaps`: a level-0 checkerboard uploaded, the levels above it pre-filled with a third value, the chain generated, and every level read back against the box average of the one below (50 of 50) | **executes** - Vitrail's `deferred-mipmap-contract` runs on this path (105 pipeline identities against Metal 3's 105, no refusal) and its chain generations are visible under the trace switch: 2448 over the run, each true, for a 2560x1440 target; correctness NOT MEASURED, because no picture of it exists | yes |
 | compute         | yes         | yes - `canDispatchCompute`: a pipeline from the probe's own kernel, a table carrying two buffers by address, one threadgroup of 32 threads, and every output word read back against its own index's formula with a sentinel proving the kernel ran (50 of 50); and the translation itself is one shared class both generations compile through | **dispatches**: on a forced Metal 4 session Vitrail's `compute-storage-contract` reports `Dispatched compute composite` and `Dispatched compute composite_a ... groups=(1, 1, 1), local=(1, 1, 1)`, the chain runs on to `final writes the game's own target`, and no pipeline, binding or encoding refusal appears. The picture is NOT MEASURED: the fixture's GREEN claim needs the in-game F2 screenshot, which this session could not press (macOS refused the key event) | yes |
 | storage buffer  | yes         | no - a buffer is bound by address and a kernel writes it (the compute smoke), but no shader in the probe declares an SSBO | **binds** - the fixture's `Phase15Buffer` is allocated through the backend, and the dispatch that reads it is encoded with the buffer in its table by address; the shader's own read of it is what the missing GREEN picture would confirm | yes |
-| storage image   | yes         | yes - `canWriteStorageImage`: a kernel writes a texture through a table, **twice**, with the table re-pointed between the dispatches, and the texture is read back at both corners and the middle (50 of 50); the frame path's `clearStorageTexture` dispatches the typed zeroing kernel over the texture's own extent | **cleared and dispatched through**: the fixture allocates `phase15Image` with no complaint about clearing it, and its two dispatches - which write it through tables - are encoded on this path; whether the second dispatch *sees* the first's writes is what the GREEN picture would confirm, and the picture is NOT MEASURED | yes |
+| storage image   | yes         | yes - `canWriteStorageImage`: a kernel writes a texture **twice, each dispatch through a table of its own** (the re-pointed form this smoke used was phase-dependent and was withdrawn), and the texture is read back at both corners and the middle (50 of 50 in this round's census, 124 of 124 in a hunt); the frame path's `clearStorageTexture` dispatches the typed zeroing kernel over the texture's own extent, with a table per clear | **cleared and dispatched through**: the fixture allocates `phase15Image` with no complaint about clearing it, and its two dispatches - which write it through tables - are encoded on this path; whether the second dispatch *sees* the first's writes is what the GREEN picture would confirm, and the picture is NOT MEASURED | yes |
 | synchronization | yes         | **three of section 60's seven fixtures** - two encoders in one command buffer, one commit, one shared-event wait, both pixels read; a pass that samples what the pass before it wrote; **a pass that samples what a dispatch wrote** (`canSampleComputeOutput`: the producer barrier is asked for before it is sent, the image is read back on the CPU so a kernel that never wrote and a sample that never arrived are two failures, and the target holds a colour no other smoke uses); **a draw that reads vertices a dispatch wrote** (`canDrawFromComputeWrittenBuffer`: the buffer starts as three copies of the origin, so a draw that ran early paints nothing). Not yet: the copy crossing into shader work and back, compute→compute visibility, and the read/write matrix's WAR direction | yes for the frame's own boundaries: every logical pass is its own native encoder and ends with the all-stages producer barrier, which is why the storage-image boundary a pack states is already encoded unconditionally; the rest of the matrix is still the plan's fixtures | yes |
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it | yes - 30 presents a window; the drawn image is **NOT MEASURED** (the screenshots were a black display) | yes |
@@ -614,10 +619,13 @@ answered rather than only what is left.
    the call site and given back through the frame's destruction queue, in both `dispatchCompute` and
    `clearStorageTexture`; the client still dispatches both of the fixture's programs with no refusal, and the
    cost is three tables a frame there (pooling is a phase-21 candidate, keyed by the dispatch's place in the
-   frame rather than by the kernel). What is still **not measured** is the fix *changing an outcome* in the
-   client: Vitrail's compute fixture dispatches two different kernels, so the stale-hand-over shape is not in
-   its frame - a fixture that dispatches one kernel twice per frame is what would show it, and the reproducer
-   is what shows it native.
+   frame rather than by the kernel). **And the smoke that carried the same shape has been corrected too** -
+   `canWriteStorageImage` now makes a table per dispatch, because its old green was phase-dependent and
+   therefore a false green: 50 of 50 in this round's census and 124 of 124 in a four-process hunt, against 18
+   failures in one warm process of the round that found it. What is still **not measured** is the fix *changing
+   an outcome* in the client: Vitrail's compute fixture dispatches two different kernels, so the
+   stale-hand-over shape is not in its frame - a fixture that dispatches one kernel twice per frame is what
+   would show it, and the reproducer is what shows it native.
 7. **What still refuses by name** - the scissored `clearColorAndDepthTextures` (a partial clear is a draw over a
    rectangle, not a load action), `writeTimestamp` (the counter path, which the plan puts after correctness), and
    the two frame-resource operations the Metal 4 encoder carries and answers false to (`clearStorageTexture`,

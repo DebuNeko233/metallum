@@ -2362,20 +2362,28 @@ public final class MTL4Probe {
             """;
 
     /**
-     * A kernel writing a texture, and a table re-pointed between two dispatches.
+     * A kernel writing a texture, twice, through a table of its own each time.
      * <p>
      * This is the mechanism a storage clear is made of, and it is two dispatches rather than one on purpose: the
-     * first writes red through a table holding one colour buffer, the second writes green through the same table
-     * holding another. A table whose contents were read when the GPU runs rather than when the dispatch is encoded
-     * would show the second colour twice, and a texture that was never writable shows nothing at all - so the two
-     * readings together say both that a kernel can write a texture and that this command model's table snapshot is
-     * what the frame path's clears depend on.
+     * first writes red, the second writes green, and the texture is read back at both corners and the middle - so
+     * a dispatch that wrote one texel, or one that wrote nothing, fails here.
+     * <p>
+     * <strong>Why two tables and not one re-pointed one.</strong> This smoke used to re-point a single table
+     * between the two dispatches, on the strength of the header's sentence that Metal takes a snapshot of the
+     * resources in the argument table when the dispatch is encoded. That sentence is not the whole contract:
+     * measured with the cold-probe reproducer (`tools/metal4-cold-probe.sh --repro 8 --own one-encoder`), two
+     * dispatches in one encoder through one table object re-pointed between them read what the table held when it
+     * was first handed over - red where green was asked, on every even round - while a table per dispatch is clean
+     * eight rounds of eight. So the smoke's own green was **phase-dependent**, which is a false green, and the
+     * frame path's clears were built on the same shape until it was fixed. What is measured here now is the
+     * capability (a kernel writes a texture through a table) and not the driver's snapshot behaviour, and the
+     * snapshot question is measured where it can be varied one part at a time: in the reproducer.
      * <p>
      * The texture is created with {@code MTLTextureUsageShaderWrite}: a texture without it is refused as a storage
      * image, by the driver rather than by this engine.
      *
      * @param device the device binding, as {@link #canBindAndDraw} takes it
-     * @return whether two dispatches write two colours into one texture through one re-pointed table
+     * @return whether two dispatches write two colours into one texture, each through its own table
      */
     public static boolean canWriteStorageImage(final MTLDevice device) {
         failure = null;
@@ -2396,6 +2404,7 @@ public final class MTL4Probe {
         MTLBuffer first = null;
         MTLBuffer second = null;
         MTL4ArgumentTable table = null;
+        MTL4ArgumentTable secondTable = null;
         MTL4ResidencySet resident = null;
         MTL4ComputeEncoder dispatch = null;
         try {
@@ -2476,11 +2485,16 @@ public final class MTL4Probe {
                         + " extent");
             }
 
-            // The table is re-pointed at the second colour and the same dispatch is encoded again: the snapshot is
-            // taken here, when the command is encoded, which is what makes the first dispatch keep red.
-            if (!table.address(second.gpuAddress(), 0L) || !dispatch.setArgumentTable(table)) {
+            // The second dispatch gets a table of its own rather than a re-pointed one, because a table object
+            // handed to one encoder and handed over again after a re-point is not reliably re-read - measured,
+            // and the reason the frame path's clears and dispatches each make their own.
+            secondTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);
+            if (secondTable == null || !secondTable.texture(texture, 0L)
+                    || !secondTable.address(second.gpuAddress(), 0L)
+                    || !dispatch.setArgumentTable(secondTable)) {
                 END.send(buffer);
-                return failed("storageImage", "the table could not be re-pointed at the second colour");
+                return failed("storageImage", "the second dispatch's own table would not take the image and the"
+                        + " second colour");
             }
             if (!dispatch.dispatchThreads(STORAGE_EDGE, STORAGE_EDGE, 1L, STORAGE_EDGE, STORAGE_EDGE, 1L)) {
                 END.send(buffer);
@@ -2507,9 +2521,9 @@ public final class MTL4Probe {
                     MTLTexture.bytes(texture, pixel, 4L, at[0], at[1], 1L, 1L);
                     if (!matches(pixel, STORAGE_SECOND_PIXEL)) {
                         return failed("storageImage", "the texture at (" + at[0] + "," + at[1] + ") reads "
-                                + describe(pixel) + " where the second dispatch wrote "
+                                + describe(pixel) + " where the second dispatch's own table held "
                                 + describe(STORAGE_SECOND_PIXEL) + ", so a kernel either did not write the image or"
-                                + " the table it read was the one the first dispatch used");
+                                + " its table was not the one it was handed");
                     }
                 }
             }
@@ -2523,6 +2537,9 @@ public final class MTL4Probe {
             }
             if (resident != null) {
                 resident.close();
+            }
+            if (secondTable != null) {
+                secondTable.close();
             }
             if (table != null) {
                 table.close();

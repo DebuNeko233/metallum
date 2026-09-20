@@ -692,7 +692,7 @@ for needle, why in (
 ):
     if needle not in compute_probe:
         raise SystemExit("cold-probe harness: " + why)
-# --- a kernel writing a texture, where the table's snapshot is the mechanism -----------------------------
+# --- a kernel writing a texture, where a table per dispatch is the mechanism ------------------------------
 if "public static boolean canWriteStorageImage(" not in engine_probe_source:
     raise SystemExit("cold-probe harness: the storage-image smoke is gone, so the harness's storageImage field "
                      "would report a call that is not there")
@@ -703,9 +703,18 @@ for needle, why in (
      "the storage smoke's texture has no shader-write bit, so the driver refuses it as a storage image"),
     ("table.texture(texture, 0L)", "the image is not bound through the table by resource id"),
     ("table.address(first.gpuAddress(), 0L)", "the first colour is not bound by address"),
-    ("table.address(second.gpuAddress(), 0L)", "the table is never re-pointed at the second colour"),
-    ("if (!table.address(second.gpuAddress(), 0L) || !dispatch.setArgumentTable(table)) {",
-     "the re-pointed table is not handed to the encoder again, so the second dispatch would read the first"),
+    ("secondTable = MTL4ArgumentTable.create(device, 1L, 1L, 0L);",
+     "the second dispatch has no table of its own, so the smoke is back on the re-pointed shape whose green is"
+     " phase-dependent - measured"),
+    ("if (secondTable == null || !secondTable.texture(texture, 0L)\n"
+     "                    || !secondTable.address(second.gpuAddress(), 0L)",
+     "the second dispatch's table is not given the image by resource id and the second colour by address"),
+    ("|| !secondTable.address(second.gpuAddress(), 0L)\n"
+     "                    || !dispatch.setArgumentTable(secondTable)) {",
+     "the second dispatch's own table is not bound to the second colour and handed over, so the smoke would"
+     " measure nothing"),
+    ("if (secondTable != null) {",
+     "the second dispatch's table is never released, so every probe of this smoke leaks one"),
     ("for (long[] at : new long[][]{{0L, 0L}, {STORAGE_EDGE - 1L, STORAGE_EDGE - 1L}, {1L, 3L}})",
      "the readback does not cover the corners and the middle, so a dispatch that wrote one texel could pass"),
     ("if (!matches(pixel, STORAGE_SECOND_PIXEL)) {",
