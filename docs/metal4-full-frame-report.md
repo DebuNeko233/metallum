@@ -581,6 +581,21 @@ configuration cache:  one per generation, keyed identically and holding nothing 
                       refused in each
 M3 result:            PROVEN (one scaler per configuration, cached, fallback-safe) and re-measured this round
                       at 55%: it takes the MetalFX road and the chain draws
+fixed-image smoke:    PROVEN on the device - `canScaleWithMetalFx` uploads a four-quadrant pattern of four
+                      different colours at 64x64, upscales it to 256x256 with this generation's scaler, and
+                      reads the four quadrant interiors back on the CPU; **40 of 40 probes** in a 20-cold/
+                      20-warm census, with a 1:1 configuration and an odd 101x57 -> 320x181 one asked for
+                      beside the verdict's. The four colours are 204 levels apart at their closest and the
+                      tolerance is 32, so a flip on either axis cannot pass. Three defects in the smoke itself
+                      were found and fixed getting there - the second and third configurations' textures were
+                      released before the commit that names them (which failed 2 of 80 probes with a
+                      neighbouring quadrant's colour), a malformed output copy with a `bytesPerRow` of four
+                      for a 256-wide texture that nothing read, and a verdict that had to be the interiors
+                      rather than a brightness
+orientation:          PROVEN on the device, by the smoke above: the four quadrants arrive where the pattern
+                      put them, so the scaler neither flips nor crops. It is **NOT PROVEN in a live frame** -
+                      no asymmetric fixture has been scaled through the frame path - and the probe's reading
+                      is of the scaler on this device rather than of the engine's use of it
 M4 result:            PROVEN ON THE DEVICE AND IN A LIVE FRAME - `MTL4Compiler` asks the device for
                       `newCompilerWithDescriptor:error:`, the artifact is made with the descriptor's Metal 4
                       spelling `newSpatialScalerWithDevice:compiler:`, and `Metal4FrameEncoder.scaleWithMetalFx`
@@ -755,7 +770,42 @@ answered rather than only what is left.
    machine's display awake.
 5. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
    AUTO, does not block implementation.
-6. **The storage-image smoke loses its second dispatch, and it is now reproducible on demand.**
+6. **The storage-image smoke still loses its second dispatch, and the census now measures the rate at which
+   it does.** The earlier rounds' reading was that this was fixed - "50 of 50 in this round's census and 124 of
+   124 in a four-process hunt" after `canWriteStorageImage` was changed to make a table *and* an encoder per
+   dispatch. Five 40-probe censuses this round, on the same device and build, say otherwise:
+
+   ```text
+   census            cold      warm     total      (each is 20 fresh processes + 20 warm probes)
+   metalFx smoke in   0/20      2/20     2/40
+   metalFx smoke out  6/20      4/20    10/40
+   metalFx smoke out  1/20      0/20     1/40
+   metalFx smoke in   1/20      0/20     1/40
+   metalFx smoke in   3/20      4/20     7/40
+   ---------------------------------------------------
+   all five                              21/200  (10.5%)
+   ```
+
+   The failures carry the shape's own reason string (`the texture at (0,0) reads (255,0,0,255) where the second
+   dispatch's own table held (0,255,0,255)`), they are spread across the run rather than clustered at the
+   start, and **no other smoke fails beside them** - `writeAfterRead`, `computeChain` and `layout` are clean in
+   all 200 probes. So the fix narrowed the fault and did not remove it, and the six-per-cent claim of a clean
+   census was the low end of a variable rate rather than the rate.
+
+   **The order effect is not established.** The two configurations above differ by what runs before the smoke -
+   the MetalFX scaler sequence - and their totals are 3 of 80 against 11 of 80. But the per-census spread
+   *within* one configuration is 1 to 10, which is wider than the difference between the configurations, so the
+   honest reading is the pooled 10.5% and the order question is left open. What would settle it is a census
+   large enough to separate a 4% arm from a 14% arm, which is a few hundred probes each.
+
+   This is the same table-and-encoder shape the engine's own `clearStorageTexture` uses, so a fault at this
+   rate in the probe is a fault the frame path can reach. It is re-opened here rather than carried as fixed,
+   and it is the strongest argument for the counter work in section 88 that the migration has produced: what
+   changes the rate is not something this instrument can see.
+
+   The original entry follows, as the record of what was found and what was changed.
+
+   **The storage-image smoke loses its second dispatch, and it is now reproducible on demand.**
    One census this round failed eighteen consecutive warm probes in a single process (its third probe onward),
    each reading the *first* dispatch's red where the *second* dispatch's green was asked for. That is the same
    table-snapshot property `Metal4FrameEncoder.clearStorageTexture` depends on, so it was chased rather than
@@ -926,8 +976,9 @@ answered rather than only what is left.
    argued rather than adversarially tested.** The Metal 4 path is a second scaler with its own protocol, and what
    is proven about it is: the device makes one (functionally, not by a `respondsTo`), Vitrail takes the road, the
    frame draws, and the reference arm's program set and scaled target sizes match. What is not:
-   **orientation** - no asymmetric fixture has been scaled, and the scaler is the one thing in the frame whose
-   output this engine never reads back at its own size; **the configuration switch and resize** of section 82 - a
+   **orientation in a live frame** - the device smoke now proves the scaler's orientation on a fixed pattern
+   (40 of 40), but no asymmetric fixture has been scaled *through the frame path*, and the scaler is the one
+   thing in the frame whose output this engine never reads back at its own size; **the configuration switch and resize** of section 82 - a
    scaler is cached per configuration and a new one is made for a new size, which is the code path but has no
    reading; and **ordering** - the Metal 3 scaler is handed the frame's fence because this engine's textures opt
    out of hazard tracking, and Metal 4 has no fence object at all in this engine's model, so the encode order
