@@ -650,7 +650,14 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     private MTL4ComputeEncoder copyEncoder() {
         if (this.currentPass != null) {
-            submitRenderPass();
+            // The pass's ENCODER is ended, because only one may be open at a time, and the pass stays this
+            // frame's current one: the game that opened it is in the middle of binding it - a dynamic uniform
+            // write is what brings a copy here - so it reopens its own encoder on the next call, and the game's
+            // own close still finds a pass to end. Measured both ways: ending the pass outright left the next
+            // `setVertexBuffer` without a vertex table ("the Metal 4 pipeline ... has no vertex table for vertex
+            // buffer 0"), and clearing the current pass left the reopened encoder open until a compute encoder
+            // ended underneath it, which is a SIGSEGV inside AGX's `endEncoding`.
+            this.currentPass.suspendEncoder();
         }
         if (this.copyEncoder == null || !this.copyEncoder.open()) {
             // A copy that arrives before any pass still needs a frame: the command buffer has to be begun before
@@ -661,6 +668,22 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                     "the frame's copies");
         }
         return this.copyEncoder;
+    }
+
+    /**
+     * Ends the frame's copy encoder, because only one encoder may be open at a time.
+     * <p>
+     * Every road into a render encoder comes through here: a pass the game opens, and a pass this frame
+     * <em>suspended</em> and the game then carries on encoding into - see {@code Metal4RenderPass.resume()}.
+     * That second road is why this is a method rather than two lines inside {@code createRenderPass}: the first
+     * version of the resume opened its render encoder with the copy encoder still open, and the crash was a
+     * SIGSEGV inside AGX's compute `performEndEncoding` when that copy was finally ended.
+     */
+    void endCopyEncoderBeforeAPass() {
+        if (this.copyEncoder != null && this.copyEncoder.open()) {
+            this.copyEncoder.barrierForSubsequentEncoders();
+            this.copyEncoder.endEncoding();
+        }
     }
 
     /**
@@ -879,10 +902,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
         // A copy the frame encoded before this pass wrote something this pass may read, so the dependency is
         // encoded here - the same over-synchronisation the pass itself ends with, in the other direction.
-        if (this.copyEncoder != null && this.copyEncoder.open()) {
-            this.copyEncoder.barrierForSubsequentEncoders();
-            this.copyEncoder.endEncoding();
-        }
+        endCopyEncoderBeforeAPass();
         beginFrameIfNeeded();
 
         // Taken before the pass is built, so what this pass was told cannot be read by the next one: a caller

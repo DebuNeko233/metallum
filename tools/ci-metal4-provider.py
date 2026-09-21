@@ -575,9 +575,9 @@ for needle, why in (
     ("this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.argumentBufferLayouts(),",
      "the binding plan is not built with the artifact's argument buffers, so a wide pipeline's table would not "
      "cover the slot its argument buffer lands in"),
-    ("this.plan.bufferSlots(MetalShaderStages.VERTEX)",
+    ("plan.bufferSlots(MetalShaderStages.VERTEX)",
      "the vertex table is not sized from the plan, so it may not cover the slots it is given"),
-    ("this.plan.bufferSlots(MetalShaderStages.FRAGMENT)",
+    ("plan.bufferSlots(MetalShaderStages.FRAGMENT)",
      "the fragment table is not sized from the plan"),
     ("Metal4BindingPlan.Slot slot = this.plan.slot(name, texture);",
      "a binding is filled without looking it up in the pipeline's layout by name and kind"),
@@ -742,22 +742,26 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
-# The copy a frame encoded before a pass wrote something that pass may read, so the dependency is encoded in the
-# pass's own opening; the same three lines appear in the clear encoder, which is a second reader of this frame's
-# copies, so each site is pinned in its own body rather than once for the file.
+# The copy a frame encoded before a pass wrote something that pass may read, so the dependency is encoded
+# wherever a render encoder opens. The clear encoder writes those three calls in its own body - it is a second
+# reader of this frame's copies - and every other road into a render encoder goes through the shared pair the
+# opening pin above requires, so this pins the clear's own copy of them and requires that the shared pair is the
+# only other place they appear. Measured: a resume that opened its render encoder with the copy encoder still
+# open crashed inside AGX, which is what the shared pair exists to prevent.
 COPY_THEN_PASS = ("if (this.copyEncoder != null && this.copyEncoder.open()) {\n"
                   "            this.copyEncoder.barrierForSubsequentEncoders();\n"
                   "            this.copyEncoder.endEncoding();")
-for method, why in (
-    ("public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {",
-     "a render pass is opened without ordering the copies the frame encoded before it, so the pass may read what "
-     "a copy has not finished writing"),
-    ("private void encodeClear(final String operation,",
-     "a clear is encoded without ordering the copies the frame encoded before it, so it may clear over what a "
-     "copy has not finished writing"),
-):
-    if COPY_THEN_PASS not in body_of(encoder, method):
-        raise SystemExit("metal 4 provider: " + why)
+if COPY_THEN_PASS not in body_of(encoder, "private void encodeClear(final String operation,"):
+    raise SystemExit("metal 4 provider: a clear is encoded without ordering the copies the frame encoded before"
+                     " it, so it may clear over what a copy has not finished writing")
+# And the road a pass takes goes through the shared method rather than writing the pair again: a pass that
+# opened its render encoder with the copy encoder still open is what crashed, so the call is pinned where a pass
+# opens - and the two other roads that need it (a compute dispatch and the present) keep their own copies, which
+# is why this pins the call sites rather than a count.
+if "endCopyEncoderBeforeAPass();" not in body_of(
+        encoder, "public @NonNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {"):
+    raise SystemExit("metal 4 provider: a render pass is opened without ending the frame's copy encoder through"
+                     " the shared road, so a pass may begin while a copy encoder is still open")
 
 # The indexed draw's selector, which is the one command whose arity was wrong: this machine's
 # MTL4RenderCommandEncoder.h declares eight arguments, and the form without baseInstance: does not exist. The
@@ -1110,6 +1114,8 @@ for needle, why in (
 # call sites and each one is pinned separately, because a pin on one of them would be satisfied by the others.
 for needle, why in (
     ("public void drawIndexedIndirect(final @NonNull GpuBufferSlice commands, final int drawCount) {\n"
+     "        // A frame encoder may have taken this pass's encoder away since the last call - see resume().\n"
+     "        resume();\n"
      "        if (!prepareDraw(\"drawIndexedIndirect\")) {",
      "an indirect indexed draw is not implemented - the chunk renderer reaches its terrain through exactly that "
      "form - or is encoded without the state a draw needs"),
@@ -1172,7 +1178,7 @@ if "owner.statPass(this.drawsEncoded, this.indexedEncoded);" not in pass_source:
     raise SystemExit("metal 4 provider: a pass's draws are not reported to the frame's counters")
 if "owner.statEncoder();" not in pass_source:
     raise SystemExit("metal 4 provider: a pass's encoder is not reported to the frame's counters")
-if "statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L" not in pass_source:
+if "statTables(plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L" not in pass_source:
     raise SystemExit("metal 4 provider: the tables a pass makes are not reported to the frame's counters")
 
 # The argument table's unbound slots, which is a correctness fact and not a detail: the header says
@@ -1803,6 +1809,85 @@ if "new DeviceFeatures(false, false, true, true, true, false, false)," in device
 if "persistentMappingFor(this.services.executing())" not in device_source:
     raise SystemExit("metal 4 provider: persistentMapping is not answered from what executes, so Metal 4's "
                      "engine-staged road and Metal 3's own could not be told apart")
+
+# --- and a pass survives having its encoder taken away -----------------------------------------------------
+# Measured: a dynamic uniform write inside an open pass grows the transient ring, that needs a copy encoder,
+# `copyEncoder()` ends the pass the game still has open, `finish()` releases the tables with it, and the next
+# `setVertexBuffer` died with "the Metal 4 pipeline ... has no vertex table for vertex buffer 0" - a frame lost
+# on the render scale's fallback road. The reference generation survives the same interruption by reopening its
+# encoder on demand, and this is that behaviour for this generation. Two things had to be true together, and
+# both were measured: the pass keeps its tables and reopens an encoder (a suspension, not an end), and the frame
+# keeps it as its current pass so that the game's own close still ends the reopened encoder - clearing the
+# current pass instead left it open and the next compute clear crashed inside AGX's `endEncoding`.
+for needle, why in (
+    ("this.currentPass.suspendEncoder();",
+     "the copy encoder does not suspend the open pass, so a pass the game is still encoding into either loses "
+     "the tables it needs or keeps a reopened encoder open under another encoder's ending"),
+    ("endCopyEncoderBeforeAPass();",
+     "the frame has no single road that ends the copy encoder before a render encoder opens"),
+    ("void endCopyEncoderBeforeAPass() {",
+     "the copy encoder's ending is repeated inline instead of shared, so a road into a render encoder - a "
+     "resumed pass - can miss it"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+for forbidden, why in (
+    ("Metal4RenderPass interrupted = this.currentPass;",
+     "the copy encoder takes the current pass out of the frame after suspending it, so the game's own close "
+     "would find nothing to end and the reopened encoder would stay open"),
+    ("interruptedByAFrameEncoder",
+     "a marking entry point is back beside the suspension, so a pass could be marked without its encoder being "
+     "ended - or ended without the frame keeping it"),
+):
+    if forbidden in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ("void suspendEncoder() {",
+     "the pass cannot be suspended, so the frame has to end it outright and a pass the game is still encoding "
+     "into loses the tables it needs"),
+    ("if (this.interrupted || this.finished) {",
+     "a suspended or finished pass can be suspended again, so its encoder would be ended twice"),
+    ("private void resume() {",
+     "the pass has no resume, so any mid-pass copy ends it for good"),
+    ("this.owner.endCopyEncoderBeforeAPass();\n        try {\n            this.encoder = MTL4RenderEncoder.open(",
+     "the resumed pass opens its encoder without ending the copy encoder the suspension was for, so two "
+     "encoders are open at once - measured as a SIGSEGV inside AGX's compute performEndEncoding"),
+    ("this.encoder = MTL4RenderEncoder.open(this.owner.nativeDevice(), this.owner.commandBuffer(),",
+     "the resumed pass does not open an encoder of its own, so nothing it encodes afterwards reaches the GPU"),
+    ("this.targetWidth, this.targetHeight, this.reopenColours, this.reopenDepth, label());",
+     "the resumed encoder is opened over something other than the pass's own attachments"),
+    ("new AttachmentContents(color.contents().readAfterwards(), false), null);",
+     "a reopened attachment does not keep its store answer and forbid a clear and an assumed overwrite, so a "
+     "resume could throw away what the pass already wrote or read undefined tile contents"),
+    ("this.reopenDepth = depth == null ? null : new MTL4RenderEncoder.Depth(depth.texture(), null);",
+     "a reopened depth attachment is passed its clear value again, so the resume would clear the depth the pass "
+     "has already written"),
+    ("this.tablesAssigned = false;\n        this.resumes++;",
+     "the resumed pass does not force the tables to be assigned to the new encoder"),
+    ("pass '{}' reopened its encoder after the frame took it",
+     "a resumed pass is not said out loud, so the extra encoder a frame's counters show would have no source"),
+    ("\", resumed=\" + this.resumes", "the failure message does not say that this pass was resumed"),
+    ("private void endEncoder() {",
+     "the two endings - a pass the game finished and a pass the frame suspended - do not share one encoder end, "
+     "so one of them would forget the producer barrier or the pass boundary marker"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+# And the pass's own tables are released where the pass is OVER and nowhere else: a suspension that released
+# them would have to rebuild them for the resumed encoder, which is the leak the first version of this fix had.
+for needle, why in (
+    ("releaseTables();\n        endEncoder();",
+     "the ending of a finished pass no longer releases its tables before it ends the encoder, so a replaced plan "
+     "could be read through stale tables"),
+    ("this.interrupted = true;\n        endEncoder();",
+     "the suspension does not end the encoder through the shared path"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+suspension = pass_source[pass_source.index("void suspendEncoder() {"):pass_source.index("private void endEncoder() {")]
+if "releaseTables" in suspension:
+    raise SystemExit("metal 4 provider: a suspension releases the pass's tables, so a resumed pass would rebuild "
+                     "them and leave the first set filed for destruction with nothing to destroy it")
 
 # --- and a draw is counted by every path that encodes one -----------------------------------------------
 # The pass's counters are what its own trace line and the frame's `drawsPerFrame` are made of. The indirect

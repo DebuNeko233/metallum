@@ -92,7 +92,19 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     /** The game's descriptor for this pass, kept for the label and the area a later slice will need. */
     private final RenderPassDescriptor descriptor;
     private final Metal4FrameEncoder owner;
-    private final MTL4RenderEncoder encoder;
+    /**
+     * The native encoder this pass encodes into, which is opened again where the frame ended it underneath the
+     * caller - see {@link #resume()}. Not final for that one reason.
+     */
+    private MTL4RenderEncoder encoder;
+    /**
+     * The attachments as a reopened encoder must describe them: the same textures, the same store answers, and
+     * <strong>no clears and no assumed overwrite</strong>. A pass that is reopened is loading what it already
+     * wrote, so a clear would throw that work away and a {@code DontCare} load would leave the attachment's tile
+     * contents undefined.
+     */
+    private final MTL4RenderEncoder.Color[] reopenColours;
+    private final MTL4RenderEncoder.@Nullable Depth reopenDepth;
     /** Whether this pass has a depth attachment, which decides which of the artifact's two states is set. */
     private final boolean depthAttached;
     private final long targetWidth;
@@ -114,6 +126,10 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     /** How many pipelines this pass has been given, and whether it has already been ended. */
     private int pipelineSets;
     private boolean finished;
+    /** Whether the frame took this pass's encoder away and the game is still encoding into it. */
+    private boolean interrupted;
+    /** How many times this pass has been reopened, which is what the log says when a frame steals one. */
+    private int resumes;
 
     /**
      * The bindings the frame path has made <strong>by name</strong>, kept so a pipeline set later can resolve
@@ -278,6 +294,17 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.targetWidth = width;
         this.targetHeight = height;
 
+        // What a reopen needs, built once here because the attachments and their answers do not change: the
+        // same textures with their store answer kept and the two facts a reopened encoder must not assume -
+        // that the attachment is clearable, and that this pass will write every pixel of it again.
+        this.reopenColours = new MTL4RenderEncoder.Color[colors.length];
+        for (int index = 0; index < colors.length; index++) {
+            MTL4RenderEncoder.Color color = colors[index];
+            this.reopenColours[index] = color == null ? null : new MTL4RenderEncoder.Color(color.texture(),
+                    new AttachmentContents(color.contents().readAfterwards(), false), null);
+        }
+        this.reopenDepth = depth == null ? null : new MTL4RenderEncoder.Depth(depth.texture(), null);
+
         try {
             owner.statEncoder();
             MetalFrameProbe.encoderOpened(0);
@@ -318,6 +345,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      */
     void finish() {
         this.finished = true;
+        this.interrupted = false;
         // Reported to the frame's counters whether or not the per-draw trace is on: the counters are what
         // answer "what did a frame cost", and a pass is the unit a cost is attributed to.
         this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
@@ -328,6 +356,31 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     colours(), load0(), store0(), this.cleared0, sampledTextures());
         }
         releaseTables();
+        endEncoder();
+    }
+
+    /**
+     * Ends the native encoder of a pass the game has not finished with, and keeps everything else.
+     * <p>
+     * This is the other half of {@link #resume()}, and the difference between the two matters: a pass the
+     * <em>game</em> ended is over - its tables are released and it may never be encoded into again - while this
+     * one is suspended. The tables stay, because they are what the resumed encoder needs and they live until the
+     * frame's slot completes either way; what goes is the encoder, which only one of may be open at a time, and
+     * the frame keeps this pass as its current one so that the game's own close still ends the resumed encoder
+     * rather than finding nothing to end. Without that last part the reopened encoder is never closed and the
+     * next encoder to open - a compute clear, measured - ends while one is still open, which is a native crash
+     * inside `MTL4ComputeEncoder`'s `endEncoding`.
+     */
+    void suspendEncoder() {
+        if (this.interrupted || this.finished) {
+            return;
+        }
+        this.interrupted = true;
+        endEncoder();
+    }
+
+    /** The producer barrier and the encoder's own end, which both endings share. */
+    private void endEncoder() {
         if (!this.encoder.open()) {
             return;
         }
@@ -488,6 +541,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      */
     @Override
     public void setPipeline(final @NonNull RenderPipeline pipeline) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         if (this.pipeline == pipeline) {
             return;
         }
@@ -511,29 +566,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.plan = Metal4BindingPlan.of(compiled.resources(), compiled.argumentBufferLayouts(),
                 compiled.firstAvailableVertexBufferSlot(), compiled.vertexBufferCount());
         releaseTables();
-        this.owner.statTables(this.plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L
-                + (this.plan.usesStage(MetalShaderStages.FRAGMENT) ? 1L : 0L));
-        if (this.plan.usesStage(MetalShaderStages.VERTEX)) {
-            this.vertexTable = MTL4ArgumentTable.create(this.owner.nativeDevice(),
-                    this.plan.bufferSlots(MetalShaderStages.VERTEX),
-                    this.plan.textureSlots(MetalShaderStages.VERTEX),
-                    this.plan.samplerSlots(MetalShaderStages.VERTEX));
-        }
-        if (this.plan.usesStage(MetalShaderStages.FRAGMENT)) {
-            this.fragmentTable = MTL4ArgumentTable.create(this.owner.nativeDevice(),
-                    this.plan.bufferSlots(MetalShaderStages.FRAGMENT),
-                    this.plan.textureSlots(MetalShaderStages.FRAGMENT),
-                    this.plan.samplerSlots(MetalShaderStages.FRAGMENT));
-        }
-        if ((this.plan.usesStage(MetalShaderStages.VERTEX) && this.vertexTable == null)
-                || (this.plan.usesStage(MetalShaderStages.FRAGMENT) && this.fragmentTable == null)) {
-            releaseTables();
-            this.pipeline = null;
-            this.artifact = null;
-            this.plan = null;
-            throw new IllegalStateException("the Metal 4 tables for " + pipeline.getLocation() + " could not be"
-                    + " made, so nothing this pass binds would reach a shader");
-        }
+        createTables();
         this.tablesAssigned = false;
         ensureArgumentBuffers();
         if (TRACE) {
@@ -560,6 +593,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     @Override
     public void bindTexture(final @NonNull String name, final @NonNull GpuTextureView view,
                             final @NonNull GpuSampler sampler) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         if (!(view instanceof MetalGpuTextureView textureView) || !(sampler instanceof MetalGpuSampler metalSampler)) {
             throw new IllegalStateException("the Metal 4 pass was handed a texture or sampler that is not this"
                     + " engine's: " + view.getClass().getName() + ", " + sampler.getClass().getName());
@@ -581,6 +616,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     @Override
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice slice) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         declare(slice.buffer());
         this.uniformBindings.put(name, slice);
         // A name this pipeline declares as a texel buffer is asked first, because it is the one case where a
@@ -668,6 +705,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      */
     @Override
     public void setVertexBuffer(final int slot, final @NonNull GpuBufferSlice buffer) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         declare(buffer.buffer());
         this.vertexBuffers.put(slot, buffer);
         Metal4BindingPlan plan = this.plan;
@@ -885,7 +924,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     + ",f=" + plan.bufferSlots(MetalShaderStages.FRAGMENT) + "), so the layout has"
                     + " nowhere to go; this pass=" + System.identityHashCode(this) + ", pipelines set="
                     + this.pipelineSets + ", remembered vertex layouts=" + this.vertexBuffers.size()
-                    + ", finished=" + this.finished);
+                    + ", finished=" + this.finished + ", resumed=" + this.resumes);
         }
         if (slot < 0 || slot >= plan.vertexBufferCount()) {
             throw new IllegalStateException("the Metal 4 pipeline declares " + plan.vertexBufferCount()
@@ -942,6 +981,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      */
     @Override
     public void setIndexBuffer(final @NonNull GpuBuffer buffer, final @NonNull IndexType type) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         // The indexed draw's index buffer is an address, which is the case the header names by name: "Use an
         // instance of MTLResidencySet to mark residency of the index buffer the indexBuffer parameter
         // references."
@@ -955,6 +996,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     @Override
     public void enableScissor(final int x, final int y, final int width, final int height) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         this.scissorEnabled = true;
         this.scissorX = x;
         this.scissorY = y;
@@ -964,6 +1007,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     @Override
     public void disableScissor() {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         // Set to the whole attachment rather than left alone: an encoder keeps the rectangle it was last given,
         // so "no scissor" has to be said as loudly as a rectangle is.
         this.scissorEnabled = false;
@@ -976,6 +1021,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     @Override
     public void drawIndexed(final int indexCount, final int instanceCount, final int firstIndex,
                             final int vertexOffset, final int firstInstance) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         if (!prepareDraw("drawIndexed")) {
             return;
         }
@@ -1025,6 +1072,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      */
     @Override
     public void drawIndexedIndirect(final @NonNull GpuBufferSlice commands, final int drawCount) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         if (!prepareDraw("drawIndexedIndirect")) {
             return;
         }
@@ -1062,6 +1111,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     @Override
     public void draw(final int vertexCount, final int instanceCount, final int firstVertex,
                      final int firstInstance) {
+        // A frame encoder may have taken this pass's encoder away since the last call - see resume().
+        resume();
         if (!prepareDraw("draw")) {
             return;
         }
@@ -1179,6 +1230,83 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
 
     private static String stageName(final int stage) {
         return (stage & MetalShaderStages.VERTEX) != 0 ? "the vertex stage" : "the fragment stage";
+    }
+
+    /**
+     * Builds the tables the current plan sizes, and refuses a plan whose stage it cannot size.
+     * <p>
+     * Called where a plan arrives and where one is resumed: the tables are the pass's own, the encoder only
+     * holds references to them, and an encoder that was opened again holds none.
+     */
+    private void createTables() {
+        Metal4BindingPlan plan = this.plan;
+        if (plan == null) {
+            return;
+        }
+        this.owner.statTables(plan.usesStage(MetalShaderStages.VERTEX) ? 1L : 0L
+                + (plan.usesStage(MetalShaderStages.FRAGMENT) ? 1L : 0L));
+        if (plan.usesStage(MetalShaderStages.VERTEX)) {
+            this.vertexTable = MTL4ArgumentTable.create(this.owner.nativeDevice(),
+                    plan.bufferSlots(MetalShaderStages.VERTEX),
+                    plan.textureSlots(MetalShaderStages.VERTEX),
+                    plan.samplerSlots(MetalShaderStages.VERTEX));
+        }
+        if (plan.usesStage(MetalShaderStages.FRAGMENT)) {
+            this.fragmentTable = MTL4ArgumentTable.create(this.owner.nativeDevice(),
+                    plan.bufferSlots(MetalShaderStages.FRAGMENT),
+                    plan.textureSlots(MetalShaderStages.FRAGMENT),
+                    plan.samplerSlots(MetalShaderStages.FRAGMENT));
+        }
+        if ((plan.usesStage(MetalShaderStages.VERTEX) && this.vertexTable == null)
+                || (plan.usesStage(MetalShaderStages.FRAGMENT) && this.fragmentTable == null)) {
+            releaseTables();
+            RenderPipeline failed = this.pipeline;
+            this.pipeline = null;
+            this.artifact = null;
+            this.plan = null;
+            throw new IllegalStateException("the Metal 4 tables for "
+                    + (failed == null ? "this pass" : failed.getLocation()) + " could not be made, so nothing"
+                    + " this pass binds would reach a shader");
+        }
+    }
+
+    /**
+     * Puts the pass back the way the game left it after a frame encoder took its encoder away.
+     * <p>
+     * The encoder is opened again over the same attachments - loading what the pass already wrote and storing
+     * it as the pass asked - the plan's tables are rebuilt, and everything the pass has been told to bind is
+     * filled into them again. The state that lives in the encoder rather than in this object (the pipeline
+     * state, the depth-stencil state, the cull mode, the depth bias and the scissor) is not restored here
+     * because {@link #prepareDraw} sends all of it before every draw, which is also what makes a resumed pass
+     * indistinguishable from a fresh one to the shaders.
+     */
+    private void resume() {
+        if (!this.interrupted) {
+            return;
+        }
+        this.interrupted = false;
+        // A copy the frame encoded while this pass was suspended may still be open, and only one encoder may be
+        // open at a time: the same ending every road into a render encoder takes.
+        this.owner.endCopyEncoderBeforeAPass();
+        try {
+            this.encoder = MTL4RenderEncoder.open(this.owner.nativeDevice(), this.owner.commandBuffer(),
+                    this.targetWidth, this.targetHeight, this.reopenColours, this.reopenDepth, label());
+        } catch (MTL4RenderEncoder.Refused refused) {
+            throw new IllegalStateException("the Metal 4 render pass '" + label() + "' could not be reopened at"
+                    + " stage " + refused.stage() + ": " + refused.getMessage(), refused);
+        }
+        // The tables are the pass's own and were never released by a suspension, so they are the same objects
+        // the suspended encoder was filled with. What the new encoder holds of them is nothing, which is what
+        // this flag says, and the next draw assigns them again - with everything the pass was told to bind
+        // already in them.
+        this.tablesAssigned = false;
+        this.resumes++;
+        if (TRACE) {
+            // Said under the trace and not always: a resumed pass is legitimate but rare, and it is exactly what
+            // a reader wants to see next to the extra encoder a frame's counters report.
+            Metallum.LOGGER.info("Metal 4 trace: pass '{}' reopened its encoder after the frame took it"
+                    + " ({} resume(s))", label(), this.resumes);
+        }
     }
 
     /** Releases the tables a replaced pipeline filled, so a stale plan cannot be read through a new pipeline. */

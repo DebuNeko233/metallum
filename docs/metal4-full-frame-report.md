@@ -1203,10 +1203,42 @@ its own encoder is reopened on demand, which is what the frame probe's `encoderr
 counters have been counting all along. The Metal 4 pass has no such resume, so any mid-pass copy - a transient
 ring growth, an upload during a pass - ends it for good.
 
-**Status: reproduced, mechanism localised, fix owed.** The fix is the reference generation's behaviour - a pass
-whose encoder was ended underneath it reopens on the next call and rebuilds the tables a new encoder needs - and
-it is the next round's first Metal 4 item, ahead of every performance phase in this audit, because the fallback
-road is one of the roads the Metal 4 production definition requires.
+**The fix, and the two crashes it went through to get there.** The shape is the reference generation's - a pass
+whose encoder was taken away reopens it on the next call - and it took three attempts, each of which is now
+pinned by a contract:
+
+1. **Suspend, do not end.** `copyEncoder()` first ended the pass outright (`submitRenderPass()`), which releases
+   the pass's tables; a pass the game is *still encoding into* must keep them. The frame now calls
+   `currentPass.suspendEncoder()`, which encodes the producer barrier, closes the native encoder and keeps the
+   pass - its plan, its tables and its place as the frame's current pass.
+2. **Keep it current.** The first version of the suspension cleared `currentPass` as `submitRenderPass()` does,
+   so the game's own close found nothing to end: the reopened encoder stayed open, the next encoder to open (a
+   compute clear, in the stack) ended underneath it, and the process died with **SIGSEGV in
+   `AGXG17XFamilyComputeContext_mtlnext performEndEncoding`**. A suspension is not an ending, and the frame keeps
+   the pass so the close still finds it.
+3. **Only one encoder at a time, on every road into a render encoder.** With the pass resumed, the crash moved
+   but stayed: the resumed render encoder was opened while the **copy encoder** the suspension was for was still
+   open, and the crash came when that copy was finally ended - the same AGX compute frame, a different ending.
+   `endCopyEncoderBeforeAPass()` is now the one road that ends it, and `createRenderPass`, the clear and the
+   resume all take it.
+
+**Verified on the road that found the bug**: Photon v1.3b, `-Dmetallum.probeNoMetalFx=true` on a forced Metal 4
+session, render scale 55, 120-frame window - `selectedGeneration=metal4 executingGeneration=metal4`,
+`The 55% render scale brings the picture back with a blit: MetalFX is not available here`, **no Java exception
+and no native crash**, and the window completes: `frame-probe 120/120 windowFrames=120 windowMs=990.68
+gpuM4P50=6.64 gpuM4P95=6.87 wallP50=8.35`. Under `-Dmetallum.metal4Trace` the pass's own story is readable:
+
+```
+Metal 4 trace: pipeline vitrail:pipeline/scale_blit_fragment in 'Vitrail upscale' pass=129993830
+Metal 4 trace: end pass 'Vitrail upscale' pass=129993830 depth=false draws=0 ...      <- the suspension
+Metal 4 trace: pass 'Vitrail upscale' reopened its encoder after the frame took it (1 resume(s))
+Metal 4 trace: draw 1 of 6 vertices from 0, instance 1, in 'Vitrail upscale'
+Metal 4 trace: end pass 'Vitrail upscale' pass=129993830 depth=false draws=1 ... samples=[InSampler=...]
+```
+
+`tools/ci-metal4-provider.py` pins each half - the suspension and its one-at-a-time guard, the shared
+copy-ending road and its call sites, the reopened attachments keeping their store answer with no clear and no
+assumed overwrite, and the tables assigned to the new encoder - and eleven mutations of those pins are caught.
 
 ## Performance
 

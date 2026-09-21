@@ -5966,6 +5966,19 @@ afterwards - a fresh live reading of blocker 18's shape, and unchanged on purpos
 what it is ("this session answers as a device without Metal FX"); it is simply a device-level answer, not a
 per-frame one.
 
+**And the frame survives a copy arriving in the middle of a pass.** A dynamic uniform write goes through the
+game's transient memory, and when that ring grows the write needs a copy encoder - which ends the render pass the
+game still has open, because only one encoder may be open at a time. The pass lost its tables with that ending and
+the frame died on the next vertex buffer ("the Metal 4 pipeline ... has no vertex table for vertex buffer 0"),
+on the render scale's fallback road. The frame now *suspends* the pass instead of ending it: the encoder is ended,
+the tables and the pass's place as the frame's current one are kept, and the pass reopens an encoder over the same
+attachments - loading what it already wrote, storing as it asked - on the next call. Two further crashes on the
+way to that fix are the reason each half is pinned: a suspension that cleared the current pass left the reopened
+encoder open (SIGSEGV in AGX's compute `performEndEncoding`), and a resumed pass that opened its encoder while the
+copy encoder was still open crashed in the same place. `endCopyEncoderBeforeAPass()` is now the one road that ends
+the copy encoder, and the resume, `createRenderPass` and the clear all take it. Verified on the road that found
+it: 120 frames of Photon at render scale 55 with the scaler refused, no exception, no native crash.
+
 **What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
 sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
 `(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations
