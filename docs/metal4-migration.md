@@ -3877,6 +3877,56 @@ than the difference between the arms, so the pooled 10.5% is the honest number a
 strongest argument the migration has produced for section 88's counters: what changes the rate is not something
 this instrument can see.
 
+### The counter API, read off this machine's headers
+
+Section 89's first instruction is to research the actual SDK rather than write selectors from memory, and the
+storage-image intermittent just made that concrete: a fault whose rate moves with something the harness cannot
+see is the case the counters exist for. So the API is recorded here from the headers, with the file each fact
+came from, before a line of it is written.
+
+```text
+MTLDevice.h:1516        - (nullable id<MTL4CounterHeap>)newCounterHeapWithDescriptor:(MTL4CounterHeapDescriptor *)
+                            descriptor error:(NSError **)error
+
+MTL4Counters.h          MTL4CounterHeapDescriptor: type (MTL4CounterHeapType), count. The only timestamp type is
+                            MTL4CounterHeapTypeTimestamp; MTL4CounterHeapTypeInvalid is the other enumerator
+                        MTL4CounterHeap: label, count, type, and the two calls that read it -
+                            resolveCounterRange:(NSRange) -> NSData of tightly packed entries
+                            invalidateCounterRange:(NSRange) (invalidated entries resolve as 0)
+                        MTL4TimestampHeapEntry is `{ uint64_t timestamp; }` - eight bytes an entry
+                        MTL4TimestampGranularity: Relaxed (least invasive, "may sample at command encoder
+                            boundaries") and Precise ("may cause splitting of command encoders" - a cost stated
+                            in the header, which is section 91's question answered in the API)
+
+three places a timestamp can be written
+    MTL4CommandBuffer.h:172        writeTimestampIntoHeap:atIndex:                       (no granularity)
+    MTL4RenderCommandEncoder.h:645 writeTimestampWithGranularity:afterStage:intoHeap:atIndex:
+    MTL4ComputeCommandEncoder.h:832 writeTimestampWithGranularity:intoHeap:atIndex:
+
+two places a heap can be resolved
+    MTL4Counters.h         resolveCounterRange:            the CPU timeline, and the header states the rule:
+                                                          "signaling an instance of MTLSharedEvent after any
+                                                          workloads write counters (and waiting on that signal on
+                                                          the CPU) is sufficient to ensure synchronization"
+    MTL4CommandBuffer.h:206 resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:   the GPU timeline
+```
+
+**Two facts in that table decide the shape of this work, and neither is a guess.**
+
+The first is that the CPU-timeline resolve's stated synchronization rule is *exactly what the frame ring already
+does*: one commit a frame, a shared event signalled with the submission's value, and a wait on that value before
+anything the GPU wrote is read. So the first version needs no new synchronization object - a heap, three
+timestamps and a resolve after the ring's existing wait, which is the smallest candidate section 96 asks for.
+
+The second is that the granularity the header calls `Precise` "may cause splitting of command encoders". That is
+a cost the API documents rather than one this engine has to discover, and it is a warning that the counter path
+can change the very thing it measures - which is section 91's A/B, not a footnote.
+
+What is **not yet known** and must be measured rather than assumed: whether the resolved `timestamp` is in the
+same timebase as the frame's `MTL4CommitFeedback.GPUStartTime/GPUEndTime`, or a different one that needs the
+device's own conversion; and what an empty or single-entry range resolves to. Both are cheap to answer in a
+process with no window in it, which is where section 90's smoke goes.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
