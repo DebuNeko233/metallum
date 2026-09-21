@@ -2534,10 +2534,35 @@ public final class MTL4Probe {
                 for (long[] at : new long[][]{{0L, 0L}, {STORAGE_EDGE - 1L, STORAGE_EDGE - 1L}, {1L, 3L}}) {
                     MTLTexture.bytes(texture, pixel, 4L, at[0], at[1], 1L, 1L);
                     if (!matches(pixel, STORAGE_SECOND_PIXEL)) {
+                        // The failure path only, so a passing probe's timing is untouched. The question this
+                        // answers is whether the second dispatch was lost or whether the CPU simply read the
+                        // texture before its write was visible: this readback is a CPU `getBytes:`, and every
+                        // other readback in this file that comes off the GPU goes through a buffer instead.
+                        // If the value is right on the second read, the dispatch ran and the instrument is what
+                        // failed; if it is still the first colour, the write is genuinely gone.
+                        String readNow = describe(pixel);
+                        String readAfterOne = readNow;
+                        String readAfterTwo = readNow;
+                        for (int again = 0; again < 3; again++) {
+                            try {
+                                Thread.sleep(50L);
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                            MTLTexture.bytes(texture, pixel, 4L, at[0], at[1], 1L, 1L);
+                            if (again == 0) {
+                                readAfterOne = describe(pixel);
+                            } else {
+                                readAfterTwo = describe(pixel);
+                            }
+                        }
                         return failed("storageImage", "the texture at (" + at[0] + "," + at[1] + ") reads "
-                                + describe(pixel) + " where the second dispatch's own table held "
+                                + readNow + " where the second dispatch's own table held "
                                 + describe(STORAGE_SECOND_PIXEL) + ", so a kernel either did not write the image or"
-                                + " its table was not the one it was handed");
+                                + " its table was not the one it was handed - and read again after 50 ms it is "
+                                + readAfterOne + " and after 100 ms " + readAfterTwo + ", which says whether the"
+                                + " dispatch was lost or the read was early");
                     }
                 }
             }

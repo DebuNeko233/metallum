@@ -1512,4 +1512,29 @@ if "copyTextureToBuffer(output" in probe_source:
         "bytesPerRow was four for a 256-wide texture is a copy of nothing that nothing reads"
     )
 
+# ---------------------------------------------------------------------------
+# The storage-image smoke's failure path localises its own mechanism
+#
+# The smoke's second dispatch is lost intermittently - 21 times in 200 probes in one period, and not once in 360
+# probes in another, on the same device and with the same smoke - and the reason string it printed named the
+# symptom ("the texture reads the first colour where the second table held the second") without saying whether
+# the dispatch was lost or the CPU read the texture before its write was visible. Those are different faults with
+# different fixes, and the smoke's readback is a CPU `getBytes:` while every other readback in this file that
+# comes off the GPU goes through a buffer.
+#
+# So the failure path re-reads the texel after 50 and after 100 ms and puts all three readings in the reason.
+# It is on the failure path only, so a passing probe's timing is untouched; a probe that passes cannot be slowed
+# by it, and the rate being measured is not disturbed by the instrument.
+# ---------------------------------------------------------------------------
+for needle, why in (
+    ("Thread.sleep(50L);", "the storage-image failure path does not re-read the texel, so its reason cannot say "
+     "whether the second dispatch was lost or the read was early"),
+    ("read again after 50 ms it is ", "the storage-image failure reason does not carry the later readings, so "
+     "the next occurrence names its symptom and not its mechanism"),
+    ("String readNow = describe(pixel);", "the first reading is not kept, so the three readings cannot be "
+     "compared in one sentence"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")
