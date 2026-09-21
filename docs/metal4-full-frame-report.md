@@ -2778,9 +2778,15 @@ drawable written frame for frame, and the Metal 4 frame carries **alpha 0** wher
 **orientation is proven and the two roads agree** (the present draw swaps the two ends of the memory-vertical
 axis and nothing else, quadrant for quadrant, and the RGBA8-to-BGRA8 channel conversion is correct on both), and
 **the alpha is not the pack's** - the shader's alpha moved from 1.0 to 0.5 and the stored alpha did not move on
-either arm. So "does it look right" is now measurable in the pixels rather than blocked on the display - and it is
-measured where it can be, not finished: which writer owns the presented target's alpha, and why the two roads
-disagree about it, is not localised, and no other fixture's picture has been read. The counters, the client's own
+either arm. So "does it look right" is now measurable in the pixels rather than blocked on the display - and since that was
+written the road has been used for every fixture whose picture was missing: the MetalFX quadrant fixture
+(orientation proven with the scaler in the loop, the two arms identical sample for sample), the history fixture
+and the compute/storage fixture (both acceptance colours in the presented frame on both arms, 25 of 25 samples
+equal). **And the alpha is localised**: both halves of the readback already show the mixed alpha and both arms
+read the same pattern, so it is decided *before* the present draw - by the pack's write into the game's target, by
+that target's own format, or by the pass that produced it - and is not a Metal 4 execution difference. What
+remains open is narrower than it was: the sky strip at the top of the no-pack frame is still unaccounted for, and
+no pack's *biased* geometry has been exercised (`depthBias=0` in every window measured). The counters, the client's own
 chain lines, the readbacks and the absence of a fault are what the frame is known by.
 
 **And the question "does it look right" now has a first answer, from a session in which the game's own interface
@@ -2794,7 +2800,16 @@ Metal4 title-screen GUI + text:     PASS   (blocker 17 fixed; reads back identic
 Metal4 in-world GUI/HUD:            PASS by construction (same GuiRenderer, same StagedVertexBuffer road);
                                     an in-world text reading of its own is NOT MEASURED
 Metal4 text/glyph rendering:        PASS on the title screen; the same NOT MEASURED in a world
-Metal4 full-frame correctness:      NOT READY - the GUI was one of its blockers, not the last
+Metal4 terrain / depth / MRT:       PASS
+Metal4 history fixture:             PASS   (acceptance colour in the presented frame, arms identical)
+Metal4 compute/storage fixture:     PASS   (same road, same result)
+Metal4 wide resources:              PASS on one real pack (photon deferred4); generality NOT MEASURED
+Metal4 MetalFX live-frame:          PASS   (asymmetric quadrant fixture, orientation proven)
+Metal4 lifecycle:                   PASS on reload, resize, leave, close; a dimension change and an in-session
+                                    pack switch are not driven
+Metal4 full-frame correctness:      PASS on every gate line that has a reading; the residuals are the sky
+                                    strip and the biased-geometry parity, both NOT MEASURED and both narrower
+                                    than they were
 ```
 
 **The pause on the compute pipeline neutralisation is lifted.** It was paused because blocker 17 was a correctness
@@ -2941,6 +2956,18 @@ This is that list with the state each item actually has, and where each reading 
 [ONGOING]    real Apple Silicon validation complete    every reading in this report is from this machine, and the
                                                        work that remains is the state a quiet machine is needed for
 [MEASURED]   docs updated                              this report and docs/metal4-migration.md
+[MEASURED]   MetalFX live-frame fixture correct        the asymmetric quadrant fixture at 55% render scale:
+                                                       orientation and channel order proven with the scaler on
+                                                       the path, the two arms identical sample for sample
+[MEASURED]   history fixture's picture                 acceptance colour in the presented frame on both arms,
+                                                       read through the drawable readback rather than a
+                                                       screenshot
+[MEASURED]   compute/storage fixture's picture         the same road, the same result, 25 of 25 samples equal
+[MEASURED]   depth-offset fixture                      canApplyDepthBias reads true on the cold census: the
+                                                       biased draw wins the compare the unbiased control fails
+[NOT MEASURED, artifact absent]  MakeUp's performance rung
+                                                       the pack is no longer on this machine; the other three
+                                                       rungs are measured and in the comparison table
 ```
 
 **So the phrase is still not earned, and the two items that stop it are named**: the cold probe's intermittency
