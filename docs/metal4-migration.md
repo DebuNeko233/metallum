@@ -5690,3 +5690,54 @@ frames), and a presence that alternates in *wall time* is sampled differently by
 rates - so the leading candidate, stated as a **HYPOTHESIS** and not as a measurement, is that the same two
 kinds account for that drift through the sampling. What is measured is that the traced sessions' drift is these
 two kinds, and that the particle term moves their counters to the pass.
+
+### The no-pack rung, re-run on a window whose content is pinned
+
+The drift's remedy is a staging change and not a code change: `--vanilla-particles` puts the game's own particles
+in every frame, so the two conditional passes are never absent and what a window holds is its tick count.
+`run/protocol-nopack` is the first rung measured that way - six arms interleaved M3/M4/M3/M4/M3/M4, no pack, the
+same world, camera, target and 600-frame window as every other rung.
+
+**Every arm's content is now identical to the digit**, which no earlier session managed:
+
+```text
+arm   wall P50   P95     P99     Max     own GPU interval   content: loadedMiB / storedMiB / depthAtt.  ticks
+m3a     8.33     8.57    8.89   11.45       gpuP50 7.63      28498.5 / 81232.9 / 1800                     99
+m3b     8.33     8.66    8.87    9.14                 7.65    28498.5 / 81232.9 / 1800                    100
+m3c     8.33     8.64    8.96    9.24                 7.62    28498.5 / 81232.9 / 1800                     99
+m4a    10.80    15.72   15.90   17.38      gpuM4P50 4.31   161400.1 / 280052.5 / 6600                    149
+m4b    10.91    15.73   15.96   16.32                 4.28   161400.1 / 280052.5 / 6600                    149
+m4c    12.92    15.68   15.93   17.23                 4.33   161400.1 / 280052.5 / 6600                    150
+```
+
+The session's own comparison therefore passes where the earlier no-pack session needed the tick instrument to
+explain its counters: `tools/vitrail-performance-compare.py run/protocol-nopack` **exits 0 with no `scene drift`
+and no arm outlier**, and the content counters are pinned rather than merely inside a tolerance (+0.0% between
+the arms of each generation on `loadedMiB`, `storedMiB` and `depthAttachments`, and on `pipelineIdentities`).
+
+**What it says, and which statistic says it.** The reference repeats exactly - 8.33 ms at the median three times,
+8.32 ms a frame in the mean - and this path's **mean repeats to 0.16%** (12.46, 12.47, 12.48 ms a frame) and its
+**upper mode repeats to 0.3%** (P95 15.72, 15.73, 15.68), while its **P50 moves 20%** between the same three arms
+(10.80, 10.91, 12.92). P50 is a percentile of this path's pacing mixture and is the number that is not
+reproducible across arms of one configuration; the two that are both put this path **1.50x slower** in the mean
+(+49.8%/+49.9%/+50.1%) and **1.82x slower** at P95 (+81.6%/+81.7%/+81.5%), with its own commit interval
+**1.8x lower** than the reference's (4.28-4.33 against 7.62-7.65 ms a frame) and its drawable wait p95
+14.35-14.47 against 7.75-7.77. Per sections 47-49 the two GPU columns are not subtracted and the wall columns
+are the comparison; the mechanism they show is the handover quantum and not the work.
+
+**And the picture column cannot be used on this protocol.** The fixture makes the *reference's own* arms differ -
+`m3a` against `m3b` differs by 9.11% of pixels by more than 8 and against `m3c` by 8.50% - because the particles
+it emits are stochastic, so the cross-generation differences (8.80%, 8.37%, 8.32%) sit **inside** the reference's
+own arm-to-arm spread. The correct reading is "no cross-generation difference beyond the scene's own movement",
+and the picture is not the per-protocol verdict it is on a still-life scene. **The comparer now says so itself**:
+it keeps each pair's share of pixels beyond eight levels, separates the arms of one generation from the
+cross-generation pairs, and prints `picture spread: the arms of one generation differ from each other by 9.113%
+of pixels (by more than 8) against the largest cross-generation difference of 8.801%, so this scene cannot
+separate the generations by picture` - and it stays silent on `run/ticks-nopack`, whose own arms differ by 0.02%
+of pixels. A contract in `tools/ci-vitrail-performance.py` fails when that reading is removed.
+
+So section 93's first rung now has two measured sessions: the still-life scene it was written for
+(`run/ticks-nopack`, 1.63-1.78x) and the content-pinned one (`run/protocol-nopack`, 1.50x in the mean and 1.82x
+at P95). They differ in which statistic they rest on and not in their direction, and section 30's rule - that a
+Metal 4 comparison may not rest on the P50 of a display-paced session - is what the second session was staged to
+honour.

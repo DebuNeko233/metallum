@@ -1546,6 +1546,36 @@ point in the load) and the same two kinds that were later *measured* to move the
 the second candidate is bounded against this session's own numbers under Remaining blockers. Until it is settled,
 §93's first rung cannot produce a comparison, and per §67 the honest verdict for it is **NOT MEASURED**.
 
+**And that rung is measured a second time on a window whose content is pinned rather than explained.**
+`run/protocol-nopack` stages `--vanilla-particles` - which is what the particle term's localisation made
+available: the game's own particles are emitted around the camera every tick, so the two conditional passes are
+never absent and a window's content is its tick count alone. Six arms interleaved M3/M4/M3/M4/M3/M4, the same
+world, camera, 3200x1800 target and 600-frame window as every other rung:
+
+```text
+arm   wall P50   P95     P99     Max     own GPU interval   content: loadedMiB / storedMiB / depthAtt.  ticks
+m3a     8.33     8.57    8.89   11.45       gpuP50 7.63      28498.5 / 81232.9 / 1800                     99
+m3b     8.33     8.66    8.87    9.14                 7.65    28498.5 / 81232.9 / 1800                    100
+m3c     8.33     8.64    8.96    9.24                 7.62    28498.5 / 81232.9 / 1800                     99
+m4a    10.80    15.72   15.90   17.38      gpuM4P50 4.31   161400.1 / 280052.5 / 6600                    149
+m4b    10.91    15.73   15.96   16.32                 4.28   161400.1 / 280052.5 / 6600                    149
+m4c    12.92    15.68   15.93   17.23                 4.33   161400.1 / 280052.5 / 6600                    150
+```
+
+**Every arm's content is identical to the digit** where the earlier rung's drifted by up to a third, and
+`vitrail-performance-compare.py run/protocol-nopack` **exits 0 with no scene drift and no arm outlier**. What the
+comparison then says is that the reference repeats exactly - 8.33 ms at the median three times, 8.32 ms a frame
+in the mean - while this path's **mean repeats to 0.16%** (12.46/12.47/12.48), its **upper mode to 0.3%** (P95
+15.72/15.73/15.68) and its **P50 moves 20%** (10.80/10.91/12.92). So on this path the mean and the upper mode
+are the statistics that are comparable and the P50 is not, which is section 30's rule with a measurement behind
+it; both put this path **1.50x slower in the mean** (+49.8/+49.9/+50.1%) and **1.82x slower at P95**, with its
+own commit interval **1.8x lower** than the reference's (4.28-4.33 against 7.62-7.65 ms a frame). **The picture
+column is not usable on this protocol**: the fixture's particles are stochastic, so the *reference's own* arms
+differ by 9.11% and 8.50% of pixels and the cross-generation differences (8.32-8.80%) sit inside that spread -
+the reading is "no cross-generation difference beyond the scene's own movement" and not a per-protocol verdict.
+**The comparer now states that itself** (`picture spread: ... this scene cannot separate the generations by
+picture`), and stays silent on `run/ticks-nopack`, whose own arms differ by 0.02% of pixels.
+
 ## Timing model
 
 Every number in this report was measured, and this section says what each instrument measures and what it does
@@ -1632,6 +1662,7 @@ copy of it - only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain. So
 | workload | M3 wall P50 | M3 P95 | M4 wall P50 | M4 P95 | M4 distribution | verdict |
 | -------- | ----------- | ------ | ----------- | ------ | --------------- | ------- |
 | no-pack (`run/ticks-nopack`) | 8.33 (8.33, 8.33) | 8.83-8.88 | 13.56-14.85 | 15.94-15.95 | upper mode stable to 0.06%, P50 moves with the mixture | **MEASURED: this path 1.63-1.78x slower**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
+| no-pack, content-pinned (`run/protocol-nopack`) | 8.33 (8.33, 8.33, 8.33) | 8.57-8.66 | 10.80-12.92 | 15.68-15.73 | mean repeats to 0.16% and the upper mode to 0.3%; **P50 moves 20%** between the same three arms | **MEASURED: this path 1.50x slower in the mean and 1.82x at P95**, on a window whose content counters are identical to the digit across arms (its own commit interval is *lower*: 4.28-4.33 against 7.62-7.65); the picture column is not usable here (the fixture's particles are stochastic) |
 | MakeUp UltraFast | - | - | - | - | - | **NOT MEASURED: the pack archive is not on this machine** |
 | Complementary (`run/rung3-complementary`) | 20.65, 21.12 | 27.19, 27.51 | 16.74, 16.75 | 28.75, 28.93 | P50 repeats to 0.06%, P95 is 5% wider than the reference's | **MEASURED: this path 19-21% faster at the median and 5% slower at P95** |
 | Photon (`run/rung4-photon`) | 8.33, 8.34 | 8.79, 8.75 | 10.23, 12.52 | 15.92, 15.83 | P95 repeats to 0.6% and the commit interval to 0.6%; P50 moves 22% with the mixture | **MEASURED: this path 23-50% slower at the median and 81% slower at P95**, with its own commit interval *equal* to the reference's (6.98-7.02 against 7.02-7.03) |
@@ -1734,7 +1765,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
 | cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault itself did not recur - and the retry policy that mitigates it is now exercised on demand (`-Dmetallum.probeInjectFirstFailure=true` reads `retried=true success=true` in 3 of 3 processes, below) |
-| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone) and the first rung's per-frame content drift is now attributed to two named kinds - the six passes a 20 Hz tick adds and the two particle passes - with the tick half reported by the probe's `windowTicks` and the particle half removed by `--vanilla-particles` (measured: that window holds only two kinds and its arms' counters are identical to the digit); what the gate then says is that this path is slower on two of the three rungs |
+| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone) and the first rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier), where this path is **1.50x slower in the mean and 1.82x at P95** with the mean repeating to 0.16% and its P50 moving 20% between the same three arms; the other two rungs read 19-21% faster at the median (Complementary) and 23-50% slower (Photon), so the gate's answer is "slower on two of the three" |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
 
