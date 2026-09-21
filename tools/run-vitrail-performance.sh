@@ -50,6 +50,7 @@ weather=clear
 keep_entities=false
 vanilla_particles=false
 vanilla_mobs=false
+vanilla_blocks=false
 fullscreen=false
 expect_target=""
 fullscreen_size=""
@@ -127,6 +128,9 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
   --vanilla-particles    stage tools/fixtures/vanilla-showcase - a tick function that emits the game's own
                          particle types around the camera - into the world. The particles are vanilla's, the
                          counts are the same in every arm, and nothing has to be typed into the game.
+  --vanilla-blocks       stage tools/fixtures/vanilla-blocks - a tick function that places a chest, a bell, a
+                         banner, a shulker box and an enchanting table in a row in front of the camera. What a
+                         block's own renderer draws is neither terrain nor an entity, so no earlier scene had one.
   --vanilla-mobs         stage tools/fixtures/vanilla-mobs - a tick function that summons a pig, a cow, an
                          armour stand, a dropped item and an experience orb in front of the camera, each with
                          NoAI - into the world. The staged world holds no entities of its own, so this is how
@@ -182,6 +186,7 @@ while [[ $# -gt 0 ]]; do
 		--keep-entities) keep_entities=true; shift ;;
 		--vanilla-particles) vanilla_particles=true; shift ;;
 		--vanilla-mobs) vanilla_mobs=true; shift ;;
+		--vanilla-blocks) vanilla_blocks=true; shift ;;
 		--continue-world) fresh_world=false; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -575,6 +580,12 @@ for run in "${runs[@]}"; do
 		cp -R "$repo_root/tools/fixtures/vanilla-mobs" "$saves_dir/$world_name/datapacks/mobshow"
 		echo "Staged the vanilla mob fixture into $world_name" >&2
 	fi
+	if [[ "$vanilla_blocks" == true ]]; then
+		rm -rf "$saves_dir/$world_name/datapacks/blockshow"
+		mkdir -p "$saves_dir/$world_name/datapacks"
+		cp -R "$repo_root/tools/fixtures/vanilla-blocks" "$saves_dir/$world_name/datapacks/blockshow"
+		echo "Staged the vanilla block-entity fixture into $world_name" >&2
+	fi
 	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator \
 		$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life") \
 		${aim_args[@]+"${aim_args[@]}"}
@@ -671,10 +682,11 @@ for run in "${runs[@]}"; do
 	# A fixture that stages and does not load is the false green this harness exists to refuse: the first
 	# version of the particle function wrote the older positional options and this version refused the whole
 	# function, so the scene carried no particles while every log line said the fixture had been copied in.
-	for fixture in showcase mobshow; do
+	for fixture in showcase mobshow blockshow; do
 		case "$fixture" in
 			showcase) staged="$vanilla_particles" ;;
 			mobshow) staged="$vanilla_mobs" ;;
+			blockshow) staged="$vanilla_blocks" ;;
 		esac
 		[[ "$staged" == true ]] || continue
 		if ! grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"; then
@@ -685,8 +697,15 @@ for run in "${runs[@]}"; do
 			echo "Run '$name' staged the $fixture fixture and the game refused a function in it, so this arm's scene does not have it" >&2
 			run_failed=1
 		fi
-		if [[ "$fixture" == mobshow ]]; then
-			for entity in pig cow armor_stand item experience_orb; do
+		# The names a fixture says it placed, because the harness has to know what to count to tell an arm
+		# whose scene has them from one whose does not.
+		names=""
+		case "$fixture" in
+			mobshow) names="pig cow armor_stand item experience_orb" ;;
+			blockshow) names="chest bell banner shulker_box enchanting_table" ;;
+		esac
+		if [[ -n "$names" ]]; then
+			for entity in $names; do
 				placed="$(grep -c "showcase: placed the $entity" "$run_dir/latest.log" || true)"
 				if [[ "$placed" == 0 ]]; then
 					echo "Run '$name' staged the entity fixture, loaded it, and the game never said it placed the $entity - so this arm's scene has none in it" >&2
@@ -798,7 +817,7 @@ wait "$gpu_tracer" 2>/dev/null || true
 # The entity fixture's arms have to have placed the same entities. Measured: each type is placed twice in every
 # arm - a number the fixture does not control - so the check is equality between the arms and not a constant,
 # and an arm that placed a different number of the same entity is not the scene the others are.
-if [[ "$vanilla_mobs" == true ]]; then
+if [[ "$vanilla_mobs" == true || "$vanilla_blocks" == true ]]; then
 	if ! python3 - "$out_dir/entity-counts.txt" <<'COUNTS'
 import sys
 

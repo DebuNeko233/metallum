@@ -263,8 +263,12 @@ for needle, why in (
     ("--vanilla-particles) vanilla_particles=true", "the harness cannot stage the vanilla particle fixture"),
     ("--vanilla-mobs) vanilla_mobs=true", "the harness cannot stage the entity fixture, and the staged world "
      "holds no entities of its own, so nothing a mob draws can be in a frame"),
-    ("for fixture in showcase mobshow; do", "only one fixture is checked against the game having loaded it, so "
-     "the other can stage and emit nothing and read as a scene that has it"),
+    ("--vanilla-blocks) vanilla_blocks=true", "the harness cannot stage the block-entity fixture, and what a "
+     "block's own renderer draws is neither terrain nor an entity, so no scene before it contained one"),
+    ("for fixture in showcase mobshow blockshow; do", "a fixture is checked against the game having loaded it "
+     "for only some of them, so another can stage and emit nothing and read as a scene that has it"),
+    ('blockshow) names="chest bell banner shulker_box enchanting_table"', "the block-entity fixture's names are "
+     "not counted, so an arm whose scene has none of them reads as the scene the other arms have"),
     ('grep -c "showcase: placed the $entity" "$run_dir/latest.log"',
      "an arm that staged the entity fixture is not counted for what it placed, so a scene with no entities - or "
      "with a number of them that grows with the window - reads as the scene the other arms have. Measured, one "
@@ -283,6 +287,9 @@ for needle, why in (
      "the particle fixture is not copied from the repository, so the scene would live in an unversioned save"),
     ('cp -R "$repo_root/tools/fixtures/vanilla-mobs" "$saves_dir/$world_name/datapacks/mobshow"',
      "the entity fixture is not copied from the repository, so the scene it describes would live in an "
+     "unversioned save"),
+    ('cp -R "$repo_root/tools/fixtures/vanilla-blocks" "$saves_dir/$world_name/datapacks/blockshow"',
+     "the block-entity fixture is not copied from the repository, so the scene it describes would live in an "
      "unversioned save"),
     ('grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"',
      "an arm that staged a fixture is not checked against the game having found it, so a scene without it reads "
@@ -353,6 +360,42 @@ if " 0 0 0 0 1" not in tick:
 if "^0 ^3" not in tick:
     raise SystemExit("vitrail performance harness: the fixture's particles are not placed in front of the "
                      "camera, so the grid lands wherever the world's spawn is and not in the frame")
+blocks = ROOT / "tools" / "fixtures" / "vanilla-blocks"
+block_tick = blocks / "data" / "blockshow" / "function" / "tick.mcfunction"
+for path, why in (
+    (blocks / "pack.mcmeta", "the block-entity fixture has no pack metadata, so the game will not load it"),
+    (blocks / "data" / "minecraft" / "tags" / "function" / "tick.json",
+     "the block-entity fixture has no tick tag, so its function never runs"),
+    (block_tick, "the block-entity fixture has no tick function, so the switch stages an empty datapack"),
+):
+    if not path.is_file():
+        raise SystemExit("vitrail performance harness: " + why)
+block_tick = block_tick.read_text()
+# The names here are the harness's own counted names, and that is the point: a name the harness counts and a
+# name the fixture does not say is a check that can never fire.
+for kind in ("chest", "bell", "banner", "shulker_box", "enchanting_table"):
+    if f"run say showcase: placed the {kind}" not in block_tick:
+        raise SystemExit(f"vitrail performance harness: the block-entity fixture does not say it placed the "
+                         f"{kind}, so an arm whose placement never ran cannot be told from one whose did")
+    block = "minecraft:" + ("white_banner" if kind == "banner" else kind)
+    # What the command *places*, which is the text after `run setblock` - the block named before it is the
+    # guard's condition, so a check that looked at the whole line would pass on a command that places air.
+    placed_tails = [line.split("run setblock", 1)[1] for line in block_tick.splitlines() if "run setblock" in line]
+    if not any(block in tail for tail in placed_tails):
+        raise SystemExit(f"vitrail performance harness: the block-entity fixture says it placed the {kind} and "
+                         f"places none - the guard would read the block as missing for the whole session")
+if "say showcase: the block fixture ran" not in block_tick:
+    raise SystemExit("vitrail performance harness: the block-entity fixture has no liveness line, so a session in "
+                     "which its function never ran cannot be told from one in which every placement was skipped - "
+                     "which is the reading that cost this fixture its first run: the function ran 1138 times and "
+                     "not one placement fired, because a block predicate does not resolve `^`")
+if "execute at @e[type=minecraft:marker" not in block_tick:
+    raise SystemExit("vitrail performance harness: the block-entity fixture does not place its blocks at a "
+                     "marker, which is the form its own diagnostic left standing: a block predicate reads a "
+                     "position only once a command has made it real, so the guard has to be an entity")
+if block_tick.count("unless entity @e[type=minecraft:marker") < 5:
+    raise SystemExit("vitrail performance harness: the block-entity fixture's placements are not guarded on a "
+                     "marker already being there, so it summons one every tick")
 if "execute at @a" not in tick:
     raise SystemExit("vitrail performance harness: the particles are not emitted at the camera, so they would "
                      "land wherever the world's spawn is and not in the frame")
