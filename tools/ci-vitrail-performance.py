@@ -168,24 +168,24 @@ if "-print -quit" in launcher:
 # and a client that is no longer drawing does not act on it. So the harness refuses to start beside one,
 # and its stop escalates to SIGKILL and says so if even that does not take.
 # ---------------------------------------------------------------------------
-if 'pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1' not in launcher:
+if 'if [[ -n "$(client_pids)" ]]; then' not in launcher:
     raise SystemExit(
         "the harness does not check for a client left over from an earlier session, so a run can be measured "
         "beside another one drawing into the same GPU and display"
     )
 before(
-    'pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1',
+    'if [[ -n "$(client_pids)" ]]; then',
     "./gradlew runClient",
     "the leftover-client check runs after the client is launched, which is not a check",
 )
-if 'pkill -9 -f "quickPlaySingleplayer $world_name"' not in launcher:
+if 'kill -9 "$pid"' not in launcher:
     raise SystemExit(
         "the stop does not escalate to SIGKILL, and a client whose render thread has stopped does not act on "
         "SIGTERM - measured, and it was still resident while later sessions measured"
     )
 before(
-    'pkill -f "quickPlaySingleplayer $world_name"',
-    'pkill -9 -f "quickPlaySingleplayer $world_name"',
+    'for pid in $(client_pids "$world_name"); do kill "$pid"',
+    'for pid in $(client_pids "$world_name"); do kill -9 "$pid"',
     "SIGKILL is sent before the client has had its chance to exit on SIGTERM",
 )
 if "stale_client=1" not in launcher or "exit 7" not in launcher:
@@ -828,7 +828,7 @@ for needle, why in (
     ("caffeinate -d -i -m -s -u -w $$ &",
      "the harness no longer declares the user active for the session, so an idle screen can lock mid-session and "
      "an occluded client is throttled to a cadence nobody can tell from a slow engine"),
-    ("trap cleanup_caffeinate EXIT",
+    ("trap cleanup EXIT",
      "the activity declaration outlives the harness, so a session that ends leaves the machine unable to sleep"),
     ('"${front_app:-unknown}" > "$run_dir/front-app.txt"',
      "the arm no longer records what was in front of the display, so a capture of another application cannot be "
@@ -842,6 +842,48 @@ for needle, why in (
      "with a late pause is refused or none is"),
     ("a paused client is not the scene",
      "the refusal does not say what the pause means for the numbers it counted"),
+):
+    if needle not in harness:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
+# --- and it must not leave the owner's display or instance somewhere else ---------------------------------
+# The game's fullscreen window asks the window server for a video mode and the window server changes the
+# display's mode to match. Measured on this machine: with the desktop on `1800x1169@120` (3600x2338 pixels) a
+# fullscreen launch left the display on `1920x1200@120` for as long as the client lived, at every requested
+# window size (`--fullscreen-size 1600x900` through `1920x1200`), while a windowed launch left it alone; and a
+# client killed before it exited cleanly left it moved. The harness therefore saves the mode before the session,
+# checks it after every arm, puts it back when it moved, says so, and puts the instance's own `options.txt` back
+# too - because a session that leaves the instance asking for a fullscreen window makes the owner's *next manual
+# launch* move their display, which is the same fault one step earlier in the chain. `tools/display/display-mode.swift`
+# is the reader and the setter, compiled by the harness on first use; the arm's own check is what makes this a
+# guarantee rather than a note at the end.
+for needle, why in (
+    ('display_mode_bin="$repo_root/run/display-mode"',
+     "the harness no longer builds the display-mode reader, so it cannot say or restore the mode it measured on"),
+    ('"$display_mode_bin" save "$out_dir/display-mode-before.txt"',
+     "the session no longer records the display mode it started on, so a mode the client moved cannot be put "
+     "back or noticed"),
+    ('"$display_mode_bin" check "$display_mode_saved"',
+     "the display is no longer checked between arms, so an arm measured on a mode the client switched to is "
+     "indistinguishable from one measured on the session's own mode"),
+    ('echo "Run \'$name\' left the display on ${moved}; it is back on $("$display_mode_bin" read)" >&2',
+     "a moved display is put back silently, so the session cannot be read afterwards for whether it moved"),
+    ('display-mode-moves.txt',
+     "the session does not leave a record of the modes its arms moved the display to"),
+    ("restore_instance_options",
+     "the instance's own options are not put back, so a session leaves the instance in the measurement profile "
+     "and the owner's next manual launch is a fullscreen one"),
+    ('cp -f "$game_dir/options.txt" "$out_dir/options-before.txt"',
+     "the instance's options are not kept before they are overwritten, so there is nothing to put back"),
+    ("note: --fullscreen asks the game for its own fullscreen mode",
+     "asking for the game's fullscreen is no longer said to move the display's mode, so a session that must "
+     "not touch the screen has nothing to read"),
+    ("client_pids() {",
+     "client detection is back to a bare pattern, which matches the shell that launched the harness - measured, "
+     "it refused a legitimate session"),
+    ('case "$(ps -o comm= -p "$pid" 2>/dev/null || true)" in',
+     "the client check no longer asks what the process is, so any command line naming the world counts as a "
+     "drawing client"),
 ):
     if needle not in harness:
         raise SystemExit("Vitrail performance harness contract: " + why)

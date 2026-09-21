@@ -256,6 +256,41 @@ own repetition over 600 frames is **1.4 per cent in frame time** and a quarter o
 counters. A difference below that is not a result, and a difference above it whose sign flips when the
 run order flips is not one either.
 
+### The launch must not move the owner's display, and a fullscreen launch does
+
+The display's mode is machine state a measurement is taken on, and it is also the owner's screen. Measured on
+this machine, whose desktop mode is `1800x1169@120` (3600x2338 pixels): **a fullscreen launch moves the display to
+`1920x1200@120`** and leaves it there for as long as the client lives, at every window size asked for -
+`--fullscreen-size 1600x900` through `1920x1200` all landed on the same mode, and the capture of the arm
+(`screen.png`, which is a photograph of the whole display) is the record of it. A windowed launch does not move
+it, at any size. The chain is the game's: `Window` asks `glfwSetWindowMonitor` for the monitor's own preferred
+video mode, and the window server changes the mode to match.
+
+Two consequences follow, and both are now handled rather than tolerated:
+
+- **It cannot be put back while the client holds the display.** A watcher that restored the session's mode a
+  second after the client switched it was refused by the window server - `no mode with id 66 is available now`
+  - because the session's *scaled* mode is not in the mode list while an app holds the display exclusively.
+  So the only prevention is not to ask for the game's fullscreen mode.
+- **A session must not leave the mode or the instance moved.** `run-vitrail-performance.sh` reads the display's
+  mode before the session (`tools/display/display-mode.swift`, compiled on first use into `run/display-mode`),
+  checks it after every arm, puts it back when an arm left it moved, writes the move into
+  `<out>/display-mode-moves.txt`, and puts the instance's own `options.txt` back when the session ends. A
+  session that leaves the instance in the measurement profile is how a *later manual launch* came up fullscreen
+  and moved the display on startup - the same fault one step earlier in the chain.
+
+**The policy, decided with the owner on 2026-09-21: the game's fullscreen is a measurement-only configuration,
+and the switch it causes during an arm is accepted.** The staged instance is left windowed
+(`fullscreen:false`, `exclusiveFullscreen:false`), so a manual launch of the dev instance never moves the
+display; a measurement session asks for `--fullscreen` and gets the game's own fullscreen window, and the mode
+is recorded per session beside the target, checked after every arm, and put back when an arm left it moved. The
+alternative - a borderless window that looks fullscreen and never changes the mode - was offered and declined
+rather than left unwritten, because it means changing what "fullscreen" means for the client (an undecorated
+window instead of an exclusive mode) and that is a product decision and not a harness one.
+
+Every number in this file that was taken with `--fullscreen` is a number taken on whatever mode that session's
+client asked for.
+
 ## Data analysis
 
 ### The two probe lines
@@ -392,3 +427,17 @@ arms drew the same frame.
 - [ ] The picture delta is read against the same-configuration pair.
 - [ ] Nobody pressed F3 in a measured arm.
 - [ ] The claim names the scene, the window, the frame count, the switches and the counters.
+
+### What was measured for the mode policy, and where the evidence is
+
+```
+run/j1-mode-windowed   windowed, no --fullscreen          capture 3600x2338  display mode unchanged
+run/j1-mode-guard      --fullscreen, clean exit           capture 1920x1200  mode restored by the client's own exit
+run/j1-mode-kill       --fullscreen, client SIGKILLed     capture 1920x1200  mode restored by the window server
+run/j1-mode-windowed2  windowed, after the instance fix   capture 3600x2338  options.txt restored to windowed
+```
+
+`--fullscreen-size 1800x1169` (the display's own mode) did not prevent the switch either - the requested size is
+not what decides it, which is why the fix is the window mode and not the size - and setting the game's own
+`fullscreenResolution` option to the same mode did not prevent it. Both negative results are recorded here
+because both look like the obvious fix.

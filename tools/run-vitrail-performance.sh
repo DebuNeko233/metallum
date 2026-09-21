@@ -232,7 +232,41 @@ fi
 cleanup_caffeinate() {
 	[[ -n "$caffeinate_pid" ]] && kill "$caffeinate_pid" 2>/dev/null || true
 }
-trap cleanup_caffeinate EXIT
+
+# --- the display's own mode, which this harness must never leave moved ------------------------------------
+# The game's fullscreen window asks the window server for a video mode, and the window server changes the
+# display's mode to match. Measured on this machine: with the desktop in `1800x1169@120` (3600x2338 pixels) a
+# fullscreen launch left the display in `1920x1200@120` for as long as the client lived, at every requested
+# window size - `--fullscreen-size 1600x900` through `1920x1200` - and a windowed launch left it alone. So a
+# fullscreen session moves the owner's screen for the whole of every arm, and a client that is killed or crashes
+# before it exits cleanly leaves it moved. That is the owner's screen and it is also machine state a measurement
+# was taken on, so the mode is read before the session, checked after every arm, and put back when it moved - and
+# the reading is kept, because "the two arms were measured on the same display mode" is a claim about the
+# session and nothing else records it.
+display_mode_bin=""
+display_mode_saved=""
+if command -v swiftc >/dev/null 2>&1; then
+	display_mode_bin="$repo_root/run/display-mode"
+	if [[ ! -x "$display_mode_bin" || "$repo_root/tools/display/display-mode.swift" -nt "$display_mode_bin" ]]; then
+		swiftc -O -o "$display_mode_bin" "$repo_root/tools/display/display-mode.swift" 2>/dev/null || display_mode_bin=""
+	fi
+fi
+restore_display_mode() {
+	[[ -n "$display_mode_bin" && -n "$display_mode_saved" ]] || return 0
+	if "$display_mode_bin" check "$display_mode_saved" >/dev/null 2>&1; then
+		return 0
+	fi
+	local moved
+	moved="$("$display_mode_bin" read)"
+	"$display_mode_bin" restore "$display_mode_saved" >/dev/null 2>&1 || true
+	echo "The display was on ${moved} and is back on $("$display_mode_bin" read)" >&2
+}
+cleanup() {
+	cleanup_caffeinate
+	restore_display_mode
+	restore_instance_options
+}
+trap cleanup EXIT
 # A pack is a zip, and a fixture pack in this repository is a *directory* of shaders - so a directory is
 # staged into one here rather than refused. Measured: the MetalFX quadrant fixture is four lines of GLSL and is
 # worth keeping in the tree where a reader can check it against the picture it produced, and a harness that
@@ -314,15 +348,38 @@ echo "Preparing the dev instance at $game_dir"
 # forty-seven minutes later, through two later sessions' windows, because `stop_run` sends SIGTERM and a client
 # that is no longer drawing does not act on it. Refused rather than measured around: the numbers of a run made
 # beside another client are not that run's numbers.
-if pgrep -f "quickPlaySingleplayer" >/dev/null 2>&1; then
+# The clients this harness is talking about are java processes, and the pattern alone is not enough to say so:
+# measured, a pre-flight check refused a legitimate session because the *shell* that launched the harness had
+# `quickPlaySingleplayer` in its own command line, and `pgrep -f` matches any command line. So the process name
+# is checked as well, and `pkill` below uses the same list rather than a pattern that could name a shell.
+client_pids() {
+	local world="$1" pid
+	for pid in $(pgrep -f "quickPlaySingleplayer${world:+ $world}" 2>/dev/null || true); do
+		case "$(ps -o comm= -p "$pid" 2>/dev/null || true)" in
+			*java*) echo "$pid" ;;
+		esac
+	done
+}
+
+if [[ -n "$(client_pids)" ]]; then
 	echo "Another Minecraft client is already running, and it would draw into the GPU and display this run measures:" >&2
-	pgrep -fl "quickPlaySingleplayer" >&2 || true
+	for pid in $(client_pids); do ps -o pid=,command= -p "$pid" >&2 || true; done
 	echo "Stop it first, then run this again: pkill -9 -f quickPlaySingleplayer" >&2
 	exit 6
 fi
 
 mkdir -p "$pack_dir" "$saves_dir" "$game_dir/vitrail" "$game_dir/config" "$marker_dir" \
 	"$game_dir/logs" "$out_dir"
+
+# The mode the session is about to be measured on, saved before anything is launched: `restore_display_mode`
+# above reads this file and the arms check it after every launch, so a client that moved the display is put
+# back within a second of the arm ending rather than when the session ends.
+if [[ -n "$display_mode_bin" ]]; then
+	if "$display_mode_bin" save "$out_dir/display-mode-before.txt" >/dev/null 2>&1; then
+		display_mode_saved="$out_dir/display-mode-before.txt"
+		echo "Display mode for this session: $("$display_mode_bin" read)" >&2
+	fi
+fi
 
 # The picture evidence this harness produces is a screenshot of the display, and a locked, asleep or absent
 # display captures as a single flat colour. Measured rather than imagined: every capture of two sessions was
@@ -395,6 +452,18 @@ pack_fingerprint="$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)"
 # read 120.2 frames a second with it and 137.4 without - and `enableVsync` is off for the same reason.
 # Fullscreen is off because every baseline is a window, and the vanilla clouds are off because the pack
 # draws its own.
+# The instance's own settings are the owner's, and this harness overwrites several of them on every run (the
+# window mode and size, the frame cap, the cloud mode, the graphics API). Kept here and put back when the
+# session ends, so a session cannot leave the instance asking for a fullscreen window - measured, that is how a
+# later manual launch of this instance came up fullscreen and moved the display's mode on startup, which is the
+# same fault the mode guard above exists for, one step earlier in the chain.
+if [[ -f "$game_dir/options.txt" ]]; then
+	cp -f "$game_dir/options.txt" "$out_dir/options-before.txt"
+fi
+restore_instance_options() {
+	[[ -f "$out_dir/options-before.txt" ]] || return 0
+	cp -f "$out_dir/options-before.txt" "$game_dir/options.txt" 2>/dev/null || true
+}
 python3 - "$game_dir/options.txt" <<'OPTIONS'
 import os
 import sys
@@ -452,6 +521,17 @@ for name, value in profile.items():
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 OPTIONS
 echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds $vanilla_clouds, weather $weather, Metal HUD off" >&2
+
+# Said out loud, because it is the one setting in this profile that moves the owner's screen: the game's
+# fullscreen window makes the window server change the display's mode, and while it holds the display the
+# session's own scaled mode is not in the mode list at all - measured, a watcher trying to put `1800x1169@120`
+# back mid-arm was refused with "no mode with id 66 is available now". So the mode is recorded before the
+# session, checked after every arm, put back when it moved, and the alternative - a window the size of the
+# display's own mode, which is what this harness does when `--fullscreen` is absent - is named here for the
+# session that must not touch the screen.
+if [[ "$fullscreen" == true ]]; then
+	echo "note: --fullscreen asks the game for its own fullscreen mode, which switches the display's mode for as long as each arm's client lives (measured on this machine: 1800x1169@120 -> 1920x1200@120, at every requested window size). The mode is checked after every arm and put back if the client left it moved; a session that must not touch the display should run windowed at the display's own size instead" >&2
+fi
 
 # The Metal path is the one being measured, and a run that came up on another backend would measure
 # nothing at all.
@@ -533,15 +613,15 @@ stop_run() {
 	# forty-seven minutes later, holding the GPU and a window while later sessions measured, which is the
 	# scene fact the pre-flight check above now refuses. SIGKILL is what takes them, so it is sent here
 	# rather than left to the operator, and a client even that does not take is said out loud.
-	pkill -f "quickPlaySingleplayer $world_name" 2>/dev/null || true
+	for pid in $(client_pids "$world_name"); do kill "$pid" 2>/dev/null || true; done
 	for _ in $(seq 1 20); do
-		pgrep -f "quickPlaySingleplayer $world_name" >/dev/null 2>&1 || return 0
+		[[ -z "$(client_pids "$world_name")" ]] && return 0
 		sleep 0.5
 	done
 	echo "A client from the last run did not act on SIGTERM; killing it" >&2
-	pkill -9 -f "quickPlaySingleplayer $world_name" 2>/dev/null || true
+	for pid in $(client_pids "$world_name"); do kill -9 "$pid" 2>/dev/null || true; done
 	sleep 1
-	if pgrep -f "quickPlaySingleplayer $world_name" >/dev/null 2>&1; then
+	if [[ -n "$(client_pids "$world_name")" ]]; then
 		echo "A client from the last run is still resident after SIGKILL, so the next run's numbers would be read with it drawing" >&2
 		stale_client=1
 	fi
@@ -895,6 +975,18 @@ for run in "${runs[@]}"; do
 	fi
 
 	stop_run
+	# And the display is put back before the next arm starts, not only when the session ends: an arm whose
+	# client switched the mode would otherwise have the next arm launched on a display mode this session never
+	# chose, and the two arms would be measured on two modes - which is the machine state that moved four times
+	# in one evening and that `--expect-target` exists to catch after the fact.
+	if [[ -n "$display_mode_saved" ]]; then
+		if ! "$display_mode_bin" check "$display_mode_saved" >/dev/null 2>&1; then
+			moved="$("$display_mode_bin" read)"
+			"$display_mode_bin" restore "$display_mode_saved" >/dev/null 2>&1 || true
+			echo "Run '$name' left the display on ${moved}; it is back on $("$display_mode_bin" read)" >&2
+			echo "display-mode after run '$name': ${moved}" >> "$out_dir/display-mode-moves.txt"
+		fi
+	fi
 	# Gradle's own run task waits on the client, so a stopped client ends it; the wait is bounded so
 	# that a client which refused to stop cannot hold the harness for the rest of the day.
 	for _ in $(seq 1 30); do
