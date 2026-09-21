@@ -1162,6 +1162,61 @@ road, where the old build failed the launch and left the session on OpenGL. `too
 halves of the split - the clause absent from `usable`, and still read where it is logged - and two mutations of
 them are caught.
 
+## Phase C1/C2 - the ring depth moves the wait, and nothing else
+
+**Question.** The audit's first performance question is not "how much slower is a shader" but "why does a frame
+whose work is under one refresh quantum so often cross two handovers". The instrument is the frame trace that
+already exists (`-Dmetallum.metal4FrameTrace=true`, one `M4_FRAME` line a frame with `wallUs`, `slotWaitUs`,
+`drawableWaitUs`, `encodeUs` and the structural counts) and the switch that already exists for the ring depth
+(`-Dmetallum.metal4RingSlots=N`).
+
+**Measured** - no-pack, forced Metal 4, fullscreen at 1920x1200, 300-frame windows, the depth the only variable,
+each depth run twice in one session (`run/m4-pacing-ring`, `run/m4-pacing-ring2`):
+
+```
+slots  n     wall mean  median   <12.5 ms  12.5-21 ms  drawableWait  slotWait  encodeUs  commitMs
+1      1839   9.931     8.371     90.8 %     8.4 %        0.08 ms      6.63 ms   8.12      1.775
+1      1831   9.919     8.378     90.5 %     8.8 %        0.10         6.55      8.07      1.698
+2      1856   9.895     8.366     90.7 %     8.6 %        5.59         0.00      7.73      3.159
+2      1842   9.901     8.370     91.0 %     8.3 %        5.62         0.00      7.76      3.094
+3      2024   9.977     8.374     91.1 %     8.4 %        5.64         0.00      7.94      3.162
+3      1848   9.900     8.364     90.6 %     8.8 %        5.60         0.00      7.75      3.156
+```
+
+**The wall does not move with the depth, and the two-handover population does not either**: the mean spans
+9.895-9.977 ms and the median 8.364-8.378 ms across all six arms, with the same ~8.5 per cent of frames between
+12.5 and 21 ms at every depth. What the depth changes is **where the wait lands**: at one slot the frame waits
+6.6 ms for its own previous submission (`slotWait`) and not at all for the display (`drawableWait` 0.08 ms); from
+two slots up it waits 5.6 ms for the **display to hand over a drawable** and never for the slot. The total waiting
+is the same either way. `commitMs` doubles (1.7-1.8 to 3.1-3.2 ms) because the commit-feedback window contains
+more of the ring's ordering - which is exactly why section 3.5 forbids reading that number as GPU work, and why
+the frame probe's `gpuM4Ms` per frame (1.18 ms at one slot, 3.37 at three) is quoted nowhere as a work figure.
+
+**Decision: the production depth stays 3 - MEASURED-BUT-INTENTIONALLY-NOT-CHANGED.** One slot buys no wall time
+in a work-light scene, and what it would trade is unmeasured: a depth that converts a display wait into a
+GPU-completion wait is a latency change, and the same experiment on work-bound scenes (MakeUp, Complementary,
+Photon) is what would price it. The hypothesis this phase was built to test - that the ring depth explains the
+pacing penalty - is **rejected** for this scene.
+
+**And the premise itself needs re-measuring per session.** The audit's ladder records Metal 4 at roughly 1.50x
+Metal 3 on no-pack, MakeUp and Photon. On this machine state, in one session, same scene, same target, no-pack,
+300-frame windows (`run/m3m4-premise`):
+
+```
+arm  windowMs   mean      wallP50  P95     P99     max     ticks
+m3   2491.66    8.305 ms  8.33     8.51    8.66    8.84    49
+m4   2516.29    8.388 ms  8.33     8.72    15.14   16.43   50
+```
+
+**One per cent apart on the mean and equal at the median.** What separates them is the tail: Metal 4 crosses two
+handovers on about one frame in a hundred (P99 15.14, max 16.43) where Metal 3 stays inside one (P99 8.66, max
+8.84), and 300 frames take 50 ticks against 49. That is a real difference and it is not a 1.50x one, so the
+ladder's factor is either a different machine state (the display mode and therefore the handover quantum are
+machine state - this project has already measured four modes in one evening) or a pack-scene effect that the
+no-pack baseline does not carry. Both readings are recorded rather than one being overwritten: the ladder stands
+as what it measured, and the number a later phase must reproduce is this session's, on its own display mode,
+with the mode in the record.
+
 ## A mid-pass copy ends the pass, and the pass cannot continue
 
 **Found by the audit's own instruction** - reach the render scale's fallback road on Metal 4 and see it work -
