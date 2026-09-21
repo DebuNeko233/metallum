@@ -55,6 +55,7 @@ vanilla_blocks=false
 vanilla_sign=false
 fullscreen=false
 expect_target=""
+expect_execution=""
 fullscreen_size=""
 
 usage() {
@@ -107,6 +108,16 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          one session were measured on a target 2.2x the baseline's. Two arms that agree
                          with each other are still not comparable with the baseline, which the compare
                          script cannot see because it only compares the arms with each other.
+  --expect-execution metal3|metal4
+                         refuse a run whose frame was not executed by this generation, read from the
+                         probe's own executingGeneration field. The choice of generation is machine
+                         state that no argument here sets: Vitrail stores it in vitrail/metal-execution.txt
+                         and the game's screen writes it, so an instance left on Metal 4 measures Metal 4
+                         for every arm that does not pass -Dmetallum.execution=metal3 itself - measured,
+                         a whole session of the shadow decomposition was collected on Metal 4 while the
+                         baseline it was to be read against was Metal 3, with every structural counter so
+                         close that nothing in the comparison could see it. The arm's own preference line
+                         ("Vitrail Metal preference: ...") is quoted when the guard refuses.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --settle S             how long to keep drawing between the frame that says the chain is up and the
@@ -181,6 +192,7 @@ while [[ $# -gt 0 ]]; do
 		--shadowmapscale) shadowmap_scale="$2"; shift 2 ;;
 		--fullscreen) fullscreen=true; shift ;;
 		--expect-target) expect_target="$2"; shift 2 ;;
+		--expect-execution) expect_execution="$2"; shift 2 ;;
 		--fullscreen-size) fullscreen_size="$2"; shift 2 ;;
 		--no-pack) no_pack=true; shift ;;
 		--fixture) fixture_pack=true; shift ;;
@@ -979,6 +991,29 @@ for run in "${runs[@]}"; do
 		fi
 	fi
 
+	# And the generation that executed the frame, where the caller asked for one. Which generation a
+	# launch runs is machine state no argument of this harness sets: Vitrail stores it in
+	# `vitrail/metal-execution.txt` and the game's own screen writes it, so an instance left on
+	# Metal 4 draws Metal 4 for every arm that does not ask for Metal 3 itself. Measured, and the
+	# reason this guard exists: a whole session of the shadow decomposition (run/c2-<pack>) was
+	# collected on Metal 4 while the corpus it was to be read against is Metal 3 - the pass counts,
+	# attachment traffic and blit counts were all within a per cent of the baseline's, so nothing in
+	# the comparison could see it, and only the probe's own `executingGeneration` said so.
+	#
+	# The cause is quoted where it can be, because it is a line Vitrail already prints and it names
+	# both the generation and who asked for it.
+	if [[ -n "$expect_execution" ]]; then
+		executed="$(grep -o 'executingGeneration=metal[0-9]*' "$run_dir/probe.txt" | tail -1 | cut -d= -f2 || true)"
+		if [[ -z "$executed" ]]; then
+			echo "Run '$name' never said which generation executed its frame, so it cannot be checked against $expect_execution" >&2
+			scene_bad=1
+		elif [[ "$executed" != "$expect_execution" ]]; then
+			preference="$(grep -o 'Vitrail Metal preference:.*' "$run_dir/latest.log" | head -1 || true)"
+			echo "Run '$name' executed on $executed and not on $expect_execution: the generation is machine state this harness does not write, and a window drawn by another command generation is not comparable with the baseline${preference:+ - the session said \"$preference\"}. Pass -Dmetallum.execution=$expect_execution to the arm, which outranks the stored choice" >&2
+			scene_bad=1
+		fi
+	fi
+
 	# The client's own word for a session that stopped drawing the scene, and it outranks every counter: measured,
 	# the sky session's first arm paused at 20:01:43 and opened its window at 20:01:51, and the window then read
 	# `wallP50=100.00` with `windowTicks=598` over 300 frames - ten frames a second at exactly two client ticks a
@@ -1060,7 +1095,7 @@ if [[ "$met_all" == 1 ]]; then
 fi
 
 if [[ "${scene_bad:-0}" == 1 ]]; then
-	echo "At least one run's window did not draw the pack it asked for; the comparison above holds that window's numbers and they are not a measurement of the pack." >&2
+	echo "At least one run's window did not draw the pack it asked for - the wrong target, the wrong command generation, or a pack selection another writer took over - so the comparison above holds that window's numbers and they are not a measurement of the pack." >&2
 	exit 4
 fi
 

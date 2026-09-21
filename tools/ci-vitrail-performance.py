@@ -755,6 +755,28 @@ for needle, why in (
     ("sysctl -n vm.loadavg", "the load average is not read from the kernel, so it is read from a shell "
                              "command's wording and not from a number"),
     ("load.txt", "nothing in the harness names the file the machine state is written to"),
+    # And the command generation that executed the frame, which is machine state this harness does not write.
+    # Measured, and the reason the guard exists: a whole session of the shadow decomposition (run/c2-<pack>)
+    # was collected on Metal 4 while the corpus it was to be read against is Metal 3 - the instance's own
+    # `vitrail/metal-execution.txt` said metal4, no arm passed `-Dmetallum.execution=metal3`, and every
+    # structural counter came out within a per cent of the baseline's, so nothing in the comparison could see
+    # it. Only the probe's own `executingGeneration` field said so, and nothing read it.
+    ("--expect-execution) expect_execution=\"$2\"; shift 2 ;;",
+     "the harness has no way to be told which command generation a session must be measured on"),
+    ('if [[ -n "$expect_execution" ]]; then',
+     "the generation guard does not run when a generation was asked for, so an arm that executed another one "
+     "passes as a measurement of this one"),
+    ("grep -o 'executingGeneration=metal[0-9]*' \"$run_dir/probe.txt\"",
+     "the generation is read from something other than the probe's own executingGeneration field"),
+    ('elif [[ "$executed" != "$expect_execution" ]]; then',
+     "the generation the arm executed is read and not compared with the one asked for"),
+    ("Vitrail Metal preference:.*",
+     "the guard does not quote the session's own preference line, which is the only place that says who asked "
+     "for the generation that ran, and would name the cause of a refused arm"),
+    # It has to run for every arm and not only for a pack's: the no-pack baseline is the one every pack is
+    # read against, and a guard that skipped it would leave the arm the corpus is anchored on unchecked.
+    ("\n\tif [[ -n \"$expect_execution\" ]]; then",
+     "the generation guard sits inside the pack-shape block, which a --no-pack session never enters"),
 ):
     if needle not in harness:
         raise SystemExit(why)
