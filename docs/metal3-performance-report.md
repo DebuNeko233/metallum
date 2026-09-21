@@ -762,3 +762,47 @@ than content. Sodium's own upload counter prints on both: `call 3, 3 frames seen
 results, 29 results in total` on the mapped arm against `call 3 ... 4 results in total` on the staged one. The
 counter alone is exactly the instrument that failed to notice the Metal 4 loss, so it is quoted as corroboration
 and the captures are the evidence.
+
+## Post-M4 regression audit: the Metal 4 probe on a Metal 3 startup
+
+**A launch that can only ever run Metal 3 was paying for the Metal 4 functional probe.** `MetalDevice`'s
+constructor asked `Metal4.available(...)` - a queue, an allocator, a command buffer begun and submitted, an
+argument table, a render pass and a draw, with a pixel read back, and one retry where the first answer is no -
+and then `MetalDeviceCapabilities.probe` asked `Metal4.canMakeAndSubmit()` and `Metal4.canBindAndDraw()` again
+through the record, all of it **before** the preference was read at the selector's line. Since Metal 4 is opt-in
+and the ordinary startup is `FORCE_METAL3`, that was every launch's cost for an answer that launch could never
+consult.
+
+**The preference is read first now and it decides the scope.** `MetalExecutionPreference.probesMetal4()` is
+false for `FORCE_METAL3` and true for everything that could reach Metal 4 - including `AUTO`, whose whole
+purpose is to answer the question the probe asks. A scoped session creates no Metal 4 object at all, and what it
+says is `metal4=not-probed`, a word of its own: **not asked is not the same answer as no**, so
+`metal4MinimumContract()` answers false there and `metalFxParityForMetal4()` reports the parity as held rather
+than as absent, which keeps a caller that ignores the scope flag on the safe side of it.
+
+**Measured on one session, four arms, no-pack** (`run/probe-scope`; the harness's own staged world, 60-frame
+windows, the only variable the property):
+
+```
+arm   metallum.execution   device created   Metal 4 probe   capability line
+m3a   metal3                  33.4 ms       skipped         metal3Family=true metal4=not-probed metalFx=true msl=msl3.2
+auto  auto                   178.0 ms       ran             metal3Family=true metal4Family=true queue=true allocator=true ...
+m3b   metal3                  26.2 ms       skipped         metal3Family=true metal4=not-probed metalFx=true msl=msl3.2
+m4    metal4                 175.8 ms       ran             metal3Family=true metal4Family=true queue=true allocator=true ...
+```
+
+**The probe is worth about 145 ms of a launch**, and a forced Metal 3 session no longer pays it: 26.2 and 33.4
+ms against 178.0 and 175.8 ms, and zero `Metal 4 core API:` or sampler-ceiling lines in the two scoped arms
+against two each in the probed ones. What the log says instead is the reason and the scope, once:
+
+```
+Metal execution: Metal 4 capability not probed for this session - metallum.execution=metal3 cannot execute
+    Metal 4, so the functional probe (queue, allocator, command buffer, render pass, draw, readback) is not run
+    and no Metal 4 object is created
+Metal execution: device created in 33.4 ms (Metal 4 probe: skipped)
+```
+
+`tools/ci-contracts.py` pins both halves - the scope behind `if (probeMetal4)`, the sentence, the
+`metal4=not-probed` word, the contract's refusal to be claimed by an unprobed session, and the parity answer -
+and five mutations of them are caught. The timing line is permanent rather than a probe: the claim this task
+makes is about a cost, and a cost that cannot be read in a session's own log is a claim nobody can check.

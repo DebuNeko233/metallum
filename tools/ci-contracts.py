@@ -1591,8 +1591,35 @@ require("the device records capabilities and selects once",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "MetalDeviceCapabilities capabilities =",
     "MetalExecutionSelector.say(capabilities);",
-    "MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);",
+    # The preference is read once, before the probe, because it decides how much of the device is asked: a
+    # launch that can only run Metal 3 must not pay for the Metal 4 functional probe, and a session must not be
+    # probed for one generation and selected as another.
+    "MetalExecutionPreference preference = MetalExecutionPreference.read();",
+    "boolean probeMetal4 = preference.probesMetal4();",
+    "MetalExecutionSelector.select(preference, capabilities);",
 ))
+# And the scope itself, in both halves: nothing Metal 4 is asked where it cannot run, and `not-probed` is a
+# word of its own rather than a false clause.
+for needle, why in (
+    ("Metal4.available(this.metalDevice);", "the Metal 4 functional probe is not run where it is needed"),
+    ("if (probeMetal4) {", "the Metal 4 probe is not behind the scope, so a forced Metal 3 launch pays for it"),
+    ("Metal 4 capability not probed for this session",
+     "a skipped probe is not said out loud, so a reader cannot tell it from a device that answered no"),
+):
+    if needle not in (ROOT / "src/main/java/com/metallum/render/MetalDevice.java").read_text(encoding="utf-8"):
+        raise SystemExit("architecture contract: " + why)
+_capability_source = (ROOT / "src/main/java/com/metallum/render/execution/MetalDeviceCapabilities.java"
+                     ).read_text(encoding="utf-8")
+for needle, why in (
+    ("final boolean probeMetal4) {", "the capability probe has no scope, so every launch asks everything"),
+    ('+ " metal4=not-probed"', "a session that did not probe says nothing distinct about Metal 4"),
+    ("return this.metal4Probed\n                && this.metal4Family",
+     "the minimum contract can be claimed by a session that never asked the Metal 4 questions"),
+    ("return !this.metal4Probed || !this.metalFxSpatial || this.metal4FxSpatial;",
+     "the scaler parity is claimed absent for a session that never asked about the scaler"),
+):
+    if needle not in _capability_source:
+        raise SystemExit("architecture contract: " + why)
 require("a Metal 4 commit carries the options its feedback arrives through",
         "src/main/java/com/metallum/render/Metal4Path.java", (
     'Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG, ADDRESS)',

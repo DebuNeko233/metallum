@@ -77,6 +77,11 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
             final String deviceName,
             final Cocoa cocoa
     ) {
+        // The startup cost this audit's second task is about: how long the device takes to exist, and whether
+        // the Metal 4 functional probe was part of it. Said once, at the end of the constructor, because "the
+        // probe is skipped for a forced Metal 3 launch" is a claim about a cost and a reader should be able to
+        // measure it rather than take it.
+        long deviceStartedAt = System.nanoTime();
         this.defaultShaderSource = defaultShaderSource;
         this.debugOptions = debugOptions;
         this.metalDeviceHandle = metalDeviceHandle;
@@ -84,21 +89,37 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         this.metalLayer = metalLayer;
         this.cocoa = cocoa;
         MTLBuiltinPipelines.init(this.metalDevice);
+        // <- read here rather than at the selector below, because it decides how much of the device is asked
+        // about at all: a launch that has already chosen Metal 3 does not need the Metal 4 functional probe,
+        // and until this line moved it paid for one. The value is read once and used once, so a session
+        // cannot be probed for one generation and selected as another.
+        MetalExecutionPreference preference = MetalExecutionPreference.read();
+        boolean probeMetal4 = preference.probesMetal4();
         // Asked once, here, because the answer is a fact about the device and the system rather than
         // about a frame: whether the image can be loaded at all and whether this GPU can run the
         // scaler. Said out loud either way, so that a session's log names which of the two it was.
         MetalFx.spatialSupported(metalDeviceHandle);
-        Metal4.available(this.metalDevice);
+        if (probeMetal4) {
+            Metal4.available(this.metalDevice);
+        } else {
+            // Not "unavailable": a device that was never asked is a different fact, and a session's log has to
+            // be able to tell it from a device that answered no. The capability record carries it as
+            // `metal4=not-probed` and every Metal 4 clause in it is false and meaningless.
+            com.metallum.Metallum.LOGGER.info("Metal execution: Metal 4 capability not probed for this session - "
+                    + "{}={} cannot execute Metal 4, so the functional probe (queue, allocator, command buffer,"
+                    + " render pass, draw, readback) is not run and no Metal 4 object is created",
+                    MetalExecutionPreference.PROPERTY, preference.word());
+        }
         // What this device can run, asked once and immutable; then which generation this launch executes.
         // The selector answers from capability - never from a chip name - and a forced preference the device
         // cannot satisfy fails the launch rather than falling back to the path nobody asked for. What is
         // executing today is still Metal 3's command buffer, which the services say plainly rather than
         // letting a selection read as a fact about the frame.
         MetalDeviceCapabilities capabilities =
-                MetalDeviceCapabilities.probe(this.metalDevice, deviceName);
+                MetalDeviceCapabilities.probe(this.metalDevice, deviceName, probeMetal4);
         MetalExecutionSelector.say(capabilities);
         MetalExecutionSelector.Decision decision =
-                MetalExecutionSelector.select(MetalExecutionPreference.read(), capabilities);
+                MetalExecutionSelector.select(preference, capabilities);
 
         // The queue comes from the execution services rather than from the device, which is the seam the
         // frame path's isolation needs: a device that makes its own Metal 3 queue is a device that belongs to
@@ -176,6 +197,9 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         this.executionState = this.services.createExecutionState(this.metalDevice);
         this.commandEncoder = this.services.createFrameEncoder(this, this.executionState, this.defaultShaderSource);
         this.deviceInfo = buildDeviceInfo(deviceName);
+        com.metallum.Metallum.LOGGER.info("Metal execution: device created in {} ms (Metal 4 probe: {})",
+                String.format(java.util.Locale.ROOT, "%.1f", (System.nanoTime() - deviceStartedAt) / 1_000_000.0),
+                probeMetal4 ? "ran" : "skipped");
     }
 
     @Override

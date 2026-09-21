@@ -40,6 +40,14 @@ import java.lang.foreign.MemorySegment;
  * @param shaderLanguageProfile   the newest MSL profile this system's Metal 3 path accepts, probed
  *                                by compiling; the session's profile is chosen with the generation and
  *                                held on {@link MetalShaderLanguageProfile}
+ * @param metal4Probed            whether the Metal 4 clauses were asked at all. A forced Metal 3 session
+ *                                does not ask them, and <strong>not asked is not the same answer as no</strong>:
+ *                                every Metal 4 field above is false on that road and means nothing, which is
+ *                                why the record carries this flag and {@link #summary()} says
+ *                                {@code metal4=not-probed} rather than listing clauses that were never asked.
+ *                                It is also not a licence to read those fields: {@link #metal4MinimumContract()}
+ *                                answers false there, so a caller that ignores this flag concludes "cannot run"
+ *                                rather than "can".
  */
 @Environment(EnvType.CLIENT)
 public record MetalDeviceCapabilities(
@@ -59,26 +67,38 @@ public record MetalDeviceCapabilities(
         boolean metal4Compiler,
         boolean metalFxSpatial,
         boolean metal4FxSpatial,
-        MetalShaderLanguageProfile shaderLanguageProfile
+        MetalShaderLanguageProfile shaderLanguageProfile,
+        boolean metal4Probed
 ) {
 
     private static final long FAMILY_METAL3 = 5001L;
     private static final long FAMILY_METAL4 = 5002L;
 
     /**
-     * Asks the device everything the record holds.
+     * Asks the device everything the record holds, or everything a Metal 3 session needs of it.
      * <p>
      * The command-structure answers come from the probe that already made and submitted the objects, so
      * nothing here creates a second queue to find out what the first one proved.
+     * <p>
+     * <strong>And a forced Metal 3 session does not ask the Metal 4 questions at all.</strong> The functional
+     * probe behind them makes a queue, an allocator, a command buffer, a render pass and a draw, submits them and
+     * reads a pixel back - a real Metal 4 workload, run at every startup, and until this method took a scope it
+     * was run for launches that had already decided to draw with Metal 3 and could never consult the answer.
+     * What is skipped is the part that creates and submits objects; the cheap questions a Metal 3 session may
+     * still want (the family it runs on, its own scaler, its own shader profile) are asked either way.
+     *
+     * @param probeMetal4 whether this session is for a generation that could execute Metal 4
      */
-    public static MetalDeviceCapabilities probe(final MTLDevice device, final String deviceName) {
+    public static MetalDeviceCapabilities probe(final MTLDevice device, final String deviceName,
+                                                final boolean probeMetal4) {
         boolean metal3 = device.supportsFamily(FAMILY_METAL3);
-        boolean metal4 = device.supportsFamily(FAMILY_METAL4);
-        boolean queue = device.respondsTo("newMTL4CommandQueue");
-        boolean allocator = device.respondsTo("newCommandAllocator");
-        boolean buffer = device.respondsTo("newCommandBuffer");
-        boolean argumentTable = MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:error:")
-                || MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:");
+        boolean metal4 = probeMetal4 && device.supportsFamily(FAMILY_METAL4);
+        boolean queue = probeMetal4 && device.respondsTo("newMTL4CommandQueue");
+        boolean allocator = probeMetal4 && device.respondsTo("newCommandAllocator");
+        boolean buffer = probeMetal4 && device.respondsTo("newCommandBuffer");
+        boolean argumentTable = probeMetal4
+                && (MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:error:")
+                || MTL4Probe.respondsTo(device.handle(), "newArgumentTableWithDescriptor:"));
 
         MemorySegment madeBuffer = MemorySegment.NULL;
         boolean renderEncoder = false;
@@ -103,10 +123,10 @@ public record MetalDeviceCapabilities(
                 metal3,
                 metal4,
                 queue,
-                allocator && Metal4.canMakeAndSubmit(),
-                buffer && Metal4.canMakeAndSubmit(),
-                argumentTable && Metal4.canBindAndDraw(),
-                renderEncoder && Metal4.canBindAndDraw(),
+                allocator && probeMetal4 && Metal4.canMakeAndSubmit(),
+                buffer && probeMetal4 && Metal4.canMakeAndSubmit(),
+                argumentTable && probeMetal4 && Metal4.canBindAndDraw(),
+                renderEncoder && probeMetal4 && Metal4.canBindAndDraw(),
                 computeEncoder,
                 device.supportsArgumentBuffersTier2(),
                 device.maxArgumentBufferSamplerCount(),
@@ -122,8 +142,9 @@ public record MetalDeviceCapabilities(
                 // scaler actually made with a compiler and released. It is not the same answer as Metal 3's and
                 // not the same object - section 80 - and it is asked here because the answer decides whether
                 // choosing Metal 4 would cost the player the render-scale setting.
-                Metal4Fx.supported(device.handle()),
-                MetalShaderLanguageProbe.newestMetal3Profile(device)
+                probeMetal4 && Metal4Fx.supported(device.handle()),
+                MetalShaderLanguageProbe.newestMetal3Profile(device),
+                probeMetal4
         );
     }
 
@@ -134,7 +155,12 @@ public record MetalDeviceCapabilities(
      * been the difference between "the family is there" and "the path works" at least once in this tree.
      */
     public boolean metal4MinimumContract() {
-        return this.metal4Family
+        // A session that did not ask the Metal 4 questions cannot claim the contract, and this answers false
+        // rather than letting the never-asked clauses read as a device's own answers: the difference between
+        // "not asked" and "no" is what `metal4Probed` is for, and a caller that ignores it must land on the
+        // safe side of it.
+        return this.metal4Probed
+                && this.metal4Family
                 && this.metal4CommandQueue
                 && this.metal4CommandAllocator
                 && this.metal4CommandBuffer
@@ -156,7 +182,10 @@ public record MetalDeviceCapabilities(
      * moved the slider, so a path that cannot scale is not eligible while a path that can is.
      */
     public boolean metalFxParityForMetal4() {
-        return !this.metalFxSpatial || this.metal4FxSpatial;
+        // Meaningful only where the Metal 4 scaler was asked: for a session that did not probe, "the Metal 4
+        // scaler is missing" is exactly the claim this method must not make, so it answers the parity as held
+        // rather than as absent.
+        return !this.metal4Probed || !this.metalFxSpatial || this.metal4FxSpatial;
     }
 
     /** Whether the device answers to a factory, which is the question a protocol cannot be asked. */
@@ -166,6 +195,15 @@ public record MetalDeviceCapabilities(
 
     /** One line for the log, which is also what a bug report should quote. */
     public String summary() {
+        if (!this.metal4Probed) {
+            // One word rather than six falses. A reader of a forced Metal 3 session's log has to be able to tell
+            // a device that cannot run Metal 4 from one that was never asked, which is the whole of why this
+            // branch exists.
+            return "metal3Family=" + this.metal3Family
+                    + " metal4=not-probed"
+                    + " metalFx=" + this.metalFxSpatial
+                    + " msl=" + this.shaderLanguageProfile.token();
+        }
         return "metal3Family=" + this.metal3Family
                 + " metal4Family=" + this.metal4Family
                 + " queue=" + this.metal4CommandQueue

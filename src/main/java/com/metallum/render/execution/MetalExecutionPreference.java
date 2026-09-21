@@ -63,6 +63,21 @@ public enum MetalExecutionPreference {
     }
 
     /**
+     * Whether a session with this preference could execute Metal 4, and therefore has to ask the device's
+     * Metal 4 questions.
+     * <p>
+     * It is the whole of the probe scope, and it is deliberately conservative in one direction only: a launch
+     * that can only ever run Metal 3 skips the functional probe - the queue, the allocator, the command buffer,
+     * the render pass, the draw and the readback, all real objects made and submitted at startup - while every
+     * preference that could reach Metal 4 asks it. {@code AUTO} asks because its answer is a selection the
+     * migration wants measured; guessing that it will fall back anyway would make its own diagnostic reading
+     * impossible.
+     */
+    public boolean probesMetal4() {
+        return this != FORCE_METAL3;
+    }
+
+    /**
      * The preference this launch asks for.
      * <p>
      * A word nothing answers to is the default and says so: a typo that silently forced the wrong
