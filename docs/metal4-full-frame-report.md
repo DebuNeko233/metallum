@@ -1200,11 +1200,19 @@ scheduling change, so the two fixtures whose whole purpose is attachment load an
 both generations in one session:
 
 ```
-run/d1-traffic  attachment-traffic-contract   M3 vs M4 (fold on)   mean 0.000, 0 pixels differ
-run/d1-depth-ab depth-value-contract          M3 vs M4 (fold on)   mean 0.112, worst 1 level
-                                              M3 vs M4 (fold off)  mean 0.112, worst 1 level
-                                              fold on vs fold off  mean 0.000, 0 pixels differ
+run/d1-traffic     attachment-traffic-contract  M3 vs M4 (fold on)   mean 0.000, 0 pixels differ
+run/d1-depth-ab    depth-value-contract         M3 vs M4 (fold on)   mean 0.112, worst 1 level
+                                                M3 vs M4 (fold off)  mean 0.112, worst 1 level
+                                                fold on vs fold off  mean 0.000, 0 pixels differ
+run/d1-compute     compute-storage-contract     M3 vs M4 (fold on)   mean 0.000, 0 pixels differ
+run/d1-history     composite-history-contract   M3 vs M4 (fold on)   mean 0.189, worst 1 level
 ```
+
+Those four are the fixtures that reach the cases the fold's rules are about: a pass that writes every pixel and
+one that reads what it is about to overwrite (traffic), the depth clear value (depth), a production whose output
+is read after a clear (compute-storage), and history carried across a frame's clears (composite-history). Two of
+them are pixel-identical to the reference and the other two differ by a single level, in the same way with the
+fold on and off where that control was taken.
 
 The traffic fixture is a checkerboard painted from `gl_FragCoord` and read back through a quantising reader, so a
 single wrong pixel is a whole level: **Metal 4 with the fold draws it pixel for pixel as Metal 3 does.** On the
