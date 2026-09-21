@@ -1538,10 +1538,13 @@ m4c     7.82      15.77      15.94     16.05      gpuM4P50 2.56        6.98 ms  
 *content* is not stable across launches in one session where the reference's is: the same world, camera and
 target produce `loadedMiB` 120267, 142767 and 160207 in three arms of one generation. That is a property of the
 frame this path builds and not of the world - the world was re-staged from the same copy for every arm and Metal
-3's counters are bit-identical - and it is **NOT LOCALISED**. The leading candidate is the window's phase
-relative to the client's world streaming (the window opens 25 s after the frame the harness waits for, and with
-no pack that frame arrives at a different point in the load), and it is stated as a hypothesis. Until it is
-settled, §93's first rung cannot produce a comparison, and per §67 the honest verdict for it is **NOT MEASURED**.
+3's counters are bit-identical - and it is **NOT LOCALISED for this session** (it has no per-frame trace to read
+the kinds from). Its leading candidates are the window's phase relative to the client's world streaming (the
+window opens 25 s after the frame the harness waits for, and with no pack that frame arrives at a different
+point in the load) and the same two kinds that were later *measured* to move the traced sessions' counters - a
+20 Hz tick frame's six passes and the two particle passes a frame opens only when its render type has work - and
+the second candidate is bounded against this session's own numbers under Remaining blockers. Until it is settled,
+§93's first rung cannot produce a comparison, and per §67 the honest verdict for it is **NOT MEASURED**.
 
 ## Timing model
 
@@ -1731,19 +1734,19 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
 | cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault did not recur and the retry policy was never exercised |
-| performance stable enough to compare | **NOT MET** | section 93's first rung is NOT MEASURED: this path's content counters drift within one session (`loadedMiB` +18.7% then +33.2%) where the reference's are identical to the byte |
+| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone) and the first rung's per-frame content drift is now attributed to two named kinds - the six passes a 20 Hz tick adds and the two particle passes - with the tick half reported by the probe's `windowTicks` and the particle half removed by `--vanilla-particles` (measured: that window holds only two kinds and its arms' counters are identical to the digit); what the gate then says is that this path is slower on two of the three rungs |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
 
-**AUTO stays on Metal 3, and Metal 4 stays forced and EXPERIMENTAL - section 70's outcome C.** The reason is
-not the frame's correctness as a whole, which is the strongest it has been: it is that **two gate lines are
-NOT MEASURED rather than failed** - the history and compute pictures, which need a screenshot this machine cannot
-take, and the §93 first rung, which needs a session in which this path's content does not move - and that the
-cold capability probe's intermittency is unresolved. Section 123's own list is therefore not met on four counts
-(history, compute/storage, the capability probe, and performance), and section 70 puts that in C rather than B:
-the performance *distribution* is explained (the drawable handover's quantum) but the *comparison* it was meant
-to serve is not yet measurable, so promoting Metal 4 would be promoting a path whose frame-rate claim rests on a
-mixture nobody has bounded on a real scene.
+**AUTO stays on Metal 3, and Metal 4 stays forced and EXPERIMENTAL - section 70's outcome C.** The frame's
+correctness is the strongest it has been - every correctness line above passes, and the two pictures that used
+to need a screenshot now read off the presented drawable through the readback road - so the decision rests on
+the two lines that are not: the **cold capability probe's intermittency**, which no session has reproduced or
+explained, and the **performance outcome**, which is unfavourable on two of the three rungs. The performance
+*distribution* is explained (the drawable handover's quantum: a frame's own work is 2.7 ms and it lands on one or
+two 8.33 ms handovers) and the content drift that made the first rung's windows differ is now attributed to two
+named kinds - but a path that is 1.63-1.78x slower than the reference on the work-light scene is not a
+production default, which is section 70's C and not its B.
 
 **The capability gate's retry policy is honest by construction and unexercised in fact.** Section 54 allows
 either a deterministic probe or a retry policy "proven safe and honest". The client's production path asks once
@@ -1763,10 +1766,12 @@ lower than the reference's on the first two and equal on the third. So the perfo
 as a production default on two of three rungs, and the mechanism is one extra display handover of latency", which
 is section 70's C rather than its B: the distribution is explained, the cost is not.
 
-What would move it, in the order the gates are listed: the content-drift blocker above (one experiment: trace the
-per-frame content counters through the window and watch them move), the cold probe's distribution (a harness that
-runs the probe's first pass alone in volume), and the two picture residuals (a screenshot road that works, or a
-fixture channel that does not need one).
+What would move it, in the order the gates are listed: the cold probe's distribution (a harness that runs the
+probe's first pass alone in volume, until a `retried=true` census prices the retry policy); the rung whose
+content moved before the per-frame trace existed (`run/perf93-nopack`, re-run with the trace on, so its
+1.56-a-frame depth-attachment swing is attributed or bounded the way the traced sessions' drift now is); and the
+correctness residuals this list still carries - the alpha residual, depth-bias parity on live content, and the
+storage-image probe's intermittency.
 
 **And section 60's audit is done: six operations are refused by name and none of them is reached.** The rule is
 "a real workload reaches it → implement; no caller reaches it → leave an explicit refusal", and the Metal 4 path
@@ -1801,36 +1806,56 @@ both would arrive with a caller and be implemented then, per the rule.
   has a pipeline that asks for a bias (`depthBias=0` in every window so far), so cross-generation parity of a
   *biased* frame is vacuous today and the instrument is what stands ready if a pack ever asks for one.
 
-- **The content drift is decomposed and NOT LOCALISED, and the tick term is smaller than it first looked.**
-  The decomposition of the traced windows, exactly: a frame is **7 passes** in the steady state, **13** on a
-  tick frame and **5** in one stretch, so a window's total is `7*600 + 6*T - 2*S` with `T` the tick frames and
-  `S` the reduced ones. `m4t1`: 436*7 + 134*5 + 30*13 = **4112** against its measured 4100 (the 134-frame
-  stretch at 5 passes is worth -268 passes, six times the tick term's +180); `m4t2`: 572*7 + 28*13 = 4368
-  against 4368; `m4t3`: 562*7 + 7*5 + 1*11 + 30*13 = 4370 against 4370. So **the tick term is real but worth
-  about 4% of a window, and a ~340 ms stretch with two passes absent is worth about 6%** - which is the shape
-  the drift has, and **the coefficients are counted rather than fitted**: `tools/metal4-pacing-analysis.py` names
-  each arm's frame kinds from the per-frame trace, and with the modal frame at 7 passes on all three arms the
-  three windows read `7*436 + 5*134 + 11*6 + 13*24 = 4100`, `7*572 + 13*28 = 4368` and
-  `7*562 + 5*7 + 11*1 + 13*30 = 4370` - each against its own measured total exactly. So the per-frame content is
-  the **same** on all three arms (7 passes) and the whole of the drift is the mix of two frame kinds: the tick
-  frames (+6 each, 24-30 a window) and the reduced stretches (-2 each, 134 frames in one arm and almost none in
-  another). A least-squares fit over the same three arms was ill-conditioned because their tick counts span only
-  10%; the trace removes the need for it. **What a reduced stretch *is* remains NOT LOCALISED**; that the drift is
-  those two kinds is measured.
-- **What the tick finding does establish is the cadence, not the size.** `run/drift-nopack` (same
-  six-arm M3/M4 interleave, no pack, with the per-frame trace on) shows what the per-frame pass count of this
-  path's no-pack frame actually is: **7 passes in the steady state, 13 on one frame every 49.6-50.0 ms** - the
-  client's 20 Hz tick, measured in wall time and not in frames (`run/drift-nopack/m4t2`: spikes spaced 21.4
-  frames but 49.6 ms; `m4t3`: 19.3 frames, 50.0 ms; `m4t1`: 20.2 frames, 49.8 ms) - and 5 passes for a
-  contiguous 134-frame stretch in one arm. The probe's window is a fixed **frame** count, so the number of
-  tick-frames inside it is `windowWall / 50 ms`: **Metal 3's frame rate is constant, so its window always contains
-  the same number of them and its content counters are identical to the byte (`depthAttachments 1800` and
-  `loadedMiB 26836/26900/26900` in all three arms), while this path's frame rate is the pacing mixture, so its
-  windows contain different numbers and its counters differ.** The guard's 2%/5% tolerances were calibrated on the
-  reference's steady frame rate, and on this path they measure the window's sampling before they measure the
-  frame. **The remedy is a window definition and not a Metal4 change**: pin the window by game ticks or by wall
-  time, or report the content counters per second and per tick beside the per-frame ones, before the rung is
-  re-run.
+- **The content drift is decomposed, counted and now NAMED.** The decomposition of the traced windows, exactly:
+  a frame is one count in the steady state, six passes more on the frame that coincides with a 20 Hz client tick
+  and two fewer in a stretch, so a window's total is `steady*600 + 6*T - 2*S` with `T` the tick frames and `S`
+  the reduced ones. On `run/drift-nopack` the steady frame is 7 passes, so `m4t1`: 436*7 + 134*5 + 30*13 =
+  **4112** against its measured 4100 (the 134-frame stretch at 5 passes is worth -268 passes, six times the tick
+  term's +180); `m4t2`: 572*7 + 28*13 = 4368 against 4368; `m4t3`: 562*7 + 7*5 + 1*11 + 30*13 = 4370 against
+  4370. The coefficients are **counted rather than fitted** - `tools/metal4-pacing-analysis.py` reads each arm's
+  frame kinds from the per-frame trace - which is what a least-squares fit over three arms whose tick counts
+  span only 10% could not do, and the per-frame content is the same on all three arms.
+  **And the two kinds are named, not only counted.** `run/reduced-nopack` is the same no-pack scene with the
+  per-pass trace on beside the per-frame one, and **every frame of both 600-frame M4 windows is exactly one of
+  four shapes**:
+
+  ```text
+   4 passes   Terrain, Terrain, Blit render target, GUI before blur
+   6 passes   the four above + Particles - Solid + Particles - Translucent
+  10 passes   the four above + Animate minecraft:textures/atlas/blocks.png x5 + Update light
+  12 passes   the six above + the same five animation passes and the lightmap pass
+  ```
+
+  **The +6 is the client's own per-tick work** - five block-atlas animation passes and one lightmap pass,
+  measured on 150 of each arm's 600 frames and spaced 4.00 frames apart - and **the -2 is the two vanilla
+  particle passes**, which are opened only when their render type has work and so come and go in runs of 36 to
+  292 frames. Both particle passes are `depth=true` with `load=load`, so the presence swing moves the counters
+  to the pass: a 44-frame swing between those two arms predicts 88 more depth attachments and they measured
+  **90** (`depthAttachments` 6100 against 6010, `renderPasses` 4000 against 3910, `loadedMiB` +2.9%). The base
+  count is scene-shaped rather than a constant of the path (`run/ticks-nopack` reads the same 4/6 and 10/12
+  where `run/drift-nopack` read 7/13 and 5) and the two mechanisms are what generalise, so
+  **the last NOT LOCALISED term of the drift is localised** - and the analyser names each kind from the trace,
+  with a contract in `tools/ci-vitrail-performance.py` that fails when the naming is removed.
+- **What the per-frame pass count is a function of is wall time, and the probe now reports the half a window
+  cannot hold still for.** `run/drift-nopack` shows the cadence: **7 passes in the steady state and 13 on one
+  frame every 49.6-50.0 ms** - the client's 20 Hz tick, measured in wall time and not in frames
+  (`run/drift-nopack/m4t2`: spikes spaced 21.4 frames but 49.6 ms; `m4t3`: 19.3 frames, 50.0 ms; `m4t1`: 20.2
+  frames, 49.8 ms) - and 5 passes for a contiguous 134-frame stretch in one arm. The probe's window is a fixed
+  **frame** count, so the number of tick frames inside it is `windowWall / 50 ms`: **Metal 3's frame rate is
+  constant, so its window always contains the same number of them and its content counters are identical to the
+  byte (`depthAttachments 1800` and `loadedMiB 26836/26900/26900` in all three arms), while this path's frame
+  rate is the pacing mixture, so its windows contain different numbers and its counters differ.** The guard's
+  2%/5% tolerances were calibrated on the reference's steady frame rate, and on this path they measure the
+  window's sampling before they measure the frame. Both halves of that sampling now have an answer: the tick
+  half is the probe's own `windowTicks`/`framesPerTick`, and the particle half is `--vanilla-particles`,
+  measured - the fixture's two windows hold **only two kinds, 6 passes on 451 and 450 frames and 12 on 149 and
+  150**, and their content counters then read **identical to the digit** (`loadedMiB 161400.1`, `storedMiB
+  280052.5`, `depthAttachments 6600`, `pipelineIdentities 99` in both) where the same scene without the fixture
+  drifts 2.9% in `loadedMiB`, the tick count (150 against 149, which the probe reports) being the only
+  difference left. That is a **new rung configuration** and not a correction to the older numbers: the fixture's
+  particles are real work (the same window's commit interval reads 4.26 ms against 2.71 without it), so a
+  comparison staged with it is content-comparable to another staged with it and not to the rungs measured
+  before it.
 - **And the remedy was tried and REFUTED, which narrows the next step.** Comparing the content counters as
   *rates per second of window* instead of per window was the obvious normalisation, and it is wrong: on
   `run/drift-nopack` it makes **the reference itself drift** - Metal 3's arms read `loadedMiB` 24131, 21945 and
@@ -1839,8 +1864,9 @@ both would arrive with a caller and be implemented then, per the rule.
   *frame* work stayed the same. So the client's content is neither per window nor per second: it is **per frame
   plus per game tick**, and only a window pinned by *ticks* (or a reported tick count to normalise by) makes the
   arms comparable. That is a harness and probe change - measure the window's game ticks, or close it on a tick
-  boundary - and it is the next measurement task; the rate comparison was reverted rather than shipped, because a
-  guard that flags the reference is worse than one that flags the path.
+  boundary - and it **has since been made**: the probe reports `windowTicks` and `framesPerTick`, and
+  `run/ticks-nopack` is the first no-pack session whose guards all pass. The rate comparison itself was reverted
+  rather than shipped, because a guard that flags the reference is worse than one that flags the path.
 - **And a genuine scene difference sits beside it.** In the same session one M4 arm's window drew 157 draws a
   frame where the other two drew 326, falling from 223 to 109 across the window - a world-content difference that
   no normalisation removes, and the reason the rung still needs a scene guard after the window is fixed.
@@ -1850,10 +1876,16 @@ both would arrive with a caller and be implemented then, per the rule.
   0.01% apart in time), while this path's three arms read `loadedMiB` 120267, 142767 and 160207 - +18.7% and
   +33.2% - with `storedMiB` and `depthAttachments` following. The world is re-staged from the same copy for
   every arm and the reference does not move, so this is a property of the frame this path builds. **NOT
-  LOCALISED**; the leading candidate, stated as a HYPOTHESIS, is the probe window's phase relative to the
-  client's world streaming, since with no pack the frame the harness waits for arrives at a different point in
-  the load. It is why the ladder stops at its first rung (section 42) and why the rung's verdict is NOT
-  MEASURED (section 67) rather than a number.
+  LOCALISED, and now bounded against the two kinds whose drift *is* localised.** That session predates the
+  per-frame trace, and its three M4 arms' `depthAttachments` read 5664, 6176 and 6600 - a swing of **1.56 a
+  frame**, where the two particle passes that account for the traced sessions' drift are worth at most 2 a
+  frame and 1.56 would need 78% of a window to change hands. Its arms' windows also cover different wall
+  durations for the same 600 frames (7496, 7484 and 4673 ms), and a presence that alternates in wall time is
+  sampled differently by windows of different frame rates, so the leading candidate - stated as a
+  **HYPOTHESIS** - is that the same two kinds account for this drift through the sampling, with the window's
+  phase relative to the client's world streaming as the older candidate beside it. **NOT MEASURED**: it needs a
+  session of this rung with the per-frame trace on, which is what attributed the traced sessions' drift - and it
+  is why this rung's verdict is NOT MEASURED (sections 42 and 67) rather than a number.
 
 The list is current, and fixed items are kept as one-line records so a reader can see what the migration already
 answered rather than only what is left.
