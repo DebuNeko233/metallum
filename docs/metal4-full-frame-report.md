@@ -153,6 +153,33 @@ than in the frame path, and neither has been run yet.
 measured 1 of 50 cold and 1 of 20 warm with a one-target probe, and the sentence in this report that read that
 as "equally frequent cold and warm" is withdrawn.
 
+**And thirty cold processes passed, which is section 14's Path B and not a resolution.** `metal4-cold-probe.sh
+--cold-runs 30 --warm-runs 20`, today, on this machine:
+
+```text
+cold processes: 30 (1 probe each, 30 probes)   failures: 0      one cold probe costs ~0.5 s
+warm probes:    20                             failures: 0      ~110-125 ms each after the first
+sampled draws, allocator rings, colour attaches, multi-targets, depth draws, depth samples, mip chains,
+MetalFX spatial, compute, storage images, bound layouts, texture copies, depth clears, fence waits,
+indexed draws, residency sets, indirect draws, compute->pass, compute->draw, copy->pass: 50 passed, 0 failed
+GPU pass time: 0 passed, 50 failed
+```
+
+So the intermittency **did not reproduce in fifty probes**, the probe is fast enough to make that a measurement
+rather than an occasion (half a second against the seventy a client launch costs, which was section 10's goal),
+and the failure **stays registered** as intermittent - section 14 forbids deleting it because the harness could
+not reproduce it. **AUTO stays blocked** by it, `-Dmetallum.execution=metal4` stays forced and EXPERIMENTAL, and
+Metal 4 development continues under it, which is what section 15 asks for.
+
+Two details a reader of that block should not misread. The harness **exits non-zero on this run**, and the only
+red line is `GPU pass time`, which is blocker 15 - the counter sampling points that do not attribute a pass - and
+not the capability probe: the cold failures are zero. And the first hypothesis recorded above, **lazy driver
+initialisation on first use**, is still un-run: the experiment is a first probe with a throwaway commit before
+the real sequence, or a first probe that runs only its first pass, and neither has been tried. With fifty
+probes passing, the next useful shape for it is a harness that runs the probe's first pass *alone* in a fresh
+process many times, because a fault that shows in one cold probe in twenty-five needs volume rather than a
+client.
+
 ## Native Smoke
 
 ```
