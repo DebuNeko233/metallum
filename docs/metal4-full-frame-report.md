@@ -1422,6 +1422,42 @@ sessions read 1.05-1.06x at one slot. So the *shape* is explained and the *mean*
 1.0x the gate wants, and section 30's consequence is written into the protocol below rather than assumed away: a
 production-depth comparison may not read a P50 as a renderer cost, because its mixture is the display's.
 
+## Timing model
+
+Every number in this report was measured, and this section says what each instrument measures and what it does
+not, because a migration that reads a clock it has not priced is a migration that optimises the wrong thing. The
+counter road is the worked example: it returned a time, the time was not the work, and only a second and third
+instrument on the same submission could say so.
+
+| name | measures | does NOT measure |
+| ---- | -------- | ---------------- |
+| CPU encode | the CPU building a frame's commands | GPU execution |
+| counter marker (command buffer, either resolve road) | the driver's *front end*: about 60 ns a draw issued | per-pass GPU work - REFUTED, and equal on both resolve roads (14/14 stamps) |
+| submit feedback (`MTL4CommitFeedback.GPUStartTime/GPUEndTime`) | the whole committed submission's interval, pacing included | isolated pass work; and it is not pure render work while `waitForDrawable:` is inside it |
+| CPU completion wait (`waitUntilSignaledValue:`) | the host's wait for a submission to finish | a kernel's execution interval |
+| drawable wait (`nextDrawable`) | the presentation/handover contribution to the frame loop | renderer work |
+| per-frame trace (`M4_FRAME`, `M4_FRAME_COMMIT`) | the distribution: what each frame waited on and what it encoded | anything about a pass |
+
+Three consequences are now protocol rather than preference, and they are section 30's menu with the entries this
+migration has evidence for:
+
+1. **A production-depth Metal 4 P50 is not a renderer cost.** At the production ring depth the period is a mixture
+   of two or three drawable handovers (16.7 and 25.0 ms on this 120 Hz panel), so that P50 measures the display's
+   mixture as much as the path.
+2. **A comparison is therefore one of**: a work-bound scene (`section 93`'s ladder, where the GPU is the
+   bottleneck in both generations); **or** a controlled pacing condition, which for this path means the diagnostic
+   one-slot ring depth - named as diagnostic and never as production; **or** a distribution-aware reading
+   (P50 with P95 and the per-frame populations, which `tools/metal4-pacing-analysis.py` prints).
+3. **Timings from different APIs are not subtracted.** `MTLCommandBuffer.gpuMillis` (Metal 3) and
+   `MTL4CommitFeedback` (Metal 4) have not been shown to measure the same interval, so a cross-generation
+   speedup is read from wall time under the condition above plus the structural counters, and a *within*-Metal 4
+   A/B may use the driver interval because its presentation structure is the same in both arms.
+
+**And the counter work stops here.** Section 36's stop rule applies: the tested Metal 4 APIs - both resolve roads
+and both marker forms - do not attribute a pass, the verdict is recorded as an instrumentation limit, and no
+further timestamp selector is tried. Optimisation uses whole-frame controlled A/B, CPU and native operation
+counts, and section 70's structural counters.
+
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it
