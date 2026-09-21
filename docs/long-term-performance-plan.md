@@ -22,10 +22,18 @@ change, or a deterministic fixture that regresses. A Metal 4 *performance* findi
 
 ```
 Track A  Metal 3 performance          A1 census DONE (docs/metal3-performance-round2.md); A2/A3 rejected as
-                                      measured (redundant binds are 0.1-0.3 % of a frame); A4/A5 not started
+                                      measured (redundant binds are 0.1-0.3 % of a frame); A4/A5 NOT MEASURED
+                                      and closed with the rest of the CPU round: the frame is GPU-bound (the
+                                      accelerator reads 100 % in every arm's own trace) and the native call
+                                      surface A1 priced is 1.5-4 % of a frame, so an arena or a wider submit
+                                      window has no measured hot path behind it (rule F of section 5)
 Track B  Vitrail CPU / runtime        B1 DONE (docs/vitrail-cpu-performance.md): the frame is 13-17 % CPU
-                                      and allocates 71-183 KiB a frame; JFR rejected by measurement; the
-                                      per-road allocation attribution is the live question
+                                      and allocates 71-183 KiB a frame; JFR rejected by measurement. B2-B6 are
+                                      closed with the CPU round by the plan's own exit condition (two
+                                      candidates under 1 %: A2/A3's redundant binds and D1's bridge), and the
+                                      allocation rate is named rather than chased: at 27-42 MB/s over a frame
+                                      the engine is GPU-bound in, no evidence puts it on the frame's critical
+                                      path. Reopening needs a profiler that shows it, which JFR is not here
 Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitrail-gpu-performance.md): the
                                       frame's GPU work is the terrain's indirect draws and attachment traffic;
                                       at 55 % exactly one pass a frame stays at the window's size (the
@@ -49,7 +57,10 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       and the switch stays off. Phase 53's list is measured end to end
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
-                                      with the binding census it closes the CPU micro-optimisation round
+                                      with the binding census it closes the CPU micro-optimisation round. D2/D3
+                                      are closed by the same census rather than by a change: the per-frame
+                                      discovery D2 wants removed is two lookups a session, so there is nothing
+                                      left to pre-resolve on this seam
 Track E  MetalFX spatial              E1 pinned (DONE); E2 ladder DONE (docs/metalfx-performance.md):
                                       55-67 % buys 1.3-1.8x on the two GPU-heavy packs and 1.19x on the
                                       lightest, with the driver's GPU time falling in step; the pack-selection
@@ -105,7 +116,31 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 - An arm states the command generation it ran in (`--expect-execution`), because the generation is the game's own
   stored setting and a whole C2 session was collected on Metal 4 against a Metal 3 corpus without one counter
   showing it.
+- **Metal 4 stays verifiable while it is frozen.** All twelve of this repository's contracts pass on the head
+  that carries everything above - `ci-architecture`, `ci-metal4-provider`, `ci-metal4-report`,
+  `ci-metal4-cold-probe` and `ci-metalfx` among them - and Vitrail's 267 tests pass on its own head, which is
+  what section 61's eleventh criterion asks for and what a shared-code change has to be re-checked against.
 ```
+
+## What is left, in the order the plan asks for it
+
+```
+1. F4's recorded candidate   an on-disk Metal pipeline cache, 0.26-1.6 s a launch by the pipeline
+                             warm-up spans, on every launch, with no disk cache of any kind behind
+                             it today (docs/startup-and-cache.md). The largest measured startup item
+                             left, and the one item of the plan with a sized prize and no change.
+2. C3's remaining three      the corpus's other scenes at a render scale, for C3's completeness.
+   scales
+3. C4/C2's unresolved        the entity family's wall and the shadow interval on the second pack -
+   walls                     both need a machine that holds one state for a session, which this one
+                             does not (47 per cent between arms of one configuration).
+4. E4, dynamic resolution    only after 2 and 3, and only with hysteresis, cooldown, step limits and
+                             a stability window, as section 36 requires.
+```
+
+Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed
+by the CPU round's exit condition, C1-C7, D1 with D2/D3 closed by it, E1/E2, F1-F3, and the harness work
+of track G.
 
 ## What each new document owns
 
