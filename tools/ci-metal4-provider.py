@@ -1815,6 +1815,58 @@ if "this.clearPipelineCache();" in device_close:
     raise SystemExit("metal 4 provider: the device's teardown clears the pipeline cache after the encoder's close, "
                      "so the wait inside that clear lands on a released ring and reports a completion that already "
                      "arrived as a timeout - measured as submission 3813 with awaited=[0, 0, 0]")
+# ---------------------------------------------------------------------------
+# Section 88's per-pass GPU time: the frame path reads the GPU's clock behind its own pass boundaries
+#
+# The road was proven by the cold probe's counter smoke before any of this existed (its intervals scale with
+# the work, its unit is a nanosecond, and an interval below about two thousand ticks is not ordered). What this
+# pins is the frame path's use of it, because every one of these properties is a way the table would quietly
+# stop being a measurement: a marker written before the pass ended, a read taken before the ring's wait, a
+# second sampling form, a report that hides the floor, or a heap that outlives the encoder whose slot it
+# describes.
+# ---------------------------------------------------------------------------
+pass_times = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4"
+              / "Metal4PassTimes.java")
+if not pass_times.is_file():
+    raise SystemExit("metal 4 provider: Metal4PassTimes is missing, so the frame path has no per-pass GPU time "
+                     "at all and section 92's third kind of timing is an assertion rather than a reading")
+pass_times = pass_times.read_text(encoding="utf-8")
+for needle, why in (
+    ('Boolean.getBoolean("metallum.metal4PassTimes")',
+     "the per-pass reader has no switch, so it either never runs or always does - and section 91 says "
+     "instrumentation is off by default unless its overhead has been measured"),
+    ("floorUs=2.0", "the report does not name the road's resolution floor, so a pass under it reads as a fast "
+     "pass rather than as noise"),
+    ("never the CPU's", "the line does not say which of section 92's three kinds of timing it is, so a reader "
+     "cannot tell a GPU interval from the CPU's encode time"),
+    ("resolveRange(0L, count)", "the slot's own frame is not read as one range, so the reading is of entries "
+     "resolved one at a time rather than of the packed range the header promises"),
+    ("this.totals.computeIfAbsent(label", "the intervals are not attributed to the pass that ended at the "
+     "marker, so the table cannot say which pass cost what"),
+    ("this.heaps[slot].writeTimestamp(commandBuffer, at)", "the boundary markers are not written into the "
+     "slot's own heap at its own index"),
+):
+    if needle not in pass_times:
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ("this.passTimes = Metal4PassTimes.create(nativeDevice, FRAMES_IN_FLIGHT);",
+     "the reader is not made once per encoder with one heap per slot, so its heaps would outlive or lag the "
+     "ring they describe"),
+    ("this.passTimes.beginFrame(this.ring.slot(), this.ring.commandBuffer());",
+     "the slot's previous frame is not read where the ring has already waited for it, which is the header's own "
+     "condition for resolving a heap on the CPU timeline"),
+    ("this.passTimes.boundary(this.ring.slot(), this.ring.commandBuffer(), label);",
+     "the pass boundary is not written from one place, so a pass can end without a marker"),
+    ('recordPassBoundary("the present");',
+     "the present is not counted with the passes, though it is a pass of the frame's own command buffer"),
+    ("this.passTimes.close();", "the heaps are not released with the encoder that made them"),
+):
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+if "this.owner.recordPassBoundary(label());" not in pass_source:
+    raise SystemExit("metal 4 provider: a render pass no longer records its own boundary when it ends, so the "
+                     "marker would be placed somewhere other than behind the pass")
+
 for needle, why in (
     ("this.ring.describe()",
      "the ring's state is not printed, so a wait that times out cannot say which value it waited for"),

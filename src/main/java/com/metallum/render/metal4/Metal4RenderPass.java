@@ -330,6 +330,9 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     + " a later pass that reads what this one wrote has no encoded dependency", label());
         }
         this.encoder.close();
+        // Behind the encoder, which is what makes it this pass's own completion: MTL4CommandBuffer.h says the
+        // marker captures the moment prior work is complete, and the work here is this pass.
+        this.owner.recordPassBoundary(label());
     }
 
     /** What the pass was told about each colour slot, and the texture each slot wrote, for the trace line. */

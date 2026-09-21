@@ -318,6 +318,17 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      * compiled scalers. Section 80 is the other half - the Metal 3 scalers live in their own cache and this path
      * holds nothing of theirs, because a scaler is a compiled pipeline and one generation's is not the other's.
      */
+    /**
+     * The GPU's own time between this path's pass boundaries, or null where the session did not ask for it.
+     * <p>
+     * Section 88's instrument and section 92's third kind of timing: {@code -Dmetallum.metal4PassTimes=true} puts
+     * one command-buffer marker behind every pass this path opens and reads the intervals when the slot comes
+     * round again. Its road, its unit and its floor were measured by the cold probe's counter smoke before it was
+     * written - including that an interval under about two thousand ticks is not ordered, which the report says
+     * out loud rather than reporting as a fast pass.
+     */
+    @Nullable
+    private final Metal4PassTimes passTimes;
     private final Metal4Fx metalFx;
 
     /**
@@ -340,6 +351,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         this.queue = MemorySegment.ofAddress(queue);
         this.ring = MTL4FrameRing.create(nativeDevice, this.queue, FRAMES_IN_FLIGHT,
                 "the Metal 4 frame encoder");
+        this.passTimes = Metal4PassTimes.create(nativeDevice, FRAMES_IN_FLIGHT);
         this.transientMemory = new MetalTransientMemory(device, this.destroyQueue);
         // Owned by this encoder and not by a static keyed on a device: section 106's rule, and the reason a
         // second device in one process would otherwise inherit the first one's pipelines.
@@ -408,6 +420,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // once the work it just committed has run.
         presentAll();
         statFrame();
+        if (this.passTimes != null) {
+            this.passTimes.frameDone();
+        }
         // The arena's blocks are rotated here and not earlier: the submission that reads them has just been
         // made, and the slot that owns them is the one the ring will prove complete before reusing it.
         this.transientMemory.rotate();
@@ -471,6 +486,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Override
     public void close() {
+        if (this.passTimes != null) {
+            this.passTimes.close();
+        }
         if (this.closed) {
             return;
         }
@@ -606,6 +624,11 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
         if (!this.ring.beginFrame()) {
             throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
+        }
+        // The slot's previous submission is complete as of the wait inside beginFrame, which is the header's own
+        // condition for reading what it wrote - so this is where the last frame on this slot is read.
+        if (this.passTimes != null) {
+            this.passTimes.beginFrame(this.ring.slot(), this.ring.commandBuffer());
         }
         this.frameCommitted = false;
         // The slot's previous submission is complete as of the wait inside beginFrame, so a drawable copied out
@@ -1450,6 +1473,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             pass.endEncoding();
         } finally {
             pass.close();
+            // The present is a pass of this frame like any other, and it is the one section 64 moved into the
+            // frame's own command buffer - so it is counted with the passes rather than left outside the table.
+            recordPassBoundary("the present");
         }
         if (this.drawableReadback) {
             // The picture first, in the same frame and the same command buffer as the drawable's copy: the two
@@ -1811,6 +1837,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                 Metallum.LOGGER.warn("Metal 4 frame encoder: the queue would not take the residency set, so what"
                         + " the frame binds by address is not declared to it");
             }
+        }
+    }
+
+    /**
+     * One pass has ended, so the GPU's clock is read behind it: the marker goes into this slot's heap and the
+     * interval is attributed to this pass's label when the slot is next begun.
+     */
+    void recordPassBoundary(final String label) {
+        if (this.passTimes != null) {
+            this.passTimes.boundary(this.ring.slot(), this.ring.commandBuffer(), label);
         }
     }
 

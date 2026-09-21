@@ -158,6 +158,10 @@ if "retried = true;" not in (ROOT / "src" / "main" / "java" / "com" / "metallum"
 # window in it; the draw and readback are the other half and are recorded as owed rather than implied.
 probe_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
                 / "MTL4Probe.java").read_text(encoding="utf-8")
+# The heap is where the road's only writing call lives, so the smoke's marker and the frame path's marker are
+# one sender: a contract that only read the probe could not tell that they had been split apart again.
+counter_heap_source = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                       / "MTL4CounterHeap.java").read_text(encoding="utf-8")
 for needle, why in (
     ("public static boolean canBindSampledTexture(", "the sampled-texture smoke is gone from the probe"),
     ("MTL4ArgumentTable.create(device, 0L, 1L, 1L)",
@@ -1563,14 +1567,14 @@ for needle, why in (
 # nanosecond on this device.
 # ---------------------------------------------------------------------------
 for needle, why in (
-    ('Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG)',
-     "the command-buffer marker is gone, and it is the smoke's only sampling point"),
+    ("heap.writeTimestamp(buffer, ", "the command-buffer marker is gone, and it is the smoke's only "
+     "sampling point - written through MTL4CounterHeap, the engine's single sender of that selector"),
     ("Work after this call may or may not have started", "the header's own statement of what a "
      "command-buffer marker means is gone, so nothing says why a marker behind a pass is a pass boundary"),
     ("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:",
      "the render encoder's stage-and-granularity form is no longer named anywhere, so the form that was tried "
      "and dropped is not recorded and a later edit could reintroduce a second sampling point without noticing"),
-    ("WRITE_TIMESTAMP.send(buffer, heap.handle(), timestampIndex);",
+    ("heap.writeTimestamp(buffer, timestampIndex);",
      "the boundary markers are not written from one site, so a second form can come back one call at a time"),
     ("if (timestampIndex >= 0L) {", "the warm-up pass is not excluded from the curve, so the first measured "
      "step is the clearing pass and the command buffer's first encoder again"),
@@ -1609,7 +1613,14 @@ for needle, why in (
 
 # And the duplicated boundary must not come back: it is the one defect that made the smoke fail on arithmetic
 # that looked like a driver property for rounds.
-if "WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L)" in probe_source:
+if ("public boolean writeTimestamp(final MemorySegment commandBuffer, final long index)"
+        not in counter_heap_source):
+    raise SystemExit("cold-probe harness: MTL4CounterHeap no longer offers the road's writing call, so a marker "
+                     "has to be sent from somewhere else and the smoke and the frame path stop sharing one call")
+if "writeTimestampIntoHeap:atIndex:" not in counter_heap_source:
+    raise SystemExit("cold-probe harness: the heap no longer sends the selector the header declares, so the "
+                     "marker's road is not the one MTL4CommandBuffer.h documents")
+if "writeTimestamp(buffer, 2L)" in probe_source:
     raise SystemExit("cold-probe harness: a marker is written to a fixed heap index again, which is how the "
                      "middle boundary came to hold the end of everything and the curve came to look inverted")
 

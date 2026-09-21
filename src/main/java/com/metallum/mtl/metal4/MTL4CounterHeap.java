@@ -130,6 +130,40 @@ public final class MTL4CounterHeap implements AutoCloseable {
         return this.handle;
     }
 
+    /** {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer, the road's only writing call. */
+    private static final Msg WRITE_TIMESTAMP =
+            Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG);
+
+    /**
+     * Writes one entry from a command buffer, and it is the whole of what the road needs.
+     * <p>
+     * {@code MTL4CommandBuffer.h} says of this call: "captures a timestamp after work prior to this command in
+     * the command buffer is complete. Work after this call may or may not have started." So a caller that places
+     * it behind a pass's encoder has a pass boundary, which is what the smoke and the frame path both want - and
+     * neither has to name a render stage or a granularity to get it.
+     * <p>
+     * There is one sender of this selector in the engine, here, so that a marker written by the frame path and a
+     * marker written by the smoke are the same call. An index outside the heap is refused with the reason in the
+     * log rather than sent, because the native side takes it as unsigned and would write past the heap.
+     *
+     * @param commandBuffer the frame's or the smoke's command buffer, open for encoding
+     * @param index         which entry of this heap the timestamp lands in
+     * @return whether the call was made
+     */
+    public boolean writeTimestamp(final MemorySegment commandBuffer, final long index) {
+        if (index < 0L || index >= this.entries) {
+            Metallum.LOGGER.warn("Metal 4 counter heap: a timestamp was asked for entry {} of the {} this heap"
+                    + " was made with, so none was written", index, this.entries);
+            return false;
+        }
+        if (ObjC.isNil(commandBuffer)) {
+            Metallum.LOGGER.warn("Metal 4 counter heap: entry {} was asked for from a nil command buffer", index);
+            return false;
+        }
+        WRITE_TIMESTAMP.send(commandBuffer, this.handle, index);
+        return true;
+    }
+
     /**
      * Resolves one entry on the CPU timeline, or -1 where it could not be read.
      * <p>

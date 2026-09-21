@@ -4209,12 +4209,10 @@ public final class MTL4Probe {
      */
     // ---------------------------------------------------------------- GPU counters
 
-    /** {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer. */
-    private static final Msg WRITE_TIMESTAMP =
-            Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG);
-
     /**
-     * {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer, and it is the smoke's only marker.
+     * {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer, and it is the smoke's only marker -
+     * written through {@link MTL4CounterHeap#writeTimestamp}, which is the engine's single sender of that
+     * selector, so a marker the smoke writes and one the frame path writes are the same call.
      * <p>
      * {@code MTL4CommandBuffer.h} is explicit about what it means: "captures a timestamp after work prior to this
      * command in the command buffer is complete. Work after this call may or may not have started." So a marker
@@ -4429,7 +4427,7 @@ public final class MTL4Probe {
                 END.send(buffer);
                 return false;
             }
-            WRITE_TIMESTAMP.send(buffer, heap.handle(), 0L);
+            heap.writeTimestamp(buffer, 0L);
             for (int step = 0; step < COUNTER_DRAWS.length; step++) {
                 if (!drawnPass(device, buffer, shared, COUNTER_EDGE, COUNTER_DRAWS[step], false,
                         clearPipeline, table, heap, step + 1L, "the counter smoke's step " + step)) {
@@ -4638,7 +4636,7 @@ public final class MTL4Probe {
             // unsigned on the native side, so there is no such entry to write and asking for one would be a
             // different measurement.
             if (timestampIndex >= 0L) {
-                WRITE_TIMESTAMP.send(buffer, heap.handle(), timestampIndex);
+                heap.writeTimestamp(buffer, timestampIndex);
             }
         }
     }
