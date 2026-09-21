@@ -359,6 +359,22 @@ public final class MetalFrameProbe {
     private static long censusBias = Long.MIN_VALUE;
     private static long censusViewport = Long.MIN_VALUE;
     private static long censusScissor = Long.MIN_VALUE;
+    /**
+     * What the frame cost the CPU, and what it allocated.
+     * <p>
+     * The plan's first-phase question is whether this path is CPU-bound at all, and the two readings that answer
+     * it are cheap enough to take every window with no profiler in the process: the render thread's own CPU time
+     * and the bytes it allocated, both from the JDK's thread MXBean, read once when the window opens and once
+     * when it closes. A profiler is the wrong instrument here and this project measured why - JFR started with
+     * `-XX:StartFlightRecording` ended the client with SIGABRT (exit 134) in the four-arm test that was meant to
+     * price it, twice, and left two zero-byte recordings - so the census the plan falls back to is this: two
+     * readings that cannot change the frame they measure.
+     */
+    private static com.sun.management.ThreadMXBean threadMx;
+    private static long windowAllocatedStart;
+    private static long windowAllocatedBytes;
+    private static long windowCpuStart;
+
     /** Bind operations asked for, native setter calls sent, and native calls whose value the slot already had. */
     private static long censusCalls;
     private static long censusNative;
@@ -708,6 +724,8 @@ public final class MetalFrameProbe {
         if (windowFrames == 1) {
             windowStartedAt = now;
             windowStartedAtTick = ticks;
+            windowAllocatedStart = currentThreadAllocatedBytes();
+            windowCpuStart = currentThreadCpuNanos();
         } else if (wallSamples < wallTimes.length) {
             wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;
             if (wallSamples == 0 || wallTimes[wallSamples] >= wallTimes[worstWallFrame]) {
@@ -992,6 +1010,51 @@ public final class MetalFrameProbe {
     }
 
     /** A scissor rect was pushed, once per state change rather than once per draw. */
+    /**
+     * The render thread's cumulative allocated bytes, or 0 where the JVM does not answer.
+     * <p>
+     * `com.sun.management.ThreadMXBean` is the only way to ask a HotSpot JVM what one thread has allocated
+     * without a profiler, and it is asked twice a window: the difference is what a frame allocates, which is the
+     * number that decides whether object churn on this path is worth pooling. A JVM that does not implement it
+     * answers 0, and the line then says 0 rather than making a claim.
+     */
+    /**
+     * The render thread's own CPU time, or 0 where the JVM does not answer.
+     * <p>
+     * `System.nanoTime()` around a window is the window's *wall* time and was the first thing this reading got
+     * wrong: a frame whose CPU is a fraction of its wall would have read as a busy thread. What is wanted is the
+     * thread's CPU, which the same MXBean answers, and the difference between the two is the whole point of the
+     * reading - a render thread that waits for its drawable is not a thread that is working.
+     */
+    private static long currentThreadCpuNanos() {
+        try {
+            java.lang.management.ThreadMXBean bean = java.lang.management.ManagementFactory.getThreadMXBean();
+            if (!bean.isCurrentThreadCpuTimeSupported()) {
+                return 0L;
+            }
+            return bean.getCurrentThreadCpuTime();
+        } catch (RuntimeException | LinkageError unsupported) {
+            return 0L;
+        }
+    }
+
+    private static long currentThreadAllocatedBytes() {
+        try {
+            if (threadMx == null) {
+                java.lang.management.ThreadMXBean bean = java.lang.management.ManagementFactory.getThreadMXBean();
+                if (bean instanceof com.sun.management.ThreadMXBean sun) {
+                    if (!sun.isThreadAllocatedMemoryEnabled()) {
+                        sun.setThreadAllocatedMemoryEnabled(true);
+                    }
+                    threadMx = sun;
+                }
+            }
+            return threadMx == null ? 0L : threadMx.getThreadAllocatedBytes(Thread.currentThread().getId());
+        } catch (RuntimeException | LinkageError unsupported) {
+            return 0L;
+        }
+    }
+
     /**
      * One client tick, which the client's own tick method reports.
      * <p>
@@ -1508,6 +1571,8 @@ public final class MetalFrameProbe {
     private static void report() {
         // Read before reset(), which clears the window's first frame along with its counts.
         long windowNanos = System.nanoTime() - windowStartedAt;
+        long windowCpuNanos = Math.max(0L, currentThreadCpuNanos() - windowCpuStart);
+        windowAllocatedBytes = currentThreadAllocatedBytes() - windowAllocatedStart;
         Metallum.LOGGER.info(
                 "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} "
                         + "clearDeferred={} clearFolds={} "
@@ -1532,7 +1597,7 @@ public final class MetalFrameProbe {
                         + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
                         + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={} "
-                        + "windowTicks={} framesPerTick={}",
+                        + "windowTicks={} framesPerTick={} frameCpuMs={} allocKiB={}",
                 frames,
                 BUDGET,
                 windowFrames,
@@ -1582,7 +1647,9 @@ public final class MetalFrameProbe {
                 percentile(gpuM4Times, gpuM4Samples, 1.00),
                 ticks - windowStartedAtTick,
                 String.format(Locale.ROOT, "%.2f",
-                        windowFrames / (double) Math.max(1L, ticks - windowStartedAtTick))
+                        windowFrames / (double) Math.max(1L, ticks - windowStartedAtTick)),
+                String.format(Locale.ROOT, "%.2f", windowCpuNanos / 1_000_000.0),
+                String.format(Locale.ROOT, "%.1f", windowAllocatedBytes / 1024.0)
         );
         if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0
                 || texelViews > 0 || passDescriptors > 0) {
