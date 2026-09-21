@@ -706,6 +706,56 @@ what a pack scene *is*; and **what makes this path's arms differ by up to half w
 which, after eighteen sessions, is the single question standing between this report and section 123's performance
 item.
 
+### The vanilla cloud, the scene it was measured in, and the defect it found
+
+**The scene was never the overworld.** Every session of the performance harness opened in the *nether*, and the
+reason is in the save rather than in the switch: a player record carries the dimension it was last in, and the
+staged world holds 81 records in the overworld and **9 in the nether at the world spawn**, the nine being the
+profiles the dev instance actually joins as. So every run opened in the nether - red fog, no sky, no cloud layer -
+at whatever coordinates `--at` had written, while the harness believed it was staging the overworld. `freeze-world.py`
+now pins the dimension beside the clock, the weather and the aim (`--dimension`, default `minecraft:overworld`), and
+the harness passes its own through. Measured on the same scene as before: the Metal 4 arm's own log goes from no
+cloud pass at all to **683 cloud passes in 120 frames**.
+
+**And that is what let the reported defect be reproduced.** With clouds in the frame, `--no-pack` and forced Metal
+4, the Metal 4 pass dropped the cloud's face data on every frame:
+
+```text
+Metal 4 trace: 'CloudFaces' is a buffer in the frame path's binding and a texture in the pipeline's layout, so it
+               is not encoded - the Metal 3 pass does the same          (683 of 683 cloud passes)
+```
+
+**The trailing sentence was wrong, and that is the defect.** The Metal 3 pass has handled this kind since it was
+written: a `GpuBuffer` bound under a name the pipeline declares as a texel buffer becomes a buffer-backed texture
+view (`createTexelBufferTexture`), which is what a `texture_buffer` argument is. The Metal 4 pass asked only the
+*buffer-slot* question, and a texel buffer is - correctly - not a buffer slot but a texture slot, so the binding
+resolved to nothing and was skipped in silence. The cloud renderer binds no vertex buffer at all: it fills a texel
+buffer with three bytes a face and derives every face corner in the vertex stage from it, so a dropped binding puts
+every face at one point - a band of cloud crowded over the camera, and the overdraw that comes with it, which is
+both halves of what was reported.
+
+**The fix** is five steps, and each is pinned by `tools/ci-metal4-provider.py` (mutation-proved by restoring the old
+lookup): the binding plan carries the binding's texel format and can be asked for the texel buffer a name declares;
+the pass asks that question *before* the buffer-slot one; it builds the view with the same
+`MTLTexture.newBufferTextureView` the reference uses; it fills the texture slot, direct or through an argument
+buffer; and it releases the view through the pass's own transient queue.
+
+**What the fix is verified by.** In a fullscreen capture of the same scene (1920x1200, one capture per arm, no
+desktop in the frame): the dropped-binding line is gone, **no binding is skipped at all**, and the cloud
+**outlines, positions and facets are identical to the reference's** - the two captures' cloud silhouettes match
+pixel for pixel, where before the fix the Metal 4 arm carried no cloud in the right place at all. Fast clouds
+(`options.renderClouds: fast`, newly reachable through `--vanilla-clouds fast`) and the view from above the layer
+were checked the same way.
+
+**And one thing is left: this path's overworld frame is lighter than the reference's.** On those same captures the
+sky and the clouds are both shifted toward white on Metal 4 - sky at one column reading `(125,155,225)` at the top
+against `(172,190,227)`, a roughly constant offset down the whole column - so a whole-frame pixel comparison still
+separates the generations (61.4% of the frame is sky and 86% of it differs; the cloud pixels differ in colour while
+their geometry matches). The nether scenes, which have neither sky nor clouds, agree to 0.06% of pixels, so this is
+specific to the overworld's sky and cloud passes and is *not* the geometry defect fixed above. It is recorded here
+as **NOT MEASURED beyond that description**: it needs its own diagnosis, and the cloud placement defect does not
+depend on it.
+
 ## Resource Binding
 
 ```

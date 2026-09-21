@@ -5881,3 +5881,55 @@ P95**. The picture column cannot read it, and the comparer says so itself: the r
 guarded, every verdict read on the mean. This path is slower by the two-handover quantum on the three work-light
 rungs and faster at the median on the one work-bound rung, which is what the AUTO decision's performance line
 says.
+
+### The nether the harness had been staging, and the cloud defect it hid
+
+The user reported that forced Metal 4 draws Minecraft's own clouds wrong - a band crowded over the camera, and a
+pathological cost when approaching the layer - and that Metal 3 does not. Reproducing it needed a scene with clouds
+in it, and there was none: every session of `tools/run-vitrail-performance.sh` opened in the **nether**.
+
+The save says why. A player record carries the dimension it was last in, and that is where the next session opens
+whatever coordinates sit beside it: the staged world holds 81 records in the overworld and **9 in the nether at the
+world spawn `(0.5, 80, 0.5)`** - the nine being the profiles the dev instance actually joins as. The aim rewrote
+their position; nothing rewrote their dimension. So the harness measured red fog, no sky and no cloud layer while
+its own notes said it staged the overworld, and any comparison of sky or clouds was impossible from the start.
+`freeze-world.py` now pins every record's dimension (`--dimension`, default `minecraft:overworld`) beside the clock,
+the weather and the aim, with a self-test case for the rewrite, and the harness passes it through. The same scene
+then reads **683 cloud passes in a 120-frame Metal 4 window** where it had none.
+
+With clouds in the frame the defect is immediate, and the trace names it on every cloud pass:
+
+```text
+Metal 4 trace: 'CloudFaces' is a buffer in the frame path's binding and a texture in the pipeline's layout, so it
+               is not encoded - the Metal 3 pass does the same
+```
+
+**The claim after the dash was false, and it is the whole defect.** `MetalRenderPass` has handled a
+`TEXEL_BUFFER` binding since it was written - `createTexelBufferTexture` makes a buffer-backed `MTLTexture` view,
+which is what MSL's `texture_buffer` argument is - and `Metal4RenderPass` did not: `setUniform(name, bufferSlice)`
+asked `slotFor(name, texture = false)`, the binding plan classifies a texel buffer as a *texture* slot (correctly,
+because that is how it is bound), the lookup returned null, and the binding was dropped with a diagnostic line
+nobody had read as a defect. The cloud renderer binds no vertex buffer at all: it fills a texel buffer with three
+bytes a face and derives every face corner in the vertex stage from it, so a dropped binding collapses every face
+toward one point - a cloud band over the camera, exactly as reported, and the overdraw that explains the cost near
+the layer.
+
+The fix teaches the binding path the kind: `Metal4BindingPlan.Slot` carries the binding's `texelBufferFormat` and
+the plan can be asked for the texel buffer a name declares; `Metal4RenderPass.setUniform` asks that before the
+buffer-slot question and calls the new `fillTexelBuffer`, which builds the view with the same
+`MTLTexture.newBufferTextureView` the reference uses, fills the texture slot (direct or through an argument buffer),
+and releases the view through `owner.queueForDestroy`. `setUniform`'s remembered bindings are re-applied on the same
+road, and `tools/ci-metal4-provider.py` pins all five steps - mutation-proved by restoring the old lookup.
+
+**Verified** on the same scene, fullscreen so no desktop is in the capture (1920x1200, one capture per arm):
+the dropped-binding line is gone, **no binding is skipped at all**, and the cloud outlines, positions and facets
+are identical to the reference's - where the pre-fix Metal 4 arm carried no cloud in the right place. Fast clouds
+and the view from above the layer were checked the same way (`--vanilla-clouds` now takes `on`, `fast` or `off`,
+the middle one being a word `options.renderClouds` parses and a boolean cannot express).
+
+**What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
+sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
+`(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations
+while the cloud geometry matches and the nether scenes (no sky, no clouds) agree to 0.06% of pixels. That is a
+separate defect in the overworld's sky and cloud *shading*, not the geometry this session fixed, and it is
+**NOT MEASURED** beyond this description.
