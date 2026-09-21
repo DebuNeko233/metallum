@@ -17,7 +17,8 @@ Metallum: e55985e  STARTING_METALLUM_SHA, two commits past the plan's own refere
                     e55985e (the byte unit, the submission-index window, the tail test) then 868d5b5
                     (the same two wordings). Both are Metal 3 bookkeeping and neither is a Metal 4 change.
                     The first Metal 4 commit after this line is 050d1dd, the cold-probe harness.
-Vitrail:  4380250f  (perf/optimisation; exactly the plan's reference)
+Vitrail:  4380250f  (perf/optimisation; exactly the plan's reference) - that is STARTING_VITRAIL_SHA, unchanged
+                    through every reading in this report, and Vitrail is unmodified at it
 ```
 
 Every structure the plan names was checked against this checkout before anything was measured:
@@ -568,6 +569,14 @@ picture:        MEASURED through the readback road rather than an F2 press, and 
                 are in that blocker, and the alpha byte is the separate residual it always was
 ```
 
+render→compute:      MEASURED in the synchronization matrix below rather than here - a compute dispatch that
+                      samples a texture a render pass wrote, and a compute dispatch that writes a storage image a
+                      later render pass samples. Both are section 60's fixtures and both are green; this section
+                      owns the dispatch road itself, which is the block above.
+compute→render:      the other half of the same pair, and the same fixtures; the reading is that both
+                      generations order the two the same way, which is what makes the pair a measurement rather
+                      than an assumption.
+
 **A note on these two blocks, because they are how a report goes wrong.** They read "NOT STARTED" long after the
 work behind them had landed: the capability matrix above was updated rung by rung while the narrative sections
 beneath it were not, so the same document contradicted itself - a reader who took the Compute block at its word
@@ -804,6 +813,30 @@ The Metal 3 reference on the pinned scene is
 `wallP50 7.25-7.26 ms`, `gpuP50 7.28-7.29`, `gpuMs 4366.72 / 4368.05` over two arms of
 `run/m3-final`, and it is the baseline any Metal 4 frame will be read against - always with
 `--fullscreen-size` and `--expect-target` set, and with nothing else running on the machine.
+
+**The GPU percentiles, which section 121 asks for beside the wall ones, from the two sessions on disk.** Each
+generation reports its own API's numbers and they are printed as collected rather than converted - a report that
+put `gpuP95` and `gpuM4P95` in one column would be claiming section 92's rule has been established:
+
+```text
+                    wallP50  wallP95  wallP99   gpuP50  gpuP95  gpuP99   gpuM4P50  gpuM4P95  gpuM4P99
+no-pack  m3a          8.23     9.36     9.47      2.21   2.38    2.42        -         -         -
+run/nopack-ab1 m4a    8.48     9.13     9.53       -      -       -        2.55      2.75      2.78
+         m3b          8.37     8.98     9.42      2.21   2.40    2.42        -         -         -
+         m4b          8.40     8.94     9.48       -      -       -        2.52      2.70      2.75
+
+pack     m3a         21.07    22.65    22.95     21.06  22.25   22.42        -         -         -
+run/perf-ab6 m4a      9.51    37.45    37.83       -      -       -       18.55    19.41     19.50
+         m3b         21.02    22.66    23.02     21.04  22.23   22.35        -         -         -
+         m4b         27.04    54.74    56.02       -      -       -       27.74    28.90     29.05
+```
+
+Read together with the pacing above, the percentiles say the same thing the medians did: on the no-pack scene
+both generations are settled and tight (a 0.2 ms spread from P50 to P99), and on the pack scene Metal 3's arms
+stay tight (21.07 to 22.95) while **this path's own GPU numbers are as stable as Metal 3's within an arm**
+(18.55 to 19.50, and 27.74 to 29.05) and the arm-to-arm difference is the machine state the two sections above
+are about. Nothing in that pair of columns is a Metal 3 against Metal 4 verdict, for the reason section 92 gives
+and the two spellings here repeat.
 
 **And the no-pack frame - section 37's first comparison - was taken between the two generations after the copy
 road was fixed, four arms in one session on the staged `PerfWorld`, window 1600x900, `--frames 600 --settle 25`
