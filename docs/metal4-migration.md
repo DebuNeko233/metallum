@@ -4133,6 +4133,72 @@ never ran and the guard aborted the session instead of reporting. The reader now
 lookups tolerate finding nothing, so an absent line is a reported condition. All three properties are pinned in
 `tools/ci-vitrail-performance.py` and each was mutation-proved.
 
+### The GUI is drawn and does not appear, and it is not the fragment stage
+
+Reported from play: **under Metal 4 the game's own text and GUI are not on screen** - not the HUD's, not the
+chat's, not the title screen's buttons or logo - while the world renders correctly. Everything below is measured
+on this machine, in sessions with no pack, `-Dmetallum.execution=metal4`, and the frame probe's own counters: the
+first question is whether the GUI is even encoded, the second is where it is lost.
+
+**It is encoded.** On the title screen one frame's pass list is, in order: five `Animate <atlas>` passes, the
+`Cubemap` pass (the panorama, one indexed draw of 36 indices, base vertex 0), the `GUI before blur` pass, and the
+present - and the GUI's pass carries **7 indexed draws** through `gui_textured`, `gui_text` and `mojang_logo`,
+into colour texture `0x7ab6ba3700` with `depth=true load=load store=store`. In a world frame the same pipelines
+appear twice, in `GUI before blur` (with `vignette` and the vanilla `blur/0..5` post passes) and in
+`GUI after blur`, both writing the target the present reads. So this is not "the GUI is never asked for" and not
+"the GUI goes to another attachment": the present's own trace line, added for this question, names the picture it
+samples - `presenting picture 0x7ab6ba3700 1708x960 into a drawable 0x...` - and it is the same texture the GUI's
+pass wrote.
+
+**And the pass's output reaches the screen, so the pass machinery is not the fault.** Forcing that pass's colour
+attachment to be *cleared* to magenta (a diagnostic in the pass constructor, since reverted) makes the whole
+window magenta: the load action, the store action, the encoder order and the present are all correct, and what is
+missing is only what the GUI's draws write. The same sessions' render-target readbacks - the layer's `picture`
+and `drawable`, the road built for the display that cannot be photographed - report the panorama
+(`meanBGRA=(20,19,11,255)`) and no GUI at all.
+
+**Then four probes, each in its own session, and none of them changed a single sampled pixel:**
+
+```text
+probe                                                     result
+the M4 pass sets the front-facing winding to Clockwise    picture readback identical
+every draw's cull mode forced to None                     picture readback identical
+every pipeline built with blending disabled               picture readback identical
+every fragment shader's alpha-0 discard_fragment removed  picture readback identical
+the GUI pipelines' fragment colour forced to magenta      picture readback identical
+```
+
+That last one is the measurement this question needed: if the GUI's fragments were being produced at all - with
+any colour, through any blend, with or without the discard - forcing their output to pure magenta would paint the
+buttons and glyphs on the picture. Nothing appears, so **the GUI's fragments are never rasterized**, and the
+whole fragment half of the pipeline (blend state, colour write mask, depth state, the discard, the sampled
+textures) is excluded at once. The GUI's pipelines declare no depth state at all, so the engine already sets
+`Always`/no-write for them and a depth attachment cannot be rejecting them either.
+
+**The vertex stage's state is right on paper, which is where this round's account ends.** Read out of the same
+trace: `pipeline/gui_textured`'s plan is `buffers(v=18,f=2) textures(v=0,f=3) samplers(v=2,f=3)
+vertexLayouts=16 from slot 2 names=Projection=b0,DynamicTransforms=b1,Sampler0=t2`; the pass fills the vertex
+buffer at table slot 2 with `address 0x10002e78000 stride 24 slice offset 0 length 262144`; the translated MSL
+declares `Position [[attribute(0)]] UV0 [[attribute(1)]] Color [[attribute(2)]]` with
+`Projection [[buffer(0)]]` and `DynamicTransforms [[buffer(1)]]`; and the uniform *contents* read back from the
+buffers are correct - the GUI's orthographic projection, and an identity with `z = -11000` at byte offset 256 of
+the dynamic-uniform ring, against the panorama's own rotation at offset 0. The panorama's fill is the same shape
+in every respect (`slot 0 -> table 2`, stride 12) and it rasterizes.
+
+**What the same trace does show is how narrow the working set is.** Of the pipelines a title-screen frame binds a
+vertex buffer through at all, there are five: `gui_textured`, `gui_text`, `gui`, `mojang_logo` and `panorama` -
+and only `panorama` rasterizes. The one thing the GUI's formats have that the panorama's does not is a second and
+third vertex element (`POSITION_COLOR`, `POSITION_TEX_COLOR` against `POSITION`) and a 16- or 24-byte stride
+against 12, so the next state to compare between the generations is the **vertex descriptor those formats build**
+- the one object of the user's list that this round did not diff, because both generations' builders are
+character-for-character the same and the difference, if there is one, is in what the descriptor receives.
+
+The residue is named rather than guessed: the GUI is encoded, its target is the presented one, its pass's writes
+reach the screen when a clear is forced through them, and its fragments are never produced. The experiments that
+would separate the remaining candidates are recorded in the report's blocker 17. **The work that was next in the
+programme's order - the compute pipeline neutralisation - is paused behind this**, because a frame path that
+cannot draw Minecraft's own GUI is not a base to add features to.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
