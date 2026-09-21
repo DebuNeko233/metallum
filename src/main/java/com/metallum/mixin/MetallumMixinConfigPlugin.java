@@ -25,6 +25,18 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
     private static final String LIFECYCLE_PROBE_MIXIN =
             "com.metallum.mixin.render.LifecycleProbeMixin";
 
+    /**
+     * The client's tick, counted for the frame probe's windows.
+     * <p>
+     * It is named here for the same reason the lifecycle driver is: a mixin in the config and not in this list is
+     * never applied, silently. This one matters to a *reading* rather than to a transition - a frame-probe window
+     * is a fixed frame count and this client's frame is not the same work every frame (7 render passes in the
+     * steady state, 13 on the frame that coincides with a client tick), so a window that cannot say how many
+     * ticks it covered cannot say whether two arms sampled the same slice of the client's life.
+     */
+    private static final String CLIENT_TICK_PROBE_MIXIN =
+            "com.metallum.mixin.render.ClientTickProbeMixin";
+
     private boolean isMacOs;
 
     @Override
@@ -48,7 +60,8 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
         }
         return PREFERRED_GRAPHICS_API_MIXIN.equals(mixinClassName)
                 || VIDEO_SETTINGS_SCREEN_MIXIN.equals(mixinClassName)
-                || LIFECYCLE_PROBE_MIXIN.equals(mixinClassName);
+                || LIFECYCLE_PROBE_MIXIN.equals(mixinClassName)
+                || CLIENT_TICK_PROBE_MIXIN.equals(mixinClassName);
     }
 
     @Override

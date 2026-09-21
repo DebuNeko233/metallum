@@ -436,7 +436,7 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 35:
+if len(guarded) != 36:
     raise SystemExit(
         "frame probe: expected 35 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
@@ -444,9 +444,11 @@ if len(guarded) != 35:
         "fourteen the Metal 3 backend-cost census added: twelve for the argument-buffer path - a pass, a layout, an "
         "allocation, a set call, a set skipped, a texture write, a sampler write, a buffer write, a useResource "
         "call, a draw, a texel view and a pass descriptor - and two for the render-encoder reuse census, one for "
-        "the reuse taken and one for the recreation with its causes - and one for section 58's depth bias, which "
-        "is the only counter that says whether a real pipeline reaches the road the artifact had carried and "
-        "nothing ever sent), found "
+        "the reuse taken and one for the recreation with its causes - and one for the client tick, which is what "
+        "a window's content can be normalised by; "
+        "the reuse taken and one for the recreation with its causes - one for section 58's depth bias, which is "
+        "the only counter that says whether a real pipeline reaches the road the artifact had carried and nothing "
+        "ever sent, and one for the client tick), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
@@ -762,5 +764,37 @@ for needle, why in (
     metal4_ring = read("src/main/java/com/metallum/mtl/metal4/MTL4FrameRing.java")
     if needle not in metal4_encoder and needle not in metal4_ring:
         raise SystemExit("frame probe contract: " + why)
+
+# --- the client tick, which is what a window's content is normalised by --------------------------------
+# A window is a fixed frame count and this client's frame is not the same work every frame: the no-pack frame is
+# 7 passes in the steady state and 13 on a client tick, so content is `a*frames + b*ticks` and two arms whose
+# frame rates differ sample different numbers of ticks. The mixin is the only road from the client's own clock
+# into the probe, and its absence would leave the drift unexplained rather than explained.
+TICK_MIXIN = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mixin" / "render" / "ClientTickProbeMixin.java"
+MIXINS_JSON = ROOT / "src" / "main" / "resources" / "metallum.mixins.json"
+if not TICK_MIXIN.is_file():
+    raise SystemExit("frame probe: the client-tick mixin is gone, so no window can say how many of the client's "
+                     "ticks it covered")
+tick_mixin = TICK_MIXIN.read_text(encoding="utf-8")
+for needle, why in (
+    ('@Inject(method = "tick()V", at = @At("HEAD"))',
+     "the mixin no longer injects at the client's own tick, so the count would be of something else"),
+    ("MetalFrameProbe.gameTick();", "the client tick is no longer reported to the probe"),
+):
+    if needle not in tick_mixin:
+        raise SystemExit("frame probe: " + why)
+if '"render.ClientTickProbeMixin"' not in MIXINS_JSON.read_text(encoding="utf-8"):
+    raise SystemExit("frame probe: the client-tick mixin is not registered, so it never loads and every window "
+                     "would report no ticks")
+for needle, why in (
+    ("public static void gameTick() {", "the probe has no client-tick entry point"),
+    ("windowTicks={} framesPerTick={}", "the window line no longer carries the tick count, so the sampling "
+                                       "difference the drift is made of cannot be read"),
+    ("                ticks - windowStartedAtTick,",
+     "the reported tick count is not the window's own span, so a window would report the process's ticks rather "
+     "than the ones it covered"),
+):
+    if needle not in probe:
+        raise SystemExit("frame probe: " + why)
 
 print("Metal frame-probe instrumentation contract: PASS")

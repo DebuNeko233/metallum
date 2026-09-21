@@ -777,4 +777,25 @@ for needle, why in (
     if needle not in harness:
         raise SystemExit("Vitrail performance harness contract: " + why)
 
+# --- the window's tick sampling, which is what a content drift has to be read against --------------------
+# A window is a fixed frame count and this client's frame is not the same work every frame (7 render passes in
+# the steady state, 13 on a frame that coincides with a 20 Hz client tick), so a content total is
+# `a*frames + b*ticks`: two arms whose frame rates differ cover different numbers of ticks and their totals
+# differ with the same scene. The comparer therefore has to carry the tick fields and name them when a content
+# drift fires, or a sampling difference is reported as a scene difference - which is what refused the no-pack rung.
+for needle, why in (
+    ('    "windowTicks",', "the comparer does not carry the window's tick count, so a content drift cannot be "
+                          "told from a sampling difference"),
+    ('    "framesPerTick",', "the comparer does not carry frames a tick, which is the number that says whether two "
+                            "arms covered the same slice of the client's life"),
+    ('f" (window ticks {reference_ticks:.0f} against {other_ticks:.0f}, frames"',
+     "a content drift no longer names the two arms' tick sampling, so its line reads as a scene difference"),
+):
+    if needle not in comparer:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+PROBE_SOURCE = ROOT / "src/main/java/com/metallum/render/shared/MetalFrameProbe.java"
+if "windowTicks={} framesPerTick={}" not in PROBE_SOURCE.read_text(encoding="utf-8"):
+    raise SystemExit("Vitrail performance harness contract: the probe no longer reports the tick sampling the "
+                     "comparer reads")
+
 print("Vitrail performance harness contract: PASS")

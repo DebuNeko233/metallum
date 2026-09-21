@@ -47,6 +47,12 @@ EXACT_COUNTERS = ("windowFrames", "blits", "blittedMiB", "pipelineIdentities")
 COUNTERS = (
     "windowFrames",
     "windowMs",
+    # The window's client ticks and its frames a tick: a window is a fixed *frame* count, and this client's frame
+    # is not the same work every frame, so two arms whose frame rates differ cover a different number of ticks and
+    # their content totals differ without their scene differing. Reported here so a drift line can say which of
+    # the two it is looking at; see `tools/ci-frame-probe.py` for the mixin that counts them.
+    "windowTicks",
+    "framesPerTick",
     "gpuFrames",
     "gpuMs",
     "encoders",
@@ -342,9 +348,21 @@ def main() -> int:
                     continue
                 change = 100 * (other - reference) / reference if reference else 0.0
                 if abs(change) > tolerance:
+                    sampling = ""
+                    if tolerance:
+                        # A content total is `a*frames + b*ticks`, so a window that covered more ticks holds more
+                        # content with the same scene. Named here rather than left to the reader, because the
+                        # alternative is a drift report that says "scene" about a sampling difference.
+                        reference_ticks = measured[reference_name].get("windowTicks")
+                        other_ticks = measured[name].get("windowTicks")
+                        reference_rate = measured[reference_name].get("framesPerTick")
+                        other_rate = measured[name].get("framesPerTick")
+                        if None not in (reference_ticks, other_ticks, reference_rate, other_rate):
+                            sampling = (f" (window ticks {reference_ticks:.0f} against {other_ticks:.0f}, frames"
+                                        f" a tick {reference_rate:.2f} against {other_rate:.2f})")
                     generation_drifted.append(
                         f"{value}: {counter} of {name} is {change:+.1f}% against {reference_name}"
-                        + ("" if tolerance else " (exact)"))
+                        + ("" if tolerance else " (exact)") + sampling)
     if generation_drifted:
         drift.extend(generation_drifted)
         if len(by_generation) > 1:

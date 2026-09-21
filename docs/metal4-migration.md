@@ -5318,3 +5318,43 @@ its window covered, or the harness must close it on a tick boundary.
 The change was reverted rather than shipped: a guard that flags the reference is worse than one that flags the
 path, and section 63 forbids writing "probably better" over a measurement that says otherwise. The next step is
 the tick count, and it is a harness and probe change rather than a Metal4 one.
+
+### The tick count, and the no-pack rung it made measurable
+
+The drift's decomposition said the missing fact was the window's **client ticks**: a window is a fixed frame
+count and this client's frame is not the same work every frame (7 render passes in the steady state, 13 on the
+frame that coincides with a 20 Hz tick), so a window's content is `a*frames + b*ticks` and two arms whose frame
+rates differ cover different numbers of ticks. So the probe counts ticks: a mixin on the client's own
+`Minecraft.tick()` hands each tick to `MetalFrameProbe.gameTick()`, the value at the window's first frame is kept,
+and the window line reports `windowTicks` and `framesPerTick`. The mixin is registered in `metallum.mixins.json`
+**and admitted by `MetallumMixinConfigPlugin`**, which `ci-contracts.py` refuses to let disagree - a mixin in the
+config and not in the plugin's list is configured and never applied, silently, and that gate caught this one
+before it could measure nothing.
+
+**`run/ticks-nopack`, six arms interleaved M3/M4, no pack, is the first no-pack session of this programme whose
+guards all pass** - no scene drift, no arm outlier, and the pictures inside the reference's own spread:
+
+```text
+arm   wall P50   wall P95   wall P99   wallMax   own GPU interval   drawable wait p50   ticks   frames/tick
+m3a     8.33       8.87       8.97      11.79      gpuP50 7.60          7.71 ms          100       6.00
+m3b     8.33       8.83       9.02      13.40      gpuP50 7.61          7.64 ms          100       6.00
+m3c     8.33       8.88       9.13      11.69      gpuP50 7.60          7.66 ms          100       6.00
+m4a    13.56      15.94      16.11      16.21      gpuM4P50 2.68        9.50 ms          150       4.00
+m4b    14.81      15.95      16.17      16.24      gpuM4P50 2.69        9.13 ms          150       4.00
+m4c    14.85      15.95      16.18      18.33      gpuM4P50 2.67        9.17 ms          150       4.00
+```
+
+The reference repeats exactly (P50 8.33 three times, `loadedMiB 28498.5` to the digit) and this path's **upper
+mode is just as stable - P95 15.94, 15.95, 15.95, 0.06% apart, and its own driver interval 2.67-2.69** - while its
+P50 moves 13.56 to 14.85 with the mixture. And every Metal 3 arm covered **100 ticks at 6.00 frames a tick**
+against every Metal 4 arm's **150 at 4.00**: the windows sampled the same slice of the client's life, which is the
+statement the previous run could not make.
+
+**What the rung says**: on this scene this path is **1.63-1.78x slower in wall time** (13.56-14.85 against
+8.33 ms) and the mechanism is the pacing rather than the work - its own commit interval is **2.67-2.69 ms against
+the reference's 7.60-7.61**, and its drawable handover wait is 9.1-9.5 ms a frame against the reference's 7.7. A
+frame whose own work is 2.7 ms is landing on two 8.33 ms handovers where the reference's lands on one. Per
+sections 47 and 49 the two GPU columns are not subtracted; the wall column is the comparison.
+
+**The ladder therefore advances**: rung 1 is measured, so MakeUp is next - and the same guards, the same
+interleave and the same tick instrument apply to it.

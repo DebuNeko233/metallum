@@ -6,6 +6,7 @@
   "mixins": [
   ],
   "client": [
+    "render.ClientTickProbeMixin",
     "render.LifecycleProbeMixin",
     "render.PreferredGraphicsApiMixin",
     "render.VideoSettingsScreenMixin",

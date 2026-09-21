@@ -94,6 +94,22 @@ public final class MetalFrameProbe {
     private static int windowFrames;
 
     /**
+     * Client ticks counted since this process started, and the value the window opened at.
+     * <p>
+     * <strong>Why the window needs a tick count at all.</strong> A window is a fixed *frame* count, and this
+     * client's frame is not the same work on every frame: measured on the no-pack scene, a frame is 7 render
+     * passes in the steady state, **13 on the frame that coincides with a 20 Hz client tick** and 5 in one
+     * stretch - so a window's content totals are `a*frames + b*ticks`, and two arms whose frame rates differ put
+     * a different number of tick frames into the same 600-frame window. `run/drift-nopack` is why that matters:
+     * the reference's three arms read `depthAttachments 1800` exactly (its frame rate is constant, so its tick
+     * count is), while this path's differed by 9% and the content guard named it as scene drift. The tick count
+     * is the missing fact that lets a reader tell a window that sampled a different slice of the client's life
+     * from a window that drew a different world.
+     */
+    private static long ticks;
+    private static long windowStartedAtTick;
+
+    /**
      * When this window's first frame was submitted, so that a line can carry the wall-clock the
      * window took. A window is the frames between two markers, so its length is read from its own
      * first frame rather than from the last line, which would include whatever the session did
@@ -583,6 +599,7 @@ public final class MetalFrameProbe {
         long now = System.nanoTime();
         if (windowFrames == 1) {
             windowStartedAt = now;
+            windowStartedAtTick = ticks;
         } else if (wallSamples < wallTimes.length) {
             wallTimes[wallSamples] = (now - lastFrameAt) / 1_000_000.0;
             if (wallSamples == 0 || wallTimes[wallSamples] >= wallTimes[worstWallFrame]) {
@@ -816,6 +833,23 @@ public final class MetalFrameProbe {
     }
 
     /** A scissor rect was pushed, once per state change rather than once per draw. */
+    /**
+     * One client tick, which the client's own tick method reports.
+     * <p>
+     * The count is per process and per window: what a window's content can be normalised by is how many of the
+     * client's ticks it covered, so the value at the window's first frame is kept and the difference is reported.
+     * <p>
+     * No marker check here, unlike the frame boundary: the frame is the one place this class asks again, so that
+     * no counter's guard can open a window of its own, and an unarmed tick is therefore a single field read.
+     */
+    public static void gameTick() {
+        if (!armed()) {
+            return;
+        }
+
+        ticks++;
+    }
+
     public static void scissorSet() {
         if (!armed()) {
             return;
@@ -918,7 +952,8 @@ public final class MetalFrameProbe {
                         + "compiles={} compileMs={} "
                         + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
-                        + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={}",
+                        + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={} "
+                        + "windowTicks={} framesPerTick={}",
                 frames,
                 BUDGET,
                 windowFrames,
@@ -965,7 +1000,10 @@ public final class MetalFrameProbe {
                 percentile(gpuM4Times, gpuM4Samples, 0.50),
                 percentile(gpuM4Times, gpuM4Samples, 0.95),
                 percentile(gpuM4Times, gpuM4Samples, 0.99),
-                percentile(gpuM4Times, gpuM4Samples, 1.00)
+                percentile(gpuM4Times, gpuM4Samples, 1.00),
+                ticks - windowStartedAtTick,
+                String.format(Locale.ROOT, "%.2f",
+                        windowFrames / (double) Math.max(1L, ticks - windowStartedAtTick))
         );
         if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0
                 || texelViews > 0 || passDescriptors > 0) {
@@ -1107,6 +1145,8 @@ public final class MetalFrameProbe {
         viewports = 0;
         scissors = 0;
         depthBiases = 0;
+        // The tick counter is *not* reset: it is a per-process count and a window's span is a difference of two
+        // of its values, so clearing it here would make a second window's first frame its own zero.
         argBufferPasses = 0;
         argBufferLayouts = 0;
         argBufferAllocations = 0;

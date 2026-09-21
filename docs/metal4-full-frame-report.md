@@ -1466,6 +1466,42 @@ built rather than an old one reused, and no third configuration was ever created
 and logs nothing, which is why the cache-size field is the evidence). The cache is keyed by the whole
 configuration record and creation is behind the miss: both are contract-pinned in `ci-metalfx.py`.
 
+**The §93 ladder, first rung: MEASURED, once the window could say what it sampled.** `run/ticks-nopack` is the
+same six-arm M3/M4 interleave with the tick instrument in the line, and every guard passes: no scene drift, no arm
+outlier, and the picture comparison inside the reference's own spread (`m3a` against `m4b` 0.48% of pixels differ,
+against `m4c` 0.64%).
+
+```text
+arm   wall P50   wall P95   wall P99   wallMax   own GPU interval   drawable wait p50   ticks   frames/tick
+m3a     8.33       8.87       8.97      11.79      gpuP50 7.60          7.71 ms          100       6.00
+m3b     8.33       8.83       9.02      13.40      gpuP50 7.61          7.64 ms          100       6.00
+m3c     8.33       8.88       9.13      11.69      gpuP50 7.60          7.66 ms          100       6.00
+m4a    13.56      15.94      16.11      16.21      gpuM4P50 2.68        9.50 ms          150       4.00
+m4b    14.81      15.95      16.17      16.24      gpuM4P50 2.69        9.13 ms          150       4.00
+m4c    14.85      15.95      16.18      18.33      gpuM4P50 2.67        9.17 ms          150       4.00
+```
+
+Four readings, and they are the first no-pack numbers this report can stand behind:
+
+- **The reference repeats exactly and so does this path's upper mode.** Metal 3: P50 8.33 ms in all three arms,
+  P95 within 0.6%, `loadedMiB 28498.5` to the digit. This path: **P95 15.94, 15.95, 15.95 ms - 0.06% apart** - and
+  its own driver interval 2.67-2.69 ms, 0.7% apart, where its **P50 moves 13.56 to 14.85 (9.5%)** with the
+  mixture. So the stable quantity is the upper mode and the driver interval, and the P50 is the mixture ratio.
+- **The windows sampled the same slice of the client's life, and the instrument is what says so**: every Metal 3
+  arm covered **100 client ticks at 6.00 frames a tick** and every Metal 4 arm **150 at 4.00**. That equality is
+  new - it is what the previous run could not state, and why its content guard fired.
+- **The wall-clock comparison: this path is 1.63-1.78x slower on this scene** (13.56-14.85 against 8.33 ms), and
+  the mechanism is the pacing and not the work: **its own commit interval is 2.67-2.69 ms against the reference's
+  7.60-7.61**, while its drawable handover wait is 9.1-9.5 ms a frame against the reference's 7.7. A frame whose
+  own work is 2.7 ms is landing on **two 8.33 ms handovers** where the reference's lands on one.
+- **Per sections 47 and 49 the two GPU columns are not subtracted**: Metal 3's `gpuP50` is
+  `MTLCommandBuffer.gpuMillis` and this path's is `MTL4CommitFeedback`, and the intervals have not been shown to
+  be the same quantity. The wall column is the comparison; the GPU columns are what each generation says about
+  itself, and the structural counters (`pipelineIdentities 99`, `blits 0`, `windowFrames 600`, `depthBias 0`)
+  agree.
+
+**The refused first attempt is kept below**, because the instrument it lacked is the reason this one exists.
+
 **The §93 ladder, first rung: attempted under the new protocol, and refused by its own guards.**
 `run/perf93-nopack` is the no-pack rung - the game's own renderer through this engine's backend - with six arms
 interleaved **M3, M4, M3, M4, M3, M4**, one world, one camera, 3200x1800, 600-frame windows, 25 s of settle, the
