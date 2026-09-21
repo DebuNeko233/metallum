@@ -862,18 +862,24 @@ for run in "${runs[@]}"; do
 	# at 4.4 per cent between two runs of one configuration when the wait was five seconds. Timed from the
 	# detection rather than from the log's own clock, which has neither a date nor a timezone in it.
 	frame_seen="$(date +%s)"
-	sleep "$settle_seconds"
+	# The client's own picture of its frame is asked for INSIDE the settle and never inside the window, and that
+	# is a correction this cost a measurement to make. Asked for at the window's own opening, the first version of
+	# this put a 273 ms frame at frame 29 of a 300-frame window whose every other arm reads a worst frame of about
+	# ten milliseconds: a readback of a 1920x1200 colour texture is a GPU copy into a buffer the CPU then maps, and
+	# the probe counted the stall. A diagnostic that moves the state it reports is worse than no diagnostic, and the
+	# settle is twenty to twenty-five seconds of drawing that nothing counts. The request goes three seconds before
+	# the window opens, which is enough for the client's once-a-second check and the readback itself and long
+	# enough into the settle that the world has stopped streaming.
+	client_picture="$game_dir/metallum/client-screenshot.png"
+	rm -f "$client_picture" "$game_dir/metallum/screenshot-request"
+	sleep $(( settle_seconds > 3 ? settle_seconds - 3 : settle_seconds ))
+	: > "$game_dir/metallum/screenshot-request"
+	if [[ "$settle_seconds" -gt 3 ]]; then
+		sleep 3
+	fi
 	touch "$marker"
 	marker_touched="$(date +%s)"
 	printf 'window-opened %s\n' "$marker_touched" >> "$run_dir/load-trace.txt"
-	# And the client's own picture of its frame, asked for now, while the window the probe is counting is still
-	# open - which is the only moment at which the picture is the frame the numbers describe. It is answered from
-	# inside the client (ScreenshotProbeMixin, off unless -Dmetallum.clientScreenshot=true), so it does not go
-	# through the display server at all: a locked screen captures as one flat colour and an arm in its own Space
-	# captures whatever window is in front, and both of those have already been read as results here.
-	client_picture="$game_dir/metallum/client-screenshot.png"
-	rm -f "$client_picture" "$game_dir/metallum/screenshot-request"
-	: > "$game_dir/metallum/screenshot-request"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
 		run_failed=1

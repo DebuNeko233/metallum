@@ -603,10 +603,21 @@ if "-PvitrailHud=0" not in launcher:
         "overlay's own numbers rather than the scene"
     )
 
+# The picture is asked for before the window's marker is touched and not after it: the two orders are one line
+# apart in the source and a session apart in what they measure.
+_request = launcher.index(': > "$game_dir/metallum/screenshot-request"')
+_marker = launcher.index('touch "$marker"')
+if _request > _marker:
+    raise SystemExit(
+        "the client's picture is asked for after the window's marker is touched, so its readback lands inside the "
+        "frames the probe counts"
+    )
+
 # The window opens on a settled scene, and how long that takes is a switch rather than a constant: the
 # measurement that motivated it - two pinned runs of one configuration 4.4 per cent apart after five seconds
 # - says five is not obviously enough.
-if "--settle" not in launcher or 'sleep "$settle_seconds"' not in launcher \
+if "--settle" not in launcher \
+        or 'sleep $(( settle_seconds > 3 ? settle_seconds - 3 : settle_seconds ))' not in launcher \
         or "settle_seconds=25" not in launcher:
     raise SystemExit(
         "the harness no longer waits for the scene to settle before opening the probe window, or no longer "
@@ -794,6 +805,17 @@ for needle, why in (
      "nothing else"),
     (': > "$game_dir/metallum/screenshot-request"',
      "the request file is not created, so the client is never asked"),
+    # And it is asked for inside the SETTLE and never inside the window. Measured, the first version asked at the
+    # window's own opening and put a 273 ms frame at frame 29 of a 300-frame window whose every other arm reads a
+    # worst frame of about ten milliseconds - a diagnostic moving the state it reports, which is the one thing a
+    # diagnostic may not do.
+    ('sleep $(( settle_seconds > 3 ? settle_seconds - 3 : settle_seconds ))',
+     "the readback request is not held back inside the settle, so the readback's stall can land inside the window "
+     "the probe is counting - measured at 273 ms against every other arm's ten"),
+    ('if [[ "$settle_seconds" -gt 3 ]]; then',
+     "the settle is not finished after the request, so the window opens before the settle the harness promised"),
+    ("the first version of",
+     "no pin carries the reason the request sits in the settle, so the next reader can move it back"),
     ('client_picture="$game_dir/metallum/client-screenshot.png"',
      "the client's answer is not named, so nothing waits for it"),
     ('for _ in $(seq 1 30); do',

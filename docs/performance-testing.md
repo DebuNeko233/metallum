@@ -174,6 +174,23 @@ arms of one session photographed the browser. The readback goes through no displ
 by a file rather than by a tick schedule because the moment wanted is the harness's - the load takes eight to
 fifteen seconds, so the tick a window opens at moves by hundreds between sessions.
 
+**And it is asked for inside the settle, never inside the window, which cost a measurement to learn.** The first
+version asked at the window's own opening and the same arm read
+
+```
+                        wallP50   wallP95   wallP99   wallMax   wallMaxAt
+readback inside window    6.62      8.43     10.94    273.00      29
+readback inside settle    7.06      8.98      9.44      9.49     177
+```
+
+A readback of a 1920x1200 colour texture is a GPU copy into a buffer the CPU then maps, and the probe counted the
+stall - 273 ms against a worst frame of about ten milliseconds in every other arm of the session. **A diagnostic
+that moves the state it reports is worse than no diagnostic**, which is the rule the engine's own probes are
+written to, and the harness now asks three seconds before the marker is touched: long enough for the client's
+once-a-second check and the readback, late enough in the settle that the world has stopped streaming, and outside
+every frame the probe counts. The contract pins the order - the request is created before the marker is touched -
+because the two orders are one line apart in the source and a session apart in what they measure.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:
