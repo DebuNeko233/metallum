@@ -230,6 +230,8 @@ public final class MetalFrameProbe {
     private static int buffers;
     private static int viewports;
     private static int scissors;
+    /** Pipelines whose non-zero depth bias was applied to an encoder, which section 58 needs a reading of. */
+    private static int depthBiases;
 
     /** Session totals: pipeline creation is not a per-frame event, so it is read as a session cost. */
     private static int compiles;
@@ -823,6 +825,23 @@ public final class MetalFrameProbe {
     }
 
     /**
+     * One pipeline whose depth-stencil state asked for a non-zero depth bias, applied to the encoder.
+     * <p>
+     * Section 58's question is whether this generation applies a pipeline's depth bias at all, and a count is
+     * the reading that answers it on a real frame: the artifact has carried the two bias fields since it was
+     * written, so "the fields exist" says nothing, and "the encoder was told" is what a decal or a shadow-offset
+     * pipeline depends on. Zero here on a scene that uses one would be the defect this counter exists to catch;
+     * a non-zero count is what says the road is reached by real geometry rather than by a smoke.
+     */
+    public static void depthBiasApplied() {
+        if (!armed()) {
+            return;
+        }
+
+        depthBiases++;
+    }
+
+    /**
      * A render pipeline state was created, which happens off the frame path and is therefore read as
      * a session cost beside the per-frame counts.
      *
@@ -895,7 +914,8 @@ public final class MetalFrameProbe {
                 "frame-probe {}/{} windowFrames={} windowMs={} gpuFrames={} gpuM4Feedbacks={} gpuM4FeedbacksTotal={} gpuM4Frames={} gpuM3Ms={} gpuM4Ms={} gpuMs={} "
                         + "selectedGeneration={} executingGeneration={} encoders={} passChanged={} submit={} loadedMiB={} storedMiB={} "
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
-                        + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} compiles={} compileMs={} "
+                        + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} depthBias={} "
+                        + "compiles={} compileMs={} "
                         + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
                         + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={}",
@@ -928,6 +948,7 @@ public final class MetalFrameProbe {
                 buffers,
                 viewports,
                 scissors,
+                depthBiases,
                 compiles,
                 millis(compileNanos),
                 identityCount,
@@ -1085,6 +1106,7 @@ public final class MetalFrameProbe {
         buffers = 0;
         viewports = 0;
         scissors = 0;
+        depthBiases = 0;
         argBufferPasses = 0;
         argBufferLayouts = 0;
         argBufferAllocations = 0;

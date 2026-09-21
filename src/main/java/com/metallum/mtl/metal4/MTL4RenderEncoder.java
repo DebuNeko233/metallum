@@ -18,6 +18,7 @@ import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
@@ -83,6 +84,18 @@ public final class MTL4RenderEncoder implements AutoCloseable {
     private static final Msg SET_PIPELINE_STATE = Msg.ofVoid("setRenderPipelineState:", ADDRESS);
     private static final Msg SET_DEPTH_STENCIL_STATE = Msg.ofVoid("setDepthStencilState:", ADDRESS);
     private static final Msg SET_CULL_MODE = Msg.ofVoid("setCullMode:", JAVA_LONG);
+    /**
+     * {@code MTL4RenderCommandEncoder.setDepthBias:slopeScale:clamp:}, read off this machine's SDK header
+     * ({@code MTL4RenderCommandEncoder.h:138}): "Configures the adjustments a render pass applies to depth
+     * values from fragment shader functions by a scaling factor and bias", with a constant bias, a slope-scaled
+     * coefficient and a clamp whose {@code 0} disables clamping.
+     * <p>
+     * The selector's arity is why it is written out here: three floats in this order - the same order Metal 3's
+     * call of the same name takes - so a call site that swapped the first two would compile, send, and bias
+     * every polygon by the wrong amount, which is a decal that z-fights on one generation and not the other.
+     */
+    private static final Msg SET_DEPTH_BIAS = Msg.ofVoid("setDepthBias:slopeScale:clamp:",
+            JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT);
     private static final Msg SET_TRIANGLE_FILL_MODE = Msg.ofVoid("setTriangleFillMode:", JAVA_LONG);
     private static final Msg SET_SCISSOR_RECT = Msg.ofVoid("setScissorRect:", ADDRESS);
     private static final Msg DRAW = Msg.ofVoid(
@@ -374,6 +387,24 @@ public final class MTL4RenderEncoder implements AutoCloseable {
             return false;
         }
         SET_DEPTH_STENCIL_STATE.send(open, depthStencilState);
+        return true;
+    }
+
+    /**
+     * The pipeline's depth bias, applied to the draws that follow.
+     * <p>
+     * A measured gap rather than a feature added for completeness: the compiled artifact has carried
+     * {@code depthBiasConstant} and {@code depthBiasScaleFactor} since it was written and nothing on this path
+     * ever sent them to an encoder - so a pipeline that asks for a bias (a decal, a shadow-map offset, anything
+     * the game draws a hair in front of its surface) drew unbiased here and biased on the reference, which is a
+     * visible difference on exactly the geometry the bias exists for.
+     */
+    public boolean setDepthBias(final float constant, final float slopeScale, final float clamp) {
+        MemorySegment open = open() ? this.encoder : null;
+        if (open == null) {
+            return false;
+        }
+        SET_DEPTH_BIAS.send(open, constant, slopeScale, clamp);
         return true;
     }
 

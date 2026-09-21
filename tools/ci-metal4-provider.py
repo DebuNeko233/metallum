@@ -386,6 +386,44 @@ if "|| NO_DRAWABLE_WAIT" in encoder or "NO_DRAWABLE_WAIT = true" in encoder:
     raise SystemExit("metal 4 provider: the drawable-wait switch can be on without the property being set, "
                      "which would make a diagnostic the default submission")
 
+# --- the pipeline's depth bias, which section 58 found carried but never sent -----------------------------
+# The artifact has held `depthBiasConstant` and `depthBiasScaleFactor` since it was written and nothing on this
+# path ever handed them to an encoder, so a pipeline that asks for a bias - a decal, a shadow-map offset - drew
+# unbiased here and biased on the reference. The three pins are the selector with the floats the header declares,
+# the call site where the Metal 3 pass makes it, and the counter that lets a live frame say whether any real
+# scene reaches it.
+ENCODER_FILE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "MTL4RenderEncoder.java"
+metal4_encoder_source = ENCODER_FILE.read_text(encoding="utf-8")
+for needle, why in (
+    ('Msg.ofVoid("setDepthBias:slopeScale:clamp:",', "the encoder cannot be told a pipeline's depth bias, so a "
+     "biased pipeline draws at a different depth here than on the reference"),
+    ("Msg.ofVoid(\"setDepthBias:slopeScale:clamp:\",\n            JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT)",
+     "the depth-bias selector's three floats are not declared in the header's order, so a swapped bias and "
+     "slope-scale would compile and send the wrong adjustment"),
+    ("public boolean setDepthBias(final float constant, final float slopeScale, final float clamp) {",
+     "the encoder's depth-bias entry point is gone"),
+):
+    if needle not in metal4_encoder_source and needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ("this.encoder.setDepthBias(this.artifact.depthBiasConstant(), this.artifact.depthBiasScaleFactor(), 0.0f);",
+     "the pass no longer applies the pipeline's depth bias, which is the gap section 58 found"),
+    ("MetalFrameProbe.depthBiasApplied();",
+     "a non-zero depth bias is no longer counted, so no live frame can say whether real geometry reaches the "
+     "road - and 'the fields exist' is not the same reading as 'the encoder was told'"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+PROBE_SOURCE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "shared" / "MetalFrameProbe.java"
+probe_source = PROBE_SOURCE.read_text(encoding="utf-8")
+for needle, why in (
+    ("public static void depthBiasApplied() {", "the probe cannot count an applied depth bias"),
+    ("depthBias={}", "the window line does not report the depth-bias count, so a session cannot say whether "
+                     "any pipeline in it asked for a bias"),
+):
+    if needle not in probe_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 # --- the compilation chain, which is what a draw needs before it needs anything else ---------------------
 # The state now compiles Metal 4 artifacts rather than refusing: the game's GLSL compiler turns a pack's source
 # into SPIR-V, the SHARED translator turns that into MSL and names the resources, and this generation builds its

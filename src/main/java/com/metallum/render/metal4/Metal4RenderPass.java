@@ -1013,6 +1013,14 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                     + this.pipeline.getLocation());
         }
         this.encoder.setDepthStencilState(this.artifact.depthStencilState());
+        // The bias the pipeline asked for, sent where the reference sends it: the Metal 3 pass calls
+        // `setDepthBias(constant, slopeScale, 0.0f)` right after the depth-stencil state, and a generation that
+        // skipped it would draw decals and shadow-offset geometry at a different depth from the reference's.
+        // The clamp is zero, which the header says disables clamping.
+        if (this.artifact.depthBiasConstant() != 0.0f || this.artifact.depthBiasScaleFactor() != 0.0f) {
+            MetalFrameProbe.depthBiasApplied();
+        }
+        this.encoder.setDepthBias(this.artifact.depthBiasConstant(), this.artifact.depthBiasScaleFactor(), 0.0f);
         this.encoder.setCullMode(this.artifact.cullMode().value);
         this.encoder.setTriangleFillMode(this.artifact.fillMode().value);
         if (this.scissorEnabled || this.scissorWidth > 0L || this.scissorHeight > 0L) {

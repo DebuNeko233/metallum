@@ -1584,6 +1584,18 @@ capability proven in a process with no window is not the same claim.
 
 ## Remaining blockers
 
+- **Depth bias: the gap is FIXED, the fixture is not built.** Section 58 was right: `Metal4CompiledRenderPipeline`
+  has carried `depthBiasConstant` and `depthBiasScaleFactor` since it was written and **nothing on this path ever
+  sent them to an encoder** - so a pipeline that asks for a bias (a decal, a shadow-map offset, anything the game
+  draws a hair in front of its surface) drew unbiased here and biased on the reference, which is a visible
+  difference on exactly the geometry the bias exists for. `MTL4RenderEncoder.setDepthBias:slopeScale:clamp:` is
+  now bound with the header's three floats in the header's order and applied by the pass where the Metal 3 pass
+  makes the same call (`setDepthBias(constant, slopeScale, 0.0f)`, right after the depth-stencil state), and a
+  window reports `depthBias=N` so a live session can say whether any real pipeline reaches it. **What is NOT
+  MEASURED is the offset itself**: no live frame has yet been shown to carry a non-zero bias, and the fixture
+  section 58 asks for - two coplanar surfaces where the biased one must win, read on both generations - is not
+  built. The fix and its four pins are a separate commit from any performance work, as section 58 requires.
+
 - **This path's frame content is not stable across launches within one session, and it blocks the first rung of
   section 93's ladder.** `run/perf93-nopack`: Metal 3's three arms are identical to the byte in every content
   counter (`loadedMiB 28498.5`, `storedMiB 81232.9`, `depthAttachments 1800`, `identities 99` all three times,

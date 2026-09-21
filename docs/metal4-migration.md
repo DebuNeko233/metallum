@@ -5194,3 +5194,26 @@ the picture comparison agrees, `m3a` against `m4c` differing in 21.46% of pixels
 against `m4a` differs in 0.09%. Per section 42 the ladder **stops at this rung**: no MakeUp, no Complementary
 and no Photon until the no-pack rung can be taken without an arm whose content moved. Per section 67 the
 verdict recorded for it is **NOT MEASURED**, and the new blocker above is what stands between it and a number.
+
+### Depth bias: the fields were carried and never sent
+
+Section 58 asked whether this generation actually executes a pipeline's depth bias, and warned that the artifact
+might hold `depthBiasConstant` and `depthBiasScaleFactor` while no encoder call exists. It did. The Metal 3 pass
+calls `enc.setDepthBias(constant, slopeScaleFactor, 0.0f)` right after the depth-stencil state
+(`MetalRenderPass`); the Metal 4 pass set the same depth-stencil state and stopped there, so every pipeline that
+asks for a bias - a decal, a shadow-map offset, anything drawn a hair in front of its surface - drew unbiased on
+this path and biased on the reference.
+
+`MTL4RenderEncoder.setDepthBias:slopeScale:clamp:` is now bound from the header ({@code
+MTL4RenderCommandEncoder.h:138}) with its three floats in the header's order - the same order the Metal 3 call
+takes, which is why the declaration spells the arity out rather than relying on a call site to get it right - and
+the pass applies it where the reference does. A window now reports `depthBias=N`, the count of pipelines whose
+non-zero bias was sent, because "the fields exist" is not a reading and "the encoder was told" is: a scene that
+uses one and reports zero is the defect, and a non-zero count is what says real geometry reaches the road rather
+than a smoke.
+
+**What is not done**: the offset itself is not measured. No live frame has been shown to carry a non-zero bias
+yet, and section 58's fixture - two coplanar surfaces where the biased one must win, read on both generations -
+is not built, so the honest verdict for the bias's *behaviour* is NOT MEASURED while the gap that made it
+impossible is closed. Five contract pins hold the selector, its argument order, the encoder entry point, the call
+site and the counter, and each is mutation-proved.
