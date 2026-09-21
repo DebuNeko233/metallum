@@ -5152,3 +5152,45 @@ line" into "a hit". The lookup is by the whole configuration record and creation
 are pinned in `ci-metalfx.py` along with the fixture's own asymmetry - four distinct colours, four distinct
 alphas, both axes split - so a later edit that made the pattern symmetric turns the contract red instead of
 quietly measuring nothing.
+
+### Section 93's ladder: the first rung is refused by its own guards, and what it found instead
+
+With the timing model written down, the ladder restarts at its first rung - the game's own renderer with no pack
+staged - under the protocol the pacing work produced: one world, one camera, a pinned target, six arms
+interleaved **M3, M4, M3, M4, M3, M4**, 600-frame windows and 25 s of settle.
+
+```text
+arm   wall P50   wall P95   wall P99   wallMax   own GPU interval   drawable wait p50   loadedMiB
+m3a     8.33       8.58       8.71      8.89      gpuP50 7.68          7.72 ms            28498.5
+m3b     8.33       8.58       8.73     15.01      gpuP50 7.42          7.20 ms            28498.5
+m3c     8.34       8.59       8.77      9.57      gpuP50 7.30          7.13 ms            28498.5
+m4a    12.57      15.94      16.11     21.25      gpuM4P50 2.71       11.28 ms           120267.3
+m4b     9.85      15.92      16.05     21.07      gpuM4P50 2.74        8.75 ms           142767.3
+m4c     7.82      15.77      15.94     16.05      gpuM4P50 2.56        6.98 ms           160206.6
+```
+
+Two readings came out of it and neither is a performance number.
+
+**The reference repeats to 0.01% and this path does not.** Metal 3's three arms read 8.33, 8.33 and 8.34 ms at
+the median with `loadedMiB`, `storedMiB`, `depthAttachments` and `pipelineIdentities` identical to the byte in
+all three; this path's three arms read 12.57, 9.85 and 7.82 (1.61x) and their content counters drift
+monotonically - `loadedMiB` +18.7% then +33.2%, `storedMiB` +9.4% then +16.7%, `depthAttachments` +9.0% then
++16.5% against the first arm. The world is re-staged from the same copy for every arm, so this is a property of
+the frame this path builds and not of the scene. **NOT LOCALISED**; the leading candidate, recorded as a
+HYPOTHESIS, is the window's phase relative to the client's world streaming - with no pack the frame the harness
+waits for arrives at a different point in the load - and it needs its own experiment.
+
+**And the distribution is the second confirmation of the pacing mechanism.** Metal 3 sits at 8.33 ms in every
+arm - one quantum of this 120 Hz panel - with its own GPU time (7.3-7.7 ms) just under it, which is a frame that
+presents once a refresh. This path's **P95 is 15.77-15.94 ms in all three arms (1.1% apart)**, the *second*
+quantum, while its P50 moves from 7.82 to 12.57 with the mixture ratio the launch landed in. So the protocol's
+distribution-aware reading is the one this scene needs, and it is now measured on a second scene independently
+of `run/m4-pacing`.
+
+**The rung is refused rather than reported.** The comparison names both faults itself - "scene drift: metal4:
+loadedMiB of m4c is +33.2% against m4a" and "arm outlier: m4a read 12.49 ms a frame against the fastest arm of
+its own generation's 7.79 (1.60x), so the machine moved under it - section 115 says to discard this arm" - and
+the picture comparison agrees, `m3a` against `m4c` differing in 21.46% of pixels by more than 8 where `m3a`
+against `m4a` differs in 0.09%. Per section 42 the ladder **stops at this rung**: no MakeUp, no Complementary
+and no Photon until the no-pack rung can be taken without an arm whose content moved. Per section 67 the
+verdict recorded for it is **NOT MEASURED**, and the new blocker above is what stands between it and a number.

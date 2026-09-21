@@ -1466,6 +1466,47 @@ built rather than an old one reused, and no third configuration was ever created
 and logs nothing, which is why the cache-size field is the evidence). The cache is keyed by the whole
 configuration record and creation is behind the miss: both are contract-pinned in `ci-metalfx.py`.
 
+**The §93 ladder, first rung: attempted under the new protocol, and refused by its own guards.**
+`run/perf93-nopack` is the no-pack rung - the game's own renderer through this engine's backend - with six arms
+interleaved **M3, M4, M3, M4, M3, M4**, one world, one camera, 3200x1800, 600-frame windows, 25 s of settle, the
+target pinned with `--expect-target` and no pack staged:
+
+```text
+arm   wall P50   wall P95   wall P99   wallMax   own GPU interval   drawable wait p50   loadedMiB
+m3a     8.33       8.58       8.71      8.89      gpuP50 7.68          7.72 ms            28498.5
+m3b     8.33       8.58       8.73     15.01      gpuP50 7.42          7.20 ms            28498.5
+m3c     8.34       8.59       8.77      9.57      gpuP50 7.30          7.13 ms            28498.5
+m4a    12.57      15.94      16.11     21.25      gpuM4P50 2.71       11.28 ms           120267.3
+m4b     9.85      15.92      16.05     21.07      gpuM4P50 2.74        8.75 ms           142767.3
+m4c     7.82      15.77      15.94     16.05      gpuM4P50 2.56        6.98 ms           160206.6
+```
+
+- **The reference repeats perfectly and the path does not.** Metal 3's three arms read 8.33, 8.33 and 8.34 ms at
+  the median and are **identical to the byte in every content counter** (`loadedMiB 28498.5`, `storedMiB 81232.9`,
+  `depthAttachments 1800`, `pipelineIdentities 99` in all three) - 0.01%. This path's three arms read 12.57, 9.85
+  and 7.82 (1.61x) and their content counters **drift monotonically**: `loadedMiB` +18.7% then +33.2%,
+  `storedMiB` +9.4% then +16.7%, `depthAttachments` +9.0% then +16.5% against the first arm.
+- **The distribution is the measurement, and it is the handover quantum again.** Metal 3 sits at **8.33 ms - one
+  quantum of this 120 Hz panel - in every arm, with its own GPU time (7.3-7.7 ms) just under it. This path's
+  **P95 is pinned at 15.77-15.94 ms in all three arms (1.1% apart) - the *second* quantum - while its P50 moves
+  from 7.82 to 12.57 with the mixture ratio.** So the two modes are one and two handovers, exactly as
+  `run/m4-pacing` measured, and on this scene the P50 is a reading of *which mixture the launch landed in*.
+- **And the rung is refused rather than reported**: the comparison names both faults itself - "scene drift:
+  metal4: loadedMiB of m4c is +33.2% against m4a" and "arm outlier: m4a read 12.49 ms a frame against the fastest
+  arm of its own generation's 7.79 (1.60x), so the machine moved under it - section 115 says to discard this arm"
+  - and the picture comparison agrees, with `m3a` against `m4c` differing in 21.46% of pixels by more than 8 where
+  `m3a` against `m4a` differs in 0.09%. **Per section 42 the ladder stops at this rung**: no MakeUp, no
+  Complementary, no Photon until the no-pack rung can be measured without an arm whose content moved.
+
+**What the no-pack rung therefore leaves open, recorded as a blocker rather than as a number.** This path's
+*content* is not stable across launches in one session where the reference's is: the same world, camera and
+target produce `loadedMiB` 120267, 142767 and 160207 in three arms of one generation. That is a property of the
+frame this path builds and not of the world - the world was re-staged from the same copy for every arm and Metal
+3's counters are bit-identical - and it is **NOT LOCALISED**. The leading candidate is the window's phase
+relative to the client's world streaming (the window opens 25 s after the frame the harness waits for, and with
+no pack that frame arrives at a different point in the load), and it is stated as a hypothesis. Until it is
+settled, §93's first rung cannot produce a comparison, and per §67 the honest verdict for it is **NOT MEASURED**.
+
 ## Timing model
 
 Every number in this report was measured, and this section says what each instrument measures and what it does
@@ -1542,6 +1583,17 @@ drew and presented; a capability with no live-frame reading is `n/a` rather than
 capability proven in a process with no window is not the same claim.
 
 ## Remaining blockers
+
+- **This path's frame content is not stable across launches within one session, and it blocks the first rung of
+  section 93's ladder.** `run/perf93-nopack`: Metal 3's three arms are identical to the byte in every content
+  counter (`loadedMiB 28498.5`, `storedMiB 81232.9`, `depthAttachments 1800`, `identities 99` all three times,
+  0.01% apart in time), while this path's three arms read `loadedMiB` 120267, 142767 and 160207 - +18.7% and
+  +33.2% - with `storedMiB` and `depthAttachments` following. The world is re-staged from the same copy for
+  every arm and the reference does not move, so this is a property of the frame this path builds. **NOT
+  LOCALISED**; the leading candidate, stated as a HYPOTHESIS, is the probe window's phase relative to the
+  client's world streaming, since with no pack the frame the harness waits for arrives at a different point in
+  the load. It is why the ladder stops at its first rung (section 42) and why the rung's verdict is NOT
+  MEASURED (section 67) rather than a number.
 
 The list is current, and fixed items are kept as one-line records so a reader can see what the migration already
 answered rather than only what is left.
