@@ -5505,3 +5505,18 @@ differently. That does not make the fixtures pass (a shader that writes alpha 1.
 generation), but it takes the residual off the list of generation differences and puts it on the list of things
 the *pack* and the *target* do - which is what section 53's gate asks and what the earlier phrasing, written
 before this road existed, could not say.
+
+### Fifty more cold probes, and what the retry policy can and cannot be shown to be
+
+The capability gate is the one AUTO line no amount of frame work moves, so it was given another period: **30 raw
+cold probes and 50 production-mode probes (30 cold + 20 warm)**. Every one passed and **not one reported
+`retried=true`** - against the 21 of 200 that failed in an earlier period with nothing in the path changed.
+
+That is the third clean period and it settles nothing about the fault, which is what the word INTERMITTENT is for.
+What it does settle is the shape of the gate's alternative: section 54 allows a retry policy "proven safe and
+honest", and the honest half is already bought and pinned - the client's production path asks once more where the
+first answer is no and the census line reports which attempt answered, so a first answer that was false can never
+be promoted without appearing in the evidence. The *safe* half cannot be measured while the fault does not recur:
+there is no failing first attempt in 50 probes to watch a second attempt recover. So the gate stays NOT MET, the
+retry policy is recorded as a mitigation and not as a proof, and the next census that catches a `retried=true`
+line is the one that will price it.

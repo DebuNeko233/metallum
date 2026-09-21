@@ -1730,7 +1730,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | lifecycle | PASS, two transitions manual | `run/m4-lifecycle`: reload (F3+T's path), resize, leave, close; a dimension change and an in-session pack switch are not driven |
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
-| cold capability probe deterministic | **NOT MET** | 240 probes passed in one period and 21 of 200 failed in an earlier one, with nothing in the path changed; the retry policy exists but is not proven safe as a production gate |
+| cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault did not recur and the retry policy was never exercised |
 | performance stable enough to compare | **NOT MET** | section 93's first rung is NOT MEASURED: this path's content counters drift within one session (`loadedMiB` +18.7% then +33.2%) where the reference's are identical to the byte |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
@@ -1744,6 +1744,16 @@ cold capability probe's intermittency is unresolved. Section 123's own list is t
 the performance *distribution* is explained (the drawable handover's quantum) but the *comparison* it was meant
 to serve is not yet measurable, so promoting Metal 4 would be promoting a path whose frame-rate claim rests on a
 mixture nobody has bounded on a real scene.
+
+**The capability gate's retry policy is honest by construction and unexercised in fact.** Section 54 allows
+either a deterministic probe or a retry policy "proven safe and honest". The client's production path asks once
+more where the first answer is no and reports which attempt answered (`retried=true` in the census line), which is
+the honest half: a session can never be promoted on a first answer that was false without that being visible. What
+is *not* available is a measurement of it, because the fault did not recur: **30 raw cold probes and 50
+production-mode probes (30 cold, 20 warm) all passed with `retried=0`**, against the 21 of 200 that failed in an
+earlier period with nothing in the path changed. So the gate stays NOT MET on the strength of a distribution that
+has been observed and not explained, and the retry policy is recorded as the mitigation it is rather than as a
+proof.
 
 **And the performance gate has since been filled in, which does not change the decision.** Three of the four
 rungs are now measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is not on this machine):
