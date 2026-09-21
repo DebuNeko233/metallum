@@ -308,7 +308,15 @@ def main() -> int:
     # drew to +0.3%, while the two Metal 4 arms differed by +12.2% of draws and +14.7% of texture bindings on
     # the same world, pack, target and window - and the comparer's own summary offered "+31.8% against the
     # first arm" for that pair, which is a content difference wearing the costume of a performance verdict.
-    content_counters = ("loadedMiB", "storedMiB", "depthAttachments", "pipeline", "texture", "buffer")
+    # What the frame's content is, in counters that mean the same thing on both generations and grow with what
+    # the frame drew rather than with how many native calls it made. `pipeline`, `texture` and `buffer` look like
+    # content and are not: Metal 3 counts a pipeline *change*, this path counts a pipeline *set per draw*, and the
+    # texture and buffer counters are fills that include the re-fills every pipeline change causes. Measured, and
+    # it is why this sentence exists: run/perf-ab6's two Metal 4 arms differ by +12.2% of `pipeline`, +14.7% of
+    # `texture` and +15.1% of `buffer`, and their *frames* differ by +0.7% of draws (1110.2 against 1118.1 a
+    # frame, all of it the shadow pass), by 20.55 passes a frame and by 2.33 clears a frame - identical to two
+    # decimals. A guard built on those three counters refuses a pair of arms that drew the same frame.
+    content_counters = ("loadedMiB", "storedMiB", "depthAttachments")
     by_generation: dict[str, list[str]] = {}
     for run in runs:
         value = generations[run.name] or "unknown"

@@ -479,6 +479,12 @@ for needle, why in (
      "nothing says out loud that a generation whose own arms disagree cannot be read against the other one"),
     ("f\"{value}: {counter} of {name} is {change:+.1f}% against {reference_name}\"",
      "the refusal does not name which generation drifted, by which counter and by how much"),
+    ('content_counters = ("loadedMiB", "storedMiB", "depthAttachments")',
+     "the content check is not made on the three counters that mean the same thing on both generations and grow "
+     "with what the frame drew - a guard that includes the native call counts refuses a pair of arms that drew "
+     "the same frame, measured: +12.2% of pipeline sets against +0.7% of draws"),
+    ("Metal 3 counts a pipeline *change*, this path counts a pipeline *set per draw*",
+     "nothing says why the native call counters are not content, so the next reader will put them back"),
 ):
     if needle not in comparer:
         raise SystemExit("Vitrail performance harness contract: " + why)
