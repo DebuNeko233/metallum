@@ -174,6 +174,10 @@ warm_total="$(grep -c '^M4_PROBE_RESULT' "$warm_log" || true)"
 # same reason again: it asks whether a slot may be reused, which is a lifetime question and not a binding one.
 sampled_draws="$(grep -c ' sampledDraw=true ' "$probe_log" || true)"
 sampled_draw_failures="$(grep -c ' sampledDraw=false ' "$probe_log" || true)"
+# And the texel buffer, counted apart for a third reason: it is the one kind of resource whose binding is a
+# texture made over a buffer, and a frame that draws a vanilla cloud binds one on every cloud pass.
+texel_buffers="$(grep -c ' texelBuffer=true ' "$probe_log" || true)"
+texel_buffer_failures="$(grep -c ' texelBuffer=false ' "$probe_log" || true)"
 ring_passes="$(grep -c ' ring=true ' "$probe_log" || true)"
 ring_failures="$(grep -c ' ring=false ' "$probe_log" || true)"
 attachment_passes="$(grep -c ' attachments=true ' "$probe_log" || true)"
@@ -259,6 +263,7 @@ if (( cold_failures > 0 )); then
 fi
 echo "warm probes:     $warm_total   failures: $warm_failures"
 echo "sampled draws:   $sampled_draws passed   $sampled_draw_failures failed"
+echo "texel buffers:   $texel_buffers passed   $texel_buffer_failures failed"
 echo "allocator rings: $ring_passes passed   $ring_failures failed"
 echo "colour attaches: $attachment_passes passed   $attachment_failures failed"
 echo "multi-targets:   $multi_target_passes passed   $multi_target_failures failed"
@@ -303,6 +308,11 @@ fi
 
 if (( sampled_draw_failures > 0 )); then
 	echo "the sampled-texture draw smoke failed in $sampled_draw_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( texel_buffer_failures > 0 )); then
+	echo "the texel-buffer smoke failed in $texel_buffer_failures probe(s)" >&2
 	exit 1
 fi
 

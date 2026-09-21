@@ -33,6 +33,7 @@ import java.util.Optional;
  *                 canMakeAndSubmit=&lt;bool&gt; canBindAndDraw=&lt;bool&gt; familyMetal4=&lt;bool&gt; queueSelector=&lt;bool&gt;
  *                 argumentTableSelector=&lt;bool&gt; deviceCreation=&lt;ok|failure&gt; deviceName=&lt;name&gt;
  *                 sampled=&lt;bool&gt; sampledReason=&lt;text&gt; sampledDraw=&lt;bool&gt; sampledDrawReason=&lt;text&gt;
+ *                 texelBuffer=&lt;bool&gt; texelBufferReason=&lt;text&gt;
  *                 ring=&lt;bool&gt; ringReason=&lt;text&gt;
  *                 attachments=&lt;bool&gt; attachmentsReason=&lt;text&gt;
  *                 multiTarget=&lt;bool&gt; multiTargetReason=&lt;text&gt;
@@ -200,6 +201,7 @@ public final class Metal4ColdProbe {
 
         String sampledReason = "-";
         String sampledDrawReason = "-";
+        String texelBufferReason = "-";
         String ringReason = "-";
         String attachmentsReason = "-";
         String layoutReason = "-";
@@ -257,6 +259,15 @@ public final class Metal4ColdProbe {
             boolean sampledDraw = makeAndSubmit && MTL4Probe.canDrawSampledTexture(device);
             if (!sampledDraw) {
                 sampledDrawReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // The other kind of resource a pass binds under a name that is not a buffer slot: a byte-format
+            // texel buffer, which Metal carries as a texture made over the buffer. It is the kind the game's own
+            // cloud pass binds on every frame it draws a cloud, and the first full-frame Metal 4 runs dropped it
+            // in silence - so it is asked here, in the game's own shape (R8_SINT, three texels a face), rather
+            // than left to a live frame that only says the clouds are wrong.
+            boolean texelBuffer = makeAndSubmit && MTL4Probe.canSampleTexelBuffer(device);
+            if (!texelBuffer) {
+                texelBufferReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The frame's allocator rule, measured before any frame encoder is built over it: twelve frames
             // over three slots, each slot reset only after its own completion value was observed, and every
@@ -477,6 +488,8 @@ public final class Metal4ColdProbe {
                     + " sampledReason=" + sampledReason.replace(' ', '_')
                     + " sampledDraw=" + sampledDraw
                     + " sampledDrawReason=" + sampledDrawReason.replace(' ', '_')
+                    + " texelBuffer=" + texelBuffer
+                    + " texelBufferReason=" + texelBufferReason.replace(' ', '_')
                     + " ring=" + ring
                     + " ringReason=" + ringReason.replace(' ', '_')
                     + " attachments=" + attachments

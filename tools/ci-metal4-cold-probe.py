@@ -246,6 +246,62 @@ for needle, why in (
     if needle not in script:
         raise SystemExit("cold-probe harness: " + why)
 
+# --- the texel-buffer smoke, which is the cloud defect's own kind ------------------------------------------
+# The game's own cloud pass binds a byte-format texel buffer on every frame it draws a cloud, and Metal carries
+# that kind as a texture made over the buffer rather than as a buffer slot - so a pass that asks only the
+# buffer-slot question finds nothing, skips the binding and draws with the slot nil. That is what the first
+# full-frame Metal 4 runs did, and it put every cloud face at one point. The smoke asks the capability in the
+# game's own shape (R8_SINT, three texels a face) and asks it twice, because one pass cannot tell a binding
+# from a pipeline.
+for needle, why in (
+    ("public static boolean canSampleTexelBuffer(",
+     "the texel-buffer smoke is gone from the probe, so the kind of binding the vanilla cloud defect was is "
+     "measured nowhere but a live frame"),
+    ("MTLPixelFormat.R8Sint.value",
+     "the smoke no longer asks for the format the game's own cloud binding declares, so it answers a question "
+     "about some other texel buffer"),
+    ("texture_buffer<int> faces [[texture(0)]]",
+     "the smoke's fragment stage no longer declares the kind MSL calls a texel buffer, so a pass could pass it "
+     "while binding nothing the shader reads"),
+    ("MTLTexture.newBufferTextureView(first.handle(), MTLPixelFormat.R8Sint.value, 0L,",
+     "the smoke does not make its view over the buffer with the call the frame path makes, so it measures a "
+     "different capability from the one the frames need"),
+    ("if (!table.texture(secondView)) {",
+     "the second pass is not given its own view through the same table, so a table whose snapshot was taken "
+     "once would pass as a binding that followed the pass"),
+    ("binding was not the one this pass was given",
+     "a pass that read the other buffer's values is not reported as a stale binding, so the second pass's whole "
+     "point would be invisible in a failure"),
+    ("texel-buffer view reached no fragment at all",
+     "the clear colour is not reported as a binding that reached nothing, which is the exact fault a dropped "
+     "texel-buffer binding produces"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+for needle, why in (
+    ('+ " texelBuffer=" + texelBuffer',
+     "the harness does not print the texel-buffer smoke's answer, so a run of it leaves no evidence"),
+    ('+ " texelBufferReason=" + texelBufferReason',
+     "the harness prints whether the texel-buffer smoke passed and not why it failed, which is the half that "
+     "says where to look"),
+):
+    if needle not in probe:
+        raise SystemExit("cold-probe harness: " + why)
+if "MTL4Probe.canSampleTexelBuffer(device)" not in probe:
+    raise SystemExit("cold-probe harness: the harness never asks the texel-buffer smoke, so the probe's answer "
+                     "is measured nowhere")
+# And the driver counts it and fails the run on it, for the reason the drawn smoke is counted: a smoke whose
+# failures are only printed is a smoke the next reader has to notice by eye.
+for needle, why in (
+    ("texel_buffer_failures=\"$(grep -c ' texelBuffer=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the texel-buffer smoke's failures, so a run cannot say how many there were"),
+    ("if (( texel_buffer_failures > 0 )); then",
+     "the driver counts the texel-buffer smoke's failures and does not fail the run on them, so a failing smoke "
+     "reports success through the harness's own exit code"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 # --- the frame's allocator rule --------------------------------------------------------------------------
 # The one part of the frame's lifetime where a guess is a use-after-free, and the rule the frame encoder is
 # built on: a slot is not reset until the value its own commit signalled has been observed. Measured on the

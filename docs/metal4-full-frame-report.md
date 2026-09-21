@@ -763,6 +763,26 @@ unbounded geometry and unbounded overdraw rather than a fixed amount of work. **
 when those runs were taken the harness was staging the nether, so no correct-scene before reading exists - and this
 paragraph is a post-fix parity reading with the mechanism as its explanation, not a before/after delta.
 
+**And the root cause now has a deterministic test of its own**, because a frame and a screenshot are not one.
+`MTL4Probe.canSampleTexelBuffer` asks the cold probe for the capability in the shape the game's own cloud
+binding declares - the layout's `R8_SINT`, a byte a texel, three texels a face, a range inside a buffer rather
+than a whole one - makes the buffer-backed view with the *same call the pass makes*, binds it through a table as
+the texture slot it is, and reads one texel's value back per band of the target. It is asked twice for the same
+reason a single reading is not one: the second pass re-points the same table at a second buffer whose twelve
+values share none with the first's, so a table whose snapshot was taken once, or an encoder that kept the first
+pass's view, is a failure. **Measured: 8 of 8 probes pass** (four cold processes and four warm in one, through
+`tools/metal4-cold-probe.sh`), and the control is a mutation rather than an argument - with the second re-point
+removed, on the device, the smoke reads
+
+```text
+texelBuffer=false  the second pass read the other buffer's texel 0 colour (1, 0, 0, 255) at column 0 where its
+                   own texel 0's 2 was asked for, so the table's binding was not the one this pass was given
+```
+
+and the harness's own exit code is non-zero on it, because a smoke whose failures are only printed is a smoke the
+next reader has to notice by eye. `tools/ci-metal4-cold-probe.py` pins the shape, the call, the second binding
+and both diagnostic sentences, and each pin was mutation-proved (five mutations, five caught).
+
 **And one thing is left: this path's overworld frame is lighter than the reference's.** On those same captures the
 sky and the clouds are both shifted toward white on Metal 4 - sky at one column reading `(125,155,225)` at the top
 against `(172,190,227)`, a roughly constant offset down the whole column - so a whole-frame pixel comparison still
@@ -790,6 +810,17 @@ vertex/index:     vertex PROVEN on the device (address + attribute stride throug
                   of different flat colour and one six-entry UInt16 index buffer, drawn at index 0 and at
                   index 3 through the production encoder's `drawIndexedPrimitives`, each read back against its
                   own triangle (50 of 50), and implemented in the pass as an address the draw offsets
+texel buffers:    PROVEN on the device AND implemented in the pass - a buffer-backed texture view over an
+                  `R8_SINT` range of twelve texels (three a face, four faces, which is the shape the game's
+                  own cloud binding declares), bound as a **texture** slot because that is what MSL's
+                  `texture_buffer` argument is, drawn with one texel's value per band of the target and read
+                  back band by band, twice: the second pass re-points the same table at a second buffer whose
+                  twelve values share none with the first's, so a table whose snapshot was taken once or a pass
+                  that kept the first encoder's view is a failure and not a pass. 8 of 8 probes (four cold
+                  processes and four warm in one), and the negative control was measured by mutation - with the
+                  second re-point removed the smoke reads `the second pass read the other buffer's texel 0
+                  colour (1, 0, 0, 255) at column 0 where its own texel 0's 2 was asked for` and the driver
+                  exits non-zero on it
 argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
                   setArgumentTable:atStages:, and the draw reads every slot
 wide resources:   PROVEN AND MEASURED IN A REAL PACK - a pipeline whose resources do not fit MSL's direct slots
@@ -3030,6 +3061,10 @@ Metal4 in-world GUI/HUD:            PASS by construction (same GuiRenderer, same
                                     an in-world text reading of its own is NOT MEASURED
 Metal4 text/glyph rendering:        PASS on the title screen; the same NOT MEASURED in a world
 Metal4 terrain / depth / MRT:       PASS
+Metal4 vanilla clouds:              PASS   (the defect was the face-data binding - a texel buffer, which Metal
+                                    binds as a texture made over the buffer; cloud outlines, positions and
+                                    facets match the reference's in a fullscreen capture, the near-layer cost
+                                    is parity, and the capability has a deterministic device smoke, 8 of 8)
 Metal4 history fixture:             PASS   (acceptance colour in the presented frame, arms identical)
 Metal4 compute/storage fixture:     PASS   (same road, same result)
 Metal4 wide resources:              PASS on one real pack (photon deferred4); generality NOT MEASURED

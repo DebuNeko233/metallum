@@ -329,6 +329,90 @@ public final class MTL4Probe {
             """;
 
     /**
+     * The texel-buffer smoke's shape, which is the game's own cloud binding's rather than a chosen one: the
+     * pipeline layout declares it a {@code TEXEL_BUFFER} of {@code R8_SINT}, the shader declares it an
+     * {@code isamplerBuffer}, and a face is three consecutive texels - a cell's x, a cell's z and a
+     * direction-and-flags byte. So a range's texel count is its byte count, and twelve bytes are four faces.
+     */
+    private static final int TEXEL_FACES = 4;
+
+    /** Bytes a face in that layout, and so texels a face in a one-byte format. */
+    private static final int TEXEL_BYTES_PER_FACE = 3;
+
+    /** The range the smoke's views are made over: {@link #TEXEL_FACES} faces. */
+    private static final int TEXEL_TEXELS = TEXEL_FACES * TEXEL_BYTES_PER_FACE;
+
+    /**
+     * Bytes the smoke's buffers hold beyond that range.
+     * <p>
+     * The view is made over a range <em>inside</em> a buffer, which is the production call's shape - a slice's
+     * offset and length - and the slack is what keeps this a question about the binding. The view call rounds
+     * the byte length it is given up to the format's texture-buffer alignment; a buffer that ended exactly at
+     * the range would make the smoke a question about that rounding as well.
+     */
+    private static final long TEXEL_SLACK = 256L;
+
+    /** The columns one texel covers in the smoke's target: {@link #TARGET_SIZE} over {@link #TEXEL_TEXELS}. */
+    private static final int TEXEL_BAND = (int) TARGET_SIZE / TEXEL_TEXELS;
+
+    /** The step between two texels' values, so twelve readings are twelve distinct bytes. */
+    private static final int TEXEL_STEP = 10;
+
+    /** What the first buffer holds at texel {@code k}: {@code 1 + 10k}, all positive and all its own. */
+    private static final int TEXEL_FIRST_BASE = 1;
+
+    /**
+     * And the second buffer's, displaced by one so the two sets share no value at all: a pass that read the
+     * first buffer's texel {@code k} into the second target is then a reading that is not the second's, which
+     * is what makes a table whose snapshot was taken once visible rather than plausible.
+     */
+    private static final int TEXEL_SECOND_BASE = 2;
+
+    /**
+     * The pass that reads a buffer as a texel buffer - {@code texture_buffer<int>}, which is what MSL calls the
+     * kind an {@code isamplerBuffer} crosses into - once per texel, and writes each texel's value as the red
+     * channel of its own band of the target.
+     * <p>
+     * The index is taken from the fragment's own position rather than from a vertex attribute, so every band is
+     * a question about a different texel and one draw can answer twelve of them: column {@code x} asks texel
+     * {@code min(x / TEXEL_BAND, TEXEL_TEXELS - 1)}, which the readback resolves at the first column of each
+     * band - {@code x = TEXEL_BAND * k}, where the fragment's centre is inside band {@code k} and nowhere near a
+     * seam. The value goes into the red channel scaled by 255 so an integer texel comes back as its own byte,
+     * and green and blue are zero so a band that read nothing is the clear colour rather than a value.
+     */
+    private static final String TEXEL_BUFFER_MSL = """
+            #include <metal_stdlib>
+            using namespace metal;
+
+            struct TexelProbeOut {
+              float4 position [[position]];
+            };
+
+            vertex TexelProbeOut metallum_texel_probe_vs(uint vertexId [[vertex_id]]) {
+              const float2 corners[3] = {
+                float2(-1.0,  1.0),
+                float2( 3.0,  1.0),
+                float2(-1.0, -3.0)
+              };
+
+              TexelProbeOut out;
+              out.position = float4(corners[vertexId], 0.0, 1.0);
+              return out;
+            }
+
+            fragment float4 metallum_texel_probe_fs(
+              TexelProbeOut in [[stage_in]],
+              texture_buffer<int> faces [[texture(0)]]
+            ) {
+              uint index = uint(min(floor(in.position.x / %d.0), %d.0));
+              // A texel buffer's read is the format's own vector, four bytes wide whatever its format - so a
+              // one-byte format is read at .x, which is also what SPIRV-Cross emits for the game's own
+              // `texelFetch(isamplerBuffer, i).r`.
+              return float4(float(faces.read(index).x) / 255.0, 0.0, 0.0, 1.0);
+            }
+            """.formatted(TEXEL_BAND, TEXEL_TEXELS - 1);
+
+    /**
      * A pipeline whose colour comes out of a vertex buffer.
      * <p>
      * The positions are three float4s and the colour is two of their components, so a pixel that arrives is a
@@ -762,6 +846,237 @@ public final class MTL4Probe {
             releaseIfPresent(buffer);
             releaseIfPresent(allocator);
             releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * Whether a buffer can be read as a <em>texel buffer</em> by a Metal 4 pass, through a table, and whether
+     * the reading follows the binding.
+     * <p>
+     * This is the kind the game's own cloud pass binds and the one the first full-frame Metal 4 runs dropped in
+     * silence: the frame path binds a {@code GpuBuffer} under a name whose pipeline layout declares a
+     * {@code TEXEL_BUFFER}, and a texel buffer is not a buffer slot at any stage - Metal carries a
+     * {@code texture_buffer} argument as a <em>texture</em>, made from the buffer with
+     * {@code newTextureWithDescriptor:offset:bytesPerRow:}. A pass that asks only the buffer-slot question finds
+     * nothing, skips the binding and draws with the slot nil, which is what put every cloud face at one point.
+     * So the capability this proves is one a frame reaches on every frame it draws a vanilla cloud, and it is
+     * asked here in the shape the game declares rather than a shape chosen to be convenient.
+     * <p>
+     * The shape, taken from the game: {@code R8_SINT} - a byte a texel, so a range's texel count is its byte
+     * count - three texels a face, four faces. The buffer is filled from the CPU, the view is made over the
+     * range with the same call the pass makes, and a full-target draw reads one different texel per band of the
+     * target and writes its value as that band's red channel.
+     * <p>
+     * <strong>Two passes and not one, because one reading cannot tell a binding from a pipeline.</strong> The
+     * second pass re-points the <em>same</em> table at a second buffer whose twelve values share no value with
+     * the first's. A table whose snapshot was taken once, or a pass that kept the first encoder's view, reads
+     * the first buffer's values into the second target, and that is reported as what it is rather than passing
+     * as a draw that read the buffer it was given. The readback of the first target is what keeps a failure
+     * diagnostic: a band that reads the clear colour never had a view, a band that reads another band's value
+     * sampled the wrong texel, and a band that reads the second buffer's value is the stale binding above.
+     *
+     * @param device the device binding, as {@link #canBindAndDraw} takes it
+     * @return whether both buffers reached both targets, texel by texel and channel by channel
+     */
+    public static boolean canSampleTexelBuffer(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("texelBuffer", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from, so no pass can be encoded");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment firstTarget = MemorySegment.NULL;
+        MemorySegment secondTarget = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MemorySegment firstView = MemorySegment.NULL;
+        MemorySegment secondView = MemorySegment.NULL;
+        MTLBuffer first = null;
+        MTLBuffer second = null;
+        MTL4ArgumentTable table = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("texelBuffer", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil - queue=" + !ObjC.isNil(queue) + " allocator=" + !ObjC.isNil(allocator)
+                        + " buffer=" + !ObjC.isNil(buffer) + " event=" + !ObjC.isNil(event));
+            }
+
+            long bufferLength = TEXEL_TEXELS + TEXEL_SLACK;
+            first = device.newBuffer(bufferLength, STORAGE_SHARED);
+            second = device.newBuffer(bufferLength, STORAGE_SHARED);
+            if (first.gpuAddress() == 0L || second.gpuAddress() == 0L) {
+                return failed("texelBuffer", "one of the two " + bufferLength + "-byte shared buffers the smoke"
+                        + " fills answered with no GPU address");
+            }
+            fillTexels(first, TEXEL_FIRST_BASE);
+            fillTexels(second, TEXEL_SECOND_BASE);
+
+            // The production call, argument for argument: the buffer, the layout's pixel format, the range's
+            // offset, its texel count and its byte length. An R8_SINT texel is a byte, so the count is the
+            // length - which is why the game's cloud buffer carries three bytes a face and no padding.
+            firstView = MTLTexture.newBufferTextureView(first.handle(), MTLPixelFormat.R8Sint.value, 0L,
+                    TEXEL_TEXELS, TEXEL_TEXELS);
+            secondView = MTLTexture.newBufferTextureView(second.handle(), MTLPixelFormat.R8Sint.value, 0L,
+                    TEXEL_TEXELS, TEXEL_TEXELS);
+            if (ObjC.isNil(firstView) || ObjC.isNil(secondView)) {
+                return failed("texelBuffer", "newTextureWithDescriptor:offset:bytesPerRow: answered nil for a "
+                        + TEXEL_TEXELS + "-texel " + MTLPixelFormat.R8Sint + " view over a "
+                        + TEXEL_TEXELS + "-byte range - first=" + !ObjC.isNil(firstView) + " second="
+                        + !ObjC.isNil(secondView) + ", so no buffer of this kind can be bound as a texture");
+            }
+
+            firstTarget = newTarget(device);
+            secondTarget = newTarget(device);
+            if (ObjC.isNil(firstTarget) || ObjC.isNil(secondTarget)) {
+                return failed("texelBuffer", "newTextureWithDescriptor: answered nil for one of the two "
+                        + TARGET_SIZE + "x" + TARGET_SIZE + " RGBA8 targets the two texel passes draw into");
+            }
+
+            table = MTL4ArgumentTable.create(device, 0L, 1L, 1L);
+            if (table == null || !table.texture(firstView)) {
+                return failed("texelBuffer", "a table made for one texture did not take the texel-buffer view"
+                        + " (table=" + (table != null) + ")");
+            }
+
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(TEXEL_BUFFER_MSL, "metallum_texel_probe_vs",
+                    "metallum_texel_probe_fs", MTLPixelFormat.RGBA8Unorm.value);
+            if (ObjC.isNil(pipeline)) {
+                return failed("texelBuffer", "the smoke's own pipeline came back nil - a fragment stage"
+                        + " declaring a texture_buffer argument did not compile or link (the probe's own MSL"
+                        + " compiles here)");
+            }
+
+            BEGIN.send(buffer, allocator);
+            // One command buffer, two passes, one table re-pointed between them: the passes are independent, so
+            // no barrier is asked for, and the only thing that may carry a value from the first to the second is
+            // the binding the second pass was given.
+            if (!encodePass(buffer, firstTarget, table.handle(), STAGE_FRAGMENT, pipeline, false,
+                    "the first texel pass")) {
+                END.send(buffer);
+                return false;
+            }
+            if (!table.texture(secondView)) {
+                END.send(buffer);
+                return failed("texelBuffer", "the same table refused the second buffer's view, so the"
+                        + " re-pointed binding could not be encoded");
+            }
+            if (!encodePass(buffer, secondTarget, table.handle(), STAGE_FRAGMENT, pipeline, false,
+                    "the second texel pass")) {
+                END.send(buffer);
+                return false;
+            }
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("texelBuffer", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " work never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                long y = TARGET_SIZE / 2L;
+                for (int texel = 0; texel < TEXEL_TEXELS; texel++) {
+                    long x = (long) TEXEL_BAND * texel;
+                    int wantFirst = TEXEL_FIRST_BASE + TEXEL_STEP * texel;
+                    int wantSecond = TEXEL_SECOND_BASE + TEXEL_STEP * texel;
+
+                    MTLTexture.bytes(firstTarget, pixel, 4L, x, y, 1L, 1L);
+                    if (!matches(pixel, new int[]{wantFirst, 0, 0, 255})) {
+                        return failed("texelBuffer", texelFailure("the first pass", pixel, x, texel, wantFirst,
+                                TEXEL_FIRST_BASE, TEXEL_SECOND_BASE));
+                    }
+
+                    MTLTexture.bytes(secondTarget, pixel, 4L, x, y, 1L, 1L);
+                    if (!matches(pixel, new int[]{wantSecond, 0, 0, 255})) {
+                        return failed("texelBuffer", texelFailure("the second pass", pixel, x, texel, wantSecond,
+                                TEXEL_SECOND_BASE, TEXEL_FIRST_BASE));
+                    }
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("texelBuffer", "making, binding, encoding or reading back the texel-buffer passes threw "
+                    + threw);
+        } finally {
+            if (table != null) {
+                table.close();
+            }
+            releaseIfPresent(pipeline);
+            releaseIfPresent(firstView);
+            releaseIfPresent(secondView);
+            releaseIfPresent(firstTarget);
+            releaseIfPresent(secondTarget);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+            releaseIfPresent(first);
+            releaseIfPresent(second);
+        }
+    }
+
+    /**
+     * What one band of the texel smoke's target holds against what it was asked for, said in the terms a reader
+     * of a failure needs: which of the three faults it is.
+     * <p>
+     * A band reading the clear colour is a texel-buffer view that never reached a fragment - the fault this
+     * smoke exists for. A band reading one of the <em>other</em> buffer's twelve values is the stale binding the
+     * second pass is there to catch. And a band reading another band's value of its own buffer is a sample that
+     * reached the wrong texel, which is reported as that rather than as a colour nobody recognises.
+     *
+     * @param pass        which of the two passes was being read
+     * @param pixel       what its target holds at that band
+     * @param x           the column the band was read at
+     * @param texel       the texel that column asks for
+     * @param want        the value that texel should have carried
+     * @param ownBase     the base of the buffer this pass was given
+     * @param otherBase   the base of the buffer the other pass was given
+     * @return the sentence {@link #failed} records
+     */
+    private static String texelFailure(final String pass, final MemorySegment pixel, final long x, final int texel,
+                                       final int want, final int ownBase, final int otherBase) {
+        String saw = describe(pixel);
+        if (matches(pixel, CLEAR_PIXEL)) {
+            return pass + " drew the clear colour " + saw + " at column " + x + ", so the table-bound"
+                    + " texel-buffer view reached no fragment at all";
+        }
+        for (int other = 0; other < TEXEL_TEXELS; other++) {
+            if (matches(pixel, new int[]{otherBase + TEXEL_STEP * other, 0, 0, 255})) {
+                return pass + " read the other buffer's texel " + other + " colour " + saw + " at column " + x
+                        + " where its own texel " + texel + "'s " + want + " was asked for, so the table's"
+                        + " binding was not the one this pass was given";
+            }
+            if (matches(pixel, new int[]{ownBase + TEXEL_STEP * other, 0, 0, 255})) {
+                return pass + " read its own texel " + other + " colour " + saw + " at column " + x + " where"
+                        + " texel " + texel + "'s " + want + " was asked for, so the sample reached the wrong"
+                        + " texel of the buffer it was given";
+            }
+        }
+        return pass + " drew " + saw + " at column " + x + " where its texel " + texel + "'s " + want
+                + " was asked for, which is neither buffer's value at any texel";
+    }
+
+    /** Writes the smoke's twelve texels into a buffer's mapped range: {@code base + 10k}, as signed bytes. */
+    private static void fillTexels(final MTLBuffer buffer, final int base) {
+        MemorySegment contents = buffer.contents().reinterpret(TEXEL_TEXELS);
+        for (int texel = 0; texel < TEXEL_TEXELS; texel++) {
+            contents.set(JAVA_BYTE, texel, (byte) (base + TEXEL_STEP * texel));
         }
     }
 

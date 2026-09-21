@@ -5937,6 +5937,17 @@ pre-fix cost was never measured** - the harness was staging the nether during th
 parity plus the mechanism (an unread face buffer puts each corner wherever the garbage says, which is unbounded
 geometry and unbounded overdraw), not a before/after figure.
 
+**And a frame is not a test, so the root cause has a deterministic one now.** The cold probe's smoke
+`canSampleTexelBuffer` asks the device the question the defect turned on, in the game's own shape: an `R8_SINT`
+range of twelve texels - three a face, four faces - bound as a **texture** slot through a table because that is
+what MSL's `texture_buffer` argument is, drawn with one texel's value per band of the target and read back band
+by band. It is asked twice, the second through the same table re-pointed at a second buffer whose values share
+none with the first's, so a table whose snapshot was taken once or a pass that kept the first encoder's view is a
+failure rather than a pass. **Measured: 8 of 8 probes passed** (four cold processes and four warm in one), and
+the control is measured too - with the second re-point removed, on the device, the smoke reads `the second pass
+read the other buffer's texel 0 colour (1, 0, 0, 255) at column 0 where its own texel 0's 2 was asked for, so
+the table's binding was not the one this pass was given`, and the harness exits non-zero on it.
+
 **What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
 sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
 `(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations
