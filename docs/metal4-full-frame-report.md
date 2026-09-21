@@ -720,6 +720,27 @@ performance:          NOT STARTED for either generation's scaler: the two arms' 
                       display in this pair, and section 84's 1920x1200 fixed target has not been run
 ```
 
+**And the configuration cache and the resize rebuild were re-taken after the copy-road fix, which is what section
+124 asks for.** `tools/run-metal4-lifecycle-probe.sh m4fx ComplementaryReimagined_r5.9.1.zip metal4
+resize@400,close@1200`, renderscale=55, one client, exit 0:
+
+```text
+Metal 4 MetalFX spatial scaling: available, the device supports it and made one
+Metal 4 MetalFX spatial scaling: made a scaler for 1408x792 to 2560x1440 with colour format 70 and output format 70, 1 in the cache
+Metal 4 MetalFX spatial scaling: made a scaler for 1760x990 to 3200x1800 with colour format 70 and output format 70, 2 in the cache
+(Vitrail) The 55% render scale brings the picture back with MetalFX
+presented extents: 2560x1440 for 2074 frames, 3200x1800 for 4430
+Stopping! 1, BUILD SUCCESSFUL 1, teardown timeouts 0, chain drawn 1
+```
+
+So on this build: the capability is the device's answer rather than a version check, the Metal 4 factory makes the
+scaler, **the cache is keyed by configuration (1 entry, then 2 for the new size)**, the resize produces a new
+configuration and a new scaler, the presented extent follows the new scale, and the session ends cleanly with no
+teardown timeout. **What section 124 still does not have**: the *failure* path falls back safely (no scaler was
+ever refused in a session, so the fallback is code and not a reading), the output orientation is proven on the
+device (40 of 40) and **not in a live frame** (blocker 17's note), and no asymmetric fixture has been scaled
+through the frame path.
+
 ## Performance
 
 **The two generations have now been run against each other, in one session, on the same world at the same size:**
