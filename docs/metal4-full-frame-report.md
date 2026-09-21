@@ -1490,7 +1490,8 @@ Four readings, and they are the first no-pack numbers this report can stand behi
 - **The windows sampled the same slice of the client's life, and the instrument is what says so**: every Metal 3
   arm covered **100 client ticks at 6.00 frames a tick** and every Metal 4 arm **150 at 4.00**. That equality is
   new - it is what the previous run could not state, and why its content guard fired.
-- **The wall-clock comparison: this path is 1.63-1.78x slower on this scene** (13.56-14.85 against 8.33 ms), and
+- **The wall-clock comparison: this path is 1.63-1.78x slower on this scene at the median** (13.56-14.85 against
+  8.33 ms - read on the mean the same session is 1.50x, and the ladder table below carries that reading), and
   the mechanism is the pacing and not the work: **its own commit interval is 2.67-2.69 ms against the reference's
   7.60-7.61**, while its drawable handover wait is 9.1-9.5 ms a frame against the reference's 7.7. A frame whose
   own work is 2.7 ms is landing on **two 8.33 ms handovers** where the reference's lands on one.
@@ -1718,7 +1719,8 @@ siblings. The matched pairs are therefore `m3a`/`m3b` (P50 20.65 and 21.12, 2.3%
 16.75, **0.06%** apart), and the comparison is between those. Per section 115 the unmatched arms are named and
 not averaged.
 
-- **At the median this path is faster on this scene** - 16.74/16.75 against 20.65/21.12 ms, 19-21% - while its
+- **At the median this path is faster on this scene** - 16.74/16.75 against 20.65/21.12 ms, 19-21%; on the mean,
+  which is the column the table carries, it is 9.2% faster (18.95 against 20.88) - while its
   own commit interval is 18.14/18.29 against the reference's 20.91/20.92. Per sections 47 and 49 the two GPU
   columns are not subtracted; the wall column is the comparison.
 - **At P95 it is slower**: 28.75/28.93 against 27.19/27.51 - a 5% wider tail, which is the mixture this report
@@ -1806,7 +1808,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
 | cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault itself did not recur - and the retry policy that mitigates it is now exercised on demand (`-Dmetallum.probeInjectFirstFailure=true` reads `retried=true success=true` in 3 of 3 processes, below) |
-| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | all four of section 93's rungs are measured under the protocol (no-pack, MakeUp, Complementary, Photon), all four readings re-taken on the statistic the protocol allows - the **mean**, which repeats to 0.0-0.16% between the arms of one generation where the P50 moves 9.5-22% - and the no-pack rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier). What the gate then says is that this path is **1.50x slower in the mean on no-pack and on Photon (1.80-1.82x at P95)** and **9.2% faster in the mean on Complementary (5.4% slower at P95)** - i.e. slower on two of the three rungs, by exactly the two-handover quantum |
+| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | all four of section 93's rungs are measured under the protocol (no-pack, MakeUp, Complementary, Photon) and every verdict is read on the statistic the protocol allows - the **mean**, which repeats to 0.0-0.16% between the arms of one generation where the P50 moves 9.5-26% - with the no-pack rung re-run on a window whose content is **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier). What the gate then says is that this path is **1.50x slower in the mean on no-pack, MakeUp and Photon (1.80-1.82x at P95)** and **9.2% faster in the mean on Complementary (5.4% slower at P95)** - i.e. slower on three of the four rungs, by exactly the two-handover quantum |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
 
@@ -1817,7 +1819,7 @@ the two lines that are not: the **cold capability probe's intermittency**, which
 explained, and the **performance outcome**, which is unfavourable on two of the three rungs. The performance
 *distribution* is explained (the drawable handover's quantum: a frame's own work is 2.7 ms and it lands on one or
 two 8.33 ms handovers) and the content drift that made the first rung's windows differ is now attributed to two
-named kinds - but a path that is 1.63-1.78x slower than the reference on the work-light scene is not a
+named kinds - but a path that is 1.50x slower than the reference in the mean on three of the four rungs is not a
 production default, which is section 70's C and not its B.
 
 **The capability gate's retry policy is honest by construction and is now exercised on demand.** Section 54
@@ -1838,13 +1840,15 @@ on purpose ...)`, and a contract pins the switch, its one-shot spend and its mar
 *mechanism*: a first-attempt failure is visible, distinguishable from a device fault, and the capability record
 reads the second attempt. What stays NOT MET is the fault itself, which is still observed and unexplained.
 
-**And the performance gate has since been filled in, which does not change the decision.** Three of the four
-rungs are now measured under the protocol, all four of them (no-pack, MakeUp, Complementary, Photon):
-this path is 1.63-1.78x slower on the work-light scene, 19-21% faster at the median and 5% slower at P95 on
-Complementary, and 23-50% slower at the median and 81% slower at P95 on Photon - with its own commit interval
-lower than the reference's on the first two and equal on the third. So the performance line reads "not acceptable
-as a production default on two of three rungs, and the mechanism is one extra display handover of latency", which
-is section 70's C rather than its B: the distribution is explained, the cost is not.
+**And the performance gate has since been filled in completely, which does not change the decision.** All four
+rungs are measured under the protocol (no-pack, MakeUp, Complementary, Photon) and every verdict is read on the
+mean: this path is **1.50x slower on the three work-light rungs** - 12.47-12.48 ms a frame against the
+reference's 8.32 on no-pack, MakeUp and Photon - with **1.80-1.82x at P95**, and **9.2% faster in the mean on
+Complementary** (18.95 against 20.88) with a 5.4% wider P95, its own commit interval lower than the reference's
+on three rungs and equal on Photon. So the cost is the two-handover quantum on the scenes whose frame fits inside
+one handover and a real gain on the one whose frame does not, and the performance line reads "not acceptable as a
+production default on three of the four rungs, and the mechanism is one extra display handover of latency" -
+section 70's C rather than its B: the distribution is explained, the cost on the light scenes is not.
 
 What would move it, in the order the gates are listed: the cold probe's distribution (a harness that runs the
 probe's first pass alone in volume, until a `retried=true` census prices the retry policy); the rung whose
