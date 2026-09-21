@@ -852,6 +852,45 @@ if "pass-count decomposition:" not in PACING.read_text(encoding="utf-8"):
                      "kinds, so a content difference can no longer be attributed to the tick frames and the "
                      "reduced stretches instead of being left unexplained")
 
+# --- the analyser reads the window the session reported, and says what its period is made of ---------------
+# Two faults this pins shut, both found by reading the same session twice:
+#
+# 1. The window used to be whatever `--frames` said, and the default said 600. A 300-frame session read at 600
+#    analysed the last 600 traced frames - the settle and the loading tail with the window - and nothing in the
+#    output said so, because the report line was looked for by matching the *requested* frame count and a
+#    mismatch did not stop it. Measured, the C1/C2 table in `docs/metal4-full-frame-report.md` carries `n` of
+#    1839-2024 a row where its own text says the windows were 300 frames. The window is now read from the probe's
+#    report line, `--frames` is an override that says when it disagrees, and the arm's header names both.
+# 2. A frame's period is `begin(N) - begin(N-1)` and its `encodeUs` is `commit(N) - begin(N)`, so a period is
+#    `between + the *previous* frame's encode` and not `+ its own`. The decomposition and its population table are
+#    pinned because that pairing is what separates "the client's own work" from "this path's work" - an
+#    off-by-one reads as a regression of this engine, which is the one mistake it exists to prevent.
+pacing = PACING.read_text(encoding="utf-8")
+for needle, why in (
+    ('REPORT_RE = re.compile(r"frame-probe (\\d+)/(\\d+) windowFrames=(\\d+)")',
+     "the analyser no longer reads the window the probe's own report line names, so a session is analysed over "
+     "whatever stretch the caller assumed instead of the one it measured"),
+    ("probeWindowFrames=",
+     "the arm header does not say how long the probe said its window was, so a reading that is longer than the "
+     "window cannot be told from one that is the window"),
+    ("** the probe's window was",
+     "an overridden window is no longer announced, so the longer stretch reads exactly like the window"),
+    ("def between_frames(window):",
+     "the period is no longer decomposed, so a slow population cannot be attributed to the client's own work "
+     "outside the frame instead of to this path's encoder"),
+    ("between(N) = wall(N) - encode(N-1) = begin(N) - commit(N-1)",
+     "the decomposition no longer states the pairing it uses, which is the only thing that makes it readable"),
+    ("period = between + previous encode:",
+     "the identity is not printed, so a period that does not add up cannot be checked against its own parts"),
+    ("population {label} (period {side} ",
+     "there is no population selected by the period, so the second population has to be assumed rather than read"),
+    ("corr(period, previous encode)=",
+     "the correlations no longer include the previous frame's encode, which is the half of a period the encoder "
+     "owns"),
+):
+    if needle not in pacing:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 # --- and a frame kind is named, not only counted -----------------------------------------------------------
 # The decomposition says a kind is two passes short of the modal one; it does not say *which* two, and a kind
 # that is only a number is a kind nobody can act on. `-Dmetallum.metal4Trace=true` makes every pass write
@@ -896,6 +935,42 @@ for needed, why in (
 ):
     if needed not in named:
         raise SystemExit("Vitrail performance harness contract: " + why)
+
+# --- and the window it reads is the session's own, not the caller's assumption ---------------------------
+# The default used to be 600 frames whatever the session measured, and a 300-frame session analysed at 600 is the
+# settle and the loading tail mixed into the window without anything in the output saying so - which is how the
+# C1/C2 table in `docs/metal4-full-frame-report.md` came to carry `n` of 1839-2024 a row while its own text says
+# the windows were 300 frames. Run here on a session written with eight traced frames and a four-frame window:
+# without `--frames` the reading has to be the window, and with it the override has to announce itself.
+with tempfile.TemporaryDirectory() as scratch:
+    arm_dir = Path(scratch) / "m4a"
+    arm_dir.mkdir()
+    lines = []
+    for index in range(1, 9):
+        for label in LABELS[6]:
+            lines.append(f"[00:00:00] [Render thread/INFO] (metallum) Metal 4 trace: end pass '{label}' "
+                         f"depth=true draws=1 indexed=0 scissor=false colours=1 load=clear store=store")
+        lines.append(f"[00:00:00] [Render thread/INFO] (metallum) M4_FRAME frame={index} slots=3 slot=0"
+                     f" submission={index} wallUs=12500 slotWaitUs=0 drawableWaitUs=9900 encodeUs=12000"
+                     f" passes=6 encoders=6 tables=9 draws=330")
+        lines.append(f"[00:00:00] [Thread-3/INFO] (metallum) M4_FRAME_COMMIT submission={index} commitMs=2.71")
+    lines.append("[00:00:00] [Render thread/INFO] (metallum) frame-probe 4/4 windowFrames=4 windowMs=50.00")
+    (arm_dir / "latest.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    read_window = subprocess.run(["python3", str(PACING), scratch],
+                                 check=True, capture_output=True, text=True).stdout
+    read_stretch = subprocess.run(["python3", str(PACING), scratch, "--frames", "8"],
+                                  check=True, capture_output=True, text=True).stdout
+for needed, why in (
+    ("frames=4 of 8 traced", "the analyser's default no longer reads the frame count the probe's own report line "
+                             "names, so it analyses whatever stretch the caller assumed"),
+    ("probeWindowFrames=4", "the arm's header does not say how long the probe said its window was, so a reading "
+                            "that is longer than the window cannot be told from one that is the window"),
+):
+    if needed not in read_window:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+if "** the probe's window was 4 frames" not in read_stretch:
+    raise SystemExit("Vitrail performance harness contract: an overridden window is not announced, so a longer "
+                     "stretch reads exactly like the window it was taken beside")
 
 # --- whether the picture column can read anything on this scene ------------------------------------------
 # A session whose own arms move by as much as the generations do has a picture column that measures the scene

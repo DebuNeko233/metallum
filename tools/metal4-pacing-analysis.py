@@ -58,6 +58,10 @@ FIELDS = ("frame", "slots", "slot", "submission", "wallUs", "slotWaitUs", "drawa
 FRAME_RE = re.compile(r"M4_FRAME " + " ".join(rf"{field}=(-?\d+)" for field in FIELDS))
 COMMIT_RE = re.compile(r"M4_FRAME_COMMIT submission=(\d+) commitMs=([\d.]+)")
 PASS_RE = re.compile(r"end pass '([^']*)'")
+# The probe's own report line, which is where a window closed and how many frames it counted. Read rather than
+# passed in, because a window size supplied on the command line is an assumption about the session and the probe's
+# line is the session's own answer.
+REPORT_RE = re.compile(r"frame-probe (\d+)/(\d+) windowFrames=(\d+)")
 
 
 def percentile(values, quantile):
@@ -69,20 +73,27 @@ def percentile(values, quantile):
 
 
 def read_arm(path, budget):
-    """The frames of one arm, and the frames of its probe window.
+    """The frames of one arm, the frames of its probe window, and how long the probe said its window was.
 
-    The window is the last `budget` frames written *before* the probe's own report line, which is where the
-    window closed: the client keeps drawing for a second or two after that while the harness photographs and
-    stops it, and a whole-run histogram would mix the loading screens, the settle and the window into one shape.
+    The window is the `windowFrames` the probe's own report line names, ending at that line: the client keeps
+    drawing for a second or two after it while the harness photographs and stops it, and a longer stretch mixes
+    the loading screens and the settle into the shape. `budget` overrides it, and the two are returned apart so a
+    caller can say when they disagree - measured, a 300-frame session read with this file's old default of 600
+    analysed the last 600 traced frames, which is the settle and the window together, and the result still looked
+    like a window because nothing in it said how many frames the probe had counted.
     """
     frames = []
     commits = {}
     malformed = 0
     report_at = None
+    window_frames = None
     pending = []
     for line in path.read_text(errors="replace").splitlines():
-        if "frame-probe " in line and "/{} ".format(budget) in line:
-            report_at = len(frames)
+        if "frame-probe " in line:
+            reported = REPORT_RE.search(line)
+            if reported:
+                report_at = len(frames)
+                window_frames = int(reported.group(3))
         if "M4_FRAME_COMMIT" in line:
             match = COMMIT_RE.search(line)
             if match:
@@ -105,8 +116,9 @@ def read_arm(path, budget):
         frames.append(frame)
     for frame in frames:
         frame["commitMs"] = commits.get(frame["submission"], -1.0)
-    end = report_at if report_at else len(frames)
-    return frames, frames[max(0, end - budget):end], commits, malformed
+    end = report_at if report_at is not None else len(frames)
+    reach = budget if budget > 0 else (window_frames if window_frames else len(frames))
+    return frames, frames[max(0, end - reach):end], commits, malformed, window_frames
 
 
 def describe(frames, weight):
@@ -145,14 +157,50 @@ def histogram(walls, bucket_us):
     return buckets
 
 
+def between_frames(window):
+    """What each frame's period is made of, from the two spans the trace already carries.
+
+    A frame's `wallUs` is `begin(N) - begin(N-1)` and its `encodeUs` is `commit(N) - begin(N)`, so the part of a
+    period that is neither that frame's own encoding nor the previous frame's is
+
+        between(N) = wall(N) - encode(N-1) = begin(N) - commit(N-1)
+
+    which is the client's own work outside this engine's frame: the tick, the level render and what the pack
+    prepares before it asks the backend for a frame. It is derived rather than instrumented, because both spans
+    are already written once a frame and the subtraction needs no clock the backend does not already read.
+
+    The pairing is checked rather than assumed - `mean(wall)` has to equal `mean(between) + mean(encode)` - because
+    an off-by-one here would fold the client's own work into the engine's and read as a regression of this path,
+    which is the one mistake this decomposition exists to prevent.
+    """
+    periods, encodes, previous, betweens, slots, drawables = [], [], [], [], [], []
+    for index in range(1, len(window)):
+        if window[index]["wallUs"] < 0 or window[index - 1]["encodeUs"] < 0:
+            continue
+        periods.append(window[index]["wallUs"] / 1000.0)
+        encodes.append(window[index]["encodeUs"] / 1000.0)
+        previous.append(window[index - 1]["encodeUs"] / 1000.0)
+        betweens.append((window[index]["wallUs"] - window[index - 1]["encodeUs"]) / 1000.0)
+        slots.append(window[index]["slotWaitUs"] / 1000.0)
+        drawables.append(window[index]["drawableWaitUs"] / 1000.0)
+    return periods, encodes, previous, betweens, slots, drawables
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("session", help="a run directory holding one directory per arm")
     parser.add_argument("--histogram-bucket-us", type=int, default=2000)
-    parser.add_argument("--frames", type=int, default=600, help="the probe window each arm was measured over")
+    parser.add_argument("--frames", type=int, default=0,
+                        help="override the window: 0 (the default) reads the frame count the probe's own "
+                             "report line names, which is the only number that comes from the session "
+                             "rather than from the caller")
     parser.add_argument("--wait-threshold-us", type=int, default=500,
                         help="how long a wait has to be to count as a real one: a ring that is never really "
                              "waited on still reports a few hundred nanoseconds of bookkeeping")
+    parser.add_argument("--slow-ratio", type=float, default=1.5,
+                        help="how far above the window's median period a frame has to be to count as the second "
+                             "population: the populations this instrument has measured sit one handover quantum "
+                             "apart, so 1.5 is a frame that crossed a handover and a half")
     args = parser.parse_args()
 
     session = pathlib.Path(args.session)
@@ -164,7 +212,7 @@ def main():
         log = arm_dir / "latest.log"
         if not log.is_file():
             continue
-        frames, window, commits, malformed = read_arm(log, args.frames)
+        frames, window, commits, malformed, reported_window = read_arm(log, args.frames)
         if not frames:
             print(f"arm {arm_dir.name}: no M4_FRAME lines - is -Dmetallum.metal4FrameTrace=true in that arm?")
             continue
@@ -181,7 +229,12 @@ def main():
         free = [frame for frame in window if frame["slotWaitUs"] < args.wait_threshold_us]
         summary = describe(window, 1.0)
         print(f"arm {name}: slots={slots} frames={summary['n']} of {len(frames)} traced"
-              f" submissions={len(commits)} malformedLines={malformed}")
+              f" submissions={len(commits)} malformedLines={malformed}"
+              + (f" probeWindowFrames={reported_window}" if reported_window else " noProbeWindowLine"))
+        if args.frames > 0 and reported_window and args.frames != reported_window:
+            print(f"  ** the probe's window was {reported_window} frames and this reading is the last"
+                  f" {summary['n']} traced frames before its report: a longer stretch than the window, which"
+                  f" holds the settle and the loading tail with it. Drop --frames to read the window itself.")
         shifted = [(window[index]["wallUs"] / 1000.0, window[index - 1]["drawableWaitUs"] / 1000.0)
                    for index in range(1, len(window))]
         print(f"  corr(wall(N), drawableWait(N-1)) = {correlation(shifted):+.3f}"
@@ -200,6 +253,40 @@ def main():
               f"  P95 {percentile([f['commitMs'] for f in window if f['commitMs'] > 0], 0.95):.2f}"
               f"  over {summary['commitN']} of {len(window)} frames")
         print(f"  draws a frame mean {summary['drawsMean']:.1f}")
+        # **What the period is made of.** A percentile says where the frames landed; this says which of the three
+        # intervals in a period grew, which is the difference between a pacing finding and a work finding. The
+        # slow population is selected by the period and not by a wait, so a frame whose extra time is the client's
+        # own is separated from one whose extra time is the encoder's or the ring's.
+        periods, encodes, previous, betweens, slots, drawables = between_frames(window)
+        if periods:
+            print(f"  period = between + previous encode: mean {statistics.fmean(periods):.2f}"
+                  f" = {statistics.fmean(betweens):.2f} + {statistics.fmean(previous):.2f} ms"
+                  f"   (between: P50 {percentile(betweens, 0.50):.2f}"
+                  f"  P95 {percentile(betweens, 0.95):.2f}"
+                  f"  P99 {percentile(betweens, 0.99):.2f}"
+                  f"  max {max(betweens):.2f})")
+            print(f"  corr(period, between)={correlation(list(zip(periods, betweens))):+.3f}"
+                  f"   corr(period, previous encode)={correlation(list(zip(periods, previous))):+.3f}"
+                  f"   corr(period, own encode)={correlation(list(zip(periods, encodes))):+.3f}"
+                  f"   corr(period, slotWait)={correlation(list(zip(periods, slots))):+.3f}"
+                  f"   corr(period, drawableWait)={correlation(list(zip(periods, drawables))):+.3f}")
+            cutoff = percentile(periods, 0.50) * args.slow_ratio
+            slow = [index for index, period in enumerate(periods) if period >= cutoff]
+            fast = [index for index, period in enumerate(periods) if period < cutoff]
+            for label, group, side in (("slow", slow, ">="), ("fast", fast, "<")):
+                if not group:
+                    continue
+                # `previous` and not this frame's own encode: the period a frame is read in is the span between
+                # its begin and the last one's, so the encoder span inside it is the *previous* frame's, and a
+                # population table assembled from the frame's own encode would not add up to its own period.
+                print(f"  population {label} (period {side} {cutoff:.2f} ms, {args.slow_ratio:g}x the window's"
+                      f" P50): frames={len(group)}"
+                      f" wallMeanMs={statistics.fmean([periods[i] for i in group]):.2f}"
+                      f" = betweenMeanMs {statistics.fmean([betweens[i] for i in group]):.2f}"
+                      f" + previousEncodeMeanMs {statistics.fmean([previous[i] for i in group]):.2f}"
+                      f"  (their own encode {statistics.fmean([encodes[i] for i in group]):.2f})"
+                      f" slotWaitMeanMs={statistics.fmean([slots[i] for i in group]):.2f}"
+                      f" drawableWaitMeanMs={statistics.fmean([drawables[i] for i in group]):.2f}")
         for label, population in (("A no real slot wait", free), ("B real slot wait", waited)):
             if not population:
                 continue

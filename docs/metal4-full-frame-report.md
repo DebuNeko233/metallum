@@ -1502,17 +1502,17 @@ section above applies: the thing the replacement was a candidate explanation *fo
 a frame, and the road is a tenth of one.
 
 **Where the gap is instead is the existing reading, not a new claim.** The one clean per-frame trace of this
-scene (`-Dmetallum.metal4FrameTrace=true`, `run/c-makeup-trace/t3`, 600 frames) is bimodal exactly as Phase C
-described and its two buckets are not a work split:
+scene (`-Dmetallum.metal4FrameTrace=true`, `run/c-makeup-trace/t3`, its probe window of 300 frames) is bimodal
+exactly as Phase C described and its two buckets are not a work split:
 
 ```
-wall ms      P50 4.53  P95 9.90  mean 4.97        wall histogram: 0-2:59 2-4:105 4-6:315 6-8:61 8-10:56 10-12:3 22-24:1
-drawable wait mean 0.94 ms   encoder mean 2.28 ms   driver interval mean 4.93 ms (P50 5.32, P95 5.42)
+wall ms      P50 4.52  P95 9.91  mean 4.94        wall histogram: 0-2:30 2-4:54 4-6:156 6-8:30 8-10:28 10-12:2
+drawable wait mean 0.87 ms   encoder mean 2.23 ms   driver interval mean 4.93 ms (P50 5.32, P95 5.43)
 ```
 
-The frame's own wall mean (4.97 ms) is its driver interval (4.93 ms), the encoder is 2.28 ms of it, and the
-second bucket sits a quantum above the first. That is the pacing resource, which is Phase C3's subject and is
-**NOT MEASURED per frame against the submission it paced** - the census at least removes the CPU-upload
+The frame's own wall mean (4.94 ms) is its driver interval (4.93 ms), the encoder is 2.23 ms of it, and the
+second bucket sits a quantum above the first. What that gap is made of is measured in Phase C3 below, and it is
+neither the upload road nor the pacing resource - the census at least removes the CPU-upload
 explanation from the list rather than leaving it standing.
 
 **Instrumentation evidence.** `tools/ci-frame-probe.py` pins the three entry points, the whole accounting block
@@ -1541,6 +1541,106 @@ mostly are *not* uploads; a scene whose frame is uploads (a GUI-bound benchmark,
 video-upload path), and the road's per-call overhead at 3-5 calls a frame against 3000, are not measured. The
 shape's other cost, the mapped-buffer allocation and the `persistentMapping` difference between the
 generations, is a separate P2 item and is not priced here.
+
+## Phase C3 - a period is the client's own work plus the previous frame's encode
+
+**Question.** C1/C2 moved the wait between the ring and the display and left the wall where it was; F1 removed
+the CPU-upload road. A frame trace still says a period is bimodal without saying which interval grew, so the
+question this phase answers is: **what is a frame's period made of, and which part of it does this path own?**
+
+**Instrument - a derivation, and no new clock.** A frame's line already carries both spans:
+`wallUs` is `begin(N) - begin(N-1)` and `encodeUs` is `commit(N) - begin(N)`, so
+
+```
+between(N) = wall(N) - encode(N-1) = begin(N) - commit(N-1)
+```
+
+is the interval from the previous frame's commit to this one's begin - the client's own work at the frame
+boundary: the tick, the level render's preparation, what the pack does before it asks the backend for a frame, and
+this backend's own post-commit present signalling. `tools/metal4-pacing-analysis.py` prints the identity
+(`mean(period) = mean(between) + mean(previous encode)`), the correlations of the period against each candidate
+interval, and a population table split by the period at 1.5x the window's median - selected by the **period** and
+not by a wait, which is what separates a frame whose extra time is the client's from one whose extra time is the
+encoder's. The pairing is the whole of it: an off-by-one would put the client's work inside the engine's and read
+as a regression of this path, which is why the identity is printed beside the table rather than assumed.
+
+**Measured - the no-pack scene, four arms of 1, 2 and 3 ring slots, each read on its own 300-frame window**
+(`run/m4-pacing-ring`, `run/m4-pacing-ring2`):
+
+```
+slots  arm   period mean = between + previous encode   corr(period, previous encode)   slotWait   drawableWait   commitMs
+1      s1a   8.33        = 0.08    + 8.26              +0.998                           7.80       0.05           1.18
+1      s1b   8.34        = 0.10    + 8.24              +0.996                           (p50 7.86) 0.06           1.14
+2      s2a   8.36        = 0.69    + 7.68                                             0.00       5.69           3.38
+2      s2b   8.39        = 0.65    + 7.74                                             0.00       5.81           3.38
+3      s3a   8.42        = 0.65    + 7.76              +0.929                           0.00       5.78           3.37
+3      s3b   8.42        = 0.72    + 7.70              +0.938                           0.00       5.53           3.37
+```
+
+**On the no-pack scene the client's own work outside this engine's frame is a rounding error** - 0.08 to 0.72 ms
+of an 8.3 ms period - and the period *is* the encoder's span, correlated with the previous frame's encode at
++0.93 to +0.998: the interval the ring's slot wait or the display's drawable wait sits inside. That is why C1/C2
+could move the wait from one to the other and measure no change in the wall: both waits live in the same interval
+and that interval is the whole period.
+
+**Measured - the packed scene** (`run/c-makeup-trace/t3`, MakeUp-UltraFast-9.5e, its 300-frame window):
+
+```
+period mean 4.94 = between 2.71 + previous encode 2.23 ms
+corr(period, between) = +0.909   corr(period, previous encode) = +0.509   corr(period, own encode) = -0.329
+slow (period >= 6.78 ms, 59 of 300): 8.74 = 5.30 + 3.44   slotWait 0.00  drawableWait 0.59  their own encode 1.69
+fast (period <  6.78 ms, 240 of 300): 4.00 = 2.07 + 1.94  slotWait 0.30  drawableWait 0.94  their own encode 2.36
+```
+
+**On the packed scene more than half of the window's wall (802 of 1475 ms) is outside this engine's frame**, the
+period correlates with that interval at +0.909, and the second population is *entirely* that interval: 5.30 of
+8.74 ms, with the ring free (0.00), the display nearly free (0.59) and **this path's own encode cheaper in the
+slow frames than in the fast ones** (1.69 against 2.36 ms). Whatever the slow frames are, they are not this engine
+working harder - they are this engine being handed a frame later.
+
+**And the interval belongs to the client's tick.** Thirty frames of that window carry the pack's extra passes (14
+at 24 passes, 16 at 25, against a modal 18/19) and the probe counted **exactly 30 client ticks in the same
+window** (`windowTicks=30 framesPerTick=10.00`): the extra-pass frames are the tick frames, one per tick. The
+tick frames themselves begin immediately after the previous commit - their own `between` is 0.09-0.10 ms with a
+maximum of 0.12 over all 30 - and the time lands on the frames around them (the 18-pass frames' `between` averages
+3.27 ms, the 19-pass 2.66, worst 7.85). The `between` series' autocorrelation peaks at a lag of ten frames
+(+0.780), which is one 20 Hz tick at this window's 4.94 ms a frame.
+
+**Decision and retraction.** The second population of the packed scene is the client's own per-frame work at the
+frame boundary, and this path neither owns it nor pays it. The earlier sections' reading of the *wait* is
+unchanged - C1/C2's "the depth moves the wait and not the wall" reproduces on the true windows below - but the
+attribution of the second population is **withdrawn**: F1 said it was "the pacing resource", and the measurement
+says the pacing resources are free in exactly those frames.
+
+**What C3 does not measure, and the instrument it would need.** *Which* part of the client's span it is - the tick
+itself, the level render's preparation, chunk work, or the pack's own CPU - is **NOT MEASURED**: nothing in this
+tree marks the client's frame boundaries, so the interval is read as one number. And **the M3-vs-M4 tail cannot be
+attributed per frame at all**, because only this path writes a per-frame line: a per-frame line on the reference
+path, at the same boundary, is the instrument that would say whether the ladder's tail is the same client work
+seen through a different frame shape or something this path does. Both are named here rather than guessed at.
+
+**Correction to the C1/C2 table, appended.** That table's `n` column is 1839-2024 a row, which is each arm's
+whole traced stretch, not the 300-frame window its own text names - the analyser's window used to be whatever
+`--frames` said and its default said 600, so a 300-frame session was read over the settle and the loading tail
+with nothing in the output to say so. Re-read on each arm's own window the medians agree to 0.04 ms and the wait
+location is the same:
+
+```
+slots  arm  wall mean  wallP50  slotWait                     drawableWait  commitMs
+1      s1a  8.33       8.35     7.80 mean, p50 7.92 of 300    0.05          1.18
+1      s1b  8.33       8.38     7.74 mean, p50 7.86 of 300    0.06          1.14
+2      s2a  8.36       8.36     0.00                          5.69          3.38
+2      s2b  8.39       8.34     0.00                          5.81          3.38
+3      s3a  8.42       8.34     0.00                          5.78          3.37
+3      s3b  8.42       8.32     0.00                          5.53          3.37
+```
+
+against the whole-stretch means of 9.90-9.98 ms the table carries: the means are where the two samples part,
+because the longer stretch holds the settle and the loading tail. The conclusion is unchanged and the sample is
+now named. The analyser reads the window the probe's own report line names by default, announces an overridden
+window, and prints the frame count it read against the frame count the probe counted -
+`tools/ci-vitrail-performance.py` pins all three and a behavioural check writes a session with eight traced frames
+and a four-frame window and refuses the harness if the default reads eight.
 
 ## Performance
 
