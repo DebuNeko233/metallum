@@ -197,13 +197,19 @@ ComplementaryReimagined r5.9.1 (2048x2048 map, 947 sections a walk)
 arm                2048^2 passes/600   blits/600   loadedMiB/f  storedMiB/f  depthAtt/f   ms/f
 interval 0                1311            3000        322.2        484.5        8.0      9.194
 interval 1 (shipped)      1000            4800        321.8        460.1        7.5      8.289
-interval 2 (selector max)  905            4800        321.7        436.5        7.3      8.031 / 8.808
+interval 2 (selector max)  905            4800        321.7-336.4  451.9-466.7   7.3-7.7  8.031 / 8.808
 no translucent             407            4800        289.5        427.8        6.9      8.898
 no chunk layers             88            4800        273.4        387.6        6.0      7.291
 ```
 
 Both packs carry a one-off ~100-pass mip cascade at each size from the load, which is why the base is not nought:
 `Complementary interval 2` reads 905 = 105 + 200 + 600, and its `interval 0` reads 1311 = 111 + 600 + 600.
+
+**And the arms of one session are not the same frame even when nothing is switched.** Complementary's four
+interval arms split by *position*: the first two read 336.7 and 336.4 `loadedMiB` a frame and the last two 321.8
+and 321.7, whatever interval each was running - a 4.5 per cent spread in the attachment traffic of a frozen
+scene, which is the drift the comparison refuses these sessions on and the reason the Complementary interval-2
+pair is unresolved rather than merely noisy.
 
 **What the columns say.** The translucent half runs **every frame** and the opaque half every other frame, so per
 frame the translucent layer loads and stores the map's attachments **twice as often** as the opaque one does -
@@ -261,6 +267,34 @@ requires is not satisfied yet. Nothing is broken by leaving it: the selector alr
 so a player who wants the longer arm can choose it today; the only question the measurement would settle is what
 the **default** should be, and one pack is not enough to move a default on.
 
+## The family the corpus cannot show: the things that move
+
+Every corpus session strips the world's entities before it starts, so `Shadow casters` read **0 frames gathered**
+in all of them and the movers' removal arm moved the frame by nothing. The harness has a fixture for it -
+`--vanilla-mobs` stages a pig, a cow, an armour stand, a dropped item and an experience orb in front of the
+camera, one of each, placed once and never again - so the arm was taken: MakeUp, same world and protocol, with
+the removers' draw kept and removed.
+
+```
+arm                 caster census          passes/f   loadedMiB/f  storedMiB/f  depthAtt/f   ms/f
+movers drawn        148 frames, 5.0 a frame   22.38       576.2        651.9        10.5     6.574 / 6.868
+movers removed      0 frames, 0.0 a frame     21.33       447.3        523.0         9.5     6.865 / 6.854
+shadow walk one a second, movers drawn:  kept 1693 a walk, drew 1569 a walk
+shadow walk one a second, movers removed: kept 1700 a walk, drew 1414 a walk
+```
+
+**The structure is the finding, and it is exact.** Five entities, none of them large, add **one full-size render
+pass a frame** into the 4080x4080 map - 1.06 passes a frame over 600 frames - and with it **129 MiB of loaded and
+129 MiB of stored attachment traffic a frame**, 29 and 25 per cent of the frame's whole attachment traffic. That
+is `4080 x 4080 x 4 bytes x 2` for the pass's load and store, to the mebibyte, so what the movers cost is the
+**full map's traffic for a handful of texels of content**, once a frame, and it can never be amortised: they move,
+which is the whole reason the engine's reuse covers the opaque world and nothing else.
+
+**Their wall price is NOT RESOLVED.** The removal arm reads 6.865 and 6.854 (0.2 per cent apart) while the two
+arms that draw them read 6.574 and 6.868 (4.5 per cent apart), so the arm with less work sits *inside* the spread
+of the arm with more - and one of the pairs even orders the wrong way. This session is a case of the rule above:
+the repeats disagree by more than the effect, so the answer is unresolved rather than a small number.
+
 ## Correctness
 
 - Every arm ran Metal 3 and said so: the probe's own `executingGeneration=metal3`, checked by the harness's new
@@ -289,10 +323,10 @@ second, and the setting is already exposed to the player.
 once, so the map's own chain cannot be separated from the pack's; the previous programme priced all of them at
 0.045 ms, 1.0 per cent, below the plan's 0.1 ms gate, and that is where this stays.
 
-**NOT MEASURED - the entity and voxel families.** The harness's still-life fixture strips the world's entities
-before every arm, so `Shadow casters: 0 frames gathered` in every scene of the corpus, and removing the movers'
-draw moves nothing (-0.06 per cent on the reference pack). The voxel write is inside the same fragment program as
-the raster and no switch takes it out without changing what the pack's shader does.
+**NOT MEASURED - the voxel family.** The voxel write is inside the same fragment program as the raster and no
+switch takes it out without changing what the pack's shader does. The entity family, which was in the same
+position at the end of the corpus work, is measured in the section above: five movers, one extra full-size pass a
+frame, 129 MiB of attachment traffic a frame, and a wall price this session could not resolve.
 
 ## Residual
 
@@ -310,9 +344,7 @@ the raster and no switch takes it out without changing what the pack's shader do
 
 ## Next
 
-1. **The entity family**, which is the one arm of C2 never taken: `--vanilla-mobs` stages a pig, a cow, an armour
-   stand, a dropped item and an experience orb in front of the camera, and `-Dvitrail.probeNoShadowEntities`
-   removes their draw, so the arm exists and the caster census would read non-zero for the first time.
-2. **A resolving measurement of the interval on Complementary**, in a session whose arms include their own
-   reference and whose repeat pair agrees - and only after the machine can hold one state for four arms.
-3. **C7's corpus** and **C3's remaining three scales**, unchanged from the list above.
+1. **A resolving measurement of the entity family and of the Complementary interval**, in sessions whose arms
+   carry their own reference and whose repeats agree - which needs the machine to hold one state for the length
+   of a session.
+2. **C7's corpus** and **C3's remaining three scales**, unchanged from the list above.

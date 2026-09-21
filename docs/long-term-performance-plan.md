@@ -35,7 +35,9 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       translucent passes a 600-frame window), the shipped reuse of the map is
                                       worth 9.8 % on MakeUp, the selector's own maximum is worth another
                                       5.9 % there and is UNRESOLVED on Complementary, so raising the default
-                                      interval is DEFERRED; the entity and voxel families are NOT MEASURED;
+                                      interval is DEFERRED; the entity family is measured (one extra full-size pass and 129 MiB
+                                      of attachment traffic a frame, wall unresolved) and the voxel family is
+                                      NOT MEASURED;
                                       C4-C7 not started
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
