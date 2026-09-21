@@ -142,6 +142,24 @@ feedback, module cache, warm-up). Every figure in this programme's documents was
 hand until it existed; a field a session does not carry is absent rather than zero, and a counter the probe grows
 lands under `other` without an edit to the tool.
 
+**Three more windows are refused, and each one looks like a result.** Section 46 lists them and the harness now
+makes them:
+
+- **A window shorter than the frames it was asked for** (`windowFrames` against `--frames`). A short window is a
+  shorter sample of the same scene, and the comparison cannot see it because both arms of a pair would be short.
+- **A window opened before the settle ran.** The harness sleeps `--settle` seconds between the pack's first full
+  frame and the marker that opens the window, and it now keeps the moment the frame was *detected* and the moment
+  the marker was touched: the difference must be at least the settle. Timed on the harness's own clock rather than
+  the log's, which carries neither a date nor a timezone. Measured, the five-second version of this settle read
+  4.4 per cent apart between two runs of one configuration.
+- **A client that crashed during the arm**: `Minecraft has crashed!`, `A fatal error has been detected by the Java
+  Runtime Environment`, or `GpuDeviceLossException` in the arm's log. A crash outranks every counter, and its
+  window may have been counted before it - which is the one reading worse than no reading, because it looks like
+  a result. The scan stops at the first marker so that the refusal names the road the fault came by.
+
+Both of the last two were seen to fire: a copy of the harness with the settle threshold raised and another with
+the crash scan pointed at a string every log carries each refused their arm and exited 4.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:

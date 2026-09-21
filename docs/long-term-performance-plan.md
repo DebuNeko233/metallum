@@ -79,10 +79,14 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
                                       GPU distribution, CPU and allocation stats, the native call census, the
                                       structural census and the engine's one-a-second censuses - with
                                       tools/ci-performance-report.py holding it against a fixture built from a
-                                      real window's lines, mutations included. G2/G3 standing (the harness, the
-                                      region reader, the census lines, the command-generation guard, the
-                                      reference-arm and minimum-over-repeats rules);
-                                      G4 (profiler stop rule) is policy, recorded below
+                                      real window's lines, mutations included. G2 DONE: section 46's list is
+                                      refused end to end - target, generation, backend, pack selection, scene
+                                      and content drift, a window shorter than the frames asked for, a window
+                                      opened before the settle it was given, and a client that crashed or lost
+                                      the device. G3 standing (the region reader, the flat-capture guard, the
+                                      census lines, the command-generation guard, the reference-arm and
+                                      minimum-over-repeats rules) and its readback half is the one improvement
+                                      left in the track; G4 (profiler stop rule) is policy, recorded below
 ```
 
 ## The benchmark discipline this repository now holds to

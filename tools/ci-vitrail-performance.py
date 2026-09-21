@@ -490,9 +490,10 @@ if '\t: > "$run_dir/load-trace.txt"' not in launcher or \
         '\t) >> "$run_dir/load-trace.txt" 2>/dev/null &' not in launcher:
     raise SystemExit("the load trace is not written by appending writers over a file emptied once, so either "
                      "the trace is never truncated between arms or the writers can overwrite each other")
-if 'printf \'window-opened %s\\n\' "$(date +%s)" >> "$run_dir/load-trace.txt"' not in launcher:
+if 'printf \'window-opened %s\\n\' "$marker_touched" >> "$run_dir/load-trace.txt"' not in launcher:
     raise SystemExit("the load trace does not say when the window opened, so no sample of it can be "
-                     "attributed to the frames the probe counted")
+                     "attributed to the frames the probe counted, and the settle cannot be checked against "
+                     "the moment the pack's first full frame was detected")
 if 'printf \'window-closed %s\\n\' "$(date +%s)" >> "$run_dir/load-trace.txt"' not in launcher:
     raise SystemExit("the load trace does not say when the window closed, so its samples cannot be "
                      "bounded at the far end either")
@@ -770,6 +771,33 @@ for needle, why in (
      "the removal does not say which arm it made cold, which is the one fact a reader of the session needs"),
     ("rm -rf \"$dir\"", "nothing is actually removed when a cold load is asked for, so the flag would be a "
                         "no-op that reads as a measurement"),
+    # And the three session-validity refusals of section 46 that nothing made, each one a window that would
+    # otherwise be read as a measurement: a short window, a window opened before the settle ran, and a client
+    # that died during the arm.
+    ('counted="$(grep -o \'windowFrames=[0-9]*\' "$run_dir/probe.txt"',
+     "nothing refuses a window that counted fewer frames than the caller asked for, and a short window is a "
+     "shorter sample of one scene - which the comparison cannot see, both arms of a pair being short"),
+    ('elif [[ "$counted" -lt "$frames" ]]; then',
+     "the frame count the window reported is read and not compared with the one asked for"),
+    ('frame_seen="$(date +%s)"',
+     "the moment the pack's first full frame was detected is not kept, so the settle this harness sleeps for "
+     "cannot be checked"),
+    ('settled_for=$(( marker_touched - frame_seen ))',
+     "the settle is not measured, so an arm whose window opened early is not refused"),
+    ('if [[ "$settled_for" -lt "$settle_seconds" ]]; then',
+     "the settle the window really had is read and not compared with the one asked for"),
+    ("a window opened before the settle it was told to run",
+     "the refusal a reader sees does not name the window that opened early, so a session refused for it reads "
+     "as a pack that did not draw"),
+    ('for marker in "Minecraft has crashed!"',
+     "a client that crashed during an arm is not refused, and its window may have been counted before the "
+     "crash - which is the one reading worse than no reading, because it looks like a result"),
+    ('"A fatal error has been detected by the Java Runtime Environment"',
+     "a native fault is not one of the markers a crash is refused on, so a client killed by one passes"),
+    ('"GpuDeviceLossException"',
+     "the engine's own device-loss exception is not one of the markers, so an arm that lost the device passes"),
+    ("scene_bad=1\n\t\t\tbreak", "the crash scan does not stop at the first marker that fires, so the log "
+                                    "line stops naming which road the fault came by"),
     # And the command generation that executed the frame, which is machine state this harness does not write.
     # Measured, and the reason the guard exists: a whole session of the shadow decomposition (run/c2-<pack>)
     # was collected on Metal 4 while the corpus it was to be read against is Metal 3 - the instance's own

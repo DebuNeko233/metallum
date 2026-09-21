@@ -855,9 +855,17 @@ for run in "${runs[@]}"; do
 	# The scene is given time to settle before the window opens, and the amount is a switch because what
 	# "settled" costs is a measurement: the first version of this waited five seconds and two runs of one
 	# configuration still read 4.4 per cent apart with the camera pinned.
+	#
+	# When the frame was DETECTED is kept, because the settle is this harness's own wait and section 46 asks
+	# for a session that did not have one to be refused rather than annotated: a scene that has not settled is
+	# the world still streaming and the pack still filling its history, which read as a slow engine - measured
+	# at 4.4 per cent between two runs of one configuration when the wait was five seconds. Timed from the
+	# detection rather than from the log's own clock, which has neither a date nor a timezone in it.
+	frame_seen="$(date +%s)"
 	sleep "$settle_seconds"
 	touch "$marker"
-	printf 'window-opened %s\n' "$(date +%s)" >> "$run_dir/load-trace.txt"
+	marker_touched="$(date +%s)"
+	printf 'window-opened %s\n' "$marker_touched" >> "$run_dir/load-trace.txt"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
 		run_failed=1
@@ -1041,6 +1049,44 @@ for run in "${runs[@]}"; do
 		fi
 	fi
 
+	# A window that was asked for more frames than it counted is not the window the caller asked for, and the
+	# counters in it are a shorter sample of the same scene rather than a different one - which is why this is
+	# not the comparison's business: the comparison judges two arms against each other and both would be short.
+	if [[ -n "$frames" ]]; then
+		counted="$(grep -o 'windowFrames=[0-9]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2)"
+		if [[ -z "$counted" ]]; then
+			echo "Run '$name' reported no window at all, so the $frames frames it was asked for cannot be checked" >&2
+			scene_bad=1
+		elif [[ "$counted" -lt "$frames" ]]; then
+			echo "Run '$name' counted $counted frames of the $frames it was asked for: a short window is a shorter sample of one scene, so its distribution is not the one the caller wanted and the comparison cannot see it - both arms of a pair would be short" >&2
+			scene_bad=1
+		fi
+	fi
+
+	# The settle, which section 46 lists as "missing warmup" and nothing checked: the harness sleeps between
+	# the pack's first full frame and the marker that opens the window, and an arm whose window opened before
+	# that wait had run is a scene still settling - the measured cost of five seconds against twenty-five was
+	# 4.4 per cent between two runs of one configuration.
+	if [[ -n "$frame_seen" && -n "$marker_touched" ]]; then
+		settled_for=$(( marker_touched - frame_seen ))
+		if [[ "$settled_for" -lt "$settle_seconds" ]]; then
+			echo "Run '$name' opened its window ${settled_for}s after the pack's first full frame and not the ${settle_seconds}s it was told to settle for: a window opened early measures the world still streaming and the pack still filling its history, which reads as a slow engine" >&2
+			scene_bad=1
+		fi
+	fi
+
+	# And a crash, which outranks every counter above: a run whose client died is not a measurement of anything,
+	# and its window may still have been counted before the crash. Three markers, because a fault reaches the
+	# log by three roads - the game's own crash report, a native fault's fatal error, and the engine's own
+	# device-loss exception in a stack trace.
+	for marker in "Minecraft has crashed!" "A fatal error has been detected by the Java Runtime Environment" "GpuDeviceLossException"; do
+		if grep -qF "$marker" "$run_dir/latest.log" 2>/dev/null; then
+			echo "Run '$name' holds \"$marker\" in its log, so its client did not survive the arm: the window it counted is not a measurement of this scene" >&2
+			scene_bad=1
+			break
+		fi
+	done
+
 	# The client's own word for a session that stopped drawing the scene, and it outranks every counter: measured,
 	# the sky session's first arm paused at 20:01:43 and opened its window at 20:01:51, and the window then read
 	# `wallP50=100.00` with `windowTicks=598` over 300 frames - ten frames a second at exactly two client ticks a
@@ -1122,7 +1168,7 @@ if [[ "$met_all" == 1 ]]; then
 fi
 
 if [[ "${scene_bad:-0}" == 1 ]]; then
-	echo "At least one run's window did not draw the pack it asked for - the wrong target, the wrong command generation, or a pack selection another writer took over - so the comparison above holds that window's numbers and they are not a measurement of the pack." >&2
+	echo "At least one run's window is not a measurement: the wrong target, the wrong command generation, a pack selection another writer took over, a window shorter than the frames it was asked for, a window opened before the settle it was told to run, or a client that crashed during the arm. The comparison above holds that window's numbers and they are not a measurement of the pack." >&2
 	exit 4
 fi
 
