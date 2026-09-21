@@ -45,6 +45,7 @@ met_all=0
 fresh_world=true
 no_pack=false
 fixture_pack=false
+dimension=minecraft:overworld
 vanilla_clouds=off
 weather=clear
 keep_entities=false
@@ -124,6 +125,13 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          what the world is left holding, with the weather cycle off either way. Rain is a
                          particle system of its own, so this is how vanilla's particles get into a frame
                          without a keyboard.
+  --dimension NAME       which dimension every staged player record is put in (default
+                         minecraft:overworld). A player record carries the dimension it was last in and
+                         that is where the next session opens, so a save left in the nether hands back a
+                         nether: measured, the staged world held 81 records in the overworld and 9 in the
+                         nether at the world spawn, the nine being the profiles the dev instance joins as,
+                         so every session of this harness opened in the nether - red fog, no sky and no
+                         clouds - while the scene it believed it was staging was the overworld.
   --keep-entities        keep the world's mobs and other entities instead of taking them out. For a
                          correctness reading of what a frame draws, not for a comparison of two arms.
   --vanilla-particles    stage tools/fixtures/vanilla-showcase - a tick function that emits the game's own
@@ -184,6 +192,7 @@ while [[ $# -gt 0 ]]; do
 		--keep) keep=true; shift ;;
 		--vanilla-clouds) vanilla_clouds="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
 		--weather) weather="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+		--dimension) dimension="$2"; shift 2 ;;
 		--keep-entities) keep_entities=true; shift ;;
 		--vanilla-particles) vanilla_particles=true; shift ;;
 		--vanilla-mobs) vanilla_mobs=true; shift ;;
@@ -615,6 +624,7 @@ for run in "${runs[@]}"; do
 		echo "Staged the vanilla depth-biased sign fixture into $world_name" >&2
 	fi
 	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator \
+		--dimension "$dimension" \
 		$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life") \
 		${aim_args[@]+"${aim_args[@]}"}
 

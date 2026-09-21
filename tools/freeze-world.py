@@ -39,7 +39,8 @@ The file is gzipped NBT, and it is rewritten **losslessly**: every tag round-tri
 values this tool means to change are changed.
 
 Usage: freeze-world.py SAVE_DIR [--time TICKS] [--still-life] [--spectator]
-                             [--at X,Y,Z] [--yaw DEG] [--pitch DEG] [--self-test]
+                             [--at X,Y,Z] [--yaw DEG] [--pitch DEG]
+                             [--dimension NAME] [--self-test]
 """
 from __future__ import annotations
 
@@ -247,6 +248,10 @@ FROZEN_TIME = 4000
 # Spectator, which is what a player who is only watching a scene should be: no hand, no body, and
 # therefore nothing drawn inside a frame that varies between two launches of one configuration.
 SPECTATOR = 3
+# What a staged scene is staged in unless the caller says otherwise. The overworld is the only dimension
+# with a sky and a cloud layer, so a comparison of either needs it and nothing else does.
+DEFAULT_DIMENSION = "minecraft:overworld"
+
 NOON = FROZEN_TIME
 
 
@@ -350,6 +355,37 @@ def spectator(save: Path) -> int:
         spectate_player(root)
         save_level_dat(record, root)
         changed += 1
+
+    return changed
+
+
+def settle_dimension(root: Compound, dimension: str) -> bool:
+    """Puts one player record in the dimension a scene is staged in, answering whether it moved.
+
+    A player record carries the dimension it was last in, and that is where the next session opens: a
+    save left in the nether hands back a nether, whatever the coordinates beside it say. Measured, and it
+    is why this exists: the staged world of the performance harness held 81 records in the overworld and
+    9 in the nether at the world spawn, the nine being the profiles the dev instance actually joins as, so
+    every session of that harness opened in the nether - red fog, no sky, no clouds - while the scene it
+    believed it was staging was the overworld. A comparison of two spans of sky cannot be taken in a
+    dimension that has none.
+    """
+    tag, current = entry(root, "Dimension")
+    if tag == TAG_STRING and current == dimension:
+        return False
+
+    set_entry(root, "Dimension", TAG_STRING, dimension)
+    return True
+
+
+def settle_world(save: Path, dimension: str) -> int:
+    """Puts every player record of a save in one dimension, and answers how many it changed."""
+    changed = 0
+    for record in player_files(save):
+        root = load_level_dat(record)
+        if settle_dimension(root, dimension):
+            save_level_dat(record, root)
+            changed += 1
 
     return changed
 
@@ -598,6 +634,21 @@ def self_test() -> None:
         raise SystemExit("self-test: the player's angle was not written")
     if place_player([("Nothing", TAG_INT, 1)], None, None, None):
         raise SystemExit("self-test: placing a player changed something it was not asked to")
+
+    # The dimension, which is where a session opens: a record left in the nether hands back a nether at
+    # whatever coordinates are beside it, so the scene and the dimension have to move together.
+    player_with_dimension: Compound = [("Dimension", TAG_STRING, "minecraft:the_nether")]
+    if not settle_dimension(player_with_dimension, DEFAULT_DIMENSION):
+        raise SystemExit("self-test: a player in the nether was reported as already in the overworld")
+    if entry(player_with_dimension, "Dimension") != (TAG_STRING, DEFAULT_DIMENSION):
+        raise SystemExit("self-test: the player's dimension was not written")
+    if settle_dimension(player_with_dimension, DEFAULT_DIMENSION):
+        raise SystemExit("self-test: a player already in the overworld was reported as moved")
+    player_without_dimension: Compound = [("Pos", TAG_LIST, ListTag(TAG_DOUBLE, [1.0, 2.0, 3.0]))]
+    if not settle_dimension(player_without_dimension, DEFAULT_DIMENSION):
+        raise SystemExit("self-test: a record with no dimension was reported as already settled")
+    if entry(player_without_dimension, "Pos") == (None, None):
+        raise SystemExit("self-test: writing the dimension dropped the rest of the record")
     for key in ("GameRules", "game_rules"):
         tag, rules = entry(frozen_data, key)
         if tag != TAG_COMPOUND:
@@ -680,6 +731,7 @@ def main() -> int:
             return 2
     yaw = float(args[args.index("--yaw") + 1]) if "--yaw" in args else None
     pitch = float(args[args.index("--pitch") + 1]) if "--pitch" in args else None
+    dimension = args[args.index("--dimension") + 1] if "--dimension" in args else DEFAULT_DIMENSION
 
     level = save / "level.dat"
     if not level.is_file():
@@ -710,6 +762,10 @@ def main() -> int:
 
     if spectate:
         print(f"Put {spectator(save)} record(s) of {save} into spectator mode")
+
+    moved = settle_world(save, dimension)
+    if moved:
+        print(f"Moved {moved} record(s) of {save} into {dimension}")
 
     if position is not None or yaw is not None or pitch is not None:
         placed = aim(save, position, yaw, pitch)

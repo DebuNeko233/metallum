@@ -258,6 +258,10 @@ for needle, why in (
     ('VITRAIL_PROFILE_CLOUDS', "the clouds switch never reaches the profile writer"),
     ("--weather) weather=", "the harness cannot leave the world raining, so vanilla's largest particle system "
      "cannot be in a frame without a keyboard"),
+    ("--dimension) dimension=", "the harness cannot choose the dimension its scene is staged in, so a save "
+     "left in the nether stages a nether - no sky, no clouds - whatever the rest of the scene says"),
+    ('--dimension "$dimension" \\', "the harness's dimension choice never reaches freeze-world, so the staged "
+     "player records keep the dimension the save was left in"),
     ("--keep-entities) keep_entities=true", "the harness always takes the world's entities out, so nothing a "
      "mob or a block entity draws can be measured"),
     ("--vanilla-particles) vanilla_particles=true", "the harness cannot stage the vanilla particle fixture"),
