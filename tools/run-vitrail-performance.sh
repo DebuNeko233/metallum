@@ -123,8 +123,11 @@ load-trace.txt is the same reading taken every five seconds while the arm ran, w
 and 'window-closed' lines bounding the frames the probe counted. The pair in load.txt says whether a
 spread *between* two arms came with a busy machine; the trace says whether a spread *inside* one did,
 which the pair cannot: a burst shorter than the one-minute average barely moves it, so a session can
-show equal load at both ends of an arm whose own cost moved by half. The harness ends by printing the
-comparison.
+show equal load at both ends of an arm whose own cost moved by half. The session also leaves
+<out>/gpu-trace.txt - the accelerator's own utilization, its memory and the pid of the driver's most recent
+submission, every two seconds - because a frame-time comparison is a claim about the GPU and no host-side
+reading can say whether the GPU was busy, or whether something else on the machine was submitting to it.
+The harness ends by printing the comparison.
 USAGE
 }
 
@@ -445,6 +448,14 @@ stop_run() {
 }
 
 : > "$out_dir/order.txt"
+# What the *GPU* was doing for the whole session, which no host-side reading can answer: the accelerator's
+# own utilization and the process whose submission the driver handled last. Session run/m4-ab7 is why it is
+# here - all four of its arms read device util 100%, so the comparison is GPU-bound in both generations and
+# its numbers are GPU work rather than pacing; and the same trace showed the machine's GPU at 85-87% busy
+# between arms with the game not running, because a browser and a remote-desktop server are on it. Sliced by
+# each arm's own load-trace markers, since the two traces are stamped from the same clock.
+bash "$repo_root/tools/gpu-trace.sh" "$out_dir/gpu-trace.txt" 2 900 &
+gpu_tracer=$!
 for run in "${runs[@]}"; do
 	name="${run%%=*}"
 	printf '%s\n' "$name" >> "$out_dir/order.txt"
@@ -698,6 +709,8 @@ for run in "${runs[@]}"; do
 
 	echo "Run '$name' collected into $run_dir"
 done
+kill "$gpu_tracer" 2>/dev/null || true
+wait "$gpu_tracer" 2>/dev/null || true
 
 if [[ "$keep" == false ]]; then
 	rm -f "$marker"

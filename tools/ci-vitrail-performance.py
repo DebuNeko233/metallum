@@ -277,6 +277,34 @@ if "{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt}" not in
                      "of a session's directory does not know the evidence is there")
 
 # ---------------------------------------------------------------------------
+# And what the GPU itself was doing, because that is what a frame-time claim is about
+#
+# `run/m4-ab7` is the session that made this necessary: its four arms read device utilization 100%, which is
+# what turns "M4 is 17-35% slower" from a wall-clock difference into GPU work - and the same trace showed the
+# accelerator 85-87% busy between arms with no game running, because a browser and a remote-desktop server
+# are on this machine. A session that keeps only the CPU's load cannot say either thing.
+# ---------------------------------------------------------------------------
+if 'bash "$repo_root/tools/gpu-trace.sh" "$out_dir/gpu-trace.txt"' not in launcher:
+    raise SystemExit("the harness does not sample the accelerator for the session, so a frame-time spread "
+                     "cannot be told from a GPU that was busy with something else")
+if 'kill "$gpu_tracer" 2>/dev/null || true' not in launcher:
+    raise SystemExit("the GPU tracer is never stopped, so a harness that dies leaves a loop reading the "
+                     "driver's statistics behind it")
+gpu_tracer = (ROOT / "tools" / "gpu-trace.sh").read_text(encoding="utf-8")
+for needle, why in (
+    ('"Device Utilization %"', "the trace does not read the accelerator's own utilization, which is the "
+                               "reading that says whether a frame was GPU-bound at all"),
+    ("grep -o 'fLastSubmissionPID\"=[0-9-]*'",
+     "does not read which process submitted to the GPU last, so a second client on the machine is invisible "
+     "to it - the comment above it is not the reading"),
+    ("set -uo pipefail", "the trace is not written to survive a missing ioreg field, and a trace that exits "
+                         "on the first absent key reports a machine that never had a GPU"),
+    ("seq 1 \"$count\"", "the trace has no sample bound, so it can outlive the session that started it"),
+):
+    if needle not in gpu_tracer:
+        raise SystemExit("the GPU trace " + why)
+
+# ---------------------------------------------------------------------------
 # The numbers are the probe's own
 #
 # The comparison parses the line the probe printed rather than restating its counters, and refuses a
