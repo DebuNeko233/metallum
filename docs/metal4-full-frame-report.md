@@ -798,6 +798,31 @@ answered rather than only what is left.
    honest reading is the pooled 10.5% and the order question is left open. What would settle it is a census
    large enough to separate a 4% arm from a 14% arm, which is a few hundred probes each.
 
+   **And the rate moved out from under the measurement.** Three censuses run after the smoke's failure path was
+   given a self-localising diagnostic - the only change, and a change that runs *only when the smoke has already
+   failed* - read **0 of 360** (0 of 40, 0 of 120, 0 of 200), against the 21 of 200 above:
+
+   ```text
+   period                                          probes   storage-image failures
+   the five censuses that re-opened this entry       200     21  (10.5%; counts 10, 2, 1, 1, 7)
+   the three censuses after the diagnostic           360      0  (counts 0/40, 0/120, 0/200)
+   ```
+
+   A fault that is 10.5% in one period and absent in the next, with nothing in the path changed, is not a
+   property of the build alone: something outside this instrument moves it - machine load, driver or clock state
+   - and the harness cannot see which. That is the gap section 88's counter work exists to close, and it is the
+   strongest argument for it that the migration has produced. **What this does not say is that the fault is
+   gone**: 360 clean probes is not decisive against a rate already observed at 25% in a single census, and the
+   honest statement is that the rate is not stable.
+
+   **The failure path now localises itself.** The reason string used to name the symptom; it now re-reads the
+   texel after 50 and after 100 ms and prints all three readings, which separates the two faults that produce
+   the symptom: a dispatch that was lost reads the same colour three times, and a CPU read that arrived before
+   the GPU's write was visible reads the right colour on the second attempt. That second candidate is real here
+   and not a straw man - this smoke's readback is a CPU `getBytes:`, while every other readback in the file that
+   comes off the GPU goes through a buffer. So the next occurrence names its own mechanism rather than the
+   report having to guess at it.
+
    This is the same table-and-encoder shape the engine's own `clearStorageTexture` uses, so a fault at this
    rate in the probe is a fault the frame path can reach. It is re-opened here rather than carried as fixed,
    and it is the strongest argument for the counter work in section 88 that the migration has produced: what

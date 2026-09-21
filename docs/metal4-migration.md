@@ -3858,7 +3858,18 @@ all five                              21/200
 ```
 
 So the fix narrowed the fault and did not remove it, and the clean census was the low end of a variable rate
-rather than the rate. **The order effect is not established**: the arms above differ by whether the MetalFX smoke
+rather than the rate.
+
+**Then the rate moved out from under the measurement.** Three censuses run after the smoke's failure path was
+given a diagnostic that re-reads the texel after 50 and 100 ms - a change that runs *only when the smoke has
+already failed* - read **0 of 360 probes**, against 21 of 200 in the period above. A fault that is 10.5% in one
+period and absent in the next, with nothing changed in the path, is not a property of the build alone: something
+outside this instrument moves it, and the harness cannot see what. 360 clean probes is not decisive against a
+rate already seen at 25% in a single census - the honest statement is that the rate is not stable, and that this
+is the gap section 88's counters exist to close. The diagnostic stays because the next occurrence will then say
+whether the dispatch was lost or the CPU read the texture before the GPU's write was visible; those are
+different faults with different fixes, and this smoke's readback is a CPU `getBytes:` while every other readback
+in the file that comes off the GPU goes through a buffer. **The order effect is not established**: the arms above differ by whether the MetalFX smoke
 runs first, and they total 3 of 80 against 11 of 80 - but the spread *within* one arm is 1 to 10, which is wider
 than the difference between the arms, so the pooled 10.5% is the honest number and separating a 4% arm from a
 14% arm needs a few hundred probes each. This is the same table-and-encoder shape the engine's own
