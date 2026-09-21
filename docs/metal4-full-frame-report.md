@@ -153,9 +153,9 @@ than in the frame path, and neither has been run yet.
 measured 1 of 50 cold and 1 of 20 warm with a one-target probe, and the sentence in this report that read that
 as "equally frequent cold and warm" is withdrawn.
 
-**And a hundred and eighty cold probes passed, which is section 14's Path B and not a resolution.** The harness was run
-twice today on this machine - `--cold-runs 30 --warm-runs 20` and then `--cold-runs 50 --warm-runs 20` - and the
-second subsumes neither the first nor the shape it measured, so both are kept:
+**And two hundred and forty cold probes passed, which is section 14's Path B and not a resolution.** The harness
+was run four times today on this machine, and no run subsumes another - the shapes differ in how many probes each
+process runs - so all four are kept:
 
 ```text
 run                                                cold processes  probes  failures  warm  warm failures
@@ -173,13 +173,13 @@ indexed draws, residency sets, indirect draws, compute->pass, compute->draw, cop
 GPU pass time: 0 passed, 50 failed
 ```
 
-So the intermittency **did not reproduce in a hundred and eighty cold probes**, the probe is fast enough to make that a
+So the intermittency **did not reproduce in two hundred and forty cold probes**, the probe is fast enough to make that a
 measurement rather than an occasion (half a second against the seventy a client launch costs, which was section
 10's goal), and the failure **stays registered** as intermittent - section 14 forbids deleting it because the
 harness could not reproduce it.
 
-**What the hundred and eighty do and do not say, because the two are easy to run together.** They say the current probe
-shape did not fail in a hundred and eighty cold probes on this machine in this session, which is the strongest single
+**What the two hundred and forty do and do not say, because the two are easy to run together.** They say the current probe
+shape did not fail in two hundred and forty cold probes on this machine in this session, which is the strongest single
 reading the harness can produce without a failure to localise. They do **not** say the fault is gone: no failure
 means **no stage and no mechanism**, so nothing has been fixed, and the historical rate of about one in
 twenty-five was measured with the **older probe shape** - the shape changed between that round and this one, and
