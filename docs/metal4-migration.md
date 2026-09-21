@@ -5400,3 +5400,32 @@ So the ladder's measured shape is a contrast: **work-light scene, this path far 
 scene, faster at the median and slower in the tail because of the same mixture** - and on both, its own commit
 interval is the lower of the two, which is the one quantity sections 47 and 49 forbid subtracting. Photon is the
 remaining rung whose pack exists.
+
+### The ladder's fourth rung, and the one mechanism all three rungs name
+
+Photon, four arms interleaved M3/M4/M3/M4, every arm passing its window guard (the pack drawn, 30-31 render
+passes a frame, `blits 6000`, `pipelineIdentities 343` in all four, no fault):
+
+```text
+arm   wall P50   wall P95   wall P99   own GPU P50   ticks   frames/tick   loadedMiB
+m3a     8.33       8.79       9.01       7.02          99        6.06        449644.5
+m3b     8.34       8.75       8.97       7.03         100        6.00        449644.5
+m4a    10.23      15.92      16.01       6.98         150        4.00        558881.5
+m4b    12.52      15.83      15.96       7.02         150        4.00        551564.6
+```
+
+The reference repeats exactly (8.33/8.34 ms, `loadedMiB` 449644.5 to the digit, 99/100 ticks). This path's P50
+moves 22% with the mixture and its **P95 is pinned at 15.92/15.83 (0.6%)**, with its own commit interval 6.98/7.02
+(0.6%) - which **equals** the reference's 7.02/7.03. The pictures are inside the reference's own spread (`m3a`
+against `m4a` 0.49% of pixels by more than 8, against `m3b` 0.62%).
+
+**And the three measured rungs now name the mechanism's cost in one sentence**: in every one of them this path's
+P95 sits at about **15.9 ms - two handovers of this 120 Hz panel** - whenever its own work fits inside one, while
+the reference's period tracks its own work (8.8 ms on no-pack and on Photon, 27.2 ms on Complementary where its
+work exceeds a handover and it is work-bound). Its own commit interval is lower than the reference's on no-pack
+(2.67-2.69 against 7.60-7.61) and on Complementary (18.14-18.29 against 20.91-20.92) and *equal* on Photon
+(6.98-7.02 against 7.02-7.03). So the wall-clock difference is not the work: it is **one extra display handover of
+latency in the submission**, whose mixture decides the median and whose floor decides the tail.
+
+That is the whole measured ladder - three rungs, one absent pack, one mechanism - and it is what the §69 table in
+the report now carries.

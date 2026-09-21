@@ -1631,7 +1631,7 @@ copy of it - only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain. So
 | no-pack (`run/ticks-nopack`) | 8.33 (8.33, 8.33) | 8.83-8.88 | 13.56-14.85 | 15.94-15.95 | upper mode stable to 0.06%, P50 moves with the mixture | **MEASURED: this path 1.63-1.78x slower**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
 | MakeUp UltraFast | - | - | - | - | - | **NOT MEASURED: the pack archive is not on this machine** |
 | Complementary (`run/rung3-complementary`) | 20.65, 21.12 | 27.19, 27.51 | 16.74, 16.75 | 28.75, 28.93 | P50 repeats to 0.06%, P95 is 5% wider than the reference's | **MEASURED: this path 19-21% faster at the median and 5% slower at P95** |
-| Photon | - | - | - | - | - | not run |
+| Photon (`run/rung4-photon`) | 8.33, 8.34 | 8.79, 8.75 | 10.23, 12.52 | 15.92, 15.83 | P95 repeats to 0.6% and the commit interval to 0.6%; P50 moves 22% with the mixture | **MEASURED: this path 23-50% slower at the median and 81% slower at P95**, with its own commit interval *equal* to the reference's (6.98-7.02 against 7.02-7.03) |
 
 **How the Complementary rung reads, and why only four of its six arms are in the table.** Six arms were
 interleaved M3/M4/M3/M4/M3/M4 and **every arm passed its window guard** (the pack drawn, 21 render passes a
@@ -1654,7 +1654,23 @@ not averaged.
   pixels by more than 8, against `m3c` in 0.44% - a cross-generation difference no larger than the reference's
   own arm-to-arm difference on this scene (section 69's kind of reading, not a screenshot verdict).
 
-**So the ladder's measured shape is two rungs and a contrast**: on the work-light scene this path is far slower
+**The Photon rung, and the pattern across all three.** Four arms, every one passing its window guard (the pack
+drawn, 30-31 render passes a frame, `blits 6000`, `pipelineIdentities 343` in all four, no fault): Metal 3 reads
+8.33 and 8.34 ms at the median with `loadedMiB 449644.5` to the digit and 99/100 client ticks, while this path
+reads 10.23 and 12.52 ms at the median - 22% apart, the mixture again - with its **P95 pinned at 15.92 and 15.83
+(0.6%)** and its own commit interval at 6.98 and 7.02 (0.6%), which **equals** the reference's 7.02/7.03. The
+pictures are inside the reference's own spread (`m3a` against `m4a` 0.49% of pixels by more than 8, against `m3b`
+0.62%).
+
+**And the three rungs together name the mechanism's cost.** In every one of them this path's P95 sits at about
+**15.9 ms - two 8.33 ms handovers of this 120 Hz panel** - whenever its own work fits inside one, while the
+reference's period tracks its own work (8.8 ms on no-pack and Photon, 27.2 ms on Complementary, where its work
+exceeds a handover and it is work-bound). This path's own commit interval is lower than the reference's on
+no-pack (2.67-2.69 against 7.60-7.61), lower on Complementary (18.14-18.29 against 20.91-20.92) and equal on
+Photon (6.98-7.02 against 7.02-7.03) - so **the wall-clock difference is not the work**: it is one extra display
+handover of latency in the submission, whose mixture decides the median and whose floor decides the tail.
+
+**So the ladder's measured shape is three rungs and one mechanism**: on the work-light scene this path is far slower
 and the reason is pacing; on the pack scene it is faster at the median and slower in the tail, and the reason is
 the same mixture. Its own commit interval is lower than the reference's on both, which is the quantity the two
 APIs do not let us subtract.
