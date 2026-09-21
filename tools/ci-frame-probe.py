@@ -727,4 +727,38 @@ for forbidden in forbidden_vocabulary:
         if forbidden in text.lower():
             raise SystemExit(f"frame probe contract leaked shader-pack semantics into {name}: {forbidden}")
 
+# --- the per-frame pacing analysis, which is what classifies a window's populations ------------------------
+# The frame path writes one `M4_FRAME` line a frame and one `M4_FRAME_COMMIT` a submission, and
+# `tools/metal4-pacing-analysis.py` reads them and splits the frames by what they waited on. Two properties
+# matter and both are pinned here rather than trusted: the analyser must need every field the line carries (a
+# field dropped from the regex would silently stop being classified), and it must refuse rather than print
+# numbers for a session whose arms never wrote a line.
+PACING = ROOT / "tools" / "metal4-pacing-analysis.py"
+if not PACING.is_file():
+    raise SystemExit("frame probe contract: the per-frame pacing analyser is gone, so a window whose periods "
+                     "fall into two populations cannot be told from one that is merely wide")
+pacing = PACING.read_text(encoding="utf-8")
+for field in ("frame", "slots", "slot", "submission", "wallUs", "slotWaitUs", "drawableWaitUs", "encodeUs",
+              "passes", "encoders", "tables", "draws"):
+    if f'"{field}"' not in pacing.split("FRAME_RE")[0]:
+        raise SystemExit(f"frame probe contract: the pacing analyser no longer reads the {field} field, so a "
+                         "classification built on the line would be built on some of it")
+if "no M4_FRAME lines - is -Dmetallum.metal4FrameTrace=true in that arm?" not in pacing:
+    raise SystemExit("frame probe contract: the pacing analyser no longer says which switch a session is "
+                     "missing, so an arm that was never traced reads as an arm with no frames")
+if "pacing analysis: no arm in this session wrote a per-frame line" not in pacing:
+    raise SystemExit("frame probe contract: the pacing analyser would print a table for a session with no "
+                     "per-frame lines at all")
+for needle, why in (
+    ("M4_FRAME frame={} slots={} slot={} submission={} wallUs={} slotWaitUs={}",
+     "the per-frame line is gone, so the analyser has nothing to read"),
+    ("public int slots() {", "the ring cannot say how deep it is, so a pooled line could not be read across "
+                            "depths"),
+    ("public long lastSlotWaitNanos() {", "the ring no longer keeps the frame's own slot wait"),
+):
+    metal4_encoder = read("src/main/java/com/metallum/render/metal4/Metal4FrameEncoder.java")
+    metal4_ring = read("src/main/java/com/metallum/mtl/metal4/MTL4FrameRing.java")
+    if needle not in metal4_encoder and needle not in metal4_ring:
+        raise SystemExit("frame probe contract: " + why)
+
 print("Metal frame-probe instrumentation contract: PASS")

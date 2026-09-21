@@ -1374,6 +1374,54 @@ Edge and the remote-desktop server on it as always, and no arm reports a `GPURes
 drawable error. So the *absolute* rates here are not production numbers, and the *deltas* between arms of one
 session are the measurement.
 
+**The two populations, and the quantum they are made of.** Blocker 16's question was what makes this path's arms
+of one configuration differ by up to half while the reference's agree, and the first candidate the migration ever
+named was the ring depth. `run/m4-pacing` is that experiment with the instrument it needed: six arms interleaved
+**1, 3, 1, 3, 1, 3** slots (`-Dmetallum.metal4RingSlots=`), Complementary at 3200x1800, and a per-frame line a
+frame (`-Dmetallum.metal4FrameTrace=true`) carrying the wall, the ring's slot wait, the drawable acquisition
+wait, the encode span and the structure counters, with each submission's own driver interval paired to the frame
+that submitted it (`M4_FRAME_COMMIT submission=`). `tools/metal4-pacing-analysis.py` reads those lines and
+classifies the window's frames by what they waited on.
+
+```text
+arm        slots  wall P50   wall P95   driver P50   wait that paces the frame        corr(wall(N), drawableWait(N-1))
+slots1-a     1     20.76      22.31       18.92     slot  p50 19.04 ms, 600 of 600             +0.03
+slots1-b     1     23.03      24.22       21.21     slot  p50 21.29 ms, 600 of 600             -0.08
+slots1-c     1     24.23      25.73       22.53     slot  p50 22.65 ms, 600 of 600             +0.18
+slots3-a     3     25.24      41.04       27.67     drawable 15.0 ms a frame, 0 slot waits     +0.56
+slots3-b     3     20.88      26.50       19.45     drawable 17.6 ms a frame, 0 slot waits     +0.82
+slots3-c     3     24.66      32.31       21.24     drawable 18.3 ms a frame, 0 slot waits     +0.85
+```
+
+- **At the production depth the frame is paced by the drawable handover, and the ring's slot wait never fires:**
+  0 of 600 window frames at each of the three depth-3 arms waited more than 0.5 ms for a slot (0.2 ms in total),
+  where all 600 frames of every depth-1 arm did (19.0, 21.3 and 22.7 ms at the median). So the two configurations
+  do not differ in how much the frame waits, but in *what it waits for*.
+- **And the period is quantised by that handover.** Every depth-3 window is two-peaked - `slots3-b`'s wall
+  histogram is 210 frames at 16-18 ms and 208 at 24-26, `slots3-c`'s 138 and 261, `slots3-a`'s 52 and 185 with a
+  further 99 at 32-34 - and the drawable waits cluster at about **7, 15 and 23 ms**, i.e. one, two and three
+  quanta of an **~8 ms** cadence. This is a 120 Hz panel (built-in Liquid Retina XDR, ProMotion), whose handover
+  interval is 8.33 ms, so a frame's period lands on two or three of them: **16.7 or 25.0 ms, which is a ratio of
+  1.50 - exactly the widest same-configuration arm ratio the eighteen-session bound measured (1.51x)**. The
+  mixture ratio is what differs between launches, and that is the "up to half" this report has been asking about.
+- **The mechanism is confirmed by the pairing, not only by the shape.** The wait a frame pays is inside its *own*
+  period, so the paced pairing is the previous frame's handover against this frame's wall:
+  `corr(wall(N), drawableWait(N-1))` is **+0.56, +0.82 and +0.85** at depth 3 and **+0.03, −0.08 and +0.18** at
+  depth 1, where the same-frame correlation at depth 3 is −0.05, −0.46 and −0.39. One slot removes the pairing
+  because every frame waits for its own previous submission and the CPU can never run ahead of the compositor;
+  three let it, and the handover decides.
+- **At depth 1 the distribution is one narrow population** - `slots1-b` puts 473 of its 600 frames in a single
+  2 ms bucket and 69 more in the next, with a P95/P50 of 1.05 - which is what a frame whose period is its own
+  submission looks like.
+
+**What this does and does not close.** Section 33's first form is satisfied: **the two populations come from the
+drawable handover's quantum**, measured by the pairing, the peak spacing and the disappearance at one slot. What
+it does *not* yet give is the collapse of the across-arm *mean*: in this session the three depth-1 arms read
+20.76/23.03/24.23 ms (1.17x) against depth 3's 25.24/20.88/24.66 (1.21x), where the earlier `run/m4-rings`
+sessions read 1.05-1.06x at one slot. So the *shape* is explained and the *mean* is not yet controlled to the
+1.0x the gate wants, and section 30's consequence is written into the protocol below rather than assumed away: a
+production-depth comparison may not read a P50 as a renderer cost, because its mixture is the display's.
+
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it
@@ -1963,7 +2011,22 @@ answered rather than only what is left.
    larger than the census above: **thirty-one probes across seven runs** (`run/m4-counters/probes.txt` and the six
    runs before it), with `markerOverDriver` between **0.0219 and 0.0234** in every one of them.
 
-16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
+16. **Blocker 16 - RESOLVED as a mechanism, and the mixture is the display's.** Observed: this path's arms of
+   one configuration repeat to 1.00-1.51x while the reference's repeat to 1.00-1.10x. Cause, measured in
+   `run/m4-pacing` (six arms interleaved 1, 3, 1, 3, 1, 3 slots, a per-frame trace, `tools/metal4-pacing-analysis.py`):
+   **at the production ring depth the frame is paced by the drawable handover and its period lands on two or three
+   quanta of that handover** - every depth-3 window is two-peaked with the peaks about 8 ms apart, the drawable
+   waits cluster at ~7, ~15 and ~23 ms, and `corr(wall(N), drawableWait(N-1))` is +0.56/+0.82/+0.85 where at one
+   slot it is +0.03/-0.08/+0.18 and the window collapses to one narrow peak. 25.0 ms over 16.7 ms is **1.50x**,
+   the bound the eighteen sessions measured. Diagnostic isolation: one slot removes the populations because every
+   frame then waits for its own previous submission and the CPU cannot run ahead of the compositor. Production
+   implication: the depth stays as it is - the wait is the ordering the header asks for and removing it changes
+   the presented picture. Benchmark implication: **a production-depth P50 is not a renderer cost**, so a
+   comparison is either taken at a controlled depth, on a work-bound scene, or read as a distribution (section 30).
+   **What is not closed**: the across-arm *mean* did not collapse at one slot in this session (1.17x against
+   1.21x), so the gate stays unmet until a session with more repeats at both depths says otherwise.
+
+   *(Kept below: the chain that got here.)* **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
    effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
    MEASURED.** *(Superseded twice, and kept because the chain that got there is the record. `run/m4-ab7` measured
    this path at 23.85 and 27.45 ms a frame against the reference's 20.31 and 20.70, arms interleaved M3/M4/M3/M4,

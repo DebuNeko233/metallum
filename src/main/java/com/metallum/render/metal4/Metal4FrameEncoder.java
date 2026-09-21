@@ -256,8 +256,31 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     private static final boolean NO_DRAWABLE_WAIT = Boolean.getBoolean("metallum.metal4NoDrawableWait");
 
+    /**
+     * Whether a per-frame pacing trace is written - one {@code M4_FRAME} line a frame.
+     * <p>
+     * Off by default and a diagnostic: a percentile summary says where a window's frames landed and not how they
+     * were distributed, so a window whose periods fall into two populations reads the same as one whose periods
+     * are merely wide. This writes the frame's own line - the wall between its begin and the last one, the wait
+     * for its ring slot, the wait for its drawable, its encode span and what it encoded - which is what a
+     * distribution can be classified from. The submission's own GPU interval is a separate line,
+     * {@code M4_FRAME_COMMIT}, written by the ring when the driver reports it, and the two join on
+     * {@code submission}.
+     */
+    private static final boolean FRAME_TRACE = Boolean.getBoolean("metallum.metal4FrameTrace");
+
+    /** The fields the per-frame trace needs and nothing else reads unless it is on. */
+    private long traceFrames;
+    private long traceLastBeginNanos;
+    private long traceFrameBeginNanos;
+    private long traceLastPasses;
+    private long traceLastEncoders;
+    private long traceLastTables;
+    private long traceLastDraws;
+    private long traceDrawableWaitNanos;
+
     /** Whether either diagnostic is on, which is what the counters themselves are gated on. */
-    private static final boolean COUNTING = TRACE || STATS;
+    private static final boolean COUNTING = TRACE || STATS || FRAME_TRACE;
     private long statFrames;
     private long statPasses;
     private long statEncoders;
@@ -445,6 +468,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // window line a Metal 3 session does - which is what makes the two generations comparable in the
         // standard harness at all. Every counter the probe prints is fed from the places below.
         MetalFrameProbe.frameSubmitted();
+        if (FRAME_TRACE) {
+            traceFrame();
+        }
         // After the commit, which is the half that comes second: the queue is told the drawable may be shown
         // once the work it just committed has run.
         presentAll();
@@ -650,6 +676,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         }
         if (STATS) {
             this.statBeganAt = System.nanoTime();
+        }
+        if (FRAME_TRACE) {
+            this.traceFrameBeginNanos = System.nanoTime();
         }
         if (!this.ring.beginFrame()) {
             throw new IllegalStateException("the Metal 4 frame could not begin: " + this.ring.refusal());
@@ -1432,7 +1461,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                     + " drawable taken and not presented is one the layer cannot hand out again");
         }
 
+        long drawableBegan = System.nanoTime();
         CAMetalDrawable drawable = layer.nextDrawable();
+        this.traceDrawableWaitNanos = System.nanoTime() - drawableBegan;
         if (drawable == null) {
             throw new IllegalStateException("the Metal 4 layer would not hand out a drawable, so this frame has"
                     + " nothing to present into");
@@ -1879,6 +1910,44 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.passTimes != null) {
             this.passTimes.boundary(this.ring.slot(), this.ring.commandBuffer(), label);
         }
+    }
+
+    /**
+     * One frame's own line: what it waited on, how long it took, and what it encoded.
+     * <p>
+     * The four times are the four things a frame's period can be made of and they are read where each one
+     * happens - the wall between this frame's begin and the last one's, the ring's wait for this frame's slot,
+     * the CPU's wait for this frame's drawable, and the span from the frame's begin to its commit - so a window
+     * whose periods fall into two populations can be classified by what the frames in each population waited
+     * for, rather than by the shape of a percentile. The structure counters are deltas of the running totals
+     * (this switch does not turn the sixty-frame summary on, so nothing resets them underneath it), and a
+     * negative delta - which a session with both switches on would produce at a reset - is reported as -1
+     * rather than as a frame that encoded minus two hundred passes.
+     */
+    private void traceFrame() {
+        long now = System.nanoTime();
+        // The wall is this frame's begin against the last one's, and the encode span is now against this frame's
+        // own begin: two different intervals, which is why the previous begin is kept and not this frame's.
+        long wall = this.traceLastBeginNanos == 0L ? -1L : this.traceFrameBeginNanos - this.traceLastBeginNanos;
+        long encode = this.traceFrameBeginNanos == 0L ? -1L : now - this.traceFrameBeginNanos;
+        this.traceLastBeginNanos = this.traceFrameBeginNanos;
+        long passes = this.statPasses - this.traceLastPasses;
+        long encoders = this.statEncoders - this.traceLastEncoders;
+        long tables = this.statTables - this.traceLastTables;
+        long draws = this.statDraws - this.traceLastDraws;
+        this.traceLastPasses = this.statPasses;
+        this.traceLastEncoders = this.statEncoders;
+        this.traceLastTables = this.statTables;
+        this.traceLastDraws = this.statDraws;
+        Metallum.LOGGER.info("M4_FRAME frame={} slots={} slot={} submission={} wallUs={} slotWaitUs={}"
+                        + " drawableWaitUs={} encodeUs={} passes={} encoders={} tables={} draws={}",
+                ++this.traceFrames, this.ring.slots(), this.ring.slot(), this.ring.submissions(),
+                wall < 0L ? -1L : wall / 1000L,
+                this.ring.lastSlotWaitNanos() / 1000L,
+                this.traceDrawableWaitNanos / 1000L,
+                encode < 0L ? -1L : encode / 1000L,
+                passes < 0L ? -1L : passes, encoders < 0L ? -1L : encoders,
+                tables < 0L ? -1L : tables, draws < 0L ? -1L : draws);
     }
 
     /** One frame's counters, said once every sixty frames so the line is a rate and not a wall of numbers. */

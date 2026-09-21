@@ -955,6 +955,11 @@ for needle, why in (
      "stall would be reported as a lifetime fault"),
     ("public long nextSubmission() {\n        return signalled + 1L;",
      "the ring cannot say which submission the next commit will signal, or says the wrong one"),
+    ("M4_FRAME_COMMIT submission={} commitMs={}",
+     "a submission's own GPU interval is no longer paired with the ordinal of the frame that submitted it, so a "
+     "per-frame pacing trace has no GPU time in it and the populations cannot be read against it"),
+    ("public long lastSlotWaitNanos() {",
+     "the ring no longer keeps the frame's own slot wait, so a per-frame line cannot say what a frame waited on"),
     ("public boolean waitForDrawable(final MemorySegment drawable) {",
      "the ring cannot register a drawable with its queue, so signalDrawable: would be an unrecognised selector"),
     ("public boolean signalDrawable(final MemorySegment drawable) {",
@@ -1105,8 +1110,14 @@ for needle, why in (
 for needle, why in (
     ('Boolean.getBoolean("metallum.metal4FrameStats")',
      "the frame path cannot be asked what a frame cost, so a slow frame is a guess again"),
-    ("private static final boolean COUNTING = TRACE || STATS;",
-     "the counters are not kept when either diagnostic is on, so a trace run has no summary"),
+    ("private static final boolean COUNTING = TRACE || STATS || FRAME_TRACE;",
+     "the counters are not kept when any diagnostic is on - the trace, the summary or the per-frame pacing line "
+     "- so a diagnostic run would report passes, tables and draws of zero"),
+    ('Boolean.getBoolean("metallum.metal4FrameTrace")',
+     "the per-frame pacing line cannot be asked for, so a window's populations cannot be classified from what "
+     "each frame waited on"),
+    ("M4_FRAME frame={} slots={} slot={} submission={} wallUs={} slotWaitUs={}",
+     "the per-frame line no longer carries the frame's own waits, which is what the classification reads"),
     ("Metal 4 frame stats: frames={} fps={} msPerFrame={}", "the counters are never reported"),
     ("this.statPasses++;", "a pass is not counted"),
     ("this.statEncoders++;", "an encoder is not counted"),
@@ -1218,8 +1229,10 @@ for needle, why in (
     ("MetalFrameProbe.blit(width, height, textureOf(destination).pixelSize());",
      "a texture copy is not counted as a blit"),
     ("MetalFrameProbe.metal4Present();", "a present the full-frame path made is not counted"),
-    ("MetalFrameProbe.submitWindowWait(System.nanoTime() - waitBegan);",
-     "the ring's slot-reuse wait is not timed, so the waits line reports nothing for this path"),
+    ("long waited = System.nanoTime() - waitBegan;\n            this.lastSlotWaitNanos = waited;\n"
+     "            MetalFrameProbe.submitWindowWait(waited);",
+     "the ring's slot-reuse wait is not timed, so the waits line reports nothing for this path - and the "
+     "per-frame trace, which reads the same wait out of this field, would report no wait at all"),
     ("MetalFrameProbe.gpuFrameMetal4(millis);", "the queue's per-commit GPU time is read but not reported to the"
      " probe, so a Metal 4 frame has no GPU time at all"),
 ):

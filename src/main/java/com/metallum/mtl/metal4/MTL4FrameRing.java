@@ -100,6 +100,14 @@ public final class MTL4FrameRing implements AutoCloseable {
     private long signalled;
     private long waits;
     private int slot = -1;
+    /**
+     * How long the last {@link #beginFrame()} spent waiting for its slot's previous submission, in nanoseconds.
+     * <p>
+     * The same wait the frame probe is told about, kept here as well because a per-frame pacing trace needs it
+     * frame by frame and the probe keeps percentiles: the two answer different questions, and the frame path may
+     * not read a percentile out of an instrument that reports one at the end of a window.
+     */
+    private long lastSlotWaitNanos;
     private boolean begun;
     private boolean closed;
 
@@ -118,6 +126,19 @@ public final class MTL4FrameRing implements AutoCloseable {
     private MemorySegment feedbackBlock;
     /** Whether a GPU fault has already been reported, so a dead GPU is one line and not one a commit. */
     private static volatile boolean faultReported;
+
+    /**
+     * Whether a per-frame pacing trace is written: one {@code M4_FRAME_*} line per frame and per submission.
+     * <p>
+     * Off by default, and a diagnostic and not a measurement: the lines are for a session whose question is the
+     * frame's *distribution* - which populations its periods fall into and what each frame waited on - and a
+     * percentile summary cannot answer that. It is the same switch the encoder's own per-frame line reads, asked
+     * here so that a submission's interval can be paired with the frame that submitted it.
+     */
+    static final boolean TRACE = Boolean.getBoolean("metallum.metal4FrameTrace");
+
+    /** How many commits this ring has been given feedback for, which is the ordinal of the submission it is for. */
+    private static long feedbackOrdinal;
 
     @Nullable
     private String refusal;
@@ -236,7 +257,11 @@ public final class MTL4FrameRing implements AutoCloseable {
                 return false;
             }
             waits++;
-            MetalFrameProbe.submitWindowWait(System.nanoTime() - waitBegan);
+            long waited = System.nanoTime() - waitBegan;
+            this.lastSlotWaitNanos = waited;
+            MetalFrameProbe.submitWindowWait(waited);
+        } else {
+            this.lastSlotWaitNanos = 0L;
         }
 
         RESET.send(allocators[next]);
@@ -450,6 +475,14 @@ public final class MTL4FrameRing implements AutoCloseable {
         double millis = MTL4CommitOptions.gpuMillis(feedback);
         if (millis > 0.0) {
             MetalFrameProbe.gpuFrameMetal4(millis);
+            if (TRACE) {
+                // One line a submission, paired by ordinal: this ring commits one command buffer at a time and
+                // signals 1, 2, 3 ..., and Metal calls a commit's handler when that submission finishes, so the
+                // nth call here is the nth commit. The pairing is what lets a per-frame line carry the interval
+                // of its own submission instead of the interval of whichever one happened to be reported last.
+                Metallum.LOGGER.info("M4_FRAME_COMMIT submission={} commitMs={}", ++feedbackOrdinal,
+                        String.format(java.util.Locale.ROOT, "%.3f", millis));
+            }
         }
         String error = MTL4CommitOptions.error(feedback);
         if (error == null) {
@@ -471,6 +504,16 @@ public final class MTL4FrameRing implements AutoCloseable {
     /** The slot the last begun frame used, or -1 before the first frame. */
     public int slot() {
         return slot;
+    }
+
+    /** How many slots this ring holds, which is what a per-frame line has to say to be readable across depths. */
+    public int slots() {
+        return this.allocators.length;
+    }
+
+    /** How long this frame's {@code beginFrame} waited for its slot, in nanoseconds; zero where it did not. */
+    public long lastSlotWaitNanos() {
+        return this.lastSlotWaitNanos;
     }
 
     /**

@@ -5029,3 +5029,67 @@ browser and the remote-desktop server on it as always, so the absolute rates are
 between the arms are the measurement. No arm reports a `GPURestart`, a validation error or a drawable error, and
 the comparer refused the session for content drift between arms of one configuration - which is why the numbers
 above are read per arm from the logs rather than through its summary.
+
+### The two populations, traced frame by frame, and the quantum under them
+
+Blocker 16 asked what makes this path's arms of one configuration differ by up to half. A percentile summary
+cannot answer that - it says where a window's frames landed, not whether they were one population or two - so the
+frame path now writes **one line a frame** behind `-Dmetallum.metal4FrameTrace=true`:
+
+```text
+M4_FRAME frame=.. slots=.. slot=.. submission=.. wallUs=.. slotWaitUs=.. drawableWaitUs=.. encodeUs=..
+         passes=.. encoders=.. tables=.. draws=..
+M4_FRAME_COMMIT submission=.. commitMs=..
+```
+
+The second line comes from the ring, on Metal's own dispatch queue, one per commit; the ring commits one command
+buffer at a time, so the nth feedback is the nth submission and a frame line can carry the interval of *its own*
+submission instead of whichever one arrived last. `tools/metal4-pacing-analysis.py` reads both, selects each arm's
+probe window by line position (the client keeps drawing for a second or two after the window closes, while the
+harness photographs and stops it), and classifies the frames by what they really waited on - with a threshold,
+because a ring that is never waited on still reports a few hundred nanoseconds of bookkeeping.
+
+`run/m4-pacing` is six arms interleaved **1, 3, 1, 3, 1, 3** slots, Complementary at 3200x1800:
+
+```text
+arm        slots  wall P50   wall P95   driver P50   wait that paces the frame        corr(wall(N), drawableWait(N-1))
+slots1-a     1     20.76      22.31       18.92     slot  p50 19.04 ms, 600 of 600             +0.03
+slots1-b     1     23.03      24.22       21.21     slot  p50 21.29 ms, 600 of 600             -0.08
+slots1-c     1     24.23      25.73       22.53     slot  p50 22.65 ms, 600 of 600             +0.18
+slots3-a     3     25.24      41.04       27.67     drawable 15.0 ms a frame, 0 slot waits     +0.56
+slots3-b     3     20.88      26.50       19.45     drawable 17.6 ms a frame, 0 slot waits     +0.82
+slots3-c     3     24.66      32.31       21.24     drawable 18.3 ms a frame, 0 slot waits     +0.85
+```
+
+Three readings, and the third is the mechanism.
+
+**The two depths do not differ in how much the frame waits but in what it waits for.** At depth 3 the ring's slot
+wait never fires - 0 of 600 window frames above 0.5 ms, 0.2 ms in total - and the drawable acquisition takes over
+at 15.0-18.3 ms a frame. At depth 1 every one of the 600 frames waits for its own previous submission, at a
+median of 19.0-22.7 ms, and the drawable wait is 0.02 ms.
+
+**And the production-depth window is two-peaked, at a spacing that is the display's.** `slots3-b`'s wall
+histogram is 210 frames at 16-18 ms and 208 at 24-26; `slots3-c`'s is 138 and 261; `slots3-a`'s 52 and 185 with
+99 more at 32-34. The drawable waits cluster at about 7, 15 and 23 ms - one, two and three quanta of an **~8 ms**
+cadence, which is this machine's 120 Hz panel (8.33 ms). So a period lands on two or three handovers: **16.7 or
+25.0 ms, a ratio of 1.50** - and 1.51x is exactly the widest same-configuration arm ratio the eighteen-session
+bound measured. The mixture ratio is what a launch changes, and that is the "up to half" of blocker 16.
+
+**The pairing confirms it rather than the shape alone.** The wait a frame pays is inside its *own* period, so the
+paced pairing is the previous frame's handover against this frame's wall: `corr(wall(N), drawableWait(N-1))` is
+**+0.56, +0.82, +0.85** at depth 3 against **+0.03, -0.08, +0.18** at depth 1 (where the same-frame correlation
+is -0.05, -0.46, -0.39 at depth 3). One slot removes the pairing because every frame waits for its own previous
+submission and the CPU cannot run ahead of the compositor; three let it, and the handover decides. At depth 1 the
+window is one narrow population - `slots1-b` puts 473 of its 600 frames in a single 2 ms bucket, P95/P50 1.05.
+
+**What this closes and what it does not.** Section 33's first form is met: the two populations come from the
+drawable handover's quantum, with the pairing, the spacing and the disappearance at one slot as the evidence. What
+is not met is the collapse of the across-arm *mean* - 1.17x at depth 1 against 1.21x at depth 3 in this session,
+where `run/m4-rings` had read 1.05-1.06x at one slot - so the gate stays open on the mean while the mechanism is
+recorded, and section 30's consequence goes into the protocol: a production-depth P50 is not a renderer cost,
+because its mixture is the display's. No two-arm benchmark is repeated to chase the remainder.
+
+Six new contract pins hold the trace (the switch, the counters it needs, the frame line's fields, the paired
+submission line, the ring's depth and its per-frame slot wait) and six more hold the analyser (every field it
+must read, its refusal when no arm wrote a line, and the line and ring accessors it depends on); each is
+mutation-proved.
