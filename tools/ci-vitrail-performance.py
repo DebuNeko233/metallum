@@ -456,4 +456,31 @@ for needle, why in (
     if needle not in harness:
         raise SystemExit(why)
 
+# And the comparison refuses a pair whose arms did not draw the same frame, judged within each generation.
+#
+# This is the check the cross-generation A/B needed and did not have: the drift check stood aside whenever two
+# generations were named, because the structural counters move with the generation by design - and that left the
+# counters a *switch* cannot move but a *scene* can (how many draws the frame made, how many textures and buffers
+# it bound) unjudged. Measured, session run/perf-ab6: the two Metal 3 arms drew to +0.3% and bound to +0.2% while
+# the two Metal 4 arms differed by +12.2% of draws, +14.7% of texture bindings and +15.1% of buffer bindings on
+# the same world, pack, target and window - and the summary printed "+31.8% against the first arm" for that pair.
+comparer = (ROOT / "tools/vitrail-performance-compare.py").read_text(encoding="utf-8")
+for needle, why in (
+    ("CONTENT_TOLERANCE = 5.0",
+     "the comparison has no content tolerance, so the arms of one generation may draw different amounts of the "
+     "same scene and still be read as a performance verdict"),
+    ('EXACT_COUNTERS = ("windowFrames", "blits", "blittedMiB", "pipelineIdentities")',
+     "the counters a frozen scene pins exactly - the frame count, the copy-backs and the program set - are not "
+     "pinned exactly"),
+    ("by_generation.setdefault(value, []).append(run.name)",
+     "the drift check does not group the arms by the generation that executed, so it cannot judge a generation "
+     "against itself"),
+    ("the arms of one generation did not draw the same frame",
+     "nothing says out loud that a generation whose own arms disagree cannot be read against the other one"),
+    ("f\"{value}: {counter} of {name} is {change:+.1f}% against {reference_name}\"",
+     "the refusal does not name which generation drifted, by which counter and by how much"),
+):
+    if needle not in comparer:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 print("Vitrail performance harness contract: PASS")

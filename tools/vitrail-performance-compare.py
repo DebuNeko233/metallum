@@ -26,6 +26,16 @@ from pathlib import Path
 # Two arms of one configuration differ by well under a per cent on the scene counters - the settled pack
 # fixture read 0.2 per cent - so this is generous and still refuses another scene.
 SCENE_TOLERANCE = 2.0
+# What the arms of one generation may differ by and still be the same frame. The counters below move with the
+# world's own streaming and its entities - measured: two Metal 3 arms of one session differed by 2.1% of
+# loadedMiB and 2.4% of depth attachments while their wall time agreed to 0.2%, and two Metal 4 arms differed by
+# 12.2% of draws, 14.7% of texture bindings and 15.1% of buffer bindings on the same world, pack, target and
+# window. Five per cent is the plan's own performance gate, so a content difference of a size no verdict could
+# survive is the size this refuses.
+CONTENT_TOLERANCE = 5.0
+# The counters a frozen scene pins exactly, whatever the world is doing: the frame count, the copy-backs the
+# pack asks for, and the program set it compiled.
+EXACT_COUNTERS = ("windowFrames", "blits", "blittedMiB", "pipelineIdentities")
 
 COUNTERS = (
     "windowFrames",
@@ -286,6 +296,46 @@ def main() -> int:
             change = 100 * (value - reference) / reference
             if abs(change) > SCENE_TOLERANCE:
                 drift.append(f"{counter} of {run.name} is {change:+.1f}% against {runs[0].name}")
+
+    # And the arms of one generation must have drawn the same frame, judged among themselves.
+    #
+    # This is the check the cross-generation A/B needed and did not have. A generation's own arms share its
+    # binding structure, so the counters a *switch* cannot move are the counters a *scene* moves: how many
+    # draws the frame made, how many textures and buffers it bound, how many bytes it loaded. Judging them
+    # across generations would refuse the comparison by design (this path binds per pass and Metal 3 binds per
+    # draw), so the judgment is made *within* each generation, where the structure is constant and only the
+    # content can move. Measured, session run/perf-ab6: the two Metal 3 arms bound their textures to +0.2% and
+    # drew to +0.3%, while the two Metal 4 arms differed by +12.2% of draws and +14.7% of texture bindings on
+    # the same world, pack, target and window - and the comparer's own summary offered "+31.8% against the
+    # first arm" for that pair, which is a content difference wearing the costume of a performance verdict.
+    content_counters = ("loadedMiB", "storedMiB", "depthAttachments", "pipeline", "texture", "buffer")
+    by_generation: dict[str, list[str]] = {}
+    for run in runs:
+        value = generations[run.name] or "unknown"
+        by_generation.setdefault(value, []).append(run.name)
+    generation_drifted: list[str] = []
+    for value, names in by_generation.items():
+        if len(names) < 2:
+            continue
+        reference_name = names[0]
+        for name in names[1:]:
+            for counter, tolerance in ([(name, 0.0) for name in EXACT_COUNTERS]
+                                       + [(name, CONTENT_TOLERANCE) for name in content_counters]):
+                reference = measured[reference_name].get(counter)
+                other = measured[name].get(counter)
+                if reference is None or other is None:
+                    continue
+                change = 100 * (other - reference) / reference if reference else 0.0
+                if abs(change) > tolerance:
+                    generation_drifted.append(
+                        f"{value}: {counter} of {name} is {change:+.1f}% against {reference_name}"
+                        + ("" if tolerance else " (exact)"))
+    if generation_drifted:
+        drift.extend(generation_drifted)
+        if len(by_generation) > 1:
+            generation_drifted.append(
+                "the arms of one generation did not draw the same frame, so no arm of it can be read against "
+                "the other generation's in this session")
     # And the window itself: a fullscreen arm renders the display's own mode, so the resolution is a scene
     # property the harness cannot pin with --width/--height and has to judge here. Measured: two arms of one
     # configuration photographed 1920x1200 and 3600x2338 - but only a capture with a picture in it is a
@@ -322,7 +372,8 @@ def main() -> int:
 
     if drift:
         print()
-        print("scene drift: " + "; ".join(drift) + f" (tolerance {SCENE_TOLERANCE:.1f}%)", file=sys.stderr)
+        print("scene drift: " + "; ".join(drift) + f" (scene tolerance {SCENE_TOLERANCE:.1f}%,"
+              f" content tolerance {CONTENT_TOLERANCE:.1f}%)", file=sys.stderr)
 
 
     # The rate is the two numbers the probe printed divided by each other and not a second opinion:
