@@ -1404,6 +1404,18 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                     + " sampler, so nothing would be drawn into the drawable");
         }
 
+        if (TRACE) {
+            // Which texture the frame was asked to present, named the same way a pass names its own attachment.
+            // It is here because "the GUI is not in the presented frame" is a question about two objects - the
+            // texture the passes drew into and the texture the present sampled - and a log that names only one
+            // of them cannot answer it.
+            Metallum.LOGGER.info("Metal 4 trace: presenting picture 0x{} {}x{} into a drawable 0x{} {}x{}",
+                    Long.toHexString(picture.nativeHandle().address()),
+                    MTLTexture.width(picture.nativeHandle()), MTLTexture.height(picture.nativeHandle()),
+                    Long.toHexString(drawableTexture.address()),
+                    MTLTexture.width(drawableTexture), MTLTexture.height(drawableTexture));
+        }
+
         MTL4RenderEncoder pass;
         try {
             // The present's drawable is an attachment like any other and this pass overwrites every pixel of it,

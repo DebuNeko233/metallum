@@ -1832,4 +1832,13 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# And the present names the texture it samples. "The GUI is not in the presented frame" is a question about two
+# objects - the texture the passes drew into and the texture the present read - and a log that names one of them
+# cannot answer it. Measured with this line: on a forced Metal 4 title screen the GUI's own pass and the present's
+# picture are the same texture, so the missing GUI is not a mis-picked attachment.
+if 'Metal 4 trace: presenting picture 0x{} {}x{} into a drawable 0x{} {}x{}' not in encoder:
+    raise SystemExit("metal 4 provider: the present does not name the picture it samples and the drawable it "
+                     "writes, so a frame with content missing cannot be told from a present that read another "
+                     "texture")
+
 print("Metal 4 execution provider contract: PASS")
