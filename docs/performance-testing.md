@@ -132,6 +132,17 @@ harness change on its own record, the readback that landed inside the window it 
 distinct sources with the arms that shared each, which is what says whether a session's two arms measured two
 revisions on purpose or by accident.
 
+**What that step was is not identified, and the instruments that were running did not see it.** Checked and
+excluded, each against the direction the reading moved: the kernel's load average (3.0-4.5 at both ends, the same
+trace taken every five seconds), the display's mode (id 66, 1800x1169, unmoved - `display-mode-moves.txt` is empty
+for every session), the device's own utilization while the game submitted (up to 74-77 per cent in both), and the
+driver's client list (the other client before the game was a browser helper at 22:05 and WindowServer tonight -
+the *fast* session is the one that had the browser). What the numbers say instead is that the no-pack frame is
+pinned rather than summed: it sits at 1.75 ms in both states while its GPU work measures *lower* tonight (a p50 of
+1.22-1.27 against 1.36-1.44) and its drawable wait does too (1.37-1.47 against 1.49-1.51), and its tail sits about
+0.9 ms above the pin on five to ten per cent of frames where the baseline had rare frames at 5.5 ms instead. That
+is the present path changing shape, and it is left named rather than explained.
+
 **A removal arm is not a pair of arms that draw the same frame.** The comparison's scene-drift guard refuses
 every removal session, correctly, because the arms differ exactly where the switch says they should: one fewer
 shadow pass in 600 frames moves `depthAttachments` by 2.2 per cent in a session whose two references agree to
