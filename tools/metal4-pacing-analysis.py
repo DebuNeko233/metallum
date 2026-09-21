@@ -16,11 +16,19 @@ What it reads
   M4_FRAME frame=.. slots=.. slot=.. submission=.. wallUs=.. slotWaitUs=..
            drawableWaitUs=.. encodeUs=.. passes=.. encoders=.. tables=.. draws=..
   M4_FRAME_COMMIT submission=.. commitMs=..
+  Metal 4 trace: end pass 'LABEL' ..        (only when -Dmetallum.metal4Trace=true)
 
 The frame's own submission's GPU interval is paired by ordinal (the ring commits one
 command buffer at a time and the driver reports each commit once, in order), so a frame
 line carries the interval of *its own* submission rather than of whichever one arrived
 last.
+
+A frame kind can also be *named* rather than only counted. `-Dmetallum.metal4Trace=true`
+makes every pass write its own `end pass 'LABEL'` line, and those lines precede the frame's
+own `M4_FRAME` line in the same order the frame encoded them, so the labels between two
+frame lines are that frame's passes. With them present each kind is printed as the set it is,
+and each non-modal kind as what it has over the modal one - which is what turns "a 340 ms
+stretch with two passes absent" into "the stretch with the two particle passes absent".
 
 What it prints
 --------------
@@ -42,12 +50,14 @@ import pathlib
 import re
 import statistics
 import sys
+from collections import Counter
 
 FIELDS = ("frame", "slots", "slot", "submission", "wallUs", "slotWaitUs", "drawableWaitUs",
           "encodeUs", "passes", "encoders", "tables", "draws")
 
 FRAME_RE = re.compile(r"M4_FRAME " + " ".join(rf"{field}=(-?\d+)" for field in FIELDS))
 COMMIT_RE = re.compile(r"M4_FRAME_COMMIT submission=(\d+) commitMs=([\d.]+)")
+PASS_RE = re.compile(r"end pass '([^']*)'")
 
 
 def percentile(values, quantile):
@@ -69,6 +79,7 @@ def read_arm(path, budget):
     commits = {}
     malformed = 0
     report_at = None
+    pending = []
     for line in path.read_text(errors="replace").splitlines():
         if "frame-probe " in line and "/{} ".format(budget) in line:
             report_at = len(frames)
@@ -78,12 +89,20 @@ def read_arm(path, budget):
                 commits[int(match.group(1))] = float(match.group(2))
             continue
         if "M4_FRAME " not in line:
+            # A pass's own line, when the per-pass trace is on. It is written while the pass is being
+            # closed, so the labels between two frame lines belong to the frame the later line closes.
+            passed = PASS_RE.search(line)
+            if passed:
+                pending.append(passed.group(1))
             continue
         match = FRAME_RE.search(line)
         if not match:
             malformed += 1
             continue
-        frames.append({field: int(value) for field, value in zip(FIELDS, match.groups())})
+        frame = {field: int(value) for field, value in zip(FIELDS, match.groups())}
+        frame["labels"] = pending
+        pending = []
+        frames.append(frame)
     for frame in frames:
         frame["commitMs"] = commits.get(frame["submission"], -1.0)
     end = report_at if report_at else len(frames)
@@ -189,11 +208,12 @@ def main():
                   f" wallP50Ms={figures['wallP50']:.2f} drawableMeanMs={figures['drawableMean']:.2f}"
                   f" commitMeanMs={figures['commitMean']:.2f} drawsMean={figures['drawsMean']:.1f}")
         # **The content decomposition, from the trace and not from a fit.** A frame's pass count is not the
-        # same on every frame: measured on the no-pack scene it is 7 in the steady state, 13 on the frame that
-        # coincides with a 20 Hz client tick and 5 in a stretch, so a window's total is `7*steady + 13*tick +
-        # 5*reduced` and two arms whose frame rates differ hold different numbers of each. The trace names the
-        # kind of every frame, so the coefficients are counted here rather than fitted - which is what the
-        # earlier attempt could not do over three arms whose tick counts spanned only 10%.
+        # same on every frame: measured on the no-pack scene this path's frame is one count in the steady state,
+        # six passes more on the frame that coincides with a 20 Hz client tick and two fewer in a stretch, so a
+        # window's total is `steady*N + tick*T - 2*S` and two arms whose frame rates differ hold different
+        # numbers of each. The trace names the kind of every frame, so the coefficients are counted here rather
+        # than fitted - which is what the earlier attempt could not do over three arms whose tick counts spanned
+        # only 10%.
         kinds = {}
         for frame in window:
             kinds.setdefault(frame["passes"], []).append(frame)
@@ -212,6 +232,29 @@ def main():
                 extra = value - steady_value
                 print(f"    frames at {value} passes: {len(group)}"
                       f"  ({extra:+d} against the modal, worth {extra * len(group):+d} passes in this window)")
+            # What each kind *is*, when the per-pass trace was on beside the frame trace: the passes a kind
+            # has that the modal kind does not, and the passes it lacks. A count says a kind is two passes
+            # short; only the labels say which two, and a frame kind is not explained until they are named.
+            named = {value: Counter(group[0]["labels"]) for value, group in kinds.items() if group[0]["labels"]}
+            if steady_value in named:
+                modal = named[steady_value]
+                print(f"  pass kinds, named from the trace (what this kind has over the modal one;"
+                      f" {len(named)} of {len(kinds)} kinds carry the per-pass trace):")
+                for value in sorted(kinds):
+                    if value not in named:
+                        continue
+                    shape = named[value]
+                    added = shape - modal
+                    missing = modal - shape
+                    detail = []
+                    if added:
+                        detail.append("has " + ", ".join(name if count == 1 else f"{name} x{count}"
+                                                          for name, count in sorted(added.items())))
+                    if missing:
+                        detail.append("lacks " + ", ".join(name if count == 1 else f"{name} x{count}"
+                                                            for name, count in sorted(missing.items())))
+                    print(f"    {value} passes over {len(kinds[value])} frames: "
+                          + ("; ".join(detail) if detail else "the modal kind itself"))
         buckets = histogram(walls, args.histogram_bucket_us)
         top = sorted(buckets.items())[:16]
         span = args.histogram_bucket_us / 1000.0

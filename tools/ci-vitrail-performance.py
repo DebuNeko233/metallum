@@ -778,11 +778,13 @@ for needle, why in (
         raise SystemExit("Vitrail performance harness contract: " + why)
 
 # --- the window's tick sampling, which is what a content drift has to be read against --------------------
-# A window is a fixed frame count and this client's frame is not the same work every frame (7 render passes in
-# the steady state, 13 on a frame that coincides with a 20 Hz client tick), so a content total is
-# `a*frames + b*ticks`: two arms whose frame rates differ cover different numbers of ticks and their totals
-# differ with the same scene. The comparer therefore has to carry the tick fields and name them when a content
-# drift fires, or a sampling difference is reported as a scene difference - which is what refused the no-pack rung.
+# A window is a fixed frame count and this client's frame is not the same work every frame (measured on the
+# no-pack scene: four render passes in the steady state, six when the two particle passes have work, and six more
+# than either on the frame that coincides with a 20 Hz client tick), so a content total is `steady*N + tick*T`
+# plus whatever the particle kind is worth: two arms whose frame rates differ cover different numbers of both
+# kinds and their totals differ with the same scene. The comparer therefore has to carry the tick fields and
+# name them when a content drift fires, or a sampling difference is reported as a scene difference - which is
+# what refused the no-pack rung.
 for needle, why in (
     ('    "windowTicks",', "the comparer does not carry the window's tick count, so a content drift cannot be "
                           "told from a sampling difference"),
@@ -798,6 +800,52 @@ if "pass-count decomposition:" not in PACING.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the pacing analyser no longer names each arm's frame "
                      "kinds, so a content difference can no longer be attributed to the tick frames and the "
                      "reduced stretches instead of being left unexplained")
+
+# --- and a frame kind is named, not only counted -----------------------------------------------------------
+# The decomposition says a kind is two passes short of the modal one; it does not say *which* two, and a kind
+# that is only a number is a kind nobody can act on. `-Dmetallum.metal4Trace=true` makes every pass write
+# `end pass 'LABEL'` before the frame's own line, so the analyser can name each kind as the set it is. This
+# runs it against a session written here - the same shape the no-pack scene has, `7*steady + 13*tick + 5*reduced`
+# being a scene's numbers and not the path's - and refuses the harness if the names do not come back. A text
+# grep for the field would pass on a reader that is never called; this one fails when the parse is removed.
+import tempfile
+
+ANIMATE = "Animate minecraft:textures/atlas/blocks.png"
+BASE = ["Terrain", "Terrain", "Blit render target", "GUI before blur"]
+PARTICLES = ["Particles - Solid", "Particles - Translucent"]
+TICK = [ANIMATE] * 5 + ["Update light"]
+LABELS = {4: BASE, 6: BASE + PARTICLES, 10: BASE + TICK, 12: BASE + PARTICLES + TICK}
+with tempfile.TemporaryDirectory() as scratch:
+    arm_dir = Path(scratch) / "m4a"
+    arm_dir.mkdir()
+    lines = []
+    # The modal kind is the particle-carrying one, as it is in the measured window, so the reduced kind is
+    # named by what it lacks rather than by what it has.
+    for index, passes in enumerate((6, 6, 4, 12), start=1):
+        for label in LABELS[passes]:
+            lines.append(f"[00:00:00] [Render thread/INFO] (metallum) Metal 4 trace: end pass '{label}' "
+                         f"depth=true draws=1 indexed=0 scissor=false colours=1 load=clear store=store")
+        lines.append(f"[00:00:00] [Render thread/INFO] (metallum) M4_FRAME frame={index} slots=3 slot=0"
+                     f" submission={index} wallUs=12500 slotWaitUs=0 drawableWaitUs=9900 encodeUs=12000"
+                     f" passes={passes} encoders={passes} tables=9 draws=330")
+        lines.append(f"[00:00:00] [Thread-3/INFO] (metallum) M4_FRAME_COMMIT submission={index} commitMs=2.71")
+    lines.append("[00:00:00] [Render thread/INFO] (metallum) frame-probe 4/4 windowFrames=4 windowMs=50.00")
+    (arm_dir / "latest.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    named = subprocess.run(["python3", str(PACING), scratch, "--frames", "4"],
+                           check=True, capture_output=True, text=True).stdout
+for needed, why in (
+    ("pass kinds, named from the trace",
+     "the analyser counts the frame kinds and does not name them, so a kind that is two passes short of the "
+     "modal one stays an unexplained count"),
+    ("lacks Particles - Solid, Particles - Translucent",
+     "the reduced kind is no longer named as the frames whose two particle passes were never opened"),
+    ("has Animate minecraft:textures/atlas/blocks.png x5, Update light",
+     "the tick kind is no longer named as the five block-atlas animation passes and the lightmap pass the "
+     "client does once a tick"),
+):
+    if needed not in named:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 PROBE_SOURCE = ROOT / "src/main/java/com/metallum/render/shared/MetalFrameProbe.java"
 if "windowTicks={} framesPerTick={}" not in PROBE_SOURCE.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the probe no longer reports the tick sampling the "
