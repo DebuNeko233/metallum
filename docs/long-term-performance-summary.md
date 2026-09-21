@@ -169,11 +169,16 @@ remains, but it changes public semantics again (the world's resolution adjusting
 as high-risk with its own stop rule for target reallocation and history invalidation. It needs the owner's
 direction before a line of it is written.
 
+**F3's in-session reload is measured, and it cannot be a window measurement.** The lifecycle probe drives F3+T's
+own path from inside the client, and a reload costs **about a second, serves 147 module-cache units and compiles
+nothing** - but vanilla pauses and saves the single-player client around a resource reload (`Reloading
+ResourceManager: ...` then `Saving and pausing game...`, in the same second), so an arm that drives one is refused
+by the pause guard, correctly, and the reload's cost is read off its own lines.
+
 **Named and unmeasured, and staying that way until something asks for them:** the voxel-writing half of the
 shadow stage (inside the same fragment program as the raster, no switch can take it out without changing what the
-pack's shader does); the in-session F3+T reload (this harness presses no keys, so the relaunch is the proxy); the
-near-duplicate case of F2 (two inputs differing in one define); and **Solas**, the fifth corpus pack, which has
-never been staged on this machine and is the owner's to supply.
+pack's shader does); the near-duplicate case of F2 (two inputs differing in one define); and **Solas**, the fifth
+corpus pack, which has never been staged on this machine and is the owner's to supply.
 
 ## Where the evidence is
 

@@ -39,6 +39,7 @@ CLAIMS = (
     ("C4's elided bytes", "17.6 MiB", "17.6 MiB", "vitrail-gpu-performance.md"),
     ("C7's traffic fall", "38.1 per cent", "38.1 per cent", "vitrail-gpu-performance.md"),
     ("G3's readback stall", "273 ms inside", "273", "performance-testing.md"),
+    ("F3's in-session reload", "about a second, serves 147 module-cache units", "147", "startup-and-cache.md"),
 )
 
 # The one line the page is for: the success criteria, and the one that is not met.

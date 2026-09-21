@@ -320,9 +320,60 @@ none of the three could be answered for the Metal side: the counts existed insid
 work, and the spike had no clock at all. They are answered now: **874 compiles, 36.6 ms, worst 0.29 ms per
 launch**, and the render-thread split says how much of it a first draw paid for itself.
 
+# F3's other half - the in-session reload
+
+## Question
+
+F3 asks for the first load against an F3+T reload and a second reload. The cold and warm loads above are two
+*launches*; this is the reload a player presses, and until now the relaunch was a proxy for it because this
+harness presses no keys.
+
+## Instrument
+
+It does not need one. The engine already has a lifecycle probe that drives the client's transitions from inside
+the client on a schedule the launch line states - it exists because this machine's automation permission refuses
+`osascript` - and one of its actions is F3+T's own path: `minecraft.delayTextureReload()`. So
+`-Dmetallum.lifecycleProbe=reload@1000` is a reload at a client tick, and the reload's cost is read off two
+timestamped lines the probe already prints, plus the engine's own per-load census lines.
+
+## A/B
+
+Two sessions, one reload each, both on MakeUp with a warm cache:
+
+```
+02:37:17  Module cache: 574 units served, 0 built     the launch's own load
+02:37:37  lifecycle probe: firing 'reload' at client tick 1001
+02:37:37  (Minecraft) Reloading ResourceManager: vanilla, fabric-api-base, ...
+02:37:37  (Minecraft) Saving and pausing game...
+02:37:38  lifecycle probe: 'reload' completed
+02:37:39  Module cache: 147 units served, 0 built ... 721 and 0 since this launch
+```
+
+**So a reload costs about a second and compiles nothing.** It serves **147** module-cache units against the
+launch's 574 - the units a chain rebuild asks for once the game's own pipelines are already built - and builds
+**zero** of them, with the translation cache in the same state. The second session reproduced it line for line.
+
+**And vanilla pauses the game around it.** The log says so in as many words: `Reloading ResourceManager: ...`
+then, from the server thread, `Saving and pausing game...`, in the same second as the reload. That is not this
+engine's doing and it is not a defect - but it has a consequence for this programme: **a reload cannot be driven
+inside a window a probe is counting**, because the client it leaves behind is the pause screen. Both of these arms
+were refused for exactly that (`Run 'reload' paused the game at log line 727, before the window it reported
+closed at line 810`), which is the pause guard doing its job, and what is measured here is read off the reload's
+own lines rather than off a window.
+
+## Decision
+
+**MEASURED - the reload is about a second, serves 147 units, and compiles nothing**, which is what the module
+cache's own note predicted (F3+T does not bump the load number and already hits) and what makes the relaunch a
+sound proxy for the *cost*: both are dominated by work the cache already covers.
+
+**RECORDED - a resource reload pauses vanilla's single-player client**, so the reload's cost must be read from its
+own lines or from a session that is not counting a window. A future session that wants a reload *and* a valid
+window has to take them in that order, in two arms.
+
 ## Next
 
-Track F is now complete: F1 (the census, with the compile count, ms and worst spike), F2 (the reuse count), F3
-(the cold and warm load) and F4 (the warm-up, and the archive rejected on its measured size). What is left of the
-plan is in `docs/long-term-performance-plan.md` - C3's remaining three scales, the two walls this machine cannot
-resolve, and E4 last.
+Track F is complete: F1 (the census, with the compile count, ms and worst spike), F2 (the reuse count), F3 (the
+cold and warm load, and now the in-session reload) and F4 (the warm-up, and the archive rejected on its measured
+size). What is left of the plan is in `docs/long-term-performance-plan.md` - the owner's decision on the shadow
+map's default, and E4.
