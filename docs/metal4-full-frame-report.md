@@ -1750,9 +1750,11 @@ answered rather than only what is left.
    granularity even though it does not within one. Both are cheap; neither is a per-pass answer on their own.
 
    **The workload is proven present before the timing is judged**, which is what separates the two explanations:
-   the large pass clears its attachment to black and draws the shader's colour, a pixel is read back, and every
-   reading says `drawsLanded=true`. Without that check, "the draws cost nothing" and "the timestamps are not
-   execution points" are the same measurement, and they are different faults.
+   each attachment clears to black and then draws the shader's colour, **a pixel of each is read back
+   separately** (the curve's target and the area pair's are two textures, so one proof cannot stand for both),
+   and every reading says `drawsLanded=true`, `curveLanded=true` and `areaLanded=true`. Without that check, "the
+   draws cost nothing" and "the timestamps are not execution points" are the same measurement - and a road that
+   does not respond to area cannot be told from an area target nothing drew into - and they are different faults.
 
    **RESOLVED: the road attributes a pass, and the three defects were the smoke's own.** Every inversion above was
    arithmetic. The loop writes one boundary per step at `step + 1`, so a four-step curve fills entries 1 to 4 with
@@ -1809,17 +1811,23 @@ answered rather than only what is left.
 
    ```text
    probe  marker span   driver window   CPU wait   fixed cost   marker/driver   encoder form   curve ordered
-   1        452.3 us      20.666 ms     20.943 ms    0.053 ms       0.0219          0.93          yes
-   2        436.1 us      18.685 ms     19.340 ms    0.078 ms       0.0233          0.96          yes
-   3        431.8 us      18.528 ms     19.105 ms    0.074 ms       0.0233          0.96          yes
-   4        433.7 us      18.564 ms     19.135 ms    0.075 ms       0.0234          0.96          yes
-   5        442.3 us      18.953 ms     19.507 ms    0.081 ms       0.0233          0.91          NO
-   6        426.4 us      18.570 ms     18.835 ms    0.074 ms       0.0230          0.90          NO
-   7        224.7 us       9.807 ms     10.363 ms    0.018 ms       0.0229          0.82          yes
-   8        230.9 us      10.016 ms     10.555 ms    0.019 ms       0.0230          0.82          yes
+   1        331.5 us      15.214 ms     15.501 ms    0.075 ms       0.0218          0.95          NO
+   2        412.8 us      21.442 ms     21.722 ms    0.078 ms       0.0193          0.96          yes
+   3        472.2 us      20.425 ms     21.021 ms    0.032 ms       0.0231          0.93          yes
+   4        431.5 us      18.788 ms     19.351 ms    0.075 ms       0.0230          0.96          yes
+   5        381.2 us      16.760 ms     17.298 ms    5.816 ms       0.0227          0.95          yes
+   6        432.8 us      18.208 ms     19.719 ms    0.030 ms       0.0238          0.94          yes
+   warm     483.7 us      20.985 ms     21.744 ms    5.760 ms       0.0231          0.82          yes
+   warm     268.5 us      12.030 ms     12.588 ms    0.019 ms       0.0223          0.92          yes
+   warm     386.9 us      17.594 ms     17.826 ms    0.030 ms       0.0220          0.94          yes
+   warm     310.1 us      13.727 ms     14.272 ms    0.022 ms       0.0226          0.94          yes
    ```
 
-   The marker span is **a forty-third of the submission in every probe** while the driver's window moves by 2.7x,
+   Eighteen probes are recorded in the two censuses on disk - `run/m4-counters/probes.txt`, the table above, and
+   `run/m4-counters/probes-loaded.txt`, a second census that ran while the machine was saturated and whose driver
+   windows were 411, 1177 and 1198 ms against a fixed cost of 7-9 ms - and `markerOverDriver` is **0.0193-0.0238**
+   in every one of them. The marker span is **one part in 42 to 52 of the submission** while the driver's window
+   moves by a factor of a hundred,
    the fixed cost is three orders below the window it would have to explain, and the CPU - which cannot be
    signalled early - waits the driver's number and not the markers'. Three mechanisms that could have excused it
    are closed: the encoder's own `Precise` after-fragment form at the same boundary reads the same interval

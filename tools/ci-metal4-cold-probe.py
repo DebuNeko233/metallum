@@ -1552,7 +1552,9 @@ for needle, why in (
 #   * the commit's own feedback (`commit:count:options:` and `MTL4CommitFeedback.GPUStartTime/GPUEndTime`), the
 #     road the frame path already reads as gpuM4P50;
 #   * the CPU's wait for the queue's completion value, which needs no API to be trusted;
-#   * a fixed-cost control: one trivial pass committed on its own, read with the same two instruments.
+#   * a fixed-cost control: one trivial pass committed on its own, read with the same two instruments;
+#   * each workload's own attachment read back, because the curve's target and the area pair's are two
+#     textures and one proof cannot stand for both.
 #
 # Measured, thirty-one probes across seven runs: the marker span is 225-643 us while the driver reports 9.8-27.9
 # ms for the same command buffer and the CPU waits 10.4-28.2 ms for its completion, against a fixed cost of
@@ -1616,6 +1618,10 @@ for needle, why in (
     ("samplerGpuDeltaTicks=", "the clock-ratio reading is not reported, so a reader cannot check the unit"),
     ("boolean drew = false;", "the smoke no longer proves its own workload is present"),
     ("drawsLanded=", "the workload proof is not reported"),
+    ("areaLanded=", "the area pair's own attachment is no longer read back, so 'the road does not respond to"
+     " area' and 'the area target received no draws' become the same measurement"),
+    ("MTLTexture.bytes(small, pixel, 4L, COUNTER_EDGE / 2L",
+     "the curve's attachment is no longer the one whose pixel is read, so one proof stands for both workloads"),
     ("if (stamps[index] < stamps[index - 1]) {",
      "the smoke no longer checks that the stamps are in submission order, which is the reading the whole "
      "counter question turns on"),

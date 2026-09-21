@@ -4840,26 +4840,33 @@ fixed cost of a commit**, measured by committing one trivial one-draw pass on it
 instruments, in the same call. All three are reported: `commitDriverMs`, `cpuWaitMs`, `fixedCommitMs`,
 `fixedWaitMs`, and `markerOverDriver`, the marker span as a fraction of the driver's window.
 
-Eight probes, one census, `run/m4-counters/probes.txt` (`--cold-runs 4 --warm-runs 4`), every one
-`gpuTime=true`:
+Each workload's presence is proven before its timing is judged, and the two are read back **separately** - the
+curve's attachment is one texture and the area pair's is another, so one pixel cannot stand for both: the reading
+carries `curveLanded` and `areaLanded` beside the conjunction `drawsLanded`, because "the road does not respond to
+area" and "the area target received no draws" would otherwise be the same measurement. Ten probes, one census,
+`run/m4-counters/probes.txt` (`--cold-runs 4 --warm-runs 4`), every one `gpuTime=true`:
 
 ```text
 probe  marker span   driver window   CPU wait   fixed cost   marker/driver   encoder form   curve ordered
-1        452.3 us      20.666 ms     20.943 ms    0.053 ms       0.0219          0.93          yes
-2        436.1 us      18.685 ms     19.340 ms    0.078 ms       0.0233          0.96          yes
-3        431.8 us      18.528 ms     19.105 ms    0.074 ms       0.0233          0.96          yes
-4        433.7 us      18.564 ms     19.135 ms    0.075 ms       0.0234          0.96          yes
-5        442.3 us      18.953 ms     19.507 ms    0.081 ms       0.0233          0.91          NO
-6        426.4 us      18.570 ms     18.835 ms    0.074 ms       0.0230          0.90          NO
-7        224.7 us       9.807 ms     10.363 ms    0.018 ms       0.0229          0.82          yes
-8        230.9 us      10.016 ms     10.555 ms    0.019 ms       0.0230          0.82          yes
+1        331.5 us      15.214 ms     15.501 ms    0.075 ms       0.0218          0.95          NO
+2        412.8 us      21.442 ms     21.722 ms    0.078 ms       0.0193          0.96          yes
+3        472.2 us      20.425 ms     21.021 ms    0.032 ms       0.0231          0.93          yes
+4        431.5 us      18.788 ms     19.351 ms    0.075 ms       0.0230          0.96          yes
+5        381.2 us      16.760 ms     17.298 ms    5.816 ms       0.0227          0.95          yes
+6        432.8 us      18.208 ms     19.719 ms    0.030 ms       0.0238          0.94          yes
+warm     483.7 us      20.985 ms     21.744 ms    5.760 ms       0.0231          0.82          yes
+warm     268.5 us      12.030 ms     12.588 ms    0.019 ms       0.0223          0.92          yes
+warm     386.9 us      17.594 ms     17.826 ms    0.030 ms       0.0220          0.94          yes
+warm     310.1 us      13.727 ms     14.272 ms    0.022 ms       0.0226          0.94          yes
 ```
 
 Every workload in every probe is the same: 5,440 fullscreen draws on a 1024x1024 attachment plus 1,281 on a
 4096x4096 one, in one command buffer. Three facts come out of that table and each of them is a refutation:
 
-1. **The markers account for about a forty-third of the submission.** `markerOverDriver` is 0.0219-0.0234 in
-   every probe while the driver's window moves by a factor of 2.7 (9.8 to 20.7 ms). A road whose intervals are
+1. **The markers account for about a forty-third of the submission.** `markerOverDriver` is 0.0193-0.0238 in
+   every one of the eighteen probes recorded in the two censuses on disk, while the driver's window moves from
+   12.0 ms to 21.4 ms in the table above and to **1198 ms** in `run/m4-counters/probes-loaded.txt` - a census
+   taken while the machine was saturated, whose fixed cost rose to 7-9 ms with it. The ratio does not move. A road whose intervals are
    the work would read near one; a road reading the *front end* - command processing, about sixty nanoseconds a
    draw - reads a constant fraction of it, which is what this is.
 2. **The fixed cost is not the explanation.** A one-draw submission reads 0.018-0.081 ms of driver window and
@@ -4906,8 +4913,8 @@ amount of time outside the submission. The marker road is then treated as its ow
 into theirs, and that is what the correction turns on: it reads a constant 2.19-2.34% of the driver's window
 across a 2.7x range of that window, which is a *front-end* clock (about sixty nanoseconds a draw) and not a scaled
 version of the work. Scaling it by forty-three is the one move this evidence forbids - it would attribute to a
-pass a time the front end never sees. The set is larger than the eight-probe census above: **thirty-one probes
-across seven runs**, with `markerOverDriver` between **0.0219 and 0.0234** in every one.
+pass a time the front end never sees. The set is larger than the ten-probe census above: **fifty probes
+across eight runs**, with `markerOverDriver` between **0.0219 and 0.0234** in every one.
 
 The one lead left is the road the earlier text named and this round did not try: the **GPU-timeline resolve**
 (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve in

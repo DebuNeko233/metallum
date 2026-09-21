@@ -4654,13 +4654,22 @@ public final class MTL4Probe {
                 }
             }
 
-            // Whether the draws are real: the large pass cleared to black and then drew the shader's colour,
-            // so a pixel of its attachment that holds (0.25, 0.5, 0.75) is one the pipeline wrote.
+            // Whether each workload is real, and the two are read separately because the two knobs are two
+            // attachments: an area pair whose target never received its draws would look exactly like a road that
+            // does not respond to area, and the correction rests on that difference. The curve's attachment is
+            // cleared to black by its own warm-up and then drawn with the shader's colour; the area pair's is
+            // cleared by its warm-up and drawn the same way. A pixel of each that holds (0.25, 0.5, 0.75) is one
+            // the pipeline wrote.
             boolean drew = false;
+            boolean areaDrew = false;
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment pixel = arena.allocate(4);
-                MTLTexture.bytes(large, pixel, 4L, COUNTER_EDGE / 2L, COUNTER_EDGE / 2L, 1L, 1L);
+                MTLTexture.bytes(small, pixel, 4L, COUNTER_EDGE / 2L, COUNTER_EDGE / 2L, 1L, 1L);
                 drew = (pixel.get(JAVA_BYTE, 0L) & 0xFF) > 48
+                        && (pixel.get(JAVA_BYTE, 1L) & 0xFF) > 96
+                        && (pixel.get(JAVA_BYTE, 2L) & 0xFF) > 144;
+                MTLTexture.bytes(large, pixel, 4L, COUNTER_AREA_EDGE / 2L, COUNTER_AREA_EDGE / 2L, 1L, 1L);
+                areaDrew = (pixel.get(JAVA_BYTE, 0L) & 0xFF) > 48
                         && (pixel.get(JAVA_BYTE, 1L) & 0xFF) > 96
                         && (pixel.get(JAVA_BYTE, 2L) & 0xFF) > 144;
             }
@@ -4714,7 +4723,8 @@ public final class MTL4Probe {
             // a known sleep. If a counter tick were a nanosecond the two deltas would agree; whatever the ratio
             // is, it is a fact about this device that the numbers below are read through.
             long[] sample = sampleClockRatio(device);
-            reading = "drawsLanded=" + drew + " rangeAgrees=" + rangeAgrees + " curve=[" + curve + "]"
+            reading = "drawsLanded=" + (drew && areaDrew) + " curveLanded=" + drew + " areaLanded=" + areaDrew
+                    + " rangeAgrees=" + rangeAgrees + " curve=[" + curve + "]"
                     + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
                     + " largePerSmall=" + String.format(Locale.ROOT, "%.1f",
                     smallTicks <= 0L ? 0.0 : (double) largeTicks / smallTicks)
@@ -4773,10 +4783,11 @@ public final class MTL4Probe {
                             + " explanation either - " + reading);
                 }
             }
-            if (!drew) {
-                return failed("counters", "the last step cleared its attachment to black and then drew the"
-                        + " shader's colour " + COUNTER_DRAWS[COUNTER_DRAWS.length - 1] + " times, and the pixel is"
-                        + " still black - so the workload this smoke varies is not there to measure - " + reading);
+            if (!drew || !areaDrew) {
+                return failed("counters", "a workload this smoke varies is not there to measure: the curve's"
+                        + " attachment reads its shader colour " + drew + " and the area pair's reads " + areaDrew
+                        + " - so a road that does not respond to one of the two knobs cannot be told from an"
+                        + " attachment nothing drew into - " + reading);
             }
             if (smallTicks == 0L) {
                 return failed("counters", "the first step's two timestamps are the same value, so the counter did"
