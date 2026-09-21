@@ -592,9 +592,35 @@ the *fixture's placement* moving between launches - and the fixture's own proof 
 it asks for and the arms hold different numbers of them. **An entity picture verdict is NOT MEASURED, for a fixture
 reason that is named and logged rather than suspected**, and a once-only placement is what the fixture owes next.
 
+**And the entity scene was then made one placement, which turned that NOT MEASURED into a reading.** The
+fixture's own proof is what found the fault: a live session logged "placed the pig" and "placed the cow" every four
+to five seconds. The missing tag was `Invulnerable:1b` - the summons are at the camera's own height, which is not
+necessarily above the terrain, and a mob placed inside a block takes suffocation damage every tick and dies, so the
+`unless entity` guard found no pig a few seconds later and placed another. With `NoAI` (no movement, no look),
+`NoGravity` (no falling), `Invulnerable` (no dying) and `PersistenceRequired` (no despawning) each type is placed a
+**stable two times an arm** in every arm of two consecutive sessions, and the harness compares the arms' placements
+with each other rather than against a constant the fixture does not control. What that buys is the reading this
+scene was built for - `run/vanilla-mobs3`, clouds on, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+picture, m3a against m3b:  mean 0.02, 0.24% of pixels differ at all   (the reference against itself)
+picture, m3a against m4a:  mean 0.02, 0.63% of pixels differ at all
+picture, m3a against m4b:  mean 0.02, 0.88% of pixels differ at all
+   - the same worst pixel, 218 at (3547,43), in all three
+
+by band:                     m3a vs m3b      m3a vs m4a      m3a vs m4b
+sky   (top 12%)              0.13 (0.1%)     0.10 (0.1%)     0.08 (0.1%)
+middle (40-60%)              0.00 (0.0%)     0.00 (0.0%)     0.00 (0.0%)
+lower  (70-90%)              0.02 (0.0%)     0.00 (0.0%)     0.03 (0.1%)
+```
+
+**So the entities are drawn identically**: the whole image agrees to the reference's own 0.02, the band the entities
+occupy is **identical** (0.00) in both generation comparisons, and the one pixel all three disagree at is the same
+pixel - which is what a cross-launch difference looks like and not a generation difference.
+
 **What is NOT MEASURED**, said plainly because the surface is now wide: a particle or rain scene whose picture can
-be compared across launches; an entity scene whose entities are placed once; and the pack-and-vanilla-features
-combination, since every session above is a no-pack one.
+be compared across launches; and the pack-and-vanilla-features combination, since every session above is a no-pack
+one.
 
 ## Resource Binding
 

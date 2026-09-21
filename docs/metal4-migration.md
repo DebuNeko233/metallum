@@ -4635,6 +4635,43 @@ threshold is measured rather than chosen - this path's own arms legitimately spr
 27.50 ms arm is named at 1.51x, which is the arm this report had discarded by hand. Six checks are pinned and
 mutation-proved, and two of them survived a first draft: a check that records nothing, and one that compares no arm.
 
+### The entity scene is one placement, and what a mob draws is the same on both generations
+
+The entity fixture's own proof is what found its fault. A live session logged "placed the pig" and "placed the cow"
+**every four to five seconds**, so a session held a number of entities that grew with its window and two arms of one
+session held different numbers of them - which is exactly why their pictures differed in different screen bands.
+The tag that was missing is `Invulnerable`: the summons are at the camera's own height, which is not necessarily
+above the terrain, and a mob placed inside a block takes suffocation damage every tick and dies, so the guard found
+no pig a few seconds later and placed another. With `NoAI` (no movement, no look), `NoGravity` (no falling),
+`Invulnerable` (no dying) and `PersistenceRequired` (no despawning) each type is placed a stable **two** times an
+arm, identical in all four arms of two consecutive sessions.
+
+The number is two and not one, and the harness does not pretend to know why: what a comparison needs is that the
+arms are one scene, so the check became *equality between the arms* - each arm's placements are recorded and the
+session is refused if an entity's count differs across them - rather than a constant the fixture cannot control.
+Five mutations were run against the pins, and each exits 1 with its own sentence.
+
+The reading it bought, `run/vanilla-mobs3`, clouds on, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+picture, m3a against m3b:  mean 0.02, 0.24% of pixels differ at all   (the reference against itself)
+picture, m3a against m4a:  mean 0.02, 0.63% of pixels differ at all
+picture, m3a against m4b:  mean 0.02, 0.88% of pixels differ at all
+   - the same worst pixel, 218 at (3547,43), in all three
+
+by band:                     m3a vs m3b      m3a vs m4a      m3a vs m4b
+sky   (top 12%)              0.13 (0.1%)     0.10 (0.1%)     0.08 (0.1%)
+middle (40-60%)              0.00 (0.0%)     0.00 (0.0%)     0.00 (0.0%)
+lower  (70-90%)              0.02 (0.0%)     0.00 (0.0%)     0.03 (0.1%)
+```
+
+**The entities are drawn identically.** The whole image agrees to the reference's own 0.02, the band the entities
+occupy is identical to the byte, and the single pixel all three arms disagree at is the same pixel - which is what
+a cross-launch difference looks like and not a generation difference. The second session of the pair
+(`run/vanilla-mobs4`) confirmed the placement counts and produced no picture at all: the display had gone to sleep,
+every capture was one flat colour, and the harness refused the session on it - which is the guard doing its job
+rather than a lost measurement, since the reading above is from the session whose display was awake.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
