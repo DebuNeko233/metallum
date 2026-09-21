@@ -709,6 +709,58 @@ The Metal 3 reference on the pinned scene is
 `run/m3-final`, and it is the baseline any Metal 4 frame will be read against - always with
 `--fullscreen-size` and `--expect-target` set, and with nothing else running on the machine.
 
+**The two generations were then run against each other on a real pack, four arms in one session, and the
+result is NOT MEASURED - for a measured reason.** Session `run/perf-ab4`, exit 0, arm order
+`m3a, m4a, m3b, m4b`, `--frames 600 --settle 25 --expect-target 3200x1800`, window 1600x900, pack
+ComplementaryReimagined_r5.9.1 on the staged `PerfWorld` (whose player is in `world-1`/the nether, so these
+numbers are not comparable with the overworld reference above):
+
+```text
+arm   wallP50  wallP95  wallP99   gpuP50  gpuM4P50   depthAttach  loadedMiB   identities  copy-backs
+m3a    21.17    23.63    24.80    21.05     0.00           2504     323336.6      333        5400
+m4a    16.93    26.02    26.21     0.00    19.36           6242     398034.9      333        5400
+m3b    21.29    27.32    28.57    21.33     0.00           2187     288573.9      333        5400
+m4b    25.01    40.82    48.63     0.00    27.42           5706     380020.6      333        5400
+
+harness summary, each arm against the one before it:  m4a -8.1%, m3b +1.5%, m4b +30.1%
+```
+
+Metal 3's two arms agree to **0.6%**, so the harness is answering the same number twice for one generation. The
+two Metal 4 arms differ by **47.7%**, which is wider than any effect being measured: the error bar contains the
+question, so no Metal 3 against Metal 4 performance claim may be drawn from this session, and the eight-percent
+first pair and thirty-percent second pair are both to be read as the spread.
+
+**The pace is taken from a different resource in each generation**, which is why wall-clock time is not the same
+quantity across these arms. The probe's two waits split by generation:
+
+```text
+                          drawable wait                    submitWindow wait
+m3a   calls=600 p50=0.06ms p95=2.78ms      calls=1200 p50=0.00ms p95=20.44ms
+m3b   calls=600 p50=0.06ms p95=6.19ms      calls=1200 p50=0.00ms p95=19.86ms
+m4a   calls=600 p50=14.64ms p95=23.96ms    calls=600  p50=0.00ms p95=0.00ms
+m4b   calls=600 p50=18.90ms p95=39.10ms    calls=600  p50=0.00ms p95=0.00ms
+```
+
+Metal 3's wall time is spent waiting on its own submission ring (1200 submission waits at roughly 20 ms) with a
+`0.06 ms` drawable median; the Metal 4 arms spend it waiting for the display to hand over the drawable
+(`14.64`/`18.90` ms medians) with a `0.00` submission wait.
+
+**The Metal 4 spread is not explained by the pace, and is registered as a residual.** The two Metal 4 arms
+differ by `8.08 ms` of wall P50 and `8.06 ms` of `gpuM4P50` - the same magnitude on both sides of the encoder -
+so part of it is inside the frame's own cost. The counters do not account for it: `blits 5400` and
+`blittedMiB 101022.1` are identical to the digit in all four arms, `identities` and `keys` are `333` in all four
+with `compiles 0`, and the arms' other counters differ by 4-9% in the direction that makes the cheaper arm the
+one it is. **The counters that must be equal are equal**, and the attachment-traffic gap
+(`depthAttachments` ~2.5x, `loadedMiB` ~1.2x) is the registered pass-per-clear structure this section already
+names, not scene drift.
+
+The harness itself needed repairing before this session could produce four arms: its target guard read the
+target from only one of the two wordings a build may use, and both of its lookups ran under `set -o pipefail`,
+so a build that did not print the first line had the guard **kill the session between the first arm and the
+second** - the previous session stopped after one arm with no line saying why. It now reads either wording and
+tolerates finding neither; all three properties are pinned in `tools/ci-vitrail-performance.py` and each was
+mutation-proved. The full account is in `docs/metal4-migration.md`.
+
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it
@@ -771,7 +823,9 @@ answered rather than only what is left.
    the display's (drawable wait ~7.4 ms of each). What that leaves open is a scene that is *not* display-paced,
    and the two GPU numbers are recorded but not compared because they come from different APIs
    (`MTLCommandBuffer.gpuMillis` against `MTL4CommitFeedback.GPUStartTime/GPUEndTime`) - section 92's timing
-   kinds have not been shown to measure the same interval.
+   kinds have not been shown to measure the same interval. **What that leaves open is a scene that is *not*
+   display-paced**: the follow-up on a real pack, four arms in one session, is blocker 16, and it did not close
+   the question - Metal 3 repeated to 0.6% while Metal 4's two arms differed by 47.7%.
 3. **The attachment traffic is the one measured inefficiency, and it is pass structure.** This path loads
    9387.8 MiB and stores 13184.7 MiB over thirty frames where the Metal 3 arm loads 950.3 and stores 2637.8 on
    the same scene - the corrections above replaced the first reading of 9387.8/9387.8, which was the game's
@@ -1129,6 +1183,33 @@ answered rather than only what is left.
    brackets execution, no per-pass GPU time may be reported**, and the census stays red on this smoke so that an
    unproven instrument cannot look green.
 
+16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
+   effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
+   MEASURED.** Session `run/perf-ab4` (exit 0, `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25
+   --expect-target 3200x1800`, Complementary on the staged nether `PerfWorld`) measured Metal 3 twice at
+   `wallP50 21.17` and `21.29` - **0.6% apart**, the harness answering the same number - and Metal 4 twice at
+   `wallP50 16.93` and `25.01` - **47.7% apart**. The harness's own summary therefore reads `m4a -8.1%`,
+   `m3b +1.5%`, `m4b +30.1%`, and none of those three is a finding.
+
+   Two things were separated before the spread was registered as a residual rather than blamed on the machine.
+   **The pace is taken from a different resource in each generation**: Metal 3's 600 frames wait on the drawable
+   at a `0.06 ms` median and on the submission ring 1200 times at ~20 ms, while the Metal 4 arms wait on the
+   drawable at `14.64`/`18.90 ms` medians and on the submission ring at `0.00`, so wall-clock time is not the
+   same quantity across the arms. **But the pace does not explain the spread**: the two Metal 4 arms differ by
+   `8.08 ms` of `wallP50` and by `8.06 ms` of `gpuM4P50`, the same magnitude on both sides of the encoder, so
+   part of the difference is inside the frame's own cost. The counters do not account for it either - `blits
+   5400` and `blittedMiB 101022.1` are identical to the digit in all four arms, `pipelineIdentities 333` and
+   `pipelineKeys 333` in all four with `compiles 0`, every arm collected 600 feedbacks, and the remaining
+   counters differ by 4-9% in the direction that makes the cheaper arm the one it is. **The adjacent fact that
+   would matter is not in doubt**: the two paths draw the same 333 programs and do the same 5400 copy-backs of
+   101022.1 MiB, so the comparison's own inputs are equal and only its timing is unstable.
+
+   What would make the number readable is named rather than guessed: **more than two arms per generation** to
+   bound the spread, or **a target the display does not pace** (the ring-depth question section 84 raised), since
+   a drawable-paced Metal 4 arm measures the display's handover as much as the frame. Repeating this shape and
+   reporting its first pair would be the mistake this blocker exists to prevent. The record is in the Performance
+   section above and in `docs/metal4-migration.md`.
+
 ## Metal 4 full-frame implementation complete?
 
 **NO, and the first full-frame milestone is behind it.** A forced Metal 4 launch loads a world, renders it and
@@ -1165,7 +1246,10 @@ closed - all seven of section 60's fixtures and all three of section 61's direct
 every field 50 of 50 in the cold census. What is **not** done is the rest of the Definition of Done: the rest of
 the smoke-pack staircase (the deferred, shadow and history packs beyond the three fixtures whose pixels have been
 read), blit inside a live frame, resize, pack reload, dimension change, shutdown, the lifecycle gate, MetalFX
-Spatial on this generation, GPU counters and Metal 4 performance. **The real-pack ladder passes on all three rungs**: `MakeUp-UltraFast-9.5e` runs on both arms with the same
+Spatial on this generation, GPU counters and Metal 4 performance - the latter two have now been run and are
+**measured to be unmeasurable as the instruments stand**: the counter road samples where the driver chooses and
+not where the caller does (blocker 15), and the four-arm performance session's Metal 4 arms disagree by more than
+the effect it was asked to resolve (blocker 16). **The real-pack ladder passes on all three rungs**: `MakeUp-UltraFast-9.5e` runs on both arms with the same
 **330 pipeline identities**, the same gross picture and no fault of any kind in either log;
 `ComplementaryReimagined_r5.9.1` with **334 identities and 714 compiles on both arms**, its compute dispatching
 on both; and `photon_v1.3b` with **345 identities, 345 keys and 736 compiles on both arms** and both readback

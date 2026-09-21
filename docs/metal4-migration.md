@@ -4045,6 +4045,94 @@ orientation is proven on the device (40 of 40) and not in a live frame; and the 
 that this path's ordering comes from the one command buffer's encode order, which the frame above is consistent
 with rather than proof of.
 
+### The two generations against each other, and the arm spread that forbids the comparison
+
+Sections 93 and 94 ask for the number this migration has to answer for: does the Metal 4 path cost more than the
+Metal 3 path, on the same world, at the same size, in one session. The harness that asks it
+(`tools/run-vitrail-performance.sh`) runs an ABAB staircase - it was BAAB's mirror image, `m3a, m4a, m3b, m4b` -
+because a staircase's whole value is that each generation is measured twice, apart, and the two arms' agreement
+is the error bar the verdict is read against. Session `run/perf-ab4` returned exit 0 with all four arms measured,
+`--frames 600 --settle 25 --expect-target 3200x1800`, window 1600x900, Complementary on the staged `PerfWorld`,
+whose player is in `world-1`/the nether rather than the overworld its historical baseline was taken in.
+
+```text
+arm   wallP50  wallP95  wallP99   gpuP50  gpuM4P50   depthAttach  loadedMiB   identities  copy-backs
+m3a    21.17    23.63    24.80    21.05     0.00           2504     323336.6      333        5400
+m4a    16.93    26.02    26.21     0.00    19.36           6242     398034.9      333        5400
+m3b    21.29    27.32    28.57    21.33     0.00           2187     288573.9      333        5400
+m4b    25.01    40.82    48.63     0.00    27.42           5706     380020.6      333        5400
+
+harness summary, each against the arm before it:  m4a -8.1%, m3b +1.5%, m4b +30.1%
+```
+
+**Nothing here may be read as a Metal 4 verdict, and the reason is measured rather than cautious.** The two
+Metal 3 arms agree to **0.6%** (`21.17` against `21.29`), which is the harness working: repeat the same
+generation twice in one session and it answers the same number. The two Metal 4 arms differ by **47.7%**
+(`16.93` against `25.01`), which is larger than any effect the measurement is being asked to resolve. The
+staircase's error bar therefore contains the whole question, and section 67's rule applies as written: an arm
+pair whose generations cannot be separated is `NOT MEASURED`, not "Metal 4 is 8% faster on the first pair and
+30% slower on the second".
+
+Two things were checked before calling it machine noise, and one of them was wrong.
+
+**The pace is drawn from a different place in each generation, and the wait counters say so.** The frame probe
+records the two waits separately, and the four arms split cleanly by generation:
+
+```text
+                          drawable wait                    submitWindow wait
+m3a   calls=600 p50=0.06ms p95=2.78ms      calls=1200 p50=0.00ms p95=20.44ms
+m3b   calls=600 p50=0.06ms p95=6.19ms      calls=1200 p50=0.00ms p95=19.86ms
+m4a   calls=600 p50=14.64ms p95=23.96ms    calls=600  p50=0.00ms p95=0.00ms
+m4b   calls=600 p50=18.90ms p95=39.10ms    calls=600  p50=0.00ms p95=0.00ms
+```
+
+Metal 3 draws 600 frames but calls the drawable wait 600 times at a `0.06 ms` median and the submission wait
+**1200** times at roughly 20 ms: its pace is the submission ring, so the wall time is spent waiting for its own
+submissions to come back. The Metal 4 arms wait on the **drawable** instead (`14.64` and `18.90` ms medians, 600
+calls) and their submission wait is `0.00`: their pace is the display handing over the next drawable. So the
+same 600-frame window is bounded by two different resources, and wall-clock time is not the same quantity in the
+two arms. That is a mechanism, not a defect, and it is what makes the harness's own percentage summary
+unusable across generations here.
+
+**But the pace does not explain the Metal 4 spread, and that is registered rather than resolved.** The two Metal
+4 arms differ by `8.08 ms` of wall P50 and by `8.06 ms` of `gpuM4P50` (`19.36` against `27.42`) - the same
+magnitude on both sides of the encoder, so the difference is inside the frame's own cost and not only in how
+long it waited to be allowed to start. The structural counters do not account for it either: `blits 5400` and
+`blittedMiB 101022.1` are **identical to the digit** in all four arms, `pipelineIdentities 333` and
+`pipelineKeys 333` are identical, and the two Metal 4 arms' remaining counters differ by 4-9%
+(`loadedMiB` 398034.9 against 380020.6, `depthAttachments` 6242 against 5706) in the direction that would make
+`m4a` the cheaper arm, which is the arm it is. The `gpuM4Feedbacks` count is 600 in both, so feedback collection
+is not sampling differently.
+
+This is written down as a residual - the fifth of this migration's registered residuals, after the sky strip,
+the alpha channel, the compute fixture's flat ramp and the counter sampling points - because a 47.7% arm spread
+on one generation cannot be dismissed and cannot be explained by anything measured so far. The next session that
+wants the number should not repeat this shape: with the Metal 4 path paced by the drawable and its own frame
+cost varying arm to arm, the measurement needs either a target that the display does not pace (the ring-depth
+question section 84 already raised) or more than two arms per generation to bound the spread.
+
+What the session did settle is smaller and still useful. **The counters are equal across generations where they
+must be**: `blits 5400` and `blittedMiB 101022.1` identical in all four arms, `pipelineIdentities 333` and
+`pipelineKeys 333` in all four with `compiles 0` and `compileMs 0.00`, so the two paths draw the same programs
+and do the same copy-back work at the same size and count, and the cache reached steady state before the window
+in every arm. **The attachment traffic gap is the registered pass-per-clear structure**, not scene drift:
+`depthAttachments` runs 2187-2504 on Metal 3 against 5706-6242 on Metal 4 and `loadedMiB`
+288573.9-323336.6 against 380020.6-398034.9, which is the mechanism the Performance section of
+`docs/metal4-full-frame-report.md` already names - Metal 3 reuses one encoder across consecutive passes and
+folds a clear into the pass that next uses the attachment where this path clears in a pass of its own, so the
+following pass loads the attachment again.
+
+**And the guard that must run before any of this is comparable was repaired in the same round.** The session
+above only produced four arms because the target guard - which refuses a run whose world was not drawn at
+`--expect-target`, since a moved display mode is machine state and a window on another target is not comparable
+with the baseline - had been killing the harness after its first arm. Two faults, both real: it read the target
+only from the probe's `The world renders at WxH`, where this Vitrail build states it with the pack's own
+`Drawing <pack> from <root> for <dimension>, at WxH, N full screen passes`; and both of its lookups ran under
+`set -o pipefail`, where a `grep` that matches nothing fails its pipeline, so the fallback to the second wording
+never ran and the guard aborted the session instead of reporting. The reader now tries both wordings and both
+lookups tolerate finding nothing, so an absent line is a reported condition. All three properties are pinned in
+`tools/ci-vitrail-performance.py` and each was mutation-proved.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
