@@ -279,6 +279,18 @@ Two consequences follow, and both are now handled rather than tolerated:
   session that leaves the instance in the measurement profile is how a *later manual launch* came up fullscreen
   and moved the display on startup - the same fault one step earlier in the chain.
 
+### A photograph of the display is only the game when the client owns the display
+
+Two more measurements sit under the mode policy, and both were taken by getting them wrong first. With
+`exclusiveFullscreen: false` the client is put in **its own Space**, and `screencapture` photographs whichever
+Space is current: all four arms of one sky session captured the browser while `lsappinfo front` answered `java`
+at the same moment, so the comparison's picture column read *99.54 per cent of pixels differ* between two arms of
+one generation. With the client **windowed**, the capture is the desktop with the game's window in it - the menu
+bar, the dock and the wallpaper are all in the frame - which is a picture of a scene nobody is measuring. So the
+measurement profile writes `exclusiveFullscreen: true`: the client owning the display is what a photograph of
+the display is for. The session's own `front-app.txt` (per arm, read at the moment of the capture) is the witness
+that it was the game in front.
+
 **The policy, decided with the owner on 2026-09-21: the game's fullscreen is a measurement-only configuration,
 and the switch it causes during an arm is accepted.** The staged instance is left windowed
 (`fullscreen:false`, `exclusiveFullscreen:false`), so a manual launch of the dev instance never moves the

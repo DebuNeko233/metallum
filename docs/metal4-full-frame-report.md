@@ -1646,6 +1646,92 @@ window, and prints the frame count it read against the frame count the probe cou
 `tools/ci-vitrail-performance.py` pins all three and a behavioural check writes a session with eight traced frames
 and a four-frame window and refuses the harness if the default reads eight.
 
+## Phase J1 - the overworld sky residual is the sky's upper gradient, and nothing else
+
+**SHAs.** Metallum `6732a16` at the start (the harness's display-mode and exclusive-fullscreen work), Vitrail
+`712d6452`; this section's commit carries the measurement and the harness changes it needed.
+
+**Question.** The Metal 4 overworld frame has been described since the cloud fix as *lighter* than Metal 3's -
+"sky and clouds shifted toward white" - and it was never measured. It is a P1 correctness residual: the game's
+own sky and clouds on the two generations, one scene, one camera.
+
+**Session.** No pack (the game's own renderer through this backend), `--vanilla-clouds on` (the fancy cloud),
+`--dimension minecraft:overworld`, camera pinned to `548.5,63,-248.5 yaw 0 pitch 20`, fullscreen exclusive at
+1920x1200, 300-frame windows, four arms in A/B/A/B order (`m3a m4a m3b m4b`, `run/j1-sky4`), the user woken for
+the whole session (`caffeinate`) and the frontmost application read at the moment of every capture: `java` in all
+four. The two Metal 3 arms are the **same-code control** the picture column needs - 300 frames each of one binary
+on one display mode.
+
+**Measured, and the control is what makes it readable.** The comparison's own global numbers:
+
+```
+pair                    mean channel difference   pixels differing   > 8 levels   worst
+m3a against m4a                    0.82               2.34 %          2.34 %    72 at (909,329)
+m3a against m4b                    0.82               2.34 %          2.34 %    62 at (601,1)
+m3a against m3b   (control)        0.01               0.02 %          0.02 %    91 at (1787,103)
+```
+
+and the same captures read by region, with every pixel classified by the **reference** arm's colour
+(`tools/vitrail-picture-regions.py`):
+
+```
+region     pixels      share   reference mean          Metal 4 mean            mean |delta|   above 8
+sky         54487       2.4 %  (154.5, 180.9, 242.1)  (189.1, 206.7, 243.9)      34.64        98.85 %
+cloud        7473       0.3 %  (188.3, 188.3, 187.7)  (188.3, 188.3, 187.7)       0.00         0.00 %
+terrain   2242040      97.3 %  ( 65.4,  75.4,  45.7)  ( 65.4,  75.4,  45.7)       0.00         0.00 %
+```
+
+**The residual is the sky and nothing else, and the clouds are byte-identical.** The terrain region is the
+control region - a shading fault that moved the world would show there - and it is *equal to the byte*, which
+also says the difference is not a global post-process, not the present road, not the upscale chain, and not the
+frame's colour space. The cloud region is equal to the byte too, and the clouds are drawn through the same fog
+state the sky is, which removes the fog colour and the fog range from the list of suspects. What is left is the
+sky draw's own colour input.
+
+**And the shape of it is a mix toward white that fades to nothing at the horizon.** Per channel, over the sky:
+
+```
+                mean reference   mean Metal 4   mean delta   headroom (255 - ref)   delta / headroom
+red                   154.48         189.12         +34.64           100.52              0.3446
+green                 180.86         206.68         +25.82            74.14              0.3482
+blue                  242.08         243.92          +1.84            12.92              0.1424
+```
+
+Red and green move by the same fraction of their headroom - 0.345 and 0.348 - and solving for the colour the
+sky is mixed toward with that fraction gives `(255, 256, 247)` for the three channels: **white, with the blue
+channel a shade under it, which is what the observed blue delta's smaller fraction means.** So Metal 4's sky is
+Metal 3's sky **mixed about 34.5 per cent toward white**, and the row bands say where:
+
+```
+band (tenth of the frame, top first)   sky pixels   reference            Metal 4              implied mix
+0  (rows 0-199)                            44272   (153.0,179.8,242.2)  (189.4,206.9,244.1)     0.353
+1  (rows 200-399)                           9588   (159.6,184.4,241.2)  (188.4,205.9,242.8)     0.301
+2  (rows 400-599)                            627   (182.2,202.6,246.1)  (182.3,202.7,246.1)     0.001
+```
+
+**The top of the sky is mixed 35 per cent toward white and the sky at the horizon is exact.** That is a
+gradient, not an offset: whatever colour the sky draw uses for its upper end is lighter on this path, and the
+lower end - the horizon colour - is right.
+
+**Decision: measured, root cause NOT MEASURED.** What this section establishes is the *shape* of the residual
+(five numbers, one region, one gradient), the exclusion of everything global (terrain, clouds, fog, present,
+colour space), and a same-session control sharp enough (0.01 mean, 0.02 per cent of pixels) that any later fix
+can be judged by the same instrument. The next step is named rather than guessed: the sky draw's colour input on
+the two generations - the sky colour the game computes for the frame, how it reaches the shader on each path, and
+whether the two paths' *shader compiler profiles* (`msl4.0` on this path against `msl3.2` on the reference, a
+generation-specific difference by construction) produce the same gradient. The instrument that would separate
+those two is a pinned shader language profile on a forced Metal 4 session, which does not exist yet and is the
+first thing this phase owes.
+
+**And the session's own scene changed twice while getting there**, both recorded because both are measurement
+integrity rather than product: a fullscreen launch moves the display's mode (`1800x1169@120` to `1920x1200@120`,
+at every requested window size), and a *non-exclusive* fullscreen client is put in its own Space, where a
+photograph of the display is of whatever Space is current - the first attempt's four captures were the browser
+while `lsappinfo front` answered `java`, and its picture column read 99.54 per cent differing between two arms of
+one generation. `docs/performance-testing.md` carries both, and the harness now records the display mode per
+session, restores it when an arm leaves it moved, writes `exclusiveFullscreen: true` for a measurement arm, and
+puts the instance's own options back at the end.
+
 ## Performance
 
 **The two generations have now been run against each other, in one session, on the same world at the same size:**
