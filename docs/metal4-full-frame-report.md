@@ -1582,6 +1582,44 @@ and its blanks are the work. A `yes` in `M4 real frame` means the harness collec
 drew and presented; a capability with no live-frame reading is `n/a` rather than inferred from a smoke, because a
 capability proven in a process with no window is not the same claim.
 
+## AUTO readiness
+
+The decision the plan allows three forms of, taken gate by gate and with the evidence each line rests on.
+
+| gate | state | evidence |
+| ---- | ----- | -------- |
+| no-pack world correct | PASS | the frame is a world again since blocker 10 (mean BGRA `(68, 91, 77, 221)` against Metal 3's `(67, 86, 71, 254)`, terrain cells identical cell for cell) |
+| GUI and text correct | PASS | blocker 17: the title screen reads back identically to Metal 3's, glyph samples equal to the byte |
+| terrain correct | PASS | terrain cells identical and the pack fixtures agree |
+| depth correct | PASS | `depthtex0-contract` and `depth-value-contract` on both arms: ~90,000 green against ~28,000 cyan, no magenta |
+| MRT correct | PASS | the fixture's four quadrants are the slot table in both arms, sample for sample |
+| history correct | **NOT MEASURED** | the temporal/history packs have not been read this way |
+| compute and storage correct | **NOT MEASURED** | the dispatches are encoded and the chain runs; the fixture's GREEN picture needs the in-game screenshot that macOS refuses to synthesise |
+| wide resources correct | PASS, one real-device reading | photon's `deferred4` (nineteen sampled images) runs through the argument-buffer road; generality beyond it is NOT MEASURED |
+| MetalFX live-frame fixture correct | **PASS this round** | the asymmetric quadrant fixture: orientation and channel order proven with the scaler in the loop, identical in both arms |
+| lifecycle | PASS, two transitions manual | `run/m4-lifecycle`: reload (F3+T's path), resize, leave, close; a dimension change and an in-session pack switch are not driven |
+| shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
+| no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
+| cold capability probe deterministic | **NOT MET** | 240 probes passed in one period and 21 of 200 failed in an earlier one, with nothing in the path changed; the retry policy exists but is not proven safe as a production gate |
+| performance stable enough to compare | **NOT MET** | section 93's first rung is NOT MEASURED: this path's content counters drift within one session (`loadedMiB` +18.7% then +33.2%) where the reference's are identical to the byte |
+| forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
+| instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
+
+**AUTO stays on Metal 3, and Metal 4 stays forced and EXPERIMENTAL - section 70's outcome C.** The reason is
+not the frame's correctness as a whole, which is the strongest it has been: it is that **two gate lines are
+NOT MEASURED rather than failed** - the history and compute pictures, which need a screenshot this machine cannot
+take, and the §93 first rung, which needs a session in which this path's content does not move - and that the
+cold capability probe's intermittency is unresolved. Section 123's own list is therefore not met on four counts
+(history, compute/storage, the capability probe, and performance), and section 70 puts that in C rather than B:
+the performance *distribution* is explained (the drawable handover's quantum) but the *comparison* it was meant
+to serve is not yet measurable, so promoting Metal 4 would be promoting a path whose frame-rate claim rests on a
+mixture nobody has bounded on a real scene.
+
+What would move it, in the order the gates are listed: the content-drift blocker above (one experiment: trace the
+per-frame content counters through the window and watch them move), the cold probe's distribution (a harness that
+runs the probe's first pass alone in volume), and the two picture residuals (a screenshot road that works, or a
+fixture channel that does not need one).
+
 ## Remaining blockers
 
 - **Depth bias: the gap is FIXED, the fixture is not built.** Section 58 was right: `Metal4CompiledRenderPipeline`

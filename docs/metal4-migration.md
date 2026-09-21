@@ -5217,3 +5217,35 @@ yet, and section 58's fixture - two coplanar surfaces where the biased one must 
 is not built, so the honest verdict for the bias's *behaviour* is NOT MEASURED while the gap that made it
 impossible is closed. Five contract pins hold the selector, its argument order, the encoder entry point, the call
 site and the counter, and each is mutation-proved.
+
+### The AUTO decision, gate by gate
+
+Section 70 allows three outcomes and this is the one the gates produce, written with the evidence each line
+rests on rather than as a verdict from a feeling. The table is in the report under **AUTO readiness**; what
+belongs here is the reasoning and the two lines that are NOT MEASURED rather than failed.
+
+**Correctness is the strongest it has been, and it is not complete.** The world frame, the game's own GUI and
+text, terrain, depth, MRT, wide resources, the MetalFX live-frame fixture and the lifecycle transitions all pass
+on this machine - the MetalFX quadrant fixture added in this round is the newest of them, and it moved section
+124's last item from NOT MEASURED to PROVEN. What is left is not a fault but an absence of a reading: the
+history packs have not been read this way, and the compute/storage fixture's acceptance picture needs the in-game
+screenshot that macOS refuses to synthesise.
+
+**The capability gate is the one that cannot be argued with.** The cold probe failed 21 times in 200 in one
+period and zero times in 360 in another, with nothing in the path changed, so the honest statement is a
+distribution and not a rate. A production AUTO that quietly promotes a path whose capability probe is
+intermittent is exactly what section 15 forbids, and the retry policy the client now carries is a mitigation
+rather than a proof.
+
+**And the performance gate is unmet for a new reason.** The mechanism behind this path's arm-to-arm spread is
+now measured - the frame's period lands on two or three of the display's handovers, and `run/m4-pacing` shows
+the pairing at +0.56/+0.82/+0.85 against +0.03/-0.08/+0.18 at one slot - but section 93's first rung still
+cannot be taken, because this path's *content* moved between the arms of one session (`loadedMiB` +18.7% then
++33.2%) where the reference's did not move at all. A comparison needs both halves: a distribution you understand
+and arms that measured the same frame.
+
+**So: AUTO stays on Metal 3 and Metal 4 stays forced and EXPERIMENTAL (section 70's C).** Forced Metal 4 remains
+available and the forced Metal 3 fallback is verified, so nothing about this decision removes anything a user
+already had. The three things that would move it, in the gates' own order: the content-drift experiment, the cold
+probe's distribution, and a screenshot road (or a fixture channel that does not need one) for the two picture
+residuals.
