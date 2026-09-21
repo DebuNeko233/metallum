@@ -755,4 +755,26 @@ for needle, why in (
     if needle not in comparer:
         raise SystemExit("Vitrail performance harness contract: " + why)
 
+# --- a fixture pack in the tree is a directory, and the harness stages it --------------------------------
+# The MetalFX quadrant fixture is four lines of GLSL and belongs in the tree where a reader can check it against
+# the picture it produced; a harness that demanded an archive would have it built by hand outside version
+# control, and a fixture nobody can read is a fixture nobody can dispute. So `--pack <directory>` is staged
+# into a zip here, and refused without a `shaders/` in it - which is the same refusal the game would make
+# twenty calls later, said where it can be acted on.
+for needle, why in (
+    ('if [[ "$no_pack" == false && -d "$pack_path" ]]; then',
+     "the harness refuses a pack directory, so a fixture kept in the tree cannot be measured"),
+    ('if [[ ! -d "$pack_path/shaders" ]]; then',
+     "a directory without shaders/ in it is staged anyway, so a typo becomes an empty pack rather than a "
+     "refusal that says what is missing"),
+    ('pack_zip="$repo_root/run/packsrc/$(basename "$pack_path").zip"',
+     "the staged zip no longer lives under run/packsrc, so it could be written into the instance's shaderpacks "
+     "and the harness would refuse the pack it just made"),
+    ('(cd "$pack_path" && zip -qr "$pack_zip" .)',
+     "the directory is not staged from its own root, so a pack whose shaders sit beside a README would arrive "
+     "with an extra directory level and never load"),
+):
+    if needle not in harness:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 print("Vitrail performance harness contract: PASS")

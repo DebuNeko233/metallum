@@ -1422,6 +1422,50 @@ sessions read 1.05-1.06x at one slot. So the *shape* is explained and the *mean*
 1.0x the gate wants, and section 30's consequence is written into the protocol below rather than assumed away: a
 production-depth comparison may not read a P50 as a renderer cost, because its mixture is the display's.
 
+**The scaler's live-frame orientation, read off an asymmetric fixture.** Section 124's remaining item was the
+orientation of a frame the client drew and presented *through the scaler*, and the obstacle was that no fixture in
+the tree painted an asymmetric pattern: a flat colour or a gradient can come back flipped, cropped or
+channel-swapped and still look right. So `tools/fixtures/metalfx-quadrant` is a one-pass pack that paints four
+quadrants split at the middle of **both** axes - **top left red (alpha 1.0), top right green (0.75), bottom left
+blue (0.5), bottom right yellow (0.25)** - and the harness now stages a *directory* pack into a zip, so the
+fixture lives in this repository where a reader can check it against the picture it produced. It is run at
+`--renderscale 55`, which is what puts the scaler on the path: the input is 704x396 for a 3200x1800 target, so
+input and output resolutions differ and the 1:1 road is not what is being measured.
+
+`run/m4-metalfx-live`, both generations, 600-frame windows, `-Dmetallum.drawableReadback=true` - the presented
+drawable read through the same code on both arms, five by five samples with the top row first, ARGB:
+
+```text
+arm   drawable readback, 5x5, top row first (ARGB hex)                                     mean BGRA
+m3    ff430000 ff8b0000 ff8b1b00 ff008b00 ff004300   ff8b0000 ffda0000 ffcb2800 ff00db00   49, 100, 99, 255
+      ff008b00   ff940012 ffd9001a ffa01940 ff27f400 ff1ba600   ff00008c ff0000db ff2828cb
+      ffdcdc00 ff8c8c00   ff000043 ff00008b ff1b1b8b ff8c8c00 ff434300
+m4    byte-identical to m3, all twenty-five samples                                        49, 100, 99, 255
+```
+
+- **Orientation: PROVEN with the scaler in the loop.** The four corner samples are the fixture's four quadrants in
+  the fixture's arrangement - `ffRR0000` red at the top left, `ff00GG00` green at the top right, `ff0000BB` blue
+  at the bottom left and `ffRRGG00` yellow at the bottom right - and the two arms are **identical sample for
+  sample** (the harness's own picture comparison agrees: mean channel difference 0.02, 0.03% of pixels differ).
+- **Channel order: PROVEN** (the components land in R, G and B as written; a swap would move two quadrants).
+- **Crop: none observed** - all four quadrants are present at the corners of a 3200x1800 drawable drawn from a
+  704x396 input.
+- **Alpha: NOT the fixture's, on either arm** - every one of the twenty-five samples reads alpha `ff` where the
+  fixture wrote 1.0, 0.75, 0.5 and 0.25. Equal across the generations, so this is not a Metal 4 fault in this
+  configuration; it is the present/layer road, and it is recorded rather than explained. It also narrows the
+  older alpha residual rather than closing it: that reading (M4 flat with alpha 0 where M3 was opaque) was taken
+  on a different fixture and a different scene.
+- **A smooth brightness modulation is present and identical in both arms**: the corners read about 0.26 of the
+  written colour and the interior about 0.85, with the whole-frame mean at 0.78 of the four quadrants' mean.
+  Mechanism NOT LOCALISED, and it is not a generation difference - which is the point of reading both arms.
+
+**And section 40's transitions are MEASURED, in `run/m4-lifecycle`**: the Metal 4 path made a scaler for
+**1408x792 to 2560x1440** and, in the same session, one for **1760x990 to 3200x1800** - the second line reporting
+`2 in the cache` - so the configuration identity separated a render-scale or a resize change and a new scaler was
+built rather than an old one reused, and no third configuration was ever created (a cache *hit* makes no scaler
+and logs nothing, which is why the cache-size field is the evidence). The cache is keyed by the whole
+configuration record and creation is behind the miss: both are contract-pinned in `ci-metalfx.py`.
+
 ## Timing model
 
 Every number in this report was measured, and this section says what each instrument measures and what it does

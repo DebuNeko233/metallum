@@ -5093,3 +5093,62 @@ Six new contract pins hold the trace (the switch, the counters it needs, the fra
 submission line, the ring's depth and its per-frame slot wait) and six more hold the analyser (every field it
 must read, its refusal when no arm wrote a line, and the line and ring accessors it depends on); each is
 mutation-proved.
+
+### The scaler's live-frame orientation, and the fixture that could say so
+
+Section 124 has carried one item since the MetalFX milestone: the spatial scaler's output orientation *in a live
+frame*. The probe's own `canScaleWithMetalFx` proves the scaler on a fixed image in a process with no window, and
+that is not the same claim - it says nothing about the arrangement of a frame the client drew, presented and
+handed to the display. What was missing was a fixture: every pattern in the tree was symmetric (a flat colour, a
+gradient, two halves), and a symmetric pattern can come back flipped, cropped or channel-swapped and still look
+right.
+
+`tools/fixtures/metalfx-quadrant` is that fixture, and it is four lines of GLSL: four quadrants split at the
+middle of **both** axes, four different colours **and** four different alphas - top left red at 1.0, top right
+green at 0.75, bottom left blue at 0.5, bottom right yellow at 0.25. A flip on either axis, a crop or a channel
+swap changes the arrangement; an alpha that did not survive is a different value in each quadrant. It is run at
+`--renderscale 55`, which is what puts the scaler on the path - the input is 704x396 for a 3200x1800 target, so
+the input and output resolutions differ and the 1:1 road is not what is measured.
+
+The harness learned one thing for it: `--pack` now accepts a **directory** and stages it into `run/packsrc/`,
+refusing a directory without `shaders/` in it. The alternative was a fixture built by hand outside version
+control, and a fixture nobody can read against the picture it produced is a fixture nobody can dispute. Four
+pins hold the staging (the directory road, the `shaders/` refusal, the destination outside the instance's
+`shaderpacks/`, and staging from the pack's own root so the archive has no extra level) and each is
+mutation-proved.
+
+**The reading**, `run/m4-metalfx-live`, both generations, 600-frame windows, `-Dmetallum.drawableReadback=true`
+so the presented drawable is read through the *same* code on both arms - five by five samples, top row first,
+ARGB:
+
+```text
+arm   drawable readback, 5x5, top row first (ARGB hex)                                     mean BGRA
+m3    ff430000 ff8b0000 ff8b1b00 ff008b00 ff004300   ff8b0000 ffda0000 ffcb2800 ff00db00   49, 100, 99, 255
+      ff008b00   ff940012 ffd9001a ffa01940 ff27f400 ff1ba600   ff00008c ff0000db ff2828cb
+      ffdcdc00 ff8c8c00   ff000043 ff00008b ff1b1b8b ff8c8c00 ff434300
+m4    byte-identical to m3, all twenty-five samples                                        49, 100, 99, 255
+```
+
+**Orientation is PROVEN with the scaler in the loop**: the corners are `ffRR0000` red top left, `ff00GG00` green
+top right, `ff0000BB` blue bottom left and `ffRRGG00` yellow bottom right - the fixture's arrangement, in the
+fixture's corners - and the two arms are identical sample for sample (the harness's picture comparison agrees:
+mean channel difference 0.02, 0.03% of pixels differ at all). **Channel order is PROVEN** by the same table, and
+**no crop** is present: four quadrants of a 704x396 input reach the corners of a 3200x1800 drawable.
+
+**The alpha is not the fixture's, on either arm**: all twenty-five samples read `ff` where the fixture wrote 1.0,
+0.75, 0.5 and 0.25. The two generations agree, so this is the present/layer road and not a Metal 4 fault in this
+configuration - recorded, not explained, and it narrows the older alpha residual (which was measured on a
+different fixture and scene) rather than closing it. **A smooth brightness modulation is present too** - the
+corners read about 0.26 of the written colour and the interior about 0.85, with the whole-frame mean at 0.78 of
+the four quadrants' mean - and it is identical in both arms, which is why both arms were read. Mechanism NOT
+LOCALISED; not a generation difference.
+
+**Section 40's configuration transitions were already measured and are now recorded**: `run/m4-lifecycle` holds
+the Metal 4 path making a scaler for **1408x792 to 2560x1440** and, in the same session, one for **1760x990 to
+3200x1800** with `2 in the cache` - so the configuration identity separated the change and a second scaler was
+built instead of an old-size one being reused, and no third configuration was ever made, because a cache *hit*
+makes no scaler and logs nothing. That is why the line reports the cache size: it is the field that turns "no
+line" into "a hit". The lookup is by the whole configuration record and creation is behind the miss, and both
+are pinned in `ci-metalfx.py` along with the fixture's own asymmetry - four distinct colours, four distinct
+alphas, both axes split - so a later edit that made the pattern symmetric turns the contract red instead of
+quietly measuring nothing.

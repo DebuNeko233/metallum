@@ -200,6 +200,26 @@ fi
 if [[ ${#runs[@]} -eq 0 ]]; then
 	runs=("plain")
 fi
+# A pack is a zip, and a fixture pack in this repository is a *directory* of shaders - so a directory is
+# staged into one here rather than refused. Measured: the MetalFX quadrant fixture is four lines of GLSL and is
+# worth keeping in the tree where a reader can check it against the picture it produced, and a harness that
+# demanded an archive would have that fixture built by hand outside version control.
+if [[ "$no_pack" == false && -d "$pack_path" ]]; then
+	if [[ ! -d "$pack_path/shaders" ]]; then
+		echo "The pack directory has no shaders/ in it: $pack_path" >&2
+		exit 2
+	fi
+	mkdir -p "$repo_root/run/packsrc"
+	pack_zip="$repo_root/run/packsrc/$(basename "$pack_path").zip"
+	rm -f "$pack_zip"
+	(cd "$pack_path" && zip -qr "$pack_zip" .)
+	if [[ ! -s "$pack_zip" ]]; then
+		echo "The pack directory could not be staged into a zip: $pack_path" >&2
+		exit 2
+	fi
+	echo "Staged the pack directory $pack_path into $pack_zip" >&2
+	pack_path="$pack_zip"
+fi
 if [[ "$no_pack" == false && ! -f "$pack_path" ]]; then
 	echo "No pack at: $pack_path" >&2
 	exit 2

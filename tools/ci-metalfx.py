@@ -301,4 +301,72 @@ for needle, why in (
     if needle not in fx:
         raise SystemExit("MetalFX availability contract: " + why)
 
+# ---------------------------------------------------------------------------
+# Section 124's live-frame half: the asymmetric fixture, and how a configuration is separated
+#
+# The orientation of the scaler's output cannot be read from a symmetric pattern - a flat colour, a gradient,
+# two halves - because such a pattern can come back flipped, cropped or channel-swapped and still look right.
+# `tools/fixtures/metalfx-quadrant` is the fixture that can tell them apart: four quadrants split at the middle
+# of both axes, four different colours AND four different alphas, so a flip on either axis, a crop or a channel
+# swap changes the arrangement. The pins below are what make that property a contract rather than a comment: a
+# later edit that made the pattern symmetric, or that dropped the per-quadrant alpha, would leave the live-frame
+# reading passing while measuring nothing.
+#
+# The second half is section 40's transitions. A cache hit makes no scaler and logs nothing, so what the log can
+# show is a *miss* - one line a configuration, with the cache size - and what the code has to guarantee is that
+# the lookup is by the whole configuration record and that creation is behind the miss. Both are pinned.
+# ---------------------------------------------------------------------------
+FIXTURE = ROOT / "tools/fixtures/metalfx-quadrant"
+FIXTURE_FRAGMENT = FIXTURE / "shaders/final.fsh"
+FIXTURE_README = FIXTURE / "README.md"
+for path in (FIXTURE / "shaders/final.vsh", FIXTURE_FRAGMENT, FIXTURE_README):
+    if not path.is_file():
+        raise SystemExit(f"MetalFX availability contract: the asymmetric fixture is missing {path.name}, so the "
+                         "scaler's live-frame orientation cannot be read from a frame at all")
+fragment = FIXTURE_FRAGMENT.read_text(encoding="utf-8")
+if "texcoord.x > 0.5" not in fragment or "texcoord.y > 0.5" not in fragment:
+    raise SystemExit("MetalFX availability contract: the fixture no longer splits both axes, so a flip on one "
+                     "axis would be invisible in the frame it paints")
+import re as _re
+
+assignments = _re.findall(r"colour = vec4\(([^)]*)\);", fragment)
+components = [tuple(part.strip() for part in assignment.split(",")) for assignment in assignments]
+if len(components) != 4 or any(len(parts) != 4 for parts in components):
+    raise SystemExit("MetalFX availability contract: the fixture no longer assigns four rgba colours, so the "
+                     "quadrant count the orientation reading depends on is not fixed by the file")
+values = [tuple(float(part.rstrip("fF")) for part in parts) for parts in components]
+if len({parts[:3] for parts in values}) != 4:
+    raise SystemExit("MetalFX availability contract: the fixture's four quadrants are no longer four different "
+                     "colours, which is what makes a channel swap or a crop visible")
+if len({parts[3] for parts in values}) != 4:
+    raise SystemExit("MetalFX availability contract: the fixture's quadrants no longer carry four different "
+                     "alphas, so whether the scaler preserves alpha cannot be read from the frame")
+README = FIXTURE_README.read_text(encoding="utf-8")
+for needle, why in (
+    ("top left red", "the fixture no longer states which corner is which, so the arrangement in the frame is "
+                     "not fixed by the file that paints it"),
+    ("--renderscale 55", "the fixture no longer says it is run below native, which is what puts the scaler on "
+                         "the path and makes input and output resolutions differ"),
+    ("drawableReadback", "the fixture no longer says which instrument reads it"),
+):
+    if needle not in README:
+        raise SystemExit("MetalFX availability contract: " + why)
+
+METAL4_FX = ROOT / "src/main/java/com/metallum/mtl/metal4/Metal4Fx.java"
+metal4_fx = METAL4_FX.read_text(encoding="utf-8")
+for needle, why in (
+    ("MTL4FXSpatialScaler scaler = this.scalers.get(configuration);",
+     "the scaler is no longer looked up by the whole configuration, so a resize or a render-scale change could "
+     "be served by an old-size scaler"),
+    ("if (scaler == null) {\n            scaler = makeScaler(this.device, this.compiler, configuration);",
+     "a scaler is made without a cache miss, so a frame could be scaled by an object built for another size"),
+    ("made a scaler for {}x{} to {}x{} with colour",
+     "a cache miss no longer says which configuration it built, so a resize leaves no evidence and section "
+     "40's transition reading has nothing to read"),
+    ("{} in the cache", "a cache miss no longer says how many configurations are cached, so the line cannot "
+                        "show that a later use of the first one was a hit rather than a third scaler"),
+):
+    if needle not in metal4_fx:
+        raise SystemExit("MetalFX availability contract: " + why)
+
 print("MetalFX availability contract: PASS")
