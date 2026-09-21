@@ -162,8 +162,10 @@ run                                                cold processes  probes  failu
 --cold-runs 30 --warm-runs 20                      30              30      0         20    0
 --cold-runs 50 --warm-runs 20                      50              50      0         20    0
 --cold-runs 20 --probes-per-process 5 --warm 20    20              100     0         20    0
+--cold-runs 60                                     60              60      0         0     0
                                                    ----------------------------------------------
-                                                   100             180     0         60    0
+                                                   160             240     0         60    0
+                   of which first-in-process probes: 160, all correct, each costing ~0.49 s
 one cold probe costs ~0.5 s, and the probes after a process's first cost ~110-125 ms each
 sampled draws, allocator rings, colour attaches, multi-targets, depth draws, depth samples, mip chains,
 MetalFX spatial, compute, storage images, bound layouts, texture copies, depth clears, fence waits,
@@ -194,9 +196,16 @@ process 1 attempt 1  490.7 ms   attempt 2  119.6 ms   attempt 3  110.3 ms   atte
 process 1 attempt 5  112.3 ms   process 2 attempt 1  488.2 ms
 ```
 
+**And the four-times cost is the *first* probe's, for every process in the run and not a warm-up of the machine.**
+The last run was sixty processes with one probe each, so every one of its probes is a first-in-process probe, and
+processes 1, 30 and 60 read 486.3, 494.2 and 500.8 ms - the same cost at the end of the run as at the start. That
+is what makes it a per-process signature rather than a cold-machine one, and it is why the volume belongs there:
+**160 first-in-process probes today, every one correct**, is the closest this harness has come to the window the
+recorded hypothesis names.
+
 **The first probe in a process costs about four times what the rest cost, in every process, cold or warm** - so
 the thing the recorded hypothesis names, lazy initialisation on first use, is really there and has a signature.
-What it does **not** do, in 180 probes across 100 processes today, is fail: a first probe that is slower and
+What it does **not** do, in 240 probes across 160 processes today, is fail: a first probe that is slower and
 correct is a different thing from a first probe that is wrong one time in twenty-five. That sharpens the
 hypothesis rather than confirming it, and it says where the next attempt should look - the 4x window is where a
 fault would live, and the experiment is the first pass alone, in volume, with `--probes-per-process` telling a bad
