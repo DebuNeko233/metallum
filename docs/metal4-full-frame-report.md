@@ -1430,7 +1430,8 @@ assumed overwrite, and the tables assigned to the new encoder - and eleven mutat
 
 **SHAs.** Metallum `23bcc06` at the start, with this phase's instrumentation uncommitted on top of it (the
 census's entry points, its three call sites and the two contract pins); Vitrail `712d6452`, untouched. The
-phase's own commit carries the section, and the measurements below name the tree they were taken on rather than
+phase's own commit is **`ae2f56d`**, which carries the instrumentation, the two contract pins, the comparison's
+counters and this section together; the measurements below name the tree they were taken on rather than
 pretending the instrument was already in history.
 
 **Question.** Phase C left a wall that is bimodal - one population inside a handover quantum and one a quantum
