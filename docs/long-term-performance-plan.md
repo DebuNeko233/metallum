@@ -48,7 +48,13 @@ Track E  MetalFX spatial              E1 pinned (DONE); E2 ladder DONE (docs/met
                                       writer that spoiled 2 of 21 cells is IDENTIFIED and FIXED (the Sodium
                                       binding applied the option's file-format default over the player's
                                       stored scale - a player-visible defect, not only a measurement one)
-Track F  shader/pipeline/startup      F1-F4 not started
+Track F  shader/pipeline/startup      F1/F2/F3 DONE (docs/startup-and-cache.md): a warm launch compiles
+                                      NOTHING (module cache 574/574, translation 45/45) and a cold one builds
+                                      187 units in 1747 ms plus 563 ms of translating; a distinct input is built
+                                      once and read 3.05 times a load; 105 of the two packs' inputs are the same
+                                      input; a warm launch saves 3-4 s on MakeUp and 4-7 s on Complementary. What
+                                      no cache covers is the Metal pipeline state, remade every launch at
+                                      0.26-1.6 s - RECORDED as the next candidate, not implemented; F4 not started
 Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines,
                                       the command-generation guard, the reference-arm and minimum-over-repeats
                                       rules);
@@ -101,6 +107,7 @@ docs/vitrail-cpu-performance.md     Track B (to be written with B1)
 docs/vitrail-gpu-performance.md     Track C: the corpus (C1), the scale audit (C3) and the shadow
                                     stage (C2)
 docs/bridge-overhead.md             Track D (to be written with D1)
+docs/startup-and-cache.md           Track F: the cache census (F1), the reuse count (F2) and the cold/warm load (F3)
 docs/metalfx-performance.md         Track E (to be written with E2)
 docs/performance-testing.md         the harness, the session rules and the picture evidence
 docs/metal3-performance-report.md   the first Metal 3 round, still the reference for its own conclusions

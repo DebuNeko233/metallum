@@ -116,6 +116,16 @@ measurement was collected on Metal 4 while the corpus it was to be read against 
 counter within a per cent of the baseline's. Pass `-Dmetallum.execution=metal3` to the arm itself; the property
 outranks the stored choice.
 
+**`--cold-cache` makes the session's first arm a cold load.** Vitrail's two derived caches live in the instance
+(`run/vitrail/modules/<build>` and `run/vitrail/translations/<build>`) and are keyed on the shader text and the
+build, so a session without the flag measures the warm path in every arm - the whole corpus read
+`574 units served, 0 built` for that reason, four times over, and no session said what a first load costs. The
+flag removes both directories before the first arm and prints each one with its size and file count. Because
+every arm is a fresh launch of the same jar, the arms behind the first are warm ones, which is what makes one
+session a reload experiment: measured, MakeUp goes 11-12 s cold and 8 s warm, Complementary 15 s cold and
+8-11 s warm (`docs/startup-and-cache.md`). `tools/vitrail-load-census.py` reads the load's own census lines out
+of a session's arms into one table.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:
