@@ -135,7 +135,9 @@ def main() -> int:
 
     pictures = {}
     for name in order:
-        shot = session / name / "screen.png"
+        shot = session / name / "client.png"
+        if not shot.is_file():
+            shot = session / name / "screen.png"
         if not shot.is_file():
             print(f"arm {name}: no screen.png, skipped")
             continue

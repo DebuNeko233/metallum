@@ -423,7 +423,12 @@ def main() -> int:
     captures: dict[str, tuple[int, int, list[tuple[int, int, int]]]] = {}
     unreadable: dict[str, str] = {}
     for run in runs:
-        screen = run / "screen.png"
+        # The client's own readback when the arm left one, and the display capture otherwise: the first is
+        # the frame the counters describe, the second is whatever the display server was showing - a locked
+        # screen captures as one flat colour and an arm in its own Space captures whatever is in front.
+        screen = run / "client.png"
+        if not screen.is_file():
+            screen = run / "screen.png"
         if not screen.is_file():
             unreadable[run.name] = "no picture"
             continue

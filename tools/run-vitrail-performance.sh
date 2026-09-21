@@ -817,7 +817,7 @@ for run in "${runs[@]}"; do
 		cd "$repo_root"
 		./gradlew runClient -PvitrailSmokeJar="$jar" \
 			-PvitrailHud=0 \
-			-PvitrailPerfVmArgs="-Dmetallum.frameProbeBudget=$frames${vmargs:+ $vmargs}" \
+			-PvitrailPerfVmArgs="-Dmetallum.frameProbeBudget=$frames -Dmetallum.clientScreenshot=true${vmargs:+ $vmargs}" \
 			--console=plain \
 			"--args=--quickPlaySingleplayer $world_name --width $width --height $height"
 	) > "$run_dir/gradle.log" 2>&1 &
@@ -866,6 +866,14 @@ for run in "${runs[@]}"; do
 	touch "$marker"
 	marker_touched="$(date +%s)"
 	printf 'window-opened %s\n' "$marker_touched" >> "$run_dir/load-trace.txt"
+	# And the client's own picture of its frame, asked for now, while the window the probe is counting is still
+	# open - which is the only moment at which the picture is the frame the numbers describe. It is answered from
+	# inside the client (ScreenshotProbeMixin, off unless -Dmetallum.clientScreenshot=true), so it does not go
+	# through the display server at all: a locked screen captures as one flat colour and an arm in its own Space
+	# captures whatever window is in front, and both of those have already been read as results here.
+	client_picture="$game_dir/metallum/client-screenshot.png"
+	rm -f "$client_picture" "$game_dir/metallum/screenshot-request"
+	: > "$game_dir/metallum/screenshot-request"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
 		run_failed=1
@@ -873,6 +881,19 @@ for run in "${runs[@]}"; do
 	printf 'window-closed %s\n' "$(date +%s)" >> "$run_dir/load-trace.txt"
 	kill "$load_tracer" 2>/dev/null || true
 	wait "$load_tracer" 2>/dev/null || true
+
+	# The client's answer, if it came: a bounded wait rather than a sleep, because the readback is submitted with
+	# the frame and handed over a frame or two later, and a session that never answers must still leave a picture.
+	picture_source="display capture"
+	for _ in $(seq 1 30); do
+		[[ -s "$client_picture" ]] && break
+		sleep 0.5
+	done
+	if [[ -s "$client_picture" ]]; then
+		cp -f "$client_picture" "$run_dir/client.png"
+		picture_source="client readback"
+	fi
+	printf '%s\n' "$picture_source" > "$run_dir/picture-source.txt"
 
 	# Taken while the game is still drawing, so the picture is the frame the numbers describe. The
 	# whole screen rather than the game's window, because asking for a window would need the window
@@ -893,6 +914,7 @@ for run in "${runs[@]}"; do
 	printf '%s\n' "${front_app:-unknown}" > "$run_dir/front-app.txt" 2>/dev/null || true
 	printf 'end %s\n' "$(load_average)" >> "$run_dir/load.txt"
 
+	rm -f "$game_dir/metallum/screenshot-request"
 	cp -f "$game_dir/logs/latest.log" "$run_dir/latest.log" 2>/dev/null || true
 	# A run that came up on another backend is not this engine's frame, and Vitrail's own rescue is what puts
 	# it there: after a session that ended badly it writes the API back to Vulkan, so the next launch is
@@ -1022,7 +1044,7 @@ for run in "${runs[@]}"; do
 		fi
 
 		if [[ "${scene_bad:-0}" == 0 ]]; then
-			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs, loadedMiB $(grep -o 'loadedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), storedMiB $(grep -o 'storedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), front '${front_app:-unknown}')"
+			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs, loadedMiB $(grep -o 'loadedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), storedMiB $(grep -o 'storedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), front '${front_app:-unknown}', picture $picture_source)"
 		fi
 	fi
 

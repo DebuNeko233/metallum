@@ -37,6 +37,16 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
     private static final String CLIENT_TICK_PROBE_MIXIN =
             "com.metallum.mixin.render.ClientTickProbeMixin";
 
+    /**
+     * The client's own picture of its frame, taken when a file asks for one.
+     * <p>
+     * Named here for the third time and the same reason: a mixin in the config and not in this list is never
+     * applied, silently, and this one's silence would be a measurement's - the performance harness would fall
+     * back to photographing the display and say so in a line nobody would connect to the missing class.
+     */
+    private static final String SCREENSHOT_PROBE_MIXIN =
+            "com.metallum.mixin.render.ScreenshotProbeMixin";
+
     private boolean isMacOs;
 
     @Override
@@ -61,7 +71,8 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
         return PREFERRED_GRAPHICS_API_MIXIN.equals(mixinClassName)
                 || VIDEO_SETTINGS_SCREEN_MIXIN.equals(mixinClassName)
                 || LIFECYCLE_PROBE_MIXIN.equals(mixinClassName)
-                || CLIENT_TICK_PROBE_MIXIN.equals(mixinClassName);
+                || CLIENT_TICK_PROBE_MIXIN.equals(mixinClassName)
+                || SCREENSHOT_PROBE_MIXIN.equals(mixinClassName);
     }
 
     @Override

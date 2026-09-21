@@ -786,6 +786,27 @@ for needle, why in (
      "the settle is not measured, so an arm whose window opened early is not refused"),
     ('if [[ "$settled_for" -lt "$settle_seconds" ]]; then',
      "the settle the window really had is read and not compared with the one asked for"),
+    # The picture column: asked for from inside the client while the window is open, waited for with a bound,
+    # and the display capture kept as the fallback - because a request answered once, a request that is never
+    # answered, and a photograph of whatever is in front are three different pieces of evidence.
+    ("-Dmetallum.clientScreenshot=true",
+     "the client's own readback is never asked for, so the picture column is a photograph of the display and "
+     "nothing else"),
+    (': > "$game_dir/metallum/screenshot-request"',
+     "the request file is not created, so the client is never asked"),
+    ('client_picture="$game_dir/metallum/client-screenshot.png"',
+     "the client's answer is not named, so nothing waits for it"),
+    ('for _ in $(seq 1 30); do',
+     "the wait for the client's answer is unbounded or absent: a session that never answers it must still leave "
+     "the display capture"),
+    ('if [[ -s "$client_picture" ]]; then',
+     "the answer's presence is not checked, so an empty file would be kept as the picture"),
+    ('picture_source="client readback"',
+     "nothing records which road the picture came by, so a reader cannot tell the frame from a photograph"),
+    ('printf \'%s\\n\' "$picture_source" > "$run_dir/picture-source.txt"',
+     "the road the picture came by is decided and not written down"),
+    ('rm -f "$game_dir/metallum/screenshot-request"',
+     "the request is not cleared at the end of an arm, so the next arm's client answers the last one's question"),
     ("a window opened before the settle it was told to run",
      "the refusal a reader sees does not name the window that opened early, so a session refused for it reads "
      "as a pack that did not draw"),
