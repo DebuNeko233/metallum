@@ -1355,7 +1355,38 @@ answered rather than only what is left.
 
    **For section 123's gate this is the reading that matters**: the number §93 needs is readable when the
    machine is quiet and the arms are consecutive (2.2% spread, all four frames identical), and the outlier has to
-   be discarded rather than averaged - which is what `run/m4-four` now lets a reader do. The content guard this round added is built
+   be discarded rather than averaged - which is what `run/m4-four` now lets a reader do.
+
+   **And a session with the path's own per-frame counters on says the cost moves *within* one window.**
+   `run/m4-stats`, two Metal 4 arms with `-Dmetallum.metal4FrameStats=true`, which prints passes, encoders,
+   tables, draws, indexed draws and **residency declarations** a frame once every sixty frames:
+
+   ```text
+   m4a (this session's slow arm)   msPerFrame 9.67 11.92 13.51 18.71 13.93 13.77   wallP50 17.02  gpuM4P50 24.50
+   m4b (this session's fast arm)   msPerFrame 7.76  7.15  6.95  6.52  7.70  7.67   wallP50  9.54  gpuM4P50 18.23
+
+   both arms, every bucket       passesPerFrame 20.6-23.5  encodersPerFrame = passes  tablesPerFrame 26.4-30.5
+                                 drawsPerFrame 1209.6-1216.6  indexedPerFrame 1180.5-1181.5  residencyPerFrame 1.7-2.5
+   ```
+
+   Two things follow, and they are the end of this blocker's investigation:
+
+   - **It is not a session state.** `residencyPerFrame` sits between 1.7 and 2.5 in both arms for the whole
+     session, `tablesPerFrame` between 26 and 31, `drawsPerFrame` within half a per cent - so no residency set, no
+     table cache and no resource list grows with the session, and the commands are the same commands. The
+     instrument that was chosen for a session-level cause has now cleared it.
+   - **It is the frame cost moving in time, by a factor of two, on identical commands** - 9.67 ms in one
+     sixty-frame bucket and 18.71 ms in another, with `drawsPerFrame` 1214.5 against 1215.8. What absorbs that
+     variation on one generation and not the other is the pacing site this section already named: **Metal 3's
+     frame time is its submission-index wait**, so a slower GPU or a busier machine shrinks that wait and leaves
+     `wallP50` where it was (its arms agree to 0.2% across four sessions), while **this path's frame time is its
+     work** - its waits are zero for most frames - so the same variation lands in the frame time whole.
+
+   That is what the section 123 gate has to be built on, and it is why the gate is not met yet: a P50 taken on
+   this path on this machine is a reading of the machine as much as of the path, so the number §93 wants needs
+   either a quiet machine or a pacing site of its own. **NOT MEASURED** remains the honest verdict for the
+   Metal 3 against Metal 4 performance comparison, and the blocker is now narrowed to that - a pacing and
+   machine-state question rather than an unexplained generation difference. The content guard this round added is built
    on the three counters that mean the same thing on both generations and grow with what the frame drew -
    `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
