@@ -127,6 +127,14 @@ One detail worth keeping: Complementary's warm arms **descend** (11, 9, 8 s) whi
 Something beyond the two shader caches is still warming across the first warm arm - the pack archive in the
 page cache, or the game's own resource loading - and it is NOT ATTRIBUTED here.
 
+**The cache is per build, and that is why this programme had never seen a cold load.** `ModuleCache`'s key
+carries the mod's version and, on a development build, the commit behind it, so a fresh commit opens a fresh
+directory and pays the cold load once - visible in this machine's instance as
+`modules/0.13.0-dev+mc26.2+6afce954` beside `modules/0.13.0-dev+mc26.2+5b498e70`, the first of which was 399
+files the second had to rebuild. On a release build the key is the version, so a player pays the cold load once
+per Vitrail update and never again; on a development build it is once per commit, which is what every session of
+this programme has been paying without saying so.
+
 ## What no cache covers: the pipeline state, remade every launch
 
 The warm rows are the finding's edge: with **zero** modules built and **zero** translations translated, the load
