@@ -747,6 +747,22 @@ pixel for pixel, where before the fix the Metal 4 arm carried no cloud in the ri
 (`options.renderClouds: fast`, newly reachable through `--vanilla-clouds fast`) and the view from above the layer
 were checked the same way.
 
+**And the other half of the report - the stutter near the layer - does not survive as a cost.** The defect's two
+halves were the band of cloud over the camera *and* the pause that came with standing in it, so the fixed path was
+costed at the four positions the report names, 120 frames each, one window per arm: below the layer, in fancy and
+in fast clouds, inside it, and above it. The Metal 4 arm's **own GPU interval is the lowest of the four inside the
+layer** - 4.40 ms a frame against 6.31 below, 6.17 below in fast, and 6.16 above - and no scene carries a stall
+beyond its own pace: the worst frame against the 99th is 19.79 ms against 19.63 ms, a single reading, not an
+isolated spike. The wall-clock columns are recorded but **cannot distinguish these scenes and are not evidence**:
+the Metal 4 arm's 120 frames take 29 ticks in *every* one of the four (1484.21/1484.29/1484.30/1484.22 ms), so its
+percentiles are the tick quantum quantised - the 15.8 ms line is two ticks and the 19.6 ms line is the one
+four-tick gap - while the reference's flat 8.33 ms is the display's own pace. What the matrix therefore establishes
+is that the fixed path's cost does not respond to the cloud layer at all, which is the shape a missing binding
+would not have: an unread face buffer puts every face corner wherever the garbage says, so the pre-fix band was
+unbounded geometry and unbounded overdraw rather than a fixed amount of work. **The pre-fix cost was not measured** -
+when those runs were taken the harness was staging the nether, so no correct-scene before reading exists - and this
+paragraph is a post-fix parity reading with the mechanism as its explanation, not a before/after delta.
+
 **And one thing is left: this path's overworld frame is lighter than the reference's.** On those same captures the
 sky and the clouds are both shifted toward white on Metal 4 - sky at one column reading `(125,155,225)` at the top
 against `(172,190,227)`, a roughly constant offset down the whole column - so a whole-frame pixel comparison still

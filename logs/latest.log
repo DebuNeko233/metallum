@@ -1,1 +1,6 @@
-[13:27:59] [main/INFO]: MetalFX spatial scaling: available, the device supports it, factory newSpatialScalerWithDevice:
+[14:07:05] [main/INFO]: Metal 4 MetalFX spatial scaling: available, the device supports it and made one
+[14:07:05] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
+[14:07:05] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
+[14:07:05] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
+[14:07:05] [main/WARN]: Metal 4 probe: the first attempt in this process failed at pixel (this first attempt of the process is failed on purpose (-Dmetallum.probeInjectFirstFailure), so the retry that answers a real first-attempt fault can be priced; the readback itself was (64, 128, 191, 255) where (64, 128, 191, 255) was asked for), and the second answered true - the capability record reads the second
+[14:07:05] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)

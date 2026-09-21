@@ -5927,6 +5927,16 @@ are identical to the reference's - where the pre-fix Metal 4 arm carried no clou
 and the view from above the layer were checked the same way (`--vanilla-clouds` now takes `on`, `fast` or `off`,
 the middle one being a word `options.renderClouds` parses and a boolean cannot express).
 
+**And the cost half of the report is answered by parity, not by a delta.** The four positions the report names
+(below the layer in fancy and in fast, inside it, above it) were each run for 120 frames per arm. Metal 4's own GPU
+interval is the **lowest inside the layer** - 4.40 ms a frame against 6.31, 6.17 and 6.16 - and the worst frame
+against its 99th is 19.79 against 19.63, so the fixed path charges nothing extra for standing in cloud. The
+wall-clock columns are not evidence here and are recorded as such: Metal 4's 120 frames take 29 ticks in all four
+scenes (1484.2 ms four times over), so those percentiles are the tick quantum, not a response to content. **The
+pre-fix cost was never measured** - the harness was staging the nether during those runs - so this is post-fix
+parity plus the mechanism (an unread face buffer puts each corner wherever the garbage says, which is unbounded
+geometry and unbounded overdraw), not a before/after figure.
+
 **What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
 sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
 `(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations
