@@ -1162,6 +1162,38 @@ road, where the old build failed the launch and left the session on OpenGL. `too
 halves of the split - the clause absent from `usable`, and still read where it is logged - and two mutations of
 them are caught.
 
+## Phase D1's starting census - the same scene, the two generations, one window each
+
+Taken from the same session as the premise check above (`run/m3m4-premise`, no-pack, 300-frame windows, fullscreen
+at 1920x1200, one process each), so world, dimension, camera, clock, weather, target and pack state are one:
+
+```
+counter (over 300 frames)   Metal 3     Metal 4     ratio
+render pass openers            1200        3000      2.5x
+clear encoders                    0        1500        --
+blit/compute copy encoders      300         650      2.2x
+attachment loaded MiB          6339.1     48526.6     7.7x
+attachment stored MiB         16886.0     72257.1     4.3x
+depth attachments               900        4200      4.7x
+depth loaded MiB                  0.0     23730.5        --
+depth stored MiB               7910.2     36914.1     4.7x
+```
+
+**This is what Phase D is about, and it is now a number rather than a description.** Metal 4 opens **1500 clear
+encoders where Metal 3 opens none** - a clear is a pass of its own on this path, and Metal 3 folds its clears
+into the passes that use the attachments - and it moves **7.7 times the attachment load traffic and 4.3 times the
+store traffic** for the same picture. The depth column is the sharpest of them: Metal 3 loads **nothing** into
+depth (0.0 MiB over 300 frames) where Metal 4 loads 23.7 GiB, which is the pass per clear showing up as memory
+traffic.
+
+Two readings of the numbers rather than one: `renderPasses`, `clearEncoders`, `loadedMiB`, `storedMiB`,
+`depthAttachments` and the depth bytes come from the shared frame probe and the same attachment mapping on both
+generations, so they are comparable **as traffic** - what differs is the load and store actions the two paths
+choose, which is the subject. `blitEncoders` is **not** comparable across the two: on Metal 4 it counts the
+compute encoders this command model uses for copies where Metal 3 has a blit encoder, and the two are counted at
+different call sites. And no per-pass GPU price is quoted from either generation, for the reason section 3.5
+gives.
+
 ## Phase C1/C2 - the ring depth moves the wait, and nothing else
 
 **Question.** The audit's first performance question is not "how much slower is a shader" but "why does a frame
