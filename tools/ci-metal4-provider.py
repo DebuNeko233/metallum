@@ -1897,4 +1897,17 @@ for needle, why in (
     if needle not in compiler:
         raise SystemExit("metal 4 provider: " + why)
 
+# And a Metal device that refuses to initialize says that the reference path is skipped too.
+#
+# Measured under Metal API validation: forcing -Dmetallum.execution=metal4 on a device that does not satisfy the
+# contract fails backend creation, and the backend the game picks afterwards is OpenGL - not the Metal 3
+# reference every comparison in this programme is against. Nothing in the session said so, which is how a
+# developer ends up measuring neither generation.
+backend = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "MetalBackend.java"
+           ).read_text(encoding="utf-8")
+if "will not run the Metal 3" not in backend:
+    raise SystemExit("Metal 4 execution provider contract: a Metal device that refuses to initialize does not say "
+                     "that the Metal 3 reference path is skipped as well, so a forced Metal 4 session on a device "
+                     "that cannot take it measures OpenGL with nothing in the log saying so")
+
 print("Metal 4 execution provider contract: PASS")

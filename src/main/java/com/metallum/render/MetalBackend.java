@@ -74,6 +74,16 @@ public class MetalBackend implements GpuBackend {
             // The layer is already on the view and this code owns the only reference to it: the window
             // is about to be destroyed, so nothing else will ever release it.
             metalLayer.close();
+            // Said before the throw, because what happens next is the game's choice and not this code's: the
+            // backend it picks after a Metal device refuses to initialize is whichever one is left, and measured
+            // under Metal API validation that is **OpenGL** - the OpenGL backend, not the Metal 3 reference this
+            // programme's every comparison is against. A developer who forces Metal 4 on a device that cannot
+            // take it therefore measures neither generation, and without this line nothing in the session says
+            // the reference path was skipped.
+            Metallum.LOGGER.error("Metal device initialization failed ({}), so this session will not run the Metal 3"
+                    + " reference path either: the game chooses the backend after this and, measured, that is"
+                    + " OpenGL. Force -Dmetallum.execution=metal3 to measure the reference path instead.",
+                    throwable.getMessage());
             throw new BackendCreationException("Metal device initialization failed: " + throwable.getMessage(), BackendCreationException.Reason.OTHER);
         }
     }
