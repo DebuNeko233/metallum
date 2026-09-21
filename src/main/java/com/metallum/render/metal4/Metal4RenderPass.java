@@ -683,11 +683,20 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      * never encoded. Faulting instead made this path stricter than the reference it is being compared against,
      * which is a bug in the guard and not in the frame.
      * <p>
-     * A name the pipeline declares as the <em>other kind</em> of resource is skipped for the same reason, and
-     * that was measured too: one of the engine's own passes binds a uniform under a name whose pipeline declares
-     * a texture, and the Metal 3 pass simply never encodes that buffer. Faulting made this path stricter than
-     * the reference; the skip is reported under {@code -Dmetallum.metal4Trace} instead, so a pack bug is visible
-     * to anyone looking rather than fatal to everyone rendering.
+     * A name the pipeline declares as the <em>other kind</em> of resource is skipped for the same reason - a
+     * name goes into a map and a draw encodes what the layout declares - and the skip is reported under
+     * {@code -Dmetallum.metal4Trace} so a pack bug is visible to anyone looking rather than fatal to everyone
+     * rendering.
+     * <p>
+     * <strong>That paragraph used to name the game's own cloud pass as its example, and that was the defect
+     * rather than an example of the rule.</strong> The name is a texture buffer: the layout declares it a texel
+     * buffer, MSL reads it as a {@code texture_buffer}, and the reference generation has always bound it by
+     * making a texture view over the buffer ({@code createTexelBufferTexture}). This path asking only the
+     * buffer-slot question found nothing, skipped the binding and drew with the slot nil - which put every
+     * cloud face at one point. {@link #setUniform(String, GpuBufferSlice)} asks the texel question first now, so
+     * a buffer that is a texture is bound as one; a skip here means what it says, a kind mismatch that neither
+     * question answers - and the staged cloud scene that produced one on every cloud pass now produces none, in
+     * a fullscreen capture and in the trace alike.
      */
     private Metal4BindingPlan.@Nullable Slot slotFor(final String name, final boolean texture) {
         if (this.pipeline == null) {
