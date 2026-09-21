@@ -1675,6 +1675,26 @@ and the reason is pacing; on the pack scene it is faster at the median and slowe
 the same mixture. Its own commit interval is lower than the reference's on both, which is the quantity the two
 APIs do not let us subtract.
 
+**And the two picture residuals were closed by the road that already existed.** The gate's history and
+compute/storage lines were NOT MEASURED because the fixtures' acceptance colours needed the in-game screenshot
+this machine refuses to synthesise - but the engine's own drawable readback (`-Dmetallum.drawableReadback=true`)
+reads the presented drawable through one shared reader, and it is the road the MetalFX orientation fixture was
+read with. Both fixtures were re-run with it, on both arms, `--fixture`, 3200x1800, 300-frame windows:
+
+```text
+fixture / arm          presented drawable, centre and corners (ARGB)      against the fixture's acceptance colour
+compute-storage m3     00004300  ff008b00  ...  ff00ff00 (centre)         green (0,1,0) - PRESENT
+compute-storage m4     00004300  ff008b00  ...  ff00ff00 (centre)         identical to the Metal 3 arm, 25/25
+composite-history m3   00004343  ff008b8b  ...  ff00ffff (centre)         cyan (0,1,1) - PRESENT
+composite-history m4   00004343  ff008b8b  ...  ff00ffff (centre)         identical to the Metal 3 arm, 25/25
+```
+
+So **both acceptance colours are in the presented frame on both generations, and the two arms' five-by-five
+grids are equal sample for sample** - the harness's picture comparison agrees (mean channel difference 0.02,
+0.02% of pixels differ). The alpha channel is not the fixture's on either arm (`00` at the corners where the
+fixture writes 1.0), which is the present/layer residual this report already carries and not a generation
+difference - both arms read the same.
+
 ## AUTO readiness
 
 The decision the plan allows three forms of, taken gate by gate and with the evidence each line rests on.
@@ -1686,8 +1706,8 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | terrain correct | PASS | terrain cells identical and the pack fixtures agree |
 | depth correct | PASS | `depthtex0-contract` and `depth-value-contract` on both arms: ~90,000 green against ~28,000 cyan, no magenta |
 | MRT correct | PASS | the fixture's four quadrants are the slot table in both arms, sample for sample |
-| history correct | **NOT MEASURED** | the temporal/history packs have not been read this way |
-| compute and storage correct | **NOT MEASURED** | the dispatches are encoded and the chain runs; the fixture's GREEN picture needs the in-game screenshot that macOS refuses to synthesise |
+| history correct | **PASS this round** | the history fixture's acceptance colour was read off the presented drawable, not a screenshot (below) |
+| compute and storage correct | **PASS this round** | the same road reads the fixture's green acceptance colour on both arms (below) |
 | wide resources correct | PASS, one real-device reading | photon's `deferred4` (nineteen sampled images) runs through the argument-buffer road; generality beyond it is NOT MEASURED |
 | MetalFX live-frame fixture correct | **PASS this round** | the asymmetric quadrant fixture: orientation and channel order proven with the scaler in the loop, identical in both arms |
 | lifecycle | PASS, two transitions manual | `run/m4-lifecycle`: reload (F3+T's path), resize, leave, close; a dimension change and an in-session pack switch are not driven |

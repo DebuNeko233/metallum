@@ -5457,3 +5457,30 @@ and the census's field.
 window of every session so far - so cross-generation parity on a *biased* frame is vacuous today: the reading that
 exists is that the call has an effect on this device, and the instrument is what stands ready if a pack asks for
 one.
+
+### The two picture residuals, read through the road that already existed
+
+The AUTO gate's `history` and `compute/storage` lines had been NOT MEASURED for a reason that was never about the
+path: the fixtures' acceptance colours needed the game's own screenshot, and macOS refuses to synthesise that key
+event on this machine. But the engine already carries a picture road that needs no keyboard - the drawable
+readback, `-Dmetallum.drawableReadback=true`, which copies the presented drawable into a shared buffer and reads
+it through one shared reader on both generations - and it is the road the MetalFX orientation fixture was read
+with in this phase.
+
+Both fixtures were re-run with it, on both arms, `--fixture`, 3200x1800, 300-frame windows:
+
+```text
+fixture / arm          centre sample     against the fixture's acceptance colour
+compute-storage m3     ff00ff00          green (0,1,0) - PRESENT
+compute-storage m4     ff00ff00          identical to the Metal 3 arm, 25 of 25 samples
+composite-history m3   ff00ffff          cyan (0,1,1) - PRESENT
+composite-history m4   ff00ffff          identical to the Metal 3 arm, 25 of 25 samples
+```
+
+**Both acceptance colours are in the presented frame on both generations and the two arms' grids are equal sample
+for sample**, and the harness's own picture comparison agrees to 0.02% of pixels. What the reading does not fix is
+the alpha channel: it is `00` at the corners where the fixture writes 1.0, on both arms - the present/layer
+residual this report already carries, unchanged and not a generation difference.
+
+So two of the AUTO gate's four unmet lines are met, by a road that was already in the engine and had been used
+for a different question. The remaining two are the intermittent capability probe and the performance line.
