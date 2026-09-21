@@ -1864,9 +1864,20 @@ both would arrive with a caller and be implemented then, per the rule.
   draw too, put both triangles on the same clamped depth and read as "the call does not work"), and the constant
   must be large against the depth format's resolution - Metal multiplies it by that resolution, about 1.2e-7 for
   `Depth32Float`, so the ten million used is worth more than one in normalised depth where a `-0.6` would move the
-  depth by less than the format can hold. **What is still NOT MEASURED is the live-frame half**: no measured scene
-  has a pipeline that asks for a bias (`depthBias=0` in every window so far), so cross-generation parity of a
-  *biased* frame is vacuous today and the instrument is what stands ready if a pack ever asks for one.
+  depth by less than the format can hold. **And the live-frame half is now MEASURED, because the game's own sign
+  text asks for a bias.** A census of the game's classes finds exactly three pipelines built with a non-zero
+  `DepthStencilState` - `pipeline/text_polygon_offset`, `pipeline/text_grayscale_polygon_offset` and
+  `pipeline/lines_depth_bias`, each with `slopeScale 1.0, constant 10.0` - and `AbstractSignRenderer` is the one a
+  live scene reaches without a keyboard, because it submits a sign's glyphs with `Font.DisplayMode.POLYGON_OFFSET`,
+  which selects the first. `tools/fixtures/vanilla-sign` places one such sign in front of the camera and
+  `run/sign-nopack3` measures it: the census reads **`depthBias=600` on both generations** - every frame of every
+  arm bound the biased pipeline - where the plain no-pack scene reads `depthBias=0`, the frame grows by exactly one
+  pass a frame (kinds 5/7/11/13 against the plain scene's 4/6/10/12), and the sign's two text lines are legible in
+  the picture on **both** arms, sample for sample (the crops of `m3a` and `m4a` at the sign are identical). The
+  Metal 3 pass carries the same counter as of this reading, so the parity is symmetric rather than one-sided. What
+  is *not* measured is the counterfactual - a live frame drawn with the call removed - so what is proven is that
+  the live workload reaches the call on both generations and that the two render the same biased surface; the
+  device smoke `canApplyDepthBias` remains the proof that the call changes which surface wins.
 
 - **The content drift is decomposed, counted and now NAMED.** The decomposition of the traced windows, exactly:
   a frame is one count in the steady state, six passes more on the frame that coincides with a 20 Hz client tick
@@ -2910,7 +2921,8 @@ remains open is narrow, and neither item is a generation difference: the sky str
 the drawable and of the picture are byte-identical between the generations, `000c0101 ff110303 ff1a0706 ...` on
 both, with mean BGRA (33, 2, 2, 100) for the drawable and (2, 2, 33, 100) for the picture, so the band is the same
 dark partly-transparent sky and the two halves differ only in the formatter's channel order - and what is left is
-that no pack's *biased* geometry has been exercised (`depthBias=0` in every window measured). The counters, the client's own
+that no *live* biased geometry had been exercised at the time of that reading (`depthBias=0` in every window
+measured then); it has since been, by the game's own sign text - see Remaining blockers. The counters, the client's own
 chain lines, the readbacks and the absence of a fault are what the frame is known by.
 
 **And the question "does it look right" now has a first answer, from a session in which the game's own interface
@@ -3090,7 +3102,10 @@ This is that list with the state each item actually has, and where each reading 
                                                        screenshot
 [MEASURED]   compute/storage fixture's picture         the same road, the same result, 25 of 25 samples equal
 [MEASURED]   depth-offset fixture                      canApplyDepthBias reads true on the cold census: the
-                                                       biased draw wins the compare the unbiased control fails
+                                                       biased draw wins the compare the unbiased control fails -
+                                                       and the live half too: run/sign-nopack3's sign draws the
+                                                       game's own polygon-offset pipeline, depthBias=600 on both
+                                                       generations, the text identical in both pictures
 [NOT MEASURED, artifact absent]  MakeUp's performance rung
                                                        the pack is no longer on this machine; the other three
                                                        rungs are measured and in the comparison table

@@ -5769,3 +5769,59 @@ frame's submission interval is 4.215 against the steady frame's 4.272 ms - its *
 13.42-13.76 ms, which is the pacing mixture and not content. Priced at that delta the windows differ 8.3
 percentage points of tick frames, worth about 0.37 ms on a 12.47 ms mean, so a tick-matched reading would be
 about 1.54x - stated as a **HYPOTHESIS**, with the inputs measured.
+
+### The depth-bias call, reached by a live frame at last
+
+Section 58's live half was the thinnest reading in this record: `MTL4Probe.canApplyDepthBias` proves the device
+honours `setDepthBias:slopeScale:clamp:` - the biased draw wins a compare the unbiased control fails - and every
+measured window had read `depthBias=0`, so cross-generation parity of a *biased* frame was vacuous. The reading
+was "no measured scene has a pipeline that asks for a bias", and the reason turned out to be that nobody had
+looked for one: the game does ask.
+
+A census of the merged game jar for the four-argument `DepthStencilState` constructor returns **two** classes -
+the record itself and `RenderPipelines` - and the pipelines it builds with it are exactly three:
+`pipeline/text_polygon_offset`, `pipeline/text_grayscale_polygon_offset` and `pipeline/lines_depth_bias`, each
+with `slopeScale 1.0, constant 10.0`. Their callers name the live workloads: `lines_depth_bias` is the debug
+crosshair's (`DebugCrosshairRenderer`), and `text_polygon_offset` is reached through `RenderTypes.textPolygonOffset`
+and `GlyphRenderTypes` by `AbstractSignRenderer`, `DisplayRenderer$TextDisplayRenderer` and the text feature
+renderer - of which **a sign needs no keyboard at all**, because `AbstractSignRenderer` submits its glyphs with
+`Font.DisplayMode.POLYGON_OFFSET`.
+
+So the fixture is a sign. `tools/fixtures/vanilla-sign` places one in front of the camera with the block
+fixture's own placement pattern (a marker entity at a camera-relative `^0 ^1 ^5`, then `setblock` at the marker,
+guarded so it happens once), and `run/sign-nopack3` measures it - four arms, M3/M4 interleaved, no pack, the
+usual world, camera, 3200x1800 target and 600-frame window:
+
+```text
+arm   depthBias   loadedMiB   depthAttachments   wall P50   mean      ticks
+m3a      600       28498.5         1800            8.33      8.32      100
+m3b      600       28498.5         1800            8.32      8.32      100
+m4a      600      160345.5         6576           12.24     12.47      150
+m4b      600      169486.1         6784           10.36     12.47      149
+```
+
+**Every frame of every arm bound the biased pipeline**: `depthBias=600` means one pass a frame applied a non-zero
+bias, where the plain no-pack scene reads `depthBias=0`. The frame grows by exactly one render pass a frame for
+it (the arm's kinds read 5/7/11/13 where the plain scene reads 4/6/10/12, so the sign is the +1), and the text is
+legible in both generations' pictures - the two crops of the sign are identical sample for sample:
+
+```text
+picture, m3a against m4a: mean channel difference 0.05, 0.67% of pixels differ at all, 0.05% differ by more
+                          than 8, worst 218 at 3547,43 (the capture's own edge residual, not the sign)
+picture, m3a against m3b: the reference's own arms: 0.01% differ by more than 8
+```
+
+**Two traps, both named by the game.** The first two versions of the fixture placed a *blank* sign and no glyph
+was ever drawn, which is the failure mode the fixture exists to avoid: `SignText` decodes `front_text` as a map
+whose `messages` field is a list of **exactly four** components, and the game said so each time in its own words -
+`Input is not a list of 4 elements` for two lines and a bare four-string list alike, `Not a map` for the list form
+- so the census read `depthBias=0` while the switch, the datapack, the placement and the harness's own checks were
+all correct. The signed fixture and the reason are both committed with the fixture.
+
+**And the comparison is symmetric because the reference counts too.** The Metal 3 pass has always called
+`setDepthBias` when a depth attachment is in use; it now counts the pipelines whose values were non-zero, in the
+same place and under the same condition as the Metal 4 pass, so `depthBias=` reads the same thing on both
+generations. `tools/ci-frame-probe.py` pins both the condition and the count, and the pin fails when the Metal 3
+side is removed. What is *not* measured is the counterfactual - a live frame drawn with the call removed - so the
+claim is exactly: the live workload reaches the call on both generations, and the two render the same biased
+surface.
