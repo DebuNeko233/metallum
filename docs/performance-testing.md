@@ -134,6 +134,14 @@ Measured while completing C3: two of three `--renderScale 55` arms were refused 
 window's own size is still the thing to pin when the question is which display mode a session ran on; it is the
 *world's* size that the guard reads.
 
+**A session can be read as JSON.** `tools/vitrail-performance-report.py <session dir> [more dirs] [--out FILE]`
+writes one document per session with every arm in the order it ran: the repositories, the machine and OS, the
+display mode, the target, the pack and the render scale, the wall and GPU distribution, the CPU and allocation
+stats, the native call census, the structural census and the engine's one-a-second censuses (shadow, mipmaps,
+feedback, module cache, warm-up). Every figure in this programme's documents was transcribed out of these lines by
+hand until it existed; a field a session does not carry is absent rather than zero, and a counter the probe grows
+lands under `other` without an edit to the tool.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:

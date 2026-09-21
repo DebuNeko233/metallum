@@ -74,9 +74,14 @@ Track F  shader/pipeline/startup      F1/F2/F3 DONE (docs/startup-and-cache.md):
                                       input; a warm load is 8 s against a cold 11-12 s on MakeUp (3 cold arms, 16 warm). What
                                       no cache covers is the Metal pipeline state, remade every launch at
                                       0.26-1.6 s - RECORDED as the next candidate, not implemented; F4 not started
-Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines,
-                                      the command-generation guard, the reference-arm and minimum-over-repeats
-                                      rules);
+Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.py writes a session's arms as
+                                      JSON - repositories, machine, display mode, target, pack, scale, wall and
+                                      GPU distribution, CPU and allocation stats, the native call census, the
+                                      structural census and the engine's one-a-second censuses - with
+                                      tools/ci-performance-report.py holding it against a fixture built from a
+                                      real window's lines, mutations included. G2/G3 standing (the harness, the
+                                      region reader, the census lines, the command-generation guard, the
+                                      reference-arm and minimum-over-repeats rules);
                                       G4 (profiler stop rule) is policy, recorded below
 ```
 
