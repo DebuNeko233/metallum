@@ -287,8 +287,11 @@ if "MetalFx.scale(" in m4_encoder:
     )
 
 # And the diagnostic that makes this generation answer "no" about the scaler, which is what turned section 124's
-# missing fallback reading into a measured shape: with it set, the eligibility clause (metalFxParityForMetal4)
-# refuses the generation before a frame is drawn, so the reachable fallback is the per-configuration refusal.
+# missing fallback reading into a measured shape: with it set, the Metal 4 core contract is untouched (the
+# scaler is an optional capability and not a clause of it) and the session runs Metal 4 with
+# `metalFxAvailable()` false - so the reachable road is the pack host's own fallback below 100 per cent, which is
+# the road section 124 asked about. Until the post-M4 regression audit the clause was in eligibility and the
+# diagnostic refused the generation before a frame was drawn; the contract now pins that clause's absence.
 fx = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "Metal4Fx.java"
       ).read_text(encoding="utf-8")
 for needle, why in (

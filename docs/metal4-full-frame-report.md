@@ -1142,23 +1142,71 @@ Metal device initialization failed (metallum.execution=metal4 was asked for and 
 Using graphics backend OpenGL
 ```
 
-The mechanism is in the capability record and it is deliberate: `metal4MinimumContract()` is the command
-structure's own list and does not mention the scaler, but **eligibility is a second question** -
-`metalFxParityForMetal4()` is `!metal3Scaler || metal4Scaler`, so a device that can scale on Metal 3 and cannot
-on Metal 4 is **refused Metal 4 rather than demoted to a path that cannot scale**. So:
+The mechanism was in the capability record and it was deliberate at the time: `metal4MinimumContract()` is the
+command structure's own list and does not mention the scaler, but **eligibility was a second question** -
+`metalFxParityForMetal4()` is `!metal3Scaler || metal4Scaler`, so a device that could scale on Metal 3 and not
+on Metal 4 was **refused Metal 4 rather than demoted to a path that could not scale**. That reading is kept as
+what the code did, and **it has since been superseded**: the clause was removed from eligibility in the
+post-M4 regression audit, because it let an optional effect decide whether a generation existed at all.
 
-- **section 124's "failure falls back safely" cannot be reached by removing the capability.** The gate refuses
-  the generation before a frame is drawn; the road that *is* reachable is the per-configuration refusal - a
-  scaler that fails to *create* for one size, which is what `Metal4Fx.refused` holds and what a reading would
-  have to provoke. That is the honest status of the item: not a reading nobody took of a road nobody drives.
-- **and the clause is not an AUTO risk, which was checked rather than assumed.** `AUTO`'s eligibility is
-  `metal4MinimumContract() && metal4CommandBuffer() && metal4RenderEncoder() && metal4ArgumentTable() &&
-  metalFxParityForMetal4()`, so a device that scales on Metal 3 and not on Metal 4 is **demoted to the reference
-  path** with `whyNot` naming the clause - the safe direction, and the reason the parity clause sits in the
-  eligibility expression rather than only in the refusal message. Writing it out matters because
-  `metal4MinimumContract()` alone does *not* carry it, so a reader of that method would expect Metal 4 to be
-  selected on exactly the device where the selector says no. The consequence of the clause is therefore confined
-  to the **forced** road, which is the behaviour section 76 owns and which this reading deliberately leaves alone.
+**What replaced it, and why the replacement is also the road section 124 asked for.** The scaler is answered by
+the record and read by the decision only as a note on a Metal 4 session; `usable` is the minimum contract,
+`metal4CommandBuffer()`, `metal4RenderEncoder()` and `metal4ArgumentTable()`. A device - or a session whose
+scaler is refused by the diagnostic - now *runs* Metal 4 and takes the render-scale setting's own road: at 100
+per cent there is no scaler and no scaled target by definition, and below it the pack host brings the picture
+back with its bilinear fallback, which is the "failure falls back safely" reading section 124 wanted and which
+the old gate made unreachable by refusing the generation first. Measured, not argued: with
+`-Dmetallum.probeNoMetalFx=true` on a forced Metal 4 launch the seam line reads
+`selectedGeneration=metal4 executingGeneration=metal4 mode=own-path` and the render scale lands on the blit
+road, where the old build failed the launch and left the session on OpenGL. `tools/ci-contracts.py` pins both
+halves of the split - the clause absent from `usable`, and still read where it is logged - and two mutations of
+them are caught.
+
+## A mid-pass copy ends the pass, and the pass cannot continue
+
+**Found by the audit's own instruction** - reach the render scale's fallback road on Metal 4 and see it work -
+and it is the first thing that road does: it crashes the frame.
+
+```
+java.lang.IllegalStateException: the Metal 4 pipeline vitrail:pipeline/scale_blit_fragment has no vertex table
+    for vertex buffer 0 (... vertex layouts=16, vertex stage=true ...; this pass=1956537953, pipelines set=1,
+    remembered vertex layouts=1, finished=true)
+    at Metal4RenderPass.fillVertexBuffer(Metal4RenderPass.java:876)
+    at Metal4RenderPass.setVertexBuffer(Metal4RenderPass.java:670)
+    at dev.vitrail.render.RenderScale.draw(RenderScale.java:598)
+```
+
+**The chain, from the trace and the counters rather than from a guess.** `RenderScale.draw` opens a pass,
+sets its pipeline, calls `RenderSystem.bindDefaultUniforms(pass)` and then binds its vertex buffer. The
+uniforms are dynamic: writing one goes through the game's transient memory, and when that ring has to grow -
+`Resizing Dynamic Transforms UBO, capacity limit of 4 reached during a single frame. New capacity will be 8.` in
+the same session - the write needs a **copy encoder**. On this command model only one encoder may be open at a
+time, so `Metal4FrameEncoder.copyEncoder()` ends the render pass the game still has open:
+
+```java
+private MTL4ComputeEncoder copyEncoder() {
+    if (this.currentPass != null) {
+        submitRenderPass();      // "its work is already encoded, and the pass's own submit becomes a no-op"
+    }
+```
+
+That comment is true for a caller that has finished encoding and false for this one: the game keeps using the
+pass. `submitRenderPass()` → `Metal4RenderPass.finish()` → `releaseTables()`, so the vertex table the pass had
+just built is gone while `plan` and `pipeline` still point at it, and the next `setVertexBuffer` throws. The
+measured fields are what rules out the two other explanations: `pipelines set=1` says `setPipeline` ran exactly
+once on this object (so its early return did not skip the rebuild) and `finished=true` says the pass had already
+been ended underneath the caller.
+
+**What the reference generation does with the same interruption**, and why this is a gap rather than a design:
+`MetalCommandEncoder.submitRenderPass()` clears its current pass and the `MetalRenderPass` object stays usable -
+its own encoder is reopened on demand, which is what the frame probe's `encoderreuse attempts/reused/recreated`
+counters have been counting all along. The Metal 4 pass has no such resume, so any mid-pass copy - a transient
+ring growth, an upload during a pass - ends it for good.
+
+**Status: reproduced, mechanism localised, fix owed.** The fix is the reference generation's behaviour - a pass
+whose encoder was ended underneath it reopens on the next call and rebuilds the tables a new encoder needs - and
+it is the next round's first Metal 4 item, ahead of every performance phase in this audit, because the fallback
+road is one of the roads the Metal 4 production definition requires.
 
 ## Performance
 

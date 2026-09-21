@@ -111,6 +111,9 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private MTL4ArgumentTable fragmentTable;
     /** Whether the tables the encoder holds are the ones this pass has been filling. */
     private boolean tablesAssigned;
+    /** How many pipelines this pass has been given, and whether it has already been ended. */
+    private int pipelineSets;
+    private boolean finished;
 
     /**
      * The bindings the frame path has made <strong>by name</strong>, kept so a pipeline set later can resolve
@@ -314,13 +317,14 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
      * command buffer may be ended once and a caller may reach this on more than one path.
      */
     void finish() {
+        this.finished = true;
         // Reported to the frame's counters whether or not the per-draw trace is on: the counters are what
         // answer "what did a frame cost", and a pass is the unit a cost is attributed to.
         this.owner.statPass(this.drawsEncoded, this.indexedEncoded);
         if (TRACE) {
-            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' depth={} draws={} indexed={} scissor={} colours={}"
+            Metallum.LOGGER.info("Metal 4 trace: end pass '{}' pass={} depth={} draws={} indexed={} scissor={} colours={}"
                             + " load={} store={} clear={} samples=[{}]",
-                    label(), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled,
+                    label(), System.identityHashCode(this), this.depthAttached, this.drawsEncoded, this.indexedEncoded, this.scissorEnabled,
                     colours(), load0(), store0(), this.cleared0, sampledTextures());
         }
         releaseTables();
@@ -487,6 +491,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         if (this.pipeline == pipeline) {
             return;
         }
+        this.pipelineSets++;
 
         Metal4CompiledRenderPipeline compiled = this.owner.compiled(pipeline);
         if (!compiled.isValid()) {
@@ -532,7 +537,7 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
         this.tablesAssigned = false;
         ensureArgumentBuffers();
         if (TRACE) {
-            Metallum.LOGGER.info("Metal 4 trace: pipeline {} in '{}'", pipeline.getLocation(), label());
+            Metallum.LOGGER.info("Metal 4 trace: pipeline {} in '{}' pass={}", pipeline.getLocation(), label(), System.identityHashCode(this));
         }
         // The tables are new, so everything this pass has been told to bind is resolved against them: the
         // bindings that arrived before this pipeline - the game's default uniforms, a vertex layout - are
@@ -873,8 +878,14 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     /** One remembered vertex layout into the table the current plan sized, by the pipeline's own stride. */
     private void fillVertexBuffer(final Metal4BindingPlan plan, final int slot, final GpuBufferSlice buffer) {
         if (this.vertexTable == null) {
-            throw new IllegalStateException("the Metal 4 pipeline declares no vertex stage, so vertex buffer " + slot
-                    + " has nowhere to go");
+            throw new IllegalStateException("the Metal 4 pipeline " + this.pipeline.getLocation() + " has no vertex"
+                    + " table for vertex buffer " + slot + " (vertex layouts=" + plan.vertexBufferCount()
+                    + ", vertex stage=" + plan.usesStage(MetalShaderStages.VERTEX) + ", base slot="
+                    + plan.firstVertexBufferSlot() + ", slots(v=" + plan.bufferSlots(MetalShaderStages.VERTEX)
+                    + ",f=" + plan.bufferSlots(MetalShaderStages.FRAGMENT) + "), so the layout has"
+                    + " nowhere to go; this pass=" + System.identityHashCode(this) + ", pipelines set="
+                    + this.pipelineSets + ", remembered vertex layouts=" + this.vertexBuffers.size()
+                    + ", finished=" + this.finished);
         }
         if (slot < 0 || slot >= plan.vertexBufferCount()) {
             throw new IllegalStateException("the Metal 4 pipeline declares " + plan.vertexBufferCount()

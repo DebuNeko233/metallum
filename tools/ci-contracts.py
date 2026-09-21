@@ -999,6 +999,29 @@ require("the selection is made from capability and nothing else",
 ))
 selector_source = (ROOT / "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java"
                    ).read_text(encoding="utf-8")
+# --- and the optional capability is not a clause of the core contract ---------------------------------------
+# The Metal 4 scaler used to be one: `usable` ended `&& capabilities.metalFxParityForMetal4()`, so a device whose
+# Metal 4 core answered yes on every clause was refused the generation outright when its scaler was missing -
+# an optional effect deciding whether the frame path existed. The render-scale setting has a road of its own for
+# a device without the scaler, so the clause is answered and logged and no longer decides. What this pair of
+# pins holds is both halves: the scalar removal from `usable`, and the fact that the answer is still taken.
+if "&& capabilities.metalFxParityForMetal4();" in selector_source:
+    raise SystemExit(
+        "the Metal 4 core contract includes the Metal 4 scaler again, so a device that answers yes on every "
+        "clause of the frame path would be handed the older generation by an optional effect - and the render "
+        "scale has its own road for a device without the scaler"
+    )
+if "&& capabilities.metal4ArgumentTable();" not in selector_source:
+    raise SystemExit(
+        "the core contract no longer ends at the argument table, so the clause list has changed shape and what "
+        "else is in it is not pinned"
+    )
+if "capabilities.metalFxParityForMetal4()" not in selector_source:
+    raise SystemExit(
+        "the Metal 4 scaler's parity is no longer read at all, so a session that has to take the render scale's "
+        "fallback road would say nothing about why"
+    )
+
 for forbidden in ("deviceName", "system().deviceName", 'contains("M1")', 'contains("M4")'):
     if forbidden in selector_source:
         raise SystemExit(
@@ -1014,8 +1037,9 @@ require("the capability record asks every clause of the minimum contract",
     "device.respondsTo(\"newMTL4CommandQueue\")",
     # The Metal 4 scaler's clause is the Metal 4 path's own question, and a functional one: the class
     # question plus a scaler actually made with a compiler and released. It is not Metal 3's answer and not
-    # Metal 3's object - section 80 - and the record asks it because the answer decides whether choosing
-    # Metal 4 would cost the player the render-scale setting.
+    # Metal 3's object - section 80 - and the record asks it because the answer is what a Metal 4 session
+    # says about the render-scale setting: with it no, the setting still works and takes the pack host's
+    # fallback road below 100 per cent, and the generation is not refused on its account.
     'Metal4Fx.supported(device.handle())',
 ))
 # The device used to make its own Metal 3 queue, and that one line is what made "the device belongs to

@@ -11,10 +11,9 @@ import net.fabricmc.api.Environment;
  * for symmetry:
  *
  * <ul>
- *   <li>{@code AUTO} prefers the newest generation the device can actually run - the full minimum contract,
- *       the startup probe that made and submitted the objects, and the feature parity that keeps the render
- *       scale working - and falls back to Metal 3 otherwise, because a fallback is what makes a new path
- *       shippable at all;</li>
+ *   <li>{@code AUTO} prefers the newest generation the device can actually run - the minimum contract, which
+ *       is the startup probe that made and submitted the objects - and falls back to Metal 3 otherwise, because
+ *       a fallback is what makes a new path shippable at all;</li>
  *   <li>{@code FORCE_METAL3} is refused only if Metal 3 itself is unavailable, since its whole purpose is to
  *       keep the old path measurable on hardware that could run either;</li>
  *   <li>{@code FORCE_METAL4} that the device cannot satisfy is a <strong>startup failure</strong> and not a
@@ -74,11 +73,18 @@ public final class MetalExecutionSelector {
      */
     public static Decision decide(final MetalExecutionPreference preference,
                                   final MetalDeviceCapabilities capabilities) {
+        // The core contract decides whether Metal 4 can run, and nothing optional is in it. The Metal 4
+        // spatial scaler used to be: a device whose Metal 4 core answered yes on every clause but whose
+        // scaler was missing was refused the whole generation, which made one optional effect decide whether
+        // the frame path existed. It does not - the render scale has a road of its own for a device without
+        // the scaler (`MetalFx`'s parities, and the pack host's bilinear fallback below 100 per cent), and a
+        // percentage setting is not a reason to hand a capable device the older generation. So the scaler is
+        // an OPTIONAL capability: `metalFxParityForMetal4()` is still answered and still logged, and the
+        // decision no longer reads it.
         boolean usable = capabilities.metal4MinimumContract()
                 && capabilities.metal4CommandBuffer()
                 && capabilities.metal4RenderEncoder()
-                && capabilities.metal4ArgumentTable()
-                && capabilities.metalFxParityForMetal4();
+                && capabilities.metal4ArgumentTable();
 
         return switch (preference) {
             case FORCE_METAL3 -> {
@@ -103,8 +109,13 @@ public final class MetalExecutionSelector {
             case AUTO -> {
                 if (usable) {
                     yield new Decision(MetalApiGeneration.METAL4, preference,
-                            "the device satisfies the Metal 4 minimum contract and keeps the scaler, so the "
-                                    + "newer generation is preferred", capabilities);
+                            capabilities.metalFxParityForMetal4()
+                                    ? "the device satisfies the Metal 4 minimum contract and keeps the scaler, so "
+                                            + "the newer generation is preferred"
+                                    : "the device satisfies the Metal 4 minimum contract, so the newer "
+                                            + "generation is preferred; the Metal 4 scaler is missing while the "
+                                            + "Metal 3 one works, which costs the render-scale setting its "
+                                            + "accelerated road and nothing else", capabilities);
                 }
                 if (!capabilities.metal3MinimumContract()) {
                     throw new UnsatisfiedPreferenceException(
@@ -139,9 +150,9 @@ public final class MetalExecutionSelector {
         if (!capabilities.metal4ArgumentTable()) {
             missing.append(" (no argument table)");
         }
-        if (!capabilities.metalFxParityForMetal4()) {
-            missing.append(" (the Metal 4 scaler is missing while the Metal 3 one works)");
-        }
+        // The scaler is deliberately absent from this list: it is not a clause of the contract that decides
+        // whether Metal 4 can run, so it may not appear as a reason the generation was refused. What a
+        // missing scaler costs is said where the decision is taken, as a note on a Metal 4 session.
         return missing.isEmpty() ? "" : missing.toString();
     }
 
