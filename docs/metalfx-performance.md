@@ -74,6 +74,22 @@ therefore has the least GPU time to remove, and its middle cells (60 per cent sl
 spread (this scene's run-to-run floor is 1-3 per cent and one cell read 6.29 against 6.06) rather than a
 mechanism.
 
+**The two cells lost to the race were re-run in the pattern that lost them** - 75 per cent and then 67, back to
+back, with the fix in place (`run/e2fix-makeup-75`, `run/e2fix-makeup-67`, `run/e2fix-photon-75`,
+`run/e2fix-photon-67`): all four took the scale they were given (`render scale 75%`, `render scale 67%`), none
+was refused, and the pair's own ratios are **1.04x** (MakeUp 5.96 to 5.72 ms) and **1.02x** (Photon 11.37 to
+11.17 ms) for the 75-to-67 step - the same direction and the same small size the ladder's Complementary cells
+show for it.
+
+**And those re-runs carry a warning about cross-batch comparison.** The 75 per cent Photon cell read **9.48 ms**
+in the ladder and **11.37 ms** in the re-run with *every scene counter in agreement* (`encoders` 21570 against
+21685, `loadedMiB` 151997.7 against 152487.9, `texture` 73055 against 74010, `pipelineIdentities` 345 against
+345, both 1920x1200, both 1286x804-class targets). A **20 per cent difference in the wall on identical counters**
+is machine state - the GPU's clock, something else on the device, an hour of sessions - and no counter this
+instrument has shows it. So the ladder's absolute times are one batch's, its *ratios within a batch* are what
+carry across batches, and a claim that mixes cells from two visits to the same scale is not supported by
+anything measured here.
+
 **A 5-per-cent step is not the curve's resolution.** 80 to 75 per cent buys 1.10 to 1.11 on MakeUp and 1.27 to
 1.34 on Complementary, while 75 to 67 buys 1.34 to 1.48 on Complementary and 1.24 to 1.32 on Photon: the useful
 part of the ladder is the lower half, which is what a preset should be built from.
