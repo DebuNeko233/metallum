@@ -5520,3 +5520,16 @@ be promoted without appearing in the evidence. The *safe* half cannot be measure
 there is no failing first attempt in 50 probes to watch a second attempt recover. So the gate stays NOT MET, the
 retry policy is recorded as a mitigation and not as a proof, and the next census that catches a `retried=true`
 line is the one that will price it.
+
+### Section 60's audit: six refusals, no callers, no workload left behind
+
+The rule for an unimplemented operation is "a real workload reaches it → implement it; no caller reaches it →
+leave an explicit refusal", and the Metal 4 path refuses exactly six by name:
+`clearColorAndDepthTextures`, `drawIndirect`, `drawMultipleIndexed`, `multiDraw`, `multiDrawIndexed` and
+`writeTimestamp` - each with the sentence section 35 asks for, so an unknown operation cannot disappear into a
+half frame. A search of the vendored game sources finds **no caller for any of the six**, so none of them is a
+workload this path fails to run today, and the audit confirms the refusals are a *list* rather than a gap.
+
+The two a future pack could plausibly reach are `writeTimestamp` (a pack asking for its own GPU timing - which the
+counter work has already shown is not attributable per pass on this API) and `drawIndirect` (a renderer batching
+its draws). Both arrive with a caller and are implemented then, which is the rule and not an omission.

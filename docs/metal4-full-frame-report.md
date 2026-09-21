@@ -1768,6 +1768,16 @@ per-frame content counters through the window and watch them move), the cold pro
 runs the probe's first pass alone in volume), and the two picture residuals (a screenshot road that works, or a
 fixture channel that does not need one).
 
+**And section 60's audit is done: six operations are refused by name and none of them is reached.** The rule is
+"a real workload reaches it → implement; no caller reaches it → leave an explicit refusal", and the Metal 4 path
+refuses exactly six operations by name - `clearColorAndDepthTextures`, `drawIndirect`, `drawMultipleIndexed`,
+`multiDraw`, `multiDrawIndexed` and `writeTimestamp` - each with the sentence section 35 asks for rather than a
+silent drop. A search of the vendored game sources finds **no caller for any of the six**, so none is a workload
+this path fails to run; and the six are the operations the *plan* named as candidates, which means the audit
+closed nothing new and confirmed what the refusals were for. The two that a future pack could plausibly reach are
+`writeTimestamp` (a pack that wants its own GPU timing) and `drawIndirect` (a renderer that batches its draws);
+both would arrive with a caller and be implemented then, per the rule.
+
 ## Remaining blockers
 
 - **Depth bias: the gap is FIXED, the fixture is not built.** Section 58 was right: `Metal4CompiledRenderPipeline`
