@@ -283,6 +283,13 @@ whole launch            874      36.60       0.29     385 events,    16.37 ms
 repeat of the pipeline half: 706 states, 24.63 ms, worst 0.27 ms, 272 on the render thread
 ```
 
+**And the worst single compile moves between sessions, which is what makes the render-thread split the point.**
+A later session of the same scene read the function half at 21.83 ms rather than 10.28, and its worst single
+compile at **10.87 ms** rather than 0.25 - a spike of a whole frame's worth, in one call. It was on a WARM-UP
+WORKER: the render thread's own function compiles totalled 6.12 ms in that same session, under the same count of
+113 as the earlier one, so what a first draw ever paid for itself stayed where it was. A total says nothing about
+a spike and a spike says nothing about where it landed, which is why both are counted and split.
+
 **That is the entire prize for an on-disk Metal pipeline cache: about 37 ms per launch**, spent as 874 events
 whose worst single one is **0.29 ms**, on a load that takes 8-12 s and a frame that takes 6.7 ms. And the
 "0.26-1.6 s a launch" the candidate was recorded with is now explained rather than merely withdrawn: that figure

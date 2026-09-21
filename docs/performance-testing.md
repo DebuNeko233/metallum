@@ -160,6 +160,20 @@ makes them:
 Both of the last two were seen to fire: a copy of the harness with the settle threshold raised and another with
 the crash scan pointed at a string every log carries each refused their arm and exited 4.
 
+**The picture column is the client's own frame, with the display capture as the fallback.** The harness asks for
+a readback while the probe's window is still open - a file in the instance's `metallum` directory, answered once
+a second from inside the client by `ScreenshotProbeMixin` (off unless `-Dmetallum.clientScreenshot=true`) - and
+keeps both: `<arm>/client.png` from the readback and `<arm>/screen.png` from `screencapture`, with
+`picture-source.txt` and the pass line saying which road the picture came by. The comparison and the region
+reader prefer `client.png`.
+
+The readback is what makes a picture evidence. A display capture is of whatever window is in front and whatever
+Space is current, and both have already been read as results here: a locked screen captured as one flat colour and
+two arms were compared on two pictures of nothing with the comparison printing its strongest verdict, and four
+arms of one session photographed the browser. The readback goes through no display server at all. It is asked for
+by a file rather than by a tick schedule because the moment wanted is the harness's - the load takes eight to
+fifteen seconds, so the tick a window opens at moves by hundreds between sessions.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:
