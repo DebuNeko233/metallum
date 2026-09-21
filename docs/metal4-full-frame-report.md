@@ -1358,7 +1358,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it. **Both halves of the presented frame are readable on both generations** behind `-Dmetallum.drawableReadback=true` (the layer's `framebufferOnly` off, the picture the triangle sampled *and* the drawable it wrote copied into a shared buffer, read when the slot completes, one formatter in the shared layer) | yes - 30 presents a window; **and the two arms compared on one scene, one fixture, one switch, at ten and at forty seconds of settle (1366/1372 and 4951/4953 readbacks): both present the fixture's acceptance colour (pure green, red and blue at zero), and on both arms the picture read is the drawable written, frame for frame - so the present pass is the identity on this fixture and the difference is frame content, not present treatment.** One difference is measured and persists forty seconds: the Metal 4 frame is flat green with **alpha 0** where the Metal 3 frame is flat opaque green - invisible on an opaque layer, mechanism not yet localised (the pack's write into the game's target, a later pass, or the sampling of it), and its experiment is a pass-boundary copy plus a fixture whose colour is asymmetric and whose alpha is not 1. The "gentle radial ramp (230..255)" registered in an earlier round is **withdrawn**: it was the Metal 3 arm's frame still cross-fading from the loading screen, and at forty seconds that arm reads flat opaque green. **Orientation is PROVEN on a second, diagnostic fixture** (four quadrant colours at alpha 0.5): both arms present the same arrangement sample for sample - the present draw swaps the two ends of the memory-vertical axis and nothing else - and the RGBA8/BGRA8 channel conversion is correct on both. **The alpha is not the pack's**: the shader's alpha moved 1.0 to 0.5 and the stored alpha did not move on either arm (255 on Metal 3, 0 on Metal 4), so the difference is in the frame's own clear rather than in the pack's write, and which writer owns that channel is not yet localised. **The full-frame path is the session's only Metal 4 submission structure**: the present-only sidecar is not started when Metal 4 executes (measured before and after the convergence change - its start line 1 time and one commit-feedback registration against 0, with the frame encoder presenting 1964 then 2182 frames), and it is still started for the reference shell, a Metal 3-executing session with the property on. **Blocker 17 narrows this row rather than leaving it**: the present is faithful - the picture the triangle samples is the texture the GUI's pass wrote and a forced clear through that pass appears on screen - so what is missing was never handed to it | yes |
 | MetalFX spatial | yes         | **a second path, not a parameter of the first** - this generation's own compiler (`newCompilerWithDescriptor:error:`), its own scaler made by the descriptor's Metal 4 spelling, its own configuration-keyed cache, and an encode into a `MTL4CommandBuffer` | **yes, in a live frame**: `metalFxAvailable()` answers the scaler path's own existence, and at renderscale=55 Vitrail logs `The 55% render scale brings the picture back with MetalFX` on this path with the reference arm's program set (333 identities, 712 compiles) and the pack's own scaled targets (704x396, 1408x792) on both. Output orientation for the scaler is NOT MEASURED | yes |
-| counters        | whole frame | **the heap road works and the marker road does not measure the work - corrected this round, and the correction is a measurement and not a doubt.** The plumbing is proven: `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device (`gpuTicksPerCpuNs=1.0000`). What is withdrawn is the reading: with the submission's own driver window and the CPU's completion wait read beside the markers, and a fixed-cost control on a submission of its own, the marker span is **452/436/432/434/442/426/225/231 us** where the driver reports **20.7/18.7/18.5/18.6/19.0/18.6/9.8/10.0 ms** and the CPU waits **20.9/19.3/19.1/19.1/19.5/18.8/10.4/10.6 ms** for the same eight submissions - a constant `markerOverDriver` of **0.0219-0.0234** while the window moves by 2.7x, which is a *front end* (about sixty nanoseconds a draw) and not render work. Both sampling forms agree at the same boundary (`encoderOverCb` 0.82-0.96, and **1.00-1.02** on the heaviest pass), so it is not a granularity or a stage question, and the area pair is not a pair (256 draws on 4096x4096 read 17,583-309,235 ticks; 1024 draws on the same attachment read 49-67). **So GPU counter timing at pass granularity is NOT AVAILABLE**, section 92's third kind of data is the whole-commit driver timing alone, and section 95 cannot rank candidates by a per-pass GPU time. `run/m4-counters/probes.txt`, eight probes, all `gpuTime=true`; seven new contract pins, each mutation-proved. The one untried lead is the GPU-timeline resolve. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; **and this is now the only road shown to track the work**: on a submission with no drawable it reads a stable 18.5-20.7 ms across probes and agrees with the CPU's completion wait to within 3% | yes |
+| counters        | whole frame | **the heap road works and the marker road does not measure the work - corrected this round, and the correction is a measurement and not a doubt.** The plumbing is proven: `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device (`gpuTicksPerCpuNs=1.0000`). What is withdrawn is the reading: with the submission's own driver window and the CPU's completion wait read beside the markers, and a fixed-cost control on a submission of its own, the marker span is **452/436/432/434/442/426/225/231 us** where the driver reports **20.7/18.7/18.5/18.6/19.0/18.6/9.8/10.0 ms** and the CPU waits **20.9/19.3/19.1/19.1/19.5/18.8/10.4/10.6 ms** for the same eight submissions - a constant `markerOverDriver` of **0.0219-0.0234** while the window moves by 2.7x, which is a *front end* (about sixty nanoseconds a draw) and not render work. Both sampling forms agree at the same boundary (`encoderOverCb` 0.82-0.96, and **1.00-1.02** on the heaviest pass), so it is not a granularity or a stage question, and the area pair is not a pair (256 draws on 4096x4096 read 17,583-309,235 ticks; 1024 draws on the same attachment read 49-67). **And the last road was then tried**: `MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:` was encoded into the same submission twice (mid-stream and at the end) and read on the CPU after the shared event - it is a real, position-sensitive resolve (the mid-stream region reads the nine not-yet-written entries' area markers as zero, the five that had not run) and it reads **byte-identical stamps to the CPU resolve, 14/14 in all ten probes** (`run/m4-counters/timeline-probes.txt`). **So GPU counter timing at pass granularity is NOT AVAILABLE on either resolve road**, section 92's third kind of data is the whole-commit driver timing alone, section 95 cannot rank candidates by a per-pass GPU time, and per section 36 the counter work stops here. Blocker 15 is CLOSED AS AN INSTRUMENTATION LIMIT. `run/m4-counters/probes.txt` (ten probes) and the timeline census, all `gpuTime=true`; fifteen new contract pins across the two rounds, each mutation-proved. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; **and this is now the only road shown to track the work**: on a submission with no drawable it reads a stable 18.5-20.7 ms across probes and agrees with the CPU's completion wait to within 3% | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
 and its blanks are the work. A `yes` in `M4 real frame` means the harness collected it from a frame the client
@@ -1843,6 +1843,63 @@ answered rather than only what is left.
    on that; seven new contract pins hold the new instruments and each is mutation-proved. The next candidate is
    the one named above and still untried: the GPU-timeline resolve
    (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`).
+
+   **AND THAT LAST ROAD HAS NOW BEEN TRIED, WHICH CLOSES THE ITEM.** `run/m4-counters/timeline-probes.txt`,
+   ten probes (six cold, four warm), all `gpuTime=true`. The smoke encodes the GPU-timeline resolve twice into
+   the same submission - once mid-stream, where the area pair's markers do not exist yet, and once at the end
+   over every entry - and reads the resolve buffer on the CPU after the shared event, which is the header's own
+   condition ("If your app needs to access `bufferRange` from the CPU, signal an `MTLSharedEvent` to notify the
+   CPU when it's ready", `MTL4CommandBuffer.h:195`):
+
+   ```text
+   probe  entry bytes   timeline vs CPU resolve   mid-stream unwritten tail   timeline span   CPU-resolved span   span/driver
+   1          8                14/14                       5/9                    481.4 us          481.4 us          0.0229
+   2          8                14/14                       5/9                    487.3 us          487.3 us          0.0231
+   3          8                14/14                       5/9                    482.4 us          482.4 us          0.0230
+   4          8                14/14                       5/9                    500.9 us          500.9 us          0.0231
+   5          8                14/14                       5/9                    479.7 us          479.7 us          0.0228
+   6          8                14/14                       5/9                    480.9 us          480.9 us          0.0230
+   warm       8                14/14                       5/9                    476.9 us          476.9 us          0.0229
+   warm       8                14/14                       5/9                    352.9 us          352.9 us          0.0228
+   warm       8                14/14                       5/9                    372.5 us          372.5 us          0.0224
+   warm       8                14/14                       5/9                    347.9 us          347.9 us          0.0227
+   ```
+
+   Three facts, and the first two are what make the third one a verdict rather than a coincidence:
+
+   - **The resolve road is real and position-sensitive.** `sizeOfCounterHeapEntry:` answers **8** bytes, and the
+     mid-stream resolve reads **5 of the 9 entries that did not exist yet as zero** - exactly the area pair's
+     command-buffer markers (5, 6, 7) and its encoder markers (12, 13), while the four encoder markers written
+     before it read values. So the command executes at its own position in the stream and the range argument is
+     honoured; this is a snapshot and not a post-hoc dump.
+   - **And it reads byte-identical stamps to the CPU resolve** - `14/14` in every one of the ten probes, with the
+     span equal to the decimicrosecond (`481.4` against `481.4`) and the ratio equal to four decimals
+     (`0.0229` against `0.0229`).
+   - **Therefore the sampling point is not a function of how the heap is resolved.** Section 5's experiment was
+     built to allow either answer, and it returned the first of section 6's two: the resolve change alters
+     neither the marker nor its meaning - the interval is the driver's front end either way, at the same
+     ~1/43 of the submission.
+
+   **Blocker 15 - CLOSED AS AN INSTRUMENTATION LIMIT.** The template the plan asks for, with each line a
+   measurement and not an inference:
+
+   ```text
+   counter heap creation:                     PROVEN
+   counter resolve, CPU timeline:             PROVEN
+   counter resolve, GPU timeline:             PROVEN (position-sensitive, and equal to the CPU road 14/14)
+   counter unit:                              PROVEN  (1 tick = 1 ns; resolved entry = 8 bytes)
+   counter markers as pass execution points:  REFUTED for both resolve roads
+   whole-submit CommitFeedback timing:        PROVEN  (the only road shown to track the work)
+   per-pass GPU attribution:                  UNAVAILABLE
+   ```
+
+   **What this costs and what it does not.** Per section 36 the counter work **stops here**: no further timestamp
+   selector is tried, and Metal 4 optimisation proceeds on whole-frame controlled A/B, CPU/native operation
+   counts and the structural counters of section 70 - which is what every milestone of this migration has
+   actually used anyway. Per section 4 this is an **INSTRUMENTATION blocker, not an execution one**: it blocks
+   ranking optimisation candidates by per-pass GPU time, and it does not block Metal 4 correctness, lifecycle or
+   the AUTO decision, whose real blockers are the frame-time distribution (blocker 16) and the intermittent
+   capability probe.
 
    **Three clocks, read separately and never forced to agree.** The driver's `GPUStartTime`/`GPUEndTime` is the
    accelerator's own account of when a submission ran; the CPU's `waitUntilSignaledValue:` duration is the host's

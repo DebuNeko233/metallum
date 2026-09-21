@@ -1625,6 +1625,30 @@ for needle, why in (
     ("if (stamps[index] < stamps[index - 1]) {",
      "the smoke no longer checks that the stamps are in submission order, which is the reading the whole "
      "counter question turns on"),
+    ("Msg.ofVoid(\n            \"resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:\",",
+     "the GPU-timeline resolve's selector is no longer the one this SDK declares, so the one counter road that "
+     "could have changed where the sample is taken is gone and the rejection would rest on the CPU resolve alone"),
+    ("ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS);",
+     "the resolve's argument words are no longer declared in the ABI's own order - the heap, the two words of "
+     "NSRange, the two of MTL4BufferRange and the two fences - so a later edit could reorder an address and a "
+     "length without the call failing to compile"),
+    ("RESOLVE_COUNTER_HEAP.send(commandBuffer, heap.handle(),",
+     "the GPU-timeline resolve is no longer encoded into the submission, so nothing writes the resolve buffer "
+     "and the comparison against the CPU resolve cannot be made"),
+    ("Msg.of(\"sizeOfCounterHeapEntry:\", JAVA_LONG, JAVA_LONG);",
+     "the resolved entry's size is assumed rather than asked, so a device whose resolved entries are not eight "
+     "bytes would be read with the wrong stride"),
+    ("timelineAgrees=", "the two resolve roads are no longer compared, which is the measurement this whole "
+     "experiment exists for"),
+    ("timelineMidUnwrittenZero=", "the mid-stream resolve's unwritten tail is no longer reported, so a resolve "
+     "that dumped the whole heap instead of snapshotting its position could not be told from one that did"),
+    ("timelineOverDriver=", "the timeline-resolved span is no longer reported against the driver's window, so "
+     "the two roads agreeing could not be read as the rejection it is"),
+    ("COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, options.handle());",
+     "the driver's own window is no longer read on the submission the markers describe, so the cross-check the "
+     "correction rests on is gone"),
+    ("WAIT_UNTIL_SIGNALED.sendLong(event, 2L, 5000L)", "the CPU no longer waits for the submission's completion "
+     "value before it reads the resolve buffer, which is the header's own condition for reading it"),
     ("MTL4RenderEncoder.Color(target, AttachmentContents.CARRIED, null)",
      "the steps are no longer dependent: each one must load what the step before stored, so a reordering of the "
      "work cannot be what an inversion means"),

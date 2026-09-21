@@ -148,6 +148,34 @@ public final class MTL4Probe {
     /** {@code MTL4TimestampGranularityPrecise}: "a timestamp as precise as possible" (MTL4Counters.h:49). */
     private static final long TIMESTAMP_PRECISE = 1L;
 
+    /**
+     * {@code MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:} - the GPU-timeline
+     * resolve, read off this machine's header ({@code MTL4CommandBuffer.h:206}): "Encodes a command that resolves
+     * an opaque counter heap into a buffer... This command runs during the {@code MTLStageBlit} stage of the GPU
+     * timeline", with a range, a buffer range and two fences.
+     * <p>
+     * <strong>The two structs are declared as their four words, and that is the ABI and not a shortcut.</strong>
+     * {@code NSRange} is {@code {NSUInteger location, NSUInteger length}} and {@code MTL4BufferRange} is
+     * {@code {MTLGPUAddress bufferAddress, uint64_t length}} ({@code MTL4BufferRange.h:33}) - two {@code uint64_t}s
+     * each, passed in two integer registers in order, so the four integers below land in exactly the registers a
+     * compiler would use for the two structs. The fences are nil here, which the header allows, because this
+     * smoke's ordering is the shared event it already waits on.
+     * <p>
+     * This is the last counter experiment the plan allows: if the stamps a GPU-timeline resolve produces are the
+     * same stamps the CPU resolve produces, then the sampling point is the driver's and not the caller's, and no
+     * further resolve road will change it.
+     */
+    private static final Msg RESOLVE_COUNTER_HEAP = Msg.ofVoid(
+            "resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:",
+            ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS);
+
+    /**
+     * {@code MTLDevice.sizeOfCounterHeapEntry:} - the size of a resolved entry, which the header says is the
+     * post-transformation size "based on the {@code MTL4CounterHeapType}" (and which is asked rather than assumed
+     * to be eight).
+     */
+    private static final Msg SIZE_OF_COUNTER_HEAP_ENTRY = Msg.of("sizeOfCounterHeapEntry:", JAVA_LONG, JAVA_LONG);
+
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg WAIT_UNTIL_SIGNALED =
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
@@ -4410,6 +4438,10 @@ public final class MTL4Probe {
         MemorySegment large = MemorySegment.NULL;
         MemorySegment fixedAllocator = MemorySegment.NULL;
         MemorySegment fixedBuffer = MemorySegment.NULL;
+        MemorySegment timeline = MemorySegment.NULL;
+        long timelineBytes = 0L;
+        long entryBytes = 0L;
+        MTLBuffer timelineBuffer = null;
         MemorySegment clearPipeline = MemorySegment.NULL;
         List<MemorySegment> steps = new ArrayList<>();
         MTL4ResidencySet resident = null;
@@ -4462,10 +4494,31 @@ public final class MTL4Probe {
                 return failed("counters", "the passes have no table to bind their colour through");
             }
 
-            resident = MTL4ResidencySet.create(device, 2L, "the counter smoke");
-            if (resident == null || !resident.add(small) || !resident.add(large) || !resident.commit()
+            // **The GPU-timeline resolve's own buffer, and its entry size asked rather than assumed.** The header
+            // says a resolve transforms the heap into "a common format consisting of entries of the size that this
+            // method advertises", so the size comes from `sizeOfCounterHeapEntry:` and everything below is derived
+            // from it. Two regions are resolved into this one buffer: the curve's entries mid-stream, where the
+            // area pair's entries are not written yet, and every entry again at the end. The first is what makes
+            // the resolve's *position* in the command stream visible; the second is what the CPU resolve is
+            // compared against.
+            entryBytes = SIZE_OF_COUNTER_HEAP_ENTRY.sendLong(device.handle(), MTL4CounterHeap.TYPE_TIMESTAMP);
+            if (entryBytes <= 0L) {
+                return failed("counters", "sizeOfCounterHeapEntry: answered " + entryBytes + " for a timestamp"
+                        + " heap, so a resolved entry's size is not known and the resolve below could not be read");
+            }
+            timelineBytes = 2L * COUNTER_HEAP_ENTRIES * entryBytes;
+            timelineBuffer = device.newBuffer(timelineBytes, STORAGE_SHARED);
+            if (timelineBuffer == null || timelineBuffer.gpuAddress() == 0L) {
+                return failed("counters", "the resolve's own buffer has no GPU address");
+            }
+            timeline = timelineBuffer.handle();
+
+            resident = MTL4ResidencySet.create(device, 3L, "the counter smoke");
+            if (resident == null || !resident.add(small) || !resident.add(large) || !resident.add(timeline)
+                    || !resident.commit()
                     || !resident.requestResidency() || !responds(queue, "addResidencySet:")) {
-                return failed("counters", "the smoke could not declare its two attachments resident");
+                return failed("counters", "the smoke could not declare its two attachments and its resolve"
+                        + " buffer resident");
             }
             ADD_RESIDENCY_SET.send(queue, resident.handle());
 
@@ -4553,6 +4606,14 @@ public final class MTL4Probe {
                 }
             }
 
+            // **The first GPU-timeline resolve, and it is placed where it can say something the end cannot.** The
+            // curve's entries are written by now and the area pair's are not, so a resolve that is a snapshot of
+            // the heap at its own position in the command stream reads the first five entries and zero for the
+            // rest - and a resolve that is a post-hoc dump of the whole heap reads the area entries too, which
+            // would say the range argument, or the stage, or the resolve itself is not what the header describes.
+            resolveCounterHeapOnTimeline(buffer, heap, COUNTER_HEAP_ENTRIES, timelineBuffer.gpuAddress(), 0L,
+                    entryBytes);
+
             // The area half, on the same command buffer and the same pipeline, with its own warm-up so that its
             // first measured step is the same *kind* of pass as the curve's steps are. The pair that reads is
             // `area step N` against `step N` - the same draw count, sixteen times the fragments - and a road that
@@ -4577,6 +4638,11 @@ public final class MTL4Probe {
                 END.send(buffer);
                 return failed("counters", "the residency set refused the attachment the steps draw into");
             }
+            // And the second one, at the end, over every entry: this is the region the CPU resolve below is
+            // compared against, stamp for stamp, so "the two resolve roads read the same numbers" is a measurement
+            // and not a claim.
+            resolveCounterHeapOnTimeline(buffer, heap, COUNTER_HEAP_ENTRIES,
+                    timelineBuffer.gpuAddress(), COUNTER_HEAP_ENTRIES * entryBytes, entryBytes);
             // **No marker here, and the one that used to be is what made this smoke's curve look inverted.**
             // The loop above writes one boundary per step at `step + 1`, so a four-step curve fills entries 1 to 4
             // and entry 0 is the start - five entries, which is what the heap is made with. This line used to
@@ -4637,6 +4703,43 @@ public final class MTL4Probe {
 
             // The header's own rule satisfied, so the heap can be resolved on the CPU timeline.
             long[] stamps = heap.resolveAll();
+            // **And the same heap read the other way.** The GPU-timeline resolve wrote the entries into the
+            // resolve buffer during the submission's blit stage, and the shared event above is the header's own
+            // "signal an MTLSharedEvent to notify the CPU when it's ready" - so this read is after the data is
+            // there by the API's contract and not by luck. The two regions are the mid-stream resolve (the curve's
+            // entries, taken before the area pair's markers exist) and the final one over every entry.
+            long[] timelineValues = new long[(int) COUNTER_HEAP_ENTRIES];
+            boolean timelineReadable = entryBytes == JAVA_LONG.byteSize();
+            if (timelineReadable) {
+                MemorySegment resolved = timelineBuffer.contents().reinterpret(timelineBytes);
+                int base = (int) (COUNTER_HEAP_ENTRIES * entryBytes);
+                for (int index = 0; index < timelineValues.length; index++) {
+                    timelineValues[index] = resolved.get(JAVA_LONG, base + (long) index * entryBytes);
+                }
+            }
+            long[] timelineMid = new long[(int) COUNTER_HEAP_ENTRIES];
+            if (timelineReadable) {
+                MemorySegment resolved = timelineBuffer.contents().reinterpret(timelineBytes);
+                for (int index = 0; index < timelineMid.length; index++) {
+                    timelineMid[index] = resolved.get(JAVA_LONG, (long) index * entryBytes);
+                }
+            }
+            // The comparison the whole experiment exists for, and it is stamp for stamp: the entries the CPU
+            // resolved against the entries the GPU-timeline resolve wrote, over the range both cover.
+            int timelineAgree = 0;
+            for (int index = 0; index < timelineValues.length; index++) {
+                if (timelineValues[index] == stamps[index]) {
+                    timelineAgree++;
+                }
+            }
+            // And the mid-stream region's tail: entries the command stream had not written yet when that resolve
+            // ran. A snapshot reads zero there; a post-hoc dump of the whole heap would not.
+            int midUnwritten = 0;
+            for (int index = (int) COUNTER_AREA_START; index < COUNTER_HEAP_ENTRIES; index++) {
+                if (timelineMid[index] == 0L) {
+                    midUnwritten++;
+                }
+            }
             for (int index = 0; index < COUNTER_ENCODER_START; index++) {
                 if (stamps[index] < 0L) {
                     return failed("counters", "entry " + index + " of the heap did not resolve to a timestamp ("
@@ -4743,6 +4846,19 @@ public final class MTL4Probe {
                     // reads near a fiftieth, which is why the frame table is a diagnostic and not an attribution.
                     + " markerOverDriver=" + String.format(Locale.ROOT, "%.4f",
                     commitMs <= 0.0 ? -1.0 : (cbSpanTicks / 1000.0 / 1000.0) / commitMs)
+                    // The GPU-timeline resolve, reported beside the CPU one rather than instead of it: the entry
+                    // size the device advertises, how many of the resolved stamps match the CPU resolve, whether
+                    // the mid-stream region's unwritten tail read as zero (a snapshot) or as data (a dump), and
+                    // the timeline-resolved span against the driver's window.
+                    + " timelineEntryBytes=" + entryBytes
+                    + " timelineAgrees=" + timelineAgree + "/" + timelineValues.length
+                    + " timelineMidUnwrittenZero=" + midUnwritten + "/" + (COUNTER_HEAP_ENTRIES - COUNTER_AREA_START)
+                    + " timelineSpanUs=" + String.format(Locale.ROOT, "%.1f",
+                    timelineReadable ? (timelineValues[(int) lastCommandMarker] - timelineValues[0]) / 1000.0 : -1.0)
+                    + " timelineOverDriver=" + String.format(Locale.ROOT, "%.4f",
+                    !timelineReadable || commitMs <= 0.0 ? -1.0
+                            : ((timelineValues[(int) lastCommandMarker] - timelineValues[0]) / 1000.0 / 1000.0)
+                            / commitMs)
                     + " encoderRead=" + encoderRead + "/" + COUNTER_ENCODER_ENTRIES
                     + " encoderSpanUs=" + String.format(Locale.ROOT, "%.1f", encoderSpanTicks / 1000.0)
                     + " encoderOverCb=" + String.format(Locale.ROOT, "%.2f",
@@ -4835,6 +4951,9 @@ public final class MTL4Probe {
             if (uniform != null) {
                 releaseIfPresent(uniform.handle());
             }
+            if (timelineBuffer != null) {
+                releaseIfPresent(timelineBuffer.handle());
+            }
             heap.close();
             releaseIfPresent(fixedBuffer);
             releaseIfPresent(fixedAllocator);
@@ -4926,6 +5045,28 @@ public final class MTL4Probe {
             }
         }
         return true;
+    }
+
+    /**
+     * Encodes one GPU-timeline resolve of {@code count} heap entries into a buffer at {@code offset}.
+     * <p>
+     * {@code MTL4CommandBuffer.h:177} is the whole of it: the command "converts the data within {@code counterHeap}
+     * into a common format and stores it into the {@code bufferRange} parameter", it "runs during the
+     * {@code MTLStageBlit} stage of the GPU timeline", and where the CPU is to read the buffer the app signals a
+     * shared event - which this smoke already does for the whole submission. The two structs are passed as their
+     * four integer words (see {@link #RESOLVE_COUNTER_HEAP}), the fences are nil, and the length is explicit
+     * rather than {@code (uint64_t)-1} so that a range that walked past the buffer would be a validation error
+     * rather than a silent write into whatever follows it.
+     */
+    private static void resolveCounterHeapOnTimeline(final MemorySegment commandBuffer, final MTL4CounterHeap heap,
+                                                     final long count, final long gpuAddress, final long offset,
+                                                     final long entryBytes) {
+        // The header's own note is why there is no separate offset argument: "The offset into the buffer is
+        // included in the address" (MTL4BufferRange.h:28), so the address handed over is the base plus the offset.
+        RESOLVE_COUNTER_HEAP.send(commandBuffer, heap.handle(),
+                0L, count,
+                gpuAddress + offset, count * entryBytes,
+                MemorySegment.NULL, MemorySegment.NULL);
     }
 
     /**

@@ -4921,3 +4921,61 @@ The one lead left is the road the earlier text named and this round did not try:
 the command stream instead of on the CPU timeline and is the only remaining candidate that could change where
 the sample is taken. It is not a per-pass answer on its own, and it is now the *next* counter experiment rather
 than a completed milestone.
+
+### The GPU-timeline resolve, and the counter work stopping on a measurement
+
+The counter road had one experiment left that could have changed the answer rather than restated it: the header
+declares a second way to get a heap's values out - `MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:
+waitFence:updateFence:` (`MTL4CommandBuffer.h:206`), which encodes a resolve *into the command stream* during the
+`MTLStageBlit` stage instead of reading the heap on the CPU timeline. Section 6 allowed two outcomes: either the
+resolve's timing is what the caller's readings were wrong about, or the marker positions themselves do not
+attribute render work and no resolve road can change that.
+
+**The experiment.** The counter smoke now encodes that resolve twice into the same submission, into a buffer it
+declares resident and reads on the CPU *after* the submission's completion value - the header's own condition for
+reading it ("If your app needs to access `bufferRange` from the CPU, signal an `MTLSharedEvent` to notify the CPU
+when it's ready", `MTL4CommandBuffer.h:195`). The first resolve is mid-stream, placed after the curve's steps and
+before the area pair's warm-up, so the entries the command stream had not written yet are the reading that says
+whether the resolve is a snapshot at its own position or a dump of the whole heap. The second is at the end, over
+every entry, and is compared **stamp for stamp** with the same heap's CPU resolve. The entry size is asked rather
+than assumed (`sizeOfCounterHeapEntry:`), and the selector's two by-value structs - `NSRange` and
+`MTL4BufferRange`, two `uint64_t`s each - are declared as their four integer words in ABI order, because that is
+the order arm64 passes them in and a reordering would have the driver read a length where an address belongs.
+
+**The result, ten probes (`run/m4-counters/timeline-probes.txt`, all `gpuTime=true`).**
+
+```text
+probe  entry bytes   timeline vs CPU resolve   mid-stream unwritten tail   timeline span   CPU-resolved span   span/driver
+1          8                14/14                       5/9                    481.4 us          481.4 us          0.0229
+2          8                14/14                       5/9                    487.3 us          487.3 us          0.0231
+3          8                14/14                       5/9                    482.4 us          482.4 us          0.0230
+4          8                14/14                       5/9                    500.9 us          500.9 us          0.0231
+5          8                14/14                       5/9                    479.7 us          479.7 us          0.0228
+6          8                14/14                       5/9                    480.9 us          480.9 us          0.0230
+warm       8                14/14                       5/9                    476.9 us          476.9 us          0.0229
+warm       8                14/14                       5/9                    352.9 us          352.9 us          0.0228
+warm       8                14/14                       5/9                    372.5 us          372.5 us          0.0224
+warm       8                14/14                       5/9                    347.9 us          347.9 us          0.0227
+```
+
+The road is real: the device advertises an **8-byte** resolved entry, and the mid-stream resolve reads **5 of the
+9 entries that did not exist yet as zero** - the area pair's three command-buffer markers and its two encoder
+markers - while the four encoder markers the curve had already written read values. So the command executes at its
+own position and the range is honoured. And it reads **the same stamps as the CPU resolve, all fourteen, in every
+one of the ten probes**, with the span equal to the decimicrosecond and the ratio to four decimals. That is the
+first of section 6's two outcomes, measured: what a resolve road changes is how the values travel, not what the
+driver put in them.
+
+**The counter work stops here, and the reason is a measurement rather than a budget.** Blocker 15 is closed as an
+instrumentation limit: heap creation, both resolve roads and the unit are PROVEN, the two resolve roads agree to
+the byte, and markers as pass execution points are REFUTED on both. Per-pass GPU attribution is **UNAVAILABLE**,
+so section 95's candidates - argument-table write dedup, residency batching, barrier narrowing, encoder reuse,
+allocator sizing - are ranked by whole-frame controlled A/B, CPU and native operation counts and section 70's
+structural counters, which is what every milestone of this migration has used anyway. Per section 4 this is an
+INSTRUMENTATION blocker: it does not block Metal 4 correctness, lifecycle or AUTO, whose blockers are the
+frame-time distribution and the intermittent capability probe.
+
+Fifteen contract pins now hold the whole counter apparatus across its two rounds - the two marker forms, the
+options commit that carries the driver's window, the completion wait, the fixed-cost control, the two workloads'
+own readbacks, the area knob, the timeline selector and its ABI words, the entry size, and the three timeline
+fields - and each is mutation-proved: removing any one of them turns `ci-metal4-cold-probe.py` red.

@@ -243,6 +243,29 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * The heap, the two structs the selector takes by value, and the two fences.
+     * <p>
+     * {@code MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:} is
+     * {@code (id<MTL4CounterHeap>)heap, (NSRange)range, (MTL4BufferRange)bufferRange, (id<MTLFence>)wait,
+     * (id<MTLFence>)update}, and both structs are two {@code uint64_t}s - {@code NSRange} is
+     * {@code {NSUInteger location, NSUInteger length}} ({@code Foundation/NSRange.h}) and
+     * {@code MTL4BufferRange} is {@code {MTLGPUAddress bufferAddress, uint64_t length}}
+     * ({@code MTL4BufferRange.h:33}). On this platform each of those is passed in **two integer registers, in
+     * order**, so the four words are declared here as four integers rather than as two group layouts: the
+     * register assignment is then the ABI's own and does not depend on how this linker classifies a small
+     * struct. A caller that got the order wrong would have the driver read a length where an address belongs,
+     * which is why the order is written out at the declaration instead of at the call site.
+     */
+    public void send(MemorySegment self, MemorySegment a, long b, long c, long d, long e,
+                     MemorySegment f, MemorySegment g) {
+        try {
+            handle.invokeExact(self, sel, a, b, c, d, e, f, g);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, MemorySegment a, long b, long c, long d, MemorySegment e, MemorySegment f, long g, long h, MemorySegment i) {
         try {
             handle.invokeExact(self, sel, a, b, c, d, e, f, g, h, i);
