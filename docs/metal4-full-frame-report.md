@@ -1835,7 +1835,12 @@ both would arrive with a caller and be implemented then, per the rule.
   count is scene-shaped rather than a constant of the path (`run/ticks-nopack` reads the same 4/6 and 10/12
   where `run/drift-nopack` read 7/13 and 5) and the two mechanisms are what generalise, so
   **the last NOT LOCALISED term of the drift is localised** - and the analyser names each kind from the trace,
-  with a contract in `tools/ci-vitrail-performance.py` that fails when the naming is removed.
+  with a contract in `tools/ci-vitrail-performance.py` that fails when the naming is removed. **The same
+  account closes the rung that was measured**: `run/ticks-nopack`'s arms carry the particle pair on 276, 324 and
+  204 of their 600 frames, which predicts a pass-count difference of +96 and -144 between them where the probes
+  read **+96 and -140** (`renderPasses` 3850/3946/3710, `depthAttachments` 5950/6046/5810 - the -140 being the
+  -144 less the two passes the window's boundary frames fall outside the trace's deltas by), and its `loadedMiB`
+  differences are that term at the 89.9 MiB a particle frame is priced at, within a few per cent.
 - **What the per-frame pass count is a function of is wall time, and the probe now reports the half a window
   cannot hold still for.** `run/drift-nopack` shows the cadence: **7 passes in the steady state and 13 on one
   frame every 49.6-50.0 ms** - the client's 20 Hz tick, measured in wall time and not in frames

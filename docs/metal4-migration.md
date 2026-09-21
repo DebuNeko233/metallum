@@ -5616,6 +5616,16 @@ stretch, which no reported field covers. The base count is scene-shaped rather t
 (the same harness's `run/drift-nopack` frames read 7 and 13 and 5 where this session reads 4 and 6 and 12 and
 10, one more pass a frame in the scene that session drew); the two mechanisms are what generalise.
 
+**And the same account closes the rung that was measured.** `run/ticks-nopack` - the no-pack session whose
+guards all pass - has its arms' kinds in the per-frame trace even though the per-pass trace was off there:
+**276, 324 and 204** of its 600 frames carry the particle pair, and its tick frames are 150 in all three. That
+one term predicts a pass-count difference of **+96** between the first two arms and **-144** between the first
+and the third, and the probes read **+96 and -140** (`renderPasses` 3850, 3946, 3710; `depthAttachments` 5950,
+6046, 5810) - the -140 being the -144 plus the two passes by which the window's boundary frames fall outside the
+trace's own deltas - with `loadedMiB` +4218.7 and -6152.4 MiB against the 89.9 MiB a particle frame is priced at
+in the measured window, within a few per cent. So what the rung's content guard compared was this term plus its
+tick count, and both are now measured.
+
 **And the second term has a measured remedy.** `--vanilla-particles` stages the showcase fixture - a tick
 function that emits the game's own particles around the camera - and with it `run/particles-nopack`'s two
 windows hold **only two kinds, 6 passes on 451 and 450 frames and 12 on 149 and 150**, so the particle passes
