@@ -265,9 +265,20 @@ for needle, why in (
      "holds no entities of its own, so nothing a mob draws can be in a frame"),
     ("for fixture in showcase mobshow; do", "only one fixture is checked against the game having loaded it, so "
      "the other can stage and emit nothing and read as a scene that has it"),
-    ('grep -q "showcase: placed the pig"', "an arm that staged the entity fixture is not checked against the game "
-     "having placed anything, which is how a fixture that loads and does nothing reads as a scene with entities - "
-     "measured, one arm of run/vanilla-mobs had the summons and the arm beside it did not"),
+    ('grep -c "showcase: placed the $entity" "$run_dir/latest.log"',
+     "an arm that staged the entity fixture is not counted for what it placed, so a scene with no entities - or "
+     "with a number of them that grows with the window - reads as the scene the other arms have. Measured, one "
+     "arm of run/vanilla-mobs placed nothing and the fixture's first version placed the pig and the cow every "
+     "four to five seconds"),
+    (': > "$out_dir/entity-counts.txt"', "the placement record is not emptied between sessions, so counts from "
+     "an earlier session would be compared with this one's"),
+    ('>> "$out_dir/entity-counts.txt"', "an arm's placements are not written to the record, so the arms cannot be "
+     "compared with each other"),
+    ('if [[ "$placed" == 0 ]]; then', "an arm that placed none of an entity is not refused, so a scene with no "
+     "entities in it reads as one that has them"),
+    ("if ! python3 - \"$out_dir/entity-counts.txt\"", "the arms' entity placements are never compared, and what "
+     "a comparison needs is that the arms are one scene: measured, each type is placed twice in every arm, a "
+     "number the fixture does not control, so the check is equality between the arms and not a constant"),
     ('cp -R "$repo_root/tools/fixtures/vanilla-showcase" "$saves_dir/$world_name/datapacks/showcase"',
      "the particle fixture is not copied from the repository, so the scene would live in an unversioned save"),
     ('cp -R "$repo_root/tools/fixtures/vanilla-mobs" "$saves_dir/$world_name/datapacks/mobshow"',
@@ -309,6 +320,11 @@ if "NoAI:1b" not in mob_tick:
 # The proof has to come *before* the summon it proves: both are guarded by `unless entity`, and the summon is
 # what makes that guard false, so a `say` behind it can never fire. Measured, the first version of this proof
 # printed nothing in any arm while the entities were placed.
+for tag in ("NoAI:1b", "NoGravity:1b", "Invulnerable:1b", "PersistenceRequired:1b"):
+    if mob_tick.count(tag) < 2:
+        raise SystemExit(f"vitrail performance harness: the entity fixture does not put {tag} on both its mobs, "
+                         f"and each of those tags is one of the ways a placement stops being one - Invulnerable "
+                         f"is the one whose absence was measured as a mob re-placed every four to five seconds")
 for kind in ("pig", "cow", "armor_stand", "item", "experience_orb"):
     said = mob_tick.find(f"run say showcase: placed the {kind}")
     placed = mob_tick.find(f"run summon minecraft:{kind}")

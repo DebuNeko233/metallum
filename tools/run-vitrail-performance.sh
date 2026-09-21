@@ -483,6 +483,7 @@ stop_run() {
 }
 
 : > "$out_dir/order.txt"
+: > "$out_dir/entity-counts.txt"
 # What the *GPU* was doing for the whole session, which no host-side reading can answer: the accelerator's
 # own utilization and the process whose submission the driver handled last. Session run/m4-ab7 is why it is
 # here - all four of its arms read device util 100%, so the comparison is GPU-bound in both generations and
@@ -684,9 +685,15 @@ for run in "${runs[@]}"; do
 			echo "Run '$name' staged the $fixture fixture and the game refused a function in it, so this arm's scene does not have it" >&2
 			run_failed=1
 		fi
-		if [[ "$fixture" == mobshow ]] && ! grep -q "showcase: placed the pig" "$run_dir/latest.log"; then
-			echo "Run '$name' staged the entity fixture, loaded it, and the game never said it placed an entity - so this arm's scene has none in it" >&2
-			run_failed=1
+		if [[ "$fixture" == mobshow ]]; then
+			for entity in pig cow armor_stand item experience_orb; do
+				placed="$(grep -c "showcase: placed the $entity" "$run_dir/latest.log" || true)"
+				if [[ "$placed" == 0 ]]; then
+					echo "Run '$name' staged the entity fixture, loaded it, and the game never said it placed the $entity - so this arm's scene has none in it" >&2
+					run_failed=1
+				fi
+				printf '%s %s %s\n' "$name" "$entity" "$placed" >> "$out_dir/entity-counts.txt"
+			done
 		fi
 	done
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
@@ -787,6 +794,30 @@ for run in "${runs[@]}"; do
 done
 kill "$gpu_tracer" 2>/dev/null || true
 wait "$gpu_tracer" 2>/dev/null || true
+
+# The entity fixture's arms have to have placed the same entities. Measured: each type is placed twice in every
+# arm - a number the fixture does not control - so the check is equality between the arms and not a constant,
+# and an arm that placed a different number of the same entity is not the scene the others are.
+if [[ "$vanilla_mobs" == true ]]; then
+	if ! python3 - "$out_dir/entity-counts.txt" <<'COUNTS'
+import sys
+
+counts = {}
+for line in open(sys.argv[1]):
+    arm, entity, placed = line.split()
+    counts.setdefault(entity, {})[arm] = int(placed)
+differing = {entity: arms for entity, arms in counts.items() if len(set(arms.values())) > 1}
+if differing:
+    said = "; ".join(f"{entity}: " + ", ".join(f"{arm}={n}" for arm, n in sorted(arms.items()))
+                     for entity, arms in sorted(differing.items()))
+    print("the entity fixture did not place the same entities in every arm, so the arms of this session are not "
+          "one scene: " + said, file=sys.stderr)
+    sys.exit(1)
+COUNTS
+	then
+		run_failed=1
+	fi
+fi
 
 if [[ "$keep" == false ]]; then
 	rm -f "$marker"
