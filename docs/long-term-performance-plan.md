@@ -3,7 +3,9 @@
 This repository is now worked to the long-term plan whose text is the goal it was handed: **Metal 4 is frozen as
 an experimental backend, and the engineering moves to Metal 3, Vitrail's CPU and GPU, the Vitrail-to-Metallum
 boundary, MetalFX and startup latency.** This file records the policy, the tracks and where each one stands, so
-the next session reads one page instead of re-deriving it.
+the next session reads one page instead of re-deriving it. **`docs/long-term-performance-summary.md` is the
+result**: each track's decision with the number that decided it, the success criteria audited, and the two things
+left open.
 
 ## Metal 4 is frozen, not deleted
 
