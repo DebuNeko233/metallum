@@ -5277,9 +5277,11 @@ its measured 4100, `m4t2` 572*7 + 28*13 = 4368 against 4368, `m4t3` 562*7 + 7*5 
 4370. The tick term is therefore worth about **+4%** of a window (27.9-30.7 tick frames in this session) and the
 134-frame stretch at 5 passes about **-6%**: both are of the same order, neither is the whole story, and a
 least-squares fit of the two coefficients over three arms whose tick counts span 10% is ill-conditioned and
-returns nonsense, so it is not fitted. **The mechanism stays NOT LOCALISED**; what is established is the
-cadence (50 ms) and that Metal 3's constant frame rate is why its counters do not move at all (its three arms
-read `depthAttachments` 1800 and `loadedMiB` 26836.1 / 26900.0 / 26900.0 exactly).
+returns nonsense, so it is not fitted. **At this point in the record the mechanism was NOT LOCALISED**; what is
+established here is the cadence (50 ms) and that Metal 3's constant frame rate is why its counters do not move at
+all (its three arms read `depthAttachments` 1800 and `loadedMiB` 26836.1 / 26900.0 / 26900.0 exactly). Two later
+sections localise it: the tick frames are the client's own per-tick passes and a reduced stretch is a run of
+frames whose two particle passes were never opened.
 
 **The remedy is a window definition, not a Metal4 change** - but which normalisation is right is not obvious,
 and one of them has already been refuted (below): content per second makes the *reference* drift. What the
@@ -5573,5 +5575,63 @@ the drift is the mix of two frame kinds: the frames that coincide with a 20 Hz c
 in a window) and the reduced stretches (-2 each, 134 frames in one arm and almost none in another). The instrument
 that says so is `tools/metal4-pacing-analysis.py`, whose pin is mutation-proved like the rest.
 
-What a *reduced* stretch is remains NOT LOCALISED; that the drift is those two kinds is measured, which is the
-difference between an unexplained number and an attributed one.
+What a *reduced* stretch is was the last NOT LOCALISED term of this drift, and the next section names it.
+
+### What the two kinds are, named
+
+A count says a window is a mixture; it does not say of what, and a kind that is only a number cannot be acted
+on. `run/reduced-nopack` is the same no-pack scene with **both** the per-frame trace and the per-pass trace on
+(`-Dmetallum.metal4FrameTrace=true -Dmetallum.metal4Trace=true`), so every pass writes its own
+`end pass 'LABEL'` line before the frame's own line, and `tools/metal4-pacing-analysis.py` prints each kind as
+the set it is. Two M4 arms, 600-frame windows, and **every frame of both windows is exactly one of four
+shapes**:
+
+```text
+ 4 passes   Terrain, Terrain, Blit render target, GUI before blur
+ 6 passes   the four above + Particles - Solid + Particles - Translucent
+10 passes   the four above + Animate minecraft:textures/atlas/blocks.png x5 + Update light
+12 passes   the six above + the same five animation passes and the lightmap pass
+```
+
+So both terms are **localised**, and they are not the same kind of thing:
+
+- **The tick term is the client's own per-tick work**: five block-atlas animation passes
+  (`Animate minecraft:textures/atlas/blocks.png` five times) and one lightmap pass (`Update light`) and nothing
+  else. It is worth +6 passes on exactly the frames that coincide with the client's 20 Hz tick - measured, 150 of
+  each arm's 600 frames carry them, spaced **4.00 frames** (m4a) and 4.00 with one five-frame gap (m4b), which at
+  12.5 ms a frame is the 50 ms tick.
+- **The reduced term is the two particle passes, absent together.** `Particles - Solid` and
+  `Particles - Translucent` are opened only when their render type has work, so a frame with no particle work
+  opens neither. They come and go in **runs of tens to hundreds of frames** - three to six runs a window, the
+  longest 292 frames, the shortest 36 - so what moves between arms is the *fraction* of a fixed-frame window
+  that carries them and not the content of a frame. In these two arms of one session that fraction was 349 of
+  600 against 305 of 600, and the counters follow it to the pass: both particle passes are `depth=true` and
+  `load=load`, so a 44-frame swing predicts **88** more depth attachments and the arms measured **90**
+  (`depthAttachments` 6100 against 6010, `renderPasses` 4000 against 3910, `loadedMiB` +2.9%).
+
+**So the traced sessions' content drift is attributed**: the per-frame content is identical on every arm, and
+the whole of the difference between two windows is (i) how many 20 Hz ticks it covers - which is why the probe
+now reports `windowTicks` and `framesPerTick` - and (ii) how much of it falls inside a particle-carrying
+stretch, which no reported field covers. The base count is scene-shaped rather than a constant of the path
+(the same harness's `run/drift-nopack` frames read 7 and 13 and 5 where this session reads 4 and 6 and 12 and
+10, one more pass a frame in the scene that session drew); the two mechanisms are what generalise.
+
+**And the second term has a measured remedy.** `--vanilla-particles` stages the showcase fixture - a tick
+function that emits the game's own particles around the camera - and with it `run/particles-nopack`'s two
+windows hold **only two kinds, 6 passes on 451 and 450 frames and 12 on 149 and 150**, so the particle passes
+are opened on every frame and what a window holds is its tick count alone: those two arms' content counters then
+read **identical to the digit** (`loadedMiB 161400.1`, `storedMiB 280052.5`, `depthAttachments 6600`,
+`pipelineIdentities 99` in both), where the same scene without the fixture drifts 2.9% in `loadedMiB` - and the
+one difference left is the tick count itself, 150 against 149, which the probe reports as `windowTicks`. That is
+a *new rung configuration* and not a correction to the older numbers: the fixture's particles are real work (the
+same window's own commit interval reads 4.26 ms against 2.71 without it), so a comparison staged with it is
+content-comparable to another staged with it and not to the rungs measured before it.
+
+**`run/perf93-nopack`'s larger drift stays NOT LOCALISED, with the two mechanisms bounded against it.** That
+session predates the per-frame trace: its M4 arms' `depthAttachments` read 5664, 6176 and 6600 - a swing of
+**1.56 a frame**, where the particle pair is worth at most 2 a frame, so 1.56 would need 78% of the window to
+change hands. Its arms' windows also cover different wall durations (7496, 7484 and 4673 ms for the same 600
+frames), and a presence that alternates in *wall time* is sampled differently by windows of different frame
+rates - so the leading candidate, stated as a **HYPOTHESIS** and not as a measurement, is that the same two
+kinds account for that drift through the sampling. What is measured is that the traced sessions' drift is these
+two kinds, and that the particle term moves their counters to the pass.
