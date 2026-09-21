@@ -343,6 +343,19 @@ require("native call census", probe, (
     "censusCalls = 0;",
 ))
 require("native call census's shadow clear", probe, ("clearBindingShadow();",))
+# The pass-size census, which is C1's split and C3's question: a frame at 55 per cent draws most of its passes
+# into the scaled world target and some - the interface, a shadow map, a post pass - into the window's own, and
+# the only place that knows which is the pass's own render area at construction. Pinned with the road that
+# reaches it, because a counter nothing calls reads zero and zero looks like a scene with no full-size passes.
+require("pass size census", probe, (
+    "public static void passTarget(final int width, final int height) {",
+    "passFullSize={} passSmaller={} passSizes={}",
+    "passSizes.merge(((long) width << 32) | (height & 0xFFFFFFFFL), 1L, Long::sum);",
+    "passSizes.clear();",
+))
+require("pass size census is reached from the pass", render_pass, (
+    "MetalFrameProbe.passTarget(width, height);",
+))
 if probe.index("clearBindingShadow();") < probe.index("public static void renderEncoderRecreated("):
     raise SystemExit(
         "native call census: the binding shadow is not cleared where a native encoder is made, so the first "
@@ -518,7 +531,7 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 58:
+if len(guarded) != 59:
     raise SystemExit(
         "frame probe: expected 38 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
@@ -538,7 +551,8 @@ if len(guarded) != 58:
         "state, the depth-stencil state, the cull mode, the fill mode, the winding order, the depth bias, the "
         "viewport, the scissor, three draw forms - primitives, indexed and indirect - and the two fence "
         "operations - and one for the indirect-draw loop, which is the only road the census prices rather "
-        "than counts), found "
+        "than counts - and one for a pass's own target size, which is C1's split between the "
+        "passes that follow a scaled world and the ones still at the window's size), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

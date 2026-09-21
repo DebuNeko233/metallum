@@ -182,6 +182,10 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         }
         this.targetWidth = width;
         this.targetHeight = height;
+        // What this pass draws into, counted by size: the plan's C1 wants a frame's passes split between the
+        // ones that follow a scaled world and the ones still at the window's own size, and this is the only
+        // place that knows the target rather than an attachment of it.
+        MetalFrameProbe.passTarget(width, height);
     }
 
     @Override

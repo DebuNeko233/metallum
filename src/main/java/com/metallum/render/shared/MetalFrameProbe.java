@@ -409,6 +409,19 @@ public final class MetalFrameProbe {
     private static long censusFenceUpdates;
     private static long censusFenceWaits;
     /**
+     * Render passes by the size of the target they draw into, against the largest target the window used.
+     * <p>
+     * The plan's C1 asks which of a frame's passes are full-resolution and which follow a scaled world, and
+     * nothing counted it: a frame at 55 per cent draws most of its passes at 1056x660 and some - the interface,
+     * a shadow map, a post pass - at the window's own size, and the split is what C3's audit needs. The largest
+     * target in the window is taken as the window's own size, because at 100 per cent every pass is at it and a
+     * session that never scales has one bucket.
+     */
+    private static long passLargestWidth;
+    private static long passLargestHeight;
+    /** Keyed by `width << 32 | height`, because a size is a pair and an area can be factored twice. */
+    private static final java.util.LinkedHashMap<Long, Long> passSizes = new java.util.LinkedHashMap<>();
+    /**
      * The indirect-draw loops: how many the frame ran, how many commands they carried, and what the loop itself
      * cost the CPU.
      * <p>
@@ -606,6 +619,25 @@ public final class MetalFrameProbe {
     }
 
     /** One native render-pass descriptor created, which is one render encoder being opened. */
+    /**
+     * One render pass, with the size of the target it draws into.
+     * <p>
+     * Read from the pass's own render area at construction, which is the size the encoder is given rather than
+     * the size of any one attachment - a pass can draw into a view of a larger texture, and what the plan asks
+     * about is the target it covers.
+     */
+    public static void passTarget(final int width, final int height) {
+        if (!armed()) {
+            return;
+        }
+
+        if ((long) width * height > passLargestWidth * passLargestHeight) {
+            passLargestWidth = width;
+            passLargestHeight = height;
+        }
+        passSizes.merge(((long) width << 32) | (height & 0xFFFFFFFFL), 1L, Long::sum);
+    }
+
     public static void passDescriptorCreated() {
         if (!armed()) {
             return;
@@ -1547,6 +1579,36 @@ public final class MetalFrameProbe {
      * and turns the probe off, so an armed session stops by itself; only a marker that goes away and
      * comes back opens another window.
      */
+    /** Passes whose target is the largest one this window used, which is the window's own size. */
+    private static long fullSizePasses() {
+        return passSizes.getOrDefault((passLargestWidth << 32) | (passLargestHeight & 0xFFFFFFFFL), 0L);
+    }
+
+    private static long passesTotal() {
+        long total = 0L;
+        for (long count : passSizes.values()) {
+            total += count;
+        }
+        return total;
+    }
+
+    /** The sizes a window drew into, largest first, as `WxH:count` - said rather than summarised. */
+    private static String passSizeBreakdown() {
+        if (passSizes.isEmpty()) {
+            return "none";
+        }
+        java.util.List<java.util.Map.Entry<Long, Long>> entries = new java.util.ArrayList<>(passSizes.entrySet());
+        entries.sort((left, right) -> Long.compare(right.getKey(), left.getKey()));
+        StringBuilder out = new StringBuilder();
+        for (java.util.Map.Entry<Long, Long> entry : entries) {
+            long width = entry.getKey() >>> 32;
+            long height = entry.getKey() & 0xFFFFFFFFL;
+            out.append(out.length() == 0 ? "" : ",").append(width).append('x').append(height)
+                    .append(':').append(entry.getValue());
+        }
+        return out.toString();
+    }
+
     /** One clear the frame recorded instead of encoding, because the next pass may carry it. */
     public static void clearDeferred() {
         if (!armed()) {
@@ -1597,7 +1659,8 @@ public final class MetalFrameProbe {
                         + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
                         + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={} "
-                        + "windowTicks={} framesPerTick={} frameCpuMs={} allocKiB={}",
+                        + "windowTicks={} framesPerTick={} frameCpuMs={} allocKiB={} "
+                        + "passFullSize={} passSmaller={} passSizes={}",
                 frames,
                 BUDGET,
                 windowFrames,
@@ -1649,7 +1712,10 @@ public final class MetalFrameProbe {
                 String.format(Locale.ROOT, "%.2f",
                         windowFrames / (double) Math.max(1L, ticks - windowStartedAtTick)),
                 String.format(Locale.ROOT, "%.2f", windowCpuNanos / 1_000_000.0),
-                String.format(Locale.ROOT, "%.1f", windowAllocatedBytes / 1024.0)
+                String.format(Locale.ROOT, "%.1f", windowAllocatedBytes / 1024.0),
+                fullSizePasses(),
+                passSizes.size() == 0 ? 0L : passesTotal() - fullSizePasses(),
+                passSizeBreakdown()
         );
         if (argBufferPasses > 0 || argBufferAllocations > 0 || argBufferSetCalls > 0
                 || texelViews > 0 || passDescriptors > 0) {
@@ -1944,6 +2010,9 @@ public final class MetalFrameProbe {
         censusDrawsIndirect = 0;
         censusFenceUpdates = 0;
         censusFenceWaits = 0;
+        passLargestWidth = 0L;
+        passLargestHeight = 0L;
+        passSizes.clear();
         censusIndirectLoops = 0;
         censusIndirectCommands = 0;
         censusIndirectNanos = 0L;

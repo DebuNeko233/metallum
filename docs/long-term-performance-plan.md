@@ -26,7 +26,11 @@ Track A  Metal 3 performance          A1 census DONE (docs/metal3-performance-ro
 Track B  Vitrail CPU / runtime        B1 DONE (docs/vitrail-cpu-performance.md): the frame is 13-17 % CPU
                                       and allocates 71-183 KiB a frame; JFR rejected by measurement; the
                                       per-road allocation attribution is the live question
-Track C  Vitrail GPU / shader work    C1-C7 not started
+Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitrail-gpu-performance.md): the
+                                      frame's GPU work is the terrain's indirect draws and attachment traffic;
+                                      at 55 % exactly one pass a frame stays at the window's size (the
+                                      interface), so C3's "heavy pass left full-res" is REJECTED for that
+                                      pack; C2/C4-C7 not started
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
                                       with the binding census it closes the CPU micro-optimisation round
