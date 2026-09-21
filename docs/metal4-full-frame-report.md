@@ -618,12 +618,29 @@ M4 result:            PROVEN ON THE DEVICE AND IN A LIVE FRAME - `MTL4Compiler` 
                       program set matches at 333 identities and 712 compiles, which is section 70's
                       comparison; the arms' *pictures* differ and are not read as a verdict, because two
                       launches of a pack with history and clouds are what section 116 says not to compare
-                      that way. **Output orientation is NOT MEASURED for the scaler** - no fixture with an
-                      asymmetric pattern has been scaled - and no fence is set on this generation's path,
+                      that way. **Output orientation is NOT MEASURED for the scaler in a live frame** - no
+                      asymmetric fixture has been scaled through the frame path, though the device smoke proves
+                      the scaler's own orientation on a fixed pattern, 40 of 40 - and no fence is set on this
+                      generation's path,
                       which is a fact about Metal 4 rather than a choice: there is no fence object in this
                       engine's Metal 4 model at all, so what orders the scaler is the one command buffer's
                       encode order and the all-stages barrier every pass already ends with. What tests that
                       is the render-scale frame above, and it does not test it adversarially
+resize rebuild:       **PROVEN in a live frame, and it needed one line to be readable.** Section 124 asks that a
+                      scaler be cached per configuration and that a resize rebuild rather than reuse, and
+                      section 81 asks for the identity that separates two configurations; all three had a code
+                      path and no reading, because this path logged a refusal and never a creation - so "the
+                      identity separated them" and "an old scaler was silently reused for a new size" looked
+                      identical in a session's log. A scaler is made on a cache miss and a miss means the
+                      configuration changed, so one line per creation is the evidence these claims can have.
+                      MEASURED at renderscale=55 with a mid-session resize on this path:
+                      `made a scaler for 1408x792 to 2560x1440 ..., 1 in the cache` and then
+                      `made a scaler for 1760x990 to 3200x1800 ..., 2 in the cache`. The resize took the pack's
+                      scaled input from 1408x792 to 1760x990 and the output from 2560x1440 to 3200x1800, the
+                      cache went from one entry to two, the presented extent followed (2560x1440 for 1591
+                      frames, 3200x1800 for 2047), Vitrail's own `The 55% render scale brings the picture back
+                      with MetalFX` line appeared, no scaler was refused, and a dimension change to `world-1`
+                      ran in the same session with a clean quit
 performance:          NOT STARTED for either generation's scaler: the two arms' frames were paced by the
                       display in this pair, and section 84's 1920x1200 fixed target has not been run
 ```
