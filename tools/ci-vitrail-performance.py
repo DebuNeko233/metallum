@@ -793,6 +793,11 @@ for needle, why in (
 ):
     if needle not in comparer:
         raise SystemExit("Vitrail performance harness contract: " + why)
+PACING = ROOT / "tools/metal4-pacing-analysis.py"
+if "pass-count decomposition:" not in PACING.read_text(encoding="utf-8"):
+    raise SystemExit("Vitrail performance harness contract: the pacing analyser no longer names each arm's frame "
+                     "kinds, so a content difference can no longer be attributed to the tick frames and the "
+                     "reduced stretches instead of being left unexplained")
 PROBE_SOURCE = ROOT / "src/main/java/com/metallum/render/shared/MetalFrameProbe.java"
 if "windowTicks={} framesPerTick={}" not in PROBE_SOURCE.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the probe no longer reports the tick sampling the "

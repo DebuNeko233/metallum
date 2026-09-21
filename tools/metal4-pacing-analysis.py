@@ -188,6 +188,30 @@ def main():
             print(f"  population {label}: frames={figures['n']} wallMeanMs={figures['wallMean']:.2f}"
                   f" wallP50Ms={figures['wallP50']:.2f} drawableMeanMs={figures['drawableMean']:.2f}"
                   f" commitMeanMs={figures['commitMean']:.2f} drawsMean={figures['drawsMean']:.1f}")
+        # **The content decomposition, from the trace and not from a fit.** A frame's pass count is not the
+        # same on every frame: measured on the no-pack scene it is 7 in the steady state, 13 on the frame that
+        # coincides with a 20 Hz client tick and 5 in a stretch, so a window's total is `7*steady + 13*tick +
+        # 5*reduced` and two arms whose frame rates differ hold different numbers of each. The trace names the
+        # kind of every frame, so the coefficients are counted here rather than fitted - which is what the
+        # earlier attempt could not do over three arms whose tick counts spanned only 10%.
+        kinds = {}
+        for frame in window:
+            kinds.setdefault(frame["passes"], []).append(frame)
+        ordered = sorted(kinds.items(), key=lambda pair: -len(pair[1]))
+        if len(ordered) >= 2:
+            steady_value, steady_frames = ordered[0]
+            line = " ".join(f"passes={value}:{len(group)}"
+                            for value, group in sorted(kinds.items(), key=lambda pair: pair[0]))
+            print(f"  pass-count decomposition: {line}"
+                  f"  (modal {steady_value} on {len(steady_frames)} frames,"
+                  f" mean {statistics.fmean([frame['passes'] for frame in window]):.2f},"
+                  f" total {sum(frame['passes'] for frame in window)})")
+            for value, group in sorted(kinds.items(), key=lambda pair: pair[0]):
+                if value == steady_value:
+                    continue
+                extra = value - steady_value
+                print(f"    frames at {value} passes: {len(group)}"
+                      f"  ({extra:+d} against the modal, worth {extra * len(group):+d} passes in this window)")
         buckets = histogram(walls, args.histogram_bucket_us)
         top = sorted(buckets.items())[:16]
         span = args.histogram_bucket_us / 1000.0

@@ -5553,3 +5553,25 @@ that took the alpha off it: **the generations agree about it to the byte**, whic
 
 What is left in the correctness residuals is one item that is not a generation difference either: no pack's
 *biased* geometry has been exercised, because `depthBias=0` in every window measured.
+
+### The content drift, counted instead of fitted
+
+The drift's decomposition said a no-pack window's content is `7*steady + 13*tick + 5*reduced`, and the earlier
+attempt to separate the coefficients failed because a least-squares fit over three arms whose tick counts spanned
+10% is ill-conditioned. The per-frame trace has since been taught to name each arm's frame kinds, so the
+coefficients are *counted*:
+
+```text
+arm    5 passes   7 passes   11 passes   13 passes   predicted   measured
+m4t1     134         436          6          24         4100       4100
+m4t2       0         572          0          28         4368       4368
+m4t3       7         562          1          30         4370       4370
+```
+
+So the **per-frame content is the same on all three arms - the modal frame is 7 render passes** - and the whole of
+the drift is the mix of two frame kinds: the frames that coincide with a 20 Hz client tick (+6 passes each, 24-30
+in a window) and the reduced stretches (-2 each, 134 frames in one arm and almost none in another). The instrument
+that says so is `tools/metal4-pacing-analysis.py`, whose pin is mutation-proved like the rest.
+
+What a *reduced* stretch is remains NOT LOCALISED; that the drift is those two kinds is measured, which is the
+difference between an unexplained number and an attributed one.
