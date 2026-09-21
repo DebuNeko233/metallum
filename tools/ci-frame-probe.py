@@ -436,9 +436,9 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 36:
+if len(guarded) != 38:
     raise SystemExit(
-        "frame probe: expected 35 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
+        "frame probe: expected 38 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
         "kinds, pipeline creation, the pipeline census, the drawable wait, the submit-window wait, and the "
         "fourteen the Metal 3 backend-cost census added: twelve for the argument-buffer path - a pass, a layout, an "
@@ -448,7 +448,8 @@ if len(guarded) != 36:
         "a window's content can be normalised by; "
         "the reuse taken and one for the recreation with its causes - one for section 58's depth bias, which is "
         "the only counter that says whether a real pipeline reaches the road the artifact had carried and nothing "
-        "ever sent, and one for the client tick), found "
+        "ever sent, and one for the client tick, and two for the clear-folding census - one for a clear the "
+        "frame deferred and one for a deferred clear a pass carried as its own load action), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

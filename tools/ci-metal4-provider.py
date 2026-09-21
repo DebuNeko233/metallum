@@ -203,7 +203,7 @@ for needle, why in (
      "the encoder does not accept the attachment-contents statement the pack side makes before every pass"),
     ("this.nextPassContents = contents == null ? null : contents.clone();",
      "the statement is kept by reference, so a caller that reuses its arrays would rewrite a pass's answers"),
-    ("Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents);",
+    ("Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents,",
      "the pass is still created without the facts stated for it, so the descriptor's load and store actions "
      "ignore what the pack side knows"),
 ):
@@ -308,9 +308,9 @@ for needle, why in (
      "the pass no longer describes one colour slot per attachment the descriptor has, so an unused slot would "
      "be compacted away and every attachment after it would sit at another slot's number - measured on "
      "Vitrail's MRT fixture, whose unused slots come before the attachment that is written"),
-    ("final @Nullable AttachmentContents[] contents) {",
-     "the pass constructor no longer takes what the frame path stated for it, so nothing can reach the "
-     "descriptor's load and store actions"),
+    ("final float @Nullable [][] foldedColourClears, final @Nullable Double foldedDepthClear) {",
+     "the pass constructor no longer takes what the frame path stated for it - the contents of each slot and"
+     " the clears the frame deferred - so nothing can reach the descriptor's load and store actions"),
     ("AttachmentContents[] stated = AttachmentContents.resolve(contents, attachments.size());",
      "the pass does not default the statement per slot, so a caller that said nothing about a slot is not "
      "answered with the answer that changes nothing"),
@@ -936,8 +936,8 @@ for needle, why in (
 CLEARS = {
     "clearColorTexture": (
         body_of(encoder, "public void clearColorTexture(final @NonNull GpuTexture colorTexture,"),
-        (('encodeClear("clearColorTexture"', "the colour clear does not run through the clear encoder"),
-         ("CARRIED, components(clearColor)", "the colour clear does not carry its colour and its contents"),
+        (("deferClear(new PendingClear(color.nativeHandle(), components(clearColor), color.pixelSize(),",
+          "the colour clear does not record its attachment, its colour and its extent"),
          ("colorTexture.getWidth(0), colorTexture.getHeight(0)",
           "the colour clear's pass is not described at the attachment's own extent, which is a wrongly-sized "
           "pass")),
@@ -946,19 +946,17 @@ CLEARS = {
         body_of(encoder, "public void clearColorAndDepthTextures(final @NonNull GpuTexture colorTexture, final "
                          "@NonNull Vector4fc clearColor,\n                                           final "
                          "@NonNull GpuTexture depthTexture, final double clearDepth) {"),
-        (('encodeClear("clearColorAndDepthTextures"',
-          "the colour-and-depth clear does not run through the clear encoder"),
-         ("new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth)",
-          "the colour-and-depth clear does not carry the depth attachment and its value, so the depth attachment "
-          "would load whatever it held"),
+        (("deferClear(new PendingClear(color.nativeHandle(), components(clearColor), color.pixelSize(),\n"
+          "                depth.nativeHandle(), clearDepth, depth.pixelSize(),",
+          "the colour-and-depth clear does not record both attachments and their values, so the depth "
+          "attachment would keep whatever it held"),
          ("colorTexture.getWidth(0), colorTexture.getHeight(0)",
           "the colour-and-depth clear's pass is not described at the attachment's own extent")),
     ),
     "clearDepthTexture": (
         body_of(encoder, "public void clearDepthTexture(final @NonNull GpuTexture depthTexture,"),
-        (('encodeClear("clearDepthTexture"', "the depth-only clear does not run through the clear encoder"),
-         ("new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth)",
-          "the depth-only clear does not carry the depth attachment and its value"),
+        (("deferClear(new PendingClear(null, null, 0, depth.nativeHandle(), clearDepth, depth.pixelSize(),",
+          "the depth-only clear does not record its attachment and its value"),
          ("depthTexture.getWidth(0), depthTexture.getHeight(0)",
           "the depth-only clear's pass is not described at the attachment's own extent")),
     ),
@@ -967,6 +965,77 @@ for name, (body, needles) in CLEARS.items():
     for needle, why in needles:
         if needle not in body:
             raise SystemExit(f"metal 4 provider: {why} ({name})")
+
+# --- and a clear the frame deferred is a promise it has to keep -------------------------------------------
+# Measured on one no-pack Metal 4 scene: 1500 clear encoders against Metal 3's nought, 7.7x the attachment load
+# traffic, and 23.7 GiB loaded into depth where Metal 3 loads none - because a clear was a pass of its own where
+# Metal 3 folds clears into the passes that use the attachments. The frame now records a clear and lets the next
+# pass carry it as a load action, which is a scheduling change with one rule that has to hold: a reader of the
+# attachment sees the clear, so anything that is not a pass attaching that whole texture materialises it first.
+# Each half is pinned, and the flush roads are pinned by name because a road that forgot is a clear a shader
+# reads before it was written - which is a wrong image and not an exception.
+PROBE_TEXT = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "shared"
+              / "MetalFrameProbe.java").read_text(encoding="utf-8")
+for needle, why in (
+    ("private final List<PendingClear> pendingClears = new ArrayList<>();",
+     "the frame keeps no deferred clears, so every clear is a pass of its own again"),
+    ("private void deferClear(final PendingClear clear) {",
+     "there is no road that records a clear instead of encoding it"),
+    ("private void flushPendingClears() {",
+     "the frame cannot materialise what it deferred, so a reader could see an attachment before its clear"),
+    ("private @Nullable FoldedClears foldPendingClears(final RenderPassDescriptor descriptor) {",
+     "a pass does not fold the clears it could carry, so the traffic this is for is not saved"),
+    ("FoldedClears folded = foldPendingClears(descriptor);",
+     "the pass is opened without asking what it can carry"),
+    ("if (!materialise.isEmpty()) {", "a clear that cannot fold is not materialised before the pass that cannot "
+     "carry it opens"),
+    ("return folded ? new FoldedClears(colourClears, depthClear) : null;",
+     "the folded clears never reach the pass"),
+    ("view.baseMipLevel() == 0\n                && view.mipLevels() >= view.texture().getMipLevels()",
+     "a partial view is foldable, so a clear's load action could cover a range the clear never wrote"),
+    ("if (slot >= 0 && colours.get(slot).clearValue().isEmpty()) {",
+     "a descriptor's own clear is overridden by a deferred one, so a pass could be opened with a clear the game "
+     "did not ask for there"),
+    ("metal4Frame();" if False else "clearDeferred();", "a deferred clear is not counted, so the trade this makes "
+     "is not readable in a session"),
+    ("clearDeferred={} clearFolds={}", "the frame probe does not report the deferred and folded clears"),
+):
+    if needle == "clearDeferred={} clearFolds={}":
+        if needle not in PROBE_TEXT:
+            raise SystemExit("metal 4 provider: " + "the frame probe does not report the deferred and folded "
+                             "clears")
+        continue
+    if needle not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
+for needle, why in (
+    ("MetalFrameProbe.clearFolded();",
+     "a folded clear is not counted where the pass carries it, so the trade the frame probe reports would be "
+     "one-sided"),
+    ("folded != null ? folded\n                            : clear == null ? null : new float[]{clear.x(),",
+     "the folded clear does not reach the colour attachment's load action, so the pass would load the pixels the "
+     "clear was supposed to have written"),
+    ("depthValue = foldedDepthClear;", "the folded depth clear does not reach the depth attachment's value"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+# The five roads out of a frame that owe the clear, each pinned where it is taken.
+for road, why in (
+    ("private MTL4ComputeEncoder copyEncoder() {\n"
+     "        // A copy may read or write an attachment whose clear is outstanding, and a clear is only a promise until\n"
+     "        // it is encoded: every road into a copy, a dispatch or the present keeps the promise before it opens.\n"
+     "        flushPendingClears();",
+     "a copy can read or write an attachment whose clear is still deferred"),
+    ("private MTL4ComputeEncoder dispatchEncoder(final String which) {\n        flushPendingClears();",
+     "a dispatch can read an attachment whose clear is still deferred"),
+    ("public void presentTextureToDrawable(final @NonNull CAMetalLayer layer, final @NonNull GpuTextureView textureView) {\n        // The presented picture is a reader",
+     "the presented picture can be read before a deferred clear was written"),
+    ("public void submit() {\n        if (this.closed) {\n            return;\n        }\n        // A frame is not committed with a clear still owed",
+     "a frame can be committed with a clear still owed"),
+    ("public void close() {\n        if (this.passTimes != null) {\n            this.passTimes.close();\n        }\n        flushPendingClears();",
+     "a frame can be closed with a clear still owed"),
+):
+    if road not in encoder:
+        raise SystemExit("metal 4 provider: " + why)
 
 # The fence: Metal 3's fence is not an MTLFence, it is a promise about the submit index that was current when it
 # was made, and the same callers read both generations. So what is pinned is that this generation answers the

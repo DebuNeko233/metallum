@@ -1162,6 +1162,97 @@ road, where the old build failed the launch and left the session on OpenGL. `too
 halves of the split - the clause absent from `usable`, and still read where it is logged - and two mutations of
 them are caught.
 
+## Phase D1 - a clear becomes the pass's load action
+
+**Change.** `Metal4FrameEncoder` no longer opens a pass for a clear. `clearColorTexture`,
+`clearColorAndDepthTextures` and `clearDepthTexture` record a `PendingClear` - the attachments, the values and the
+extent - and end whatever was open; the next render pass that attaches **that whole texture** in a slot its own
+descriptor does not clear takes the clear as that slot's load action, and everything else is materialised before
+that pass opens. Colour and depth are separate fields because the game asks for them separately and together:
+the scene's clears are `clearColorAndDepthTextures` followed by `clearDepthTexture`, both over the main target's
+colour and depth, and the GUI pass that follows attaches both with `load=load`. Every road out of a frame that
+could show a reader an unfinished clear flushes first - a copy, a dispatch, the present, the commit and the close -
+and a partial view is never foldable, because a clear writes every texel and a view of one mip is not what it
+wrote.
+
+**Counters, no-pack, 300-frame windows, one session** (`run/d1-nopack` against `run/m3m4-premise`, same world,
+camera, clock, weather and target; Metal 3 beside it as the reference):
+
+```
+counter (300 frames)        Metal 3   Metal 4 before   Metal 4 with the fold
+render pass openers            966        3000              2766
+clear encoders                   0        1500               900
+clearDeferred / clearFolds      --          --         1500 / 900
+attachment loaded MiB        5507.9     48526.6            39785.2
+attachment stored MiB       16054.8     72257.1            63515.7
+depth attachments               900        4200              3600
+depth loaded MiB                 0.0     23730.5            18457.0
+depth stored MiB             7910.2     36914.1            31640.6
+```
+
+**900 of the frame's 1500 deferred clears are carried by a pass** - the depth clear the game asks for twice in a
+row folds into one load action - and the traffic follows: **attachment loads down 18 per cent, stores 12 per
+cent, depth loads 22 per cent and depth stores 14 per cent**, with 234 fewer render pass openers. `clearDeferred`
+and `clearFolds` are new frame-probe fields, because a trade this shape needs both numbers to be readable.
+
+**Correctness, and it is the fixtures that decide it rather than a picture of a scene.** The clear is a
+scheduling change, so the two fixtures whose whole purpose is attachment load and store correctness were run on
+both generations in one session:
+
+```
+run/d1-traffic  attachment-traffic-contract   M3 vs M4 (fold on)   mean 0.000, 0 pixels differ
+run/d1-depth-ab depth-value-contract          M3 vs M4 (fold on)   mean 0.112, worst 1 level
+                                              M3 vs M4 (fold off)  mean 0.112, worst 1 level
+                                              fold on vs fold off  mean 0.000, 0 pixels differ
+```
+
+The traffic fixture is a checkerboard painted from `gl_FragCoord` and read back through a quantising reader, so a
+single wrong pixel is a whole level: **Metal 4 with the fold draws it pixel for pixel as Metal 3 does.** On the
+depth fixture the fold is **pixel-identical to itself with the fold off**, and the one-level difference against
+Metal 3 is identical with the fold on and off - so it is a pre-existing cross-generation depth quantisation
+residual, not this change, and it belongs beside the sky residual rather than here.
+
+**And the flush rule has teeth.** With the copy road's flush removed as a mutation, the traffic fixture's picture
+moves on **34.16 per cent of its pixels** (mean 0.161, one level) and 120 more clears fold than should - the
+fixture detects a clear that reached a pass late. The structural pins hold the same rule from the other side
+(each of the five flush roads by name, the full-texture and descriptor-clear conditions, and the two counters),
+and eleven mutations of the mechanism are caught.
+
+**A real pack is not regressed, and it took three arms to say so.** Photon v1.3b at render scale 55, one
+session, 120-frame windows, the fold the only variable (`run/d1-photon-trio`):
+
+```
+arm     windowMs  wallP50  clear encoders  deferred  folded  loaded MiB  stored MiB
+metal3    864.05   7.20           120          --      --     18775.9     26541.9
+metal4    866.23   7.29           600         720     240     19830.6     30246.5
+metal4
+ no fold  864.51   7.27           720           0       0     20468.6     30884.6
+```
+
+The pack folds **240 of its 720 deferred clears** - its clears have a compatible pass less often than the
+no-pack scene's do - for **120 fewer clear encoders, 3.0 per cent less attachment load traffic and 2.0 per cent
+less store traffic**, and the wall is unchanged (866.23 against 864.51 ms, 7.29 against 7.27 at the median,
+beside Metal 3's 864.05 and 7.20).
+
+**And the one figure that argued otherwise is retracted here rather than left standing.** A first two-arm
+session (`run/d1-photon-ab`) read the fold against no-fold at `mean 25.473, 29.76 per cent above eight` - eight
+times a same-code control pair taken the same way (`mean 2.874`) - which is what a real regression would look
+like. The three-arm session contradicts it and says why: in one session
+
+```
+M3 vs M4 with the fold      mean 3.035, 11.38 % above eight
+M3 vs M4 without the fold   mean 2.997, 11.01 % above eight
+fold vs no fold             mean 1.369,  3.19 % above eight
+```
+
+M3 against M4 is the same to within 0.04 whether the fold is on or off, and the fold differs from itself by
+**less than the same-code noise floor** (1.369 against 2.874). So the fold is picture-neutral on the pack too,
+and the 25.473 was that session's own state rather than this change: the harness records the world, camera,
+clock, weather and target but not the display mode, the pack's history phase at capture or what else the machine
+was doing, and a two-arm session has no control in it. The lesson is the standing one - **a pair without a
+same-code control in the same session cannot decide a picture** - and the two-arm reading is kept above as what
+it was rather than deleted.
+
 ## Phase D1's starting census - the same scene, the two generations, one window each
 
 Taken from the same session as the premise check above (`run/m3m4-premise`, no-pack, 300-frame windows, fullscreen

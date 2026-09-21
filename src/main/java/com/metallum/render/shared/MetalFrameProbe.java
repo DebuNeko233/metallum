@@ -234,6 +234,9 @@ public final class MetalFrameProbe {
     private static int blitOpeners;
     private static int computeOpeners;
     private static int clearOpeners;
+    /** Clears the frame deferred and the next pass carried as a load action, and those it had to encode. */
+    private static int clearDeferred;
+    private static int clearFolded;
 
     /** Frames carried through the Metal 4 command structure, and what that path cost on the CPU. */
     private static int metal4Frames;
@@ -929,16 +932,40 @@ public final class MetalFrameProbe {
      * and turns the probe off, so an armed session stops by itself; only a marker that goes away and
      * comes back opens another window.
      */
+    /** One clear the frame recorded instead of encoding, because the next pass may carry it. */
+    public static void clearDeferred() {
+        if (!armed()) {
+            return;
+        }
+        clearDeferred++;
+    }
+
+    /**
+     * One deferred clear a render pass carried as its own load action.
+     * <p>
+     * Counted apart from the encoders so the trade this makes is readable: a fold removes a clear pass and turns
+     * a load into a clear, and the two counters together say how many of a frame's clears took each road.
+     */
+    public static void clearFolded() {
+        if (!armed()) {
+            return;
+        }
+        clearFolded++;
+    }
+
     private static void report() {
         // Read before reset(), which clears the window's first frame along with its counts.
         long windowNanos = System.nanoTime() - windowStartedAt;
         Metallum.LOGGER.info(
                 "frame-probe openers renderPasses={} blitEncoders={} computeEncoders={} clearEncoders={} "
+                        + "clearDeferred={} clearFolds={} "
                         + "metal4Frames={} metal4Us={} metal4Draws={} metal4Presents={}",
                 renderPassOpeners,
                 blitOpeners,
                 computeOpeners,
                 clearOpeners,
+                clearDeferred,
+                clearFolded,
                 metal4Frames,
                 String.format(Locale.ROOT, "%.1f", metal4Frames == 0 ? 0.0 : metal4Nanos / 1000.0 / metal4Frames),
                 metal4Draws,
@@ -1134,6 +1161,8 @@ public final class MetalFrameProbe {
         blitOpeners = 0;
         computeOpeners = 0;
         clearOpeners = 0;
+        clearDeferred = 0;
+        clearFolded = 0;
         metal4Frames = 0;
         metal4Nanos = 0L;
         metal4Draws = 0;

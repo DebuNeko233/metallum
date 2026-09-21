@@ -36,6 +36,9 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPassBackend;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import java.util.Optional;
+import java.util.OptionalDouble;
+import org.joml.Vector4fc;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.TransientMemory;
 import com.mojang.blaze3d.textures.GpuSampler;
@@ -45,7 +48,6 @@ import com.mojang.blaze3d.buffers.GpuFence;
 import org.jspecify.annotations.Nullable;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import org.joml.Vector4fc;
 import org.jspecify.annotations.NonNull;
 
 import java.lang.foreign.MemorySegment;
@@ -352,6 +354,31 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Nullable
     private AttachmentContents[] nextPassContents;
+    /**
+     * The clears the frame has been asked for and has not encoded, in the order they were asked for.
+     * <p>
+     * A clear on this path used to be a pass of its own - {@code clearEncoders=1500} against Metal 3's nought on
+     * one measured scene - and a clear is exactly what a render pass's load action can be instead. The game's own
+     * order is what makes the fold possible: it clears an attachment and then opens the pass that draws over it,
+     * and that pass loads what it just wrote. Deferring the clear to the next pass turns two encoders and a load
+     * into one encoder and a clear.
+     * <p>
+     * Held only until the next encoder that is not a pass which attaches the same texture, and never past the
+     * frame: every road out of this class - a copy, a dispatch, the present, the commit and the close - flushes
+     * what is outstanding, because a reader of an attachment must see the clear it was promised.
+     */
+    private final List<PendingClear> pendingClears = new ArrayList<>();
+
+    /**
+     * Whether a clear the frame is asked for may be carried by the pass that follows it.
+     * <p>
+     * {@code -Dmetallum.metal4FoldClears=false} keeps every clear as its own pass, which is the control the fold
+     * is measured against and the shape this path had before it. On by default: the fold is a scheduling change
+     * that a picture cannot see, and the fixtures that decide attachment load and store correctness are what say
+     * so.
+     */
+    private static final boolean FOLD_CLEARS = !"false".equalsIgnoreCase(
+            System.getProperty("metallum.metal4FoldClears", "true"));
 
     /**
      * This generation's MetalFX spatial scaler path, or null where the device cannot have one.
@@ -444,6 +471,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.closed) {
             return;
         }
+        // A frame is not committed with a clear still owed: whatever did not fold is written now, before the
+        // commit that ends the frame.
+        flushPendingClears();
         // A pass still open when the frame is submitted is a pass the game did not end: it is ended here, which
         // is what the Metal 3 encoder does, because the alternative is a command buffer ended with an encoder
         // still open and no image at all.
@@ -544,6 +574,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         if (this.passTimes != null) {
             this.passTimes.close();
         }
+        flushPendingClears();
         if (this.closed) {
             return;
         }
@@ -649,6 +680,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      * no-op rather than a second ending.
      */
     private MTL4ComputeEncoder copyEncoder() {
+        // A copy may read or write an attachment whose clear is outstanding, and a clear is only a promise until
+        // it is encoded: every road into a copy, a dispatch or the present keeps the promise before it opens.
+        flushPendingClears();
         if (this.currentPass != null) {
             // The pass's ENCODER is ended, because only one may be open at a time, and the pass stays this
             // frame's current one: the game that opened it is in the middle of binding it - a dynamic uniform
@@ -909,8 +943,12 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // that says nothing about a pass must get the pass it would have had, not the last one's answers.
         AttachmentContents[] passContents = this.nextPassContents;
         this.nextPassContents = null;
+        // And the clears the game has asked for and this pass can carry as its own load actions: a clear and the
+        // pass that draws over the same attachment are one encoder's work, not two.
+        FoldedClears folded = foldPendingClears(descriptor);
 
-        Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents);
+        Metal4RenderPass pass = new Metal4RenderPass(this, descriptor, passContents,
+                folded == null ? null : folded.colourClears(), folded == null ? null : folded.depthClear());
         this.currentPass = pass;
         return pass;
     }
@@ -1269,6 +1307,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Nullable
     private MTL4ComputeEncoder dispatchEncoder(final String which) {
+        flushPendingClears();
         if (this.closed) {
             return null;
         }
@@ -1471,6 +1510,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Override
     public void presentTextureToDrawable(final @NonNull CAMetalLayer layer, final @NonNull GpuTextureView textureView) {
+        // The presented picture is a reader like any other, and a frame is not presented with a clear still owed.
+        flushPendingClears();
         if (this.closed) {
             throw new IllegalStateException("the Metal 4 frame encoder is closed, so it cannot present");
         }
@@ -1752,11 +1793,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     @Override
     public void clearColorTexture(final @NonNull GpuTexture colorTexture, final @NonNull Vector4fc clearColor) {
         MetalGpuTexture color = textureOf(colorTexture);
-        encodeClear("clearColorTexture",
-                new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
-                        AttachmentContents.CARRIED, components(clearColor))},
-                null, new int[]{color.pixelSize()}, 0,
-                colorTexture.getWidth(0), colorTexture.getHeight(0));
+        deferClear(new PendingClear(color.nativeHandle(), components(clearColor), color.pixelSize(),
+                null, null, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)));
     }
 
     /** Clears a colour attachment and a depth attachment in one pass, which is one pass and not two. */
@@ -1765,12 +1803,9 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                                            final @NonNull GpuTexture depthTexture, final double clearDepth) {
         MetalGpuTexture color = textureOf(colorTexture);
         MetalGpuTexture depth = textureOf(depthTexture);
-        encodeClear("clearColorAndDepthTextures",
-                new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(color.nativeHandle(),
-                        AttachmentContents.CARRIED, components(clearColor))},
-                new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
-                new int[]{color.pixelSize()}, depth.pixelSize(),
-                colorTexture.getWidth(0), colorTexture.getHeight(0));
+        deferClear(new PendingClear(color.nativeHandle(), components(clearColor), color.pixelSize(),
+                depth.nativeHandle(), clearDepth, depth.pixelSize(),
+                colorTexture.getWidth(0), colorTexture.getHeight(0)));
     }
 
     @Override
@@ -1785,10 +1820,8 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     @Override
     public void clearDepthTexture(final @NonNull GpuTexture depthTexture, final double clearDepth) {
         MetalGpuTexture depth = textureOf(depthTexture);
-        encodeClear("clearDepthTexture", new MTL4RenderEncoder.Color[0],
-                new MTL4RenderEncoder.Depth(depth.nativeHandle(), clearDepth),
-                new int[0], depth.pixelSize(),
-                depthTexture.getWidth(0), depthTexture.getHeight(0));
+        deferClear(new PendingClear(null, null, 0, depth.nativeHandle(), clearDepth, depth.pixelSize(),
+                depthTexture.getWidth(0), depthTexture.getHeight(0)));
     }
 
     /**
@@ -1815,9 +1848,179 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      * against this one, and the clear's pass ends with the producer barrier so that whatever reads the cleared
      * attachment afterwards has an encoded dependency on it.
      */
+    /**
+     * A clear that has been asked for and not yet encoded: what it would have written, and where.
+     * <p>
+     * Colour and depth are separate fields because the game asks for them separately - and together, in
+     * {@code clearColorAndDepthTextures}, which is the shape this scene's clears actually take. An entry folds
+     * only where the pass that follows attaches the same full texture; whatever cannot fold is materialised
+     * before that pass opens, which is what keeps this a scheduling change rather than a semantic one.
+     */
+    private record PendingClear(MemorySegment colourTexture, float[] colour, int colourPixelSize,
+                                MemorySegment depthTexture, Double depth, int depthPixelSize,
+                                long width, long height) {
+
+        boolean hasColour() {
+            return this.colourTexture != null;
+        }
+
+        boolean hasDepth() {
+            return this.depthTexture != null;
+        }
+
+        PendingClear withoutColour() {
+            return new PendingClear(null, null, 0, this.depthTexture, this.depth, this.depthPixelSize,
+                    this.width, this.height);
+        }
+
+        PendingClear withoutDepth() {
+            return new PendingClear(this.colourTexture, this.colour, this.colourPixelSize, null, null, 0,
+                    this.width, this.height);
+        }
+    }
+
+    /** The clears a pass is opening with, per colour slot and for the depth attachment. */
+    private record FoldedClears(float[][] colourClears, @Nullable Double depthClear) {
+    }
+
+    /**
+     * Records a clear for the pass that may consume it, ending whatever is open first.
+     * <p>
+     * Ending the open pass is what {@code encodeClear} did and is still required: only one encoder may be open,
+     * and the clear may have been asked for from the middle of a pass. What is different is that no pass is
+     * opened for the clear itself.
+     */
+    private void deferClear(final PendingClear clear) {
+        if (!FOLD_CLEARS) {
+            // The diagnostic road, and the control this change is measured against: every clear is a pass of its
+            // own again, which is what this path did before the fold and what an A/B needs to price it.
+            materialise(List.of(clear));
+            return;
+        }
+        if (this.currentPass != null) {
+            submitRenderPass();
+        }
+        endCopyEncoderBeforeAPass();
+        beginFrameIfNeeded();
+        this.pendingClears.add(clear);
+        MetalFrameProbe.clearDeferred();
+    }
+
+    /** Materialises every outstanding clear, before an encoder that cannot fold one opens. */
+    private void flushPendingClears() {
+        if (this.pendingClears.isEmpty()) {
+            return;
+        }
+        List<PendingClear> clears = List.copyOf(this.pendingClears);
+        this.pendingClears.clear();
+        materialise(clears);
+    }
+
+    /** The clear passes themselves, which is what a deferred clear becomes when it cannot fold. */
+    private void materialise(final List<PendingClear> clears) {
+        for (PendingClear clear : clears) {
+            encodeClear(clear.hasColour() && clear.hasDepth() ? "clearColorAndDepthTextures"
+                            : clear.hasColour() ? "clearColorTexture" : "clearDepthTexture",
+                    clear.hasColour()
+                            ? new MTL4RenderEncoder.Color[]{new MTL4RenderEncoder.Color(clear.colourTexture(),
+                                    AttachmentContents.CARRIED, clear.colour())}
+                            : new MTL4RenderEncoder.Color[0],
+                    clear.hasDepth() ? new MTL4RenderEncoder.Depth(clear.depthTexture(), clear.depth()) : null,
+                    clear.hasColour() ? new int[]{clear.colourPixelSize()} : new int[0], clear.depthPixelSize(),
+                    clear.width(), clear.height());
+        }
+    }
+
+    /**
+     * What this pass may open with, and what has to be written first.
+     * <p>
+     * For each outstanding clear: if the pass attaches that same full texture in a slot the descriptor does not
+     * itself clear, the clear becomes that slot's load action; otherwise it is materialised now, before the pass
+     * opens, because this pass or a later reader must see it. A descriptor that already clears the slot needs no
+     * fold - its own clear is the promise kept.
+     *
+     * @param descriptor the pass about to open
+     * @return what to open with, or null where there was nothing to fold
+     */
+    private @Nullable FoldedClears foldPendingClears(final RenderPassDescriptor descriptor) {
+        if (this.pendingClears.isEmpty()) {
+            return null;
+        }
+        List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colours = descriptor.colorAttachments();
+        RenderPassDescriptor.Attachment<OptionalDouble> depthAttachment = descriptor.depthAttachment();
+        float[][] colourClears = new float[colours.size()][];
+        Double depthClear = null;
+        List<PendingClear> materialise = new ArrayList<>();
+        boolean folded = false;
+        for (PendingClear clear : this.pendingClears) {
+            PendingClear remaining = clear;
+            if (clear.hasColour()) {
+                int slot = fullColourSlot(colours, clear);
+                if (slot >= 0 && colours.get(slot).clearValue().isEmpty()) {
+                    colourClears[slot] = clear.colour();
+                    remaining = remaining.withoutColour();
+                    folded = true;
+                }
+            }
+            if (clear.hasDepth() && depthAttachment != null && depthAttachment.clearValue().isEmpty()
+                    && isTheFullTexture(depthAttachment.textureView(), clear.depthTexture(), clear)) {
+                depthClear = clear.depth();
+                remaining = remaining.withoutDepth();
+                folded = true;
+            }
+            if (remaining.hasColour() || remaining.hasDepth()) {
+                materialise.add(remaining);
+            }
+        }
+        this.pendingClears.clear();
+        if (!materialise.isEmpty()) {
+            // Before this pass opens, and in the order the game asked: these clears are what some reader - this
+            // pass's own shaders or a later one - is entitled to see.
+            materialise(materialise);
+        }
+        return folded ? new FoldedClears(colourClears, depthClear) : null;
+    }
+
+    /** The colour slot this clear can fold into, or -1 where no slot attaches that whole texture. */
+    private static int fullColourSlot(final List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colours,
+                                      final PendingClear clear) {
+        for (int slot = 0; slot < colours.size(); slot++) {
+            RenderPassDescriptor.Attachment<Optional<Vector4fc>> attachment = colours.get(slot);
+            if (attachment != null && isTheFullTexture(attachment.textureView(), clear.colourTexture(), clear)) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Whether this view is the whole of that texture, which is what a clear covers.
+     * <p>
+     * A clear writes every texel of a texture; a pass that attaches a mip or a layer of it would be given the
+     * clear value as a load action over a range the clear never wrote, so a partial view is not foldable and the
+     * clear is materialised instead.
+     */
+    private static boolean isTheFullTexture(final GpuTextureView view, final MemorySegment texture,
+                                            final PendingClear clear) {
+        if (!(view instanceof MetalGpuTextureView metal) || !metal.nativeHandle().equals(texture)) {
+            return false;
+        }
+        return view.baseMipLevel() == 0
+                && view.mipLevels() >= view.texture().getMipLevels()
+                && view.getWidth(0) == clear.width()
+                && view.getHeight(0) == clear.height();
+    }
+
     private void encodeClear(final String operation, final MTL4RenderEncoder.Color[] colors,
                              final MTL4RenderEncoder.Depth depth, final int[] colorPixelSizes,
                              final int depthPixelSize, final long width, final long height) {
+        if (TRACE) {
+            // Which clear this is, and for which attachment: the counters say how many clear passes a frame
+            // opens and say nothing about what they are for, which is the question a folding decision turns on.
+            Metallum.LOGGER.info("Metal 4 trace: clear '{}' colours={} depth={} at {}x{}", operation,
+                    colors.length == 0 ? "none" : Long.toHexString(colors[0].texture().address()),
+                    depth == null ? "none" : Long.toHexString(depth.texture().address()), width, height);
+        }
         for (MTL4RenderEncoder.Color color : colors) {
             useResource(color.texture());
         }

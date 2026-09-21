@@ -194,7 +194,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     private long scissorHeight;
 
     Metal4RenderPass(final Metal4FrameEncoder owner, final RenderPassDescriptor descriptor,
-                     final @Nullable AttachmentContents[] contents) {
+                     final @Nullable AttachmentContents[] contents,
+                     final float @Nullable [][] foldedColourClears, final @Nullable Double foldedDepthClear) {
         this.owner = owner;
         this.descriptor = descriptor;
 
@@ -233,6 +234,16 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
                         + view.getWidth(0) + "x" + view.getHeight(0) + ", expected " + width + "x" + height);
             }
             Vector4fc clear = attachment.clearValue().orElse(null);
+            // A clear the frame deferred and this pass carries: the descriptor asked for none, and the load
+            // action is the clear the game asked for a moment ago. It takes the place of a load of the pixels
+            // that clear wrote, so what the pass's shaders see is the same either way.
+            float[] folded = foldedColourClears == null || index >= foldedColourClears.length
+                    ? null
+                    : foldedColourClears[index];
+            if (folded != null) {
+                clear = null;
+                MetalFrameProbe.clearFolded();
+            }
             MemorySegment attachmentTexture = nativeHandle(view);
             this.colourHandles[index] = attachmentTexture;
             if (index == 0) {
@@ -247,7 +258,8 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             // reading of what a frame costs cannot drift from what Metal was asked for.
             AttachmentContents slotContents = stated[index];
             MTL4RenderEncoder.Color color = new MTL4RenderEncoder.Color(attachmentTexture, slotContents,
-                    clear == null ? null : new float[]{clear.x(), clear.y(), clear.z(), clear.w()});
+                    folded != null ? folded
+                            : clear == null ? null : new float[]{clear.x(), clear.y(), clear.z(), clear.w()});
             MTL4RenderEncoder.countAttachment(color, pixelSize(view));
             colors[index] = color;
         }
@@ -268,9 +280,16 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             // A cleared depth attachment is handed the clear value rather than what stood there, which is the
             // one slot the pack side cannot answer for and therefore the one whose traffic has to be counted
             // from what this pass actually asked for.
+            // The depth half of a deferred clear takes the same place a folded colour clear does: the pass loads
+            // a cleared depth instead of the depth the previous pass wrote.
             boolean depthCleared = depthAttachment.clearValue().isPresent();
-            MTL4RenderEncoder.Depth depthAttachmentValue = new MTL4RenderEncoder.Depth(depthTexture,
-                    depthCleared ? depthAttachment.clearValue().getAsDouble() : null);
+            Double depthValue = depthCleared ? depthAttachment.clearValue().getAsDouble() : null;
+            if (foldedDepthClear != null) {
+                depthCleared = true;
+                depthValue = foldedDepthClear;
+                MetalFrameProbe.clearFolded();
+            }
+            MTL4RenderEncoder.Depth depthAttachmentValue = new MTL4RenderEncoder.Depth(depthTexture, depthValue);
             MTL4RenderEncoder.countDepthAttachment(depthAttachmentValue, pixelSize(view));
             depth = depthAttachmentValue;
         }
