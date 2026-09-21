@@ -298,6 +298,37 @@ if "execute at @a" not in tick:
     raise SystemExit("vitrail performance harness: the particles are not emitted at the camera, so they would "
                      "land wherever the world's spawn is and not in the frame")
 
+# ---------------------------------------------------------------------------
+# An arm the machine spoiled is named, and the session is refused
+#
+# Measured, run/vanilla-grid: one Metal 4 arm read 10.68 ms a frame against the other's 2.46 - 4.35x - while
+# every structural counter agreed to a tenth of a per cent, and nothing refused it, because a session with two
+# generations in it skips the per-generation structural check by design. Section 115's answer to an arm like
+# that is "discard the arm", and a reader can only discard what is named. The same file has to keep the two
+# properties that make the check right rather than noisy: it judges an arm against its *own* generation (the
+# generations legitimately differ) and its threshold is loose enough for this path's real 15% arm-to-arm
+# spread and tight enough to catch 4.35x.
+# ---------------------------------------------------------------------------
+for needle, why in (
+    ("TIMING_OUTLIER = 1.5", "the comparer has no threshold for an arm the machine spoiled, so a 4.35x outlier "
+     "reads as a result and is averaged into the generation's answer"),
+    ("outliers: list[str] = []", "the timing outlier check is gone from the comparison"),
+    ("outliers.append(", "the outlier check finds an arm and records nothing, so the line and the refusal that "
+     "depend on it can never fire"),
+    ("for name, rate in per_frame.items():", "the check no longer compares each arm with the fastest of its own "
+     "generation, which is the whole of what it does"),
+    ("per_frame[name] = millis / frames", "the outlier check does not read the arms' own frame rates"),
+    ('print("arm outlier: " + "; ".join(outliers)', "the outlier is not said on a line of its own, so a reader "
+     "sees it folded into a sentence about scene drift - which is a different fault with a different remedy"),
+    ("if drift or outliers:", "an arm the machine spoiled no longer refuses the session, so its numbers are "
+     "printed as if they were comparable"),
+):
+    if needle not in compare:
+        raise SystemExit("vitrail performance harness: " + why)
+if "TIMING_OUTLIER * fastest" not in compare:
+    raise SystemExit("vitrail performance harness: the outlier threshold is not applied to the fastest arm of the "
+                     "arm's own generation, so two generations that legitimately differ would be refused")
+
 if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
     raise SystemExit("--frames never reaches the probe, so the window length is not the harness's")
 

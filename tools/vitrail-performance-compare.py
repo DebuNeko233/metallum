@@ -33,6 +33,13 @@ SCENE_TOLERANCE = 2.0
 # window. Five per cent is the plan's own performance gate, so a content difference of a size no verdict could
 # survive is the size this refuses.
 CONTENT_TOLERANCE = 5.0
+
+# How far one arm's own frame rate may sit from the fastest arm of its generation before the arm is named as one
+# the machine spoiled rather than one the change moved. 1.5 rather than a tighter number because this path's own
+# arms legitimately spread by up to 15% between consecutive runs (measured, run/m4-four: 18.22, 18.41, 18.51 and
+# 27.50 - and the 27.50 is the arm whose load sample was twice the others'), and looser than that would let the
+# 433% of run/vanilla-grid through unnamed.
+TIMING_OUTLIER = 1.5
 # The counters a frozen scene pins exactly, whatever the world is doing: the frame count, the copy-backs the
 # pack asks for, and the program set it compiled.
 EXACT_COUNTERS = ("windowFrames", "blits", "blittedMiB", "pipelineIdentities")
@@ -344,6 +351,33 @@ def main() -> int:
             generation_drifted.append(
                 "the arms of one generation did not draw the same frame, so no arm of it can be read against "
                 "the other generation's in this session")
+
+    # And a generation's own arms have to have run in the same *machine state*, which its time column says and
+    # its counters do not. Measured, session run/vanilla-grid: one Metal 4 arm read 10.68 ms a frame against the
+    # other's 2.46 - 4.2x, with 4.23 against 1.11 of its own commit feedback - while every structural counter
+    # agreed to a tenth of a per cent, and nothing refused it, because a session with two generations in it
+    # skips the structural check above by design. Section 115's answer to an arm like that is "discard the arm",
+    # and a reader can only discard what is named: the arm is named here and the session is refused, because a
+    # mean taken across an arm the machine spoiled is the reading this whole file exists to prevent.
+    outliers: list[str] = []
+    for value, names in by_generation.items():
+        if len(names) < 2:
+            continue
+        per_frame = {}
+        for name in names:
+            frames = measured[name].get("windowFrames")
+            millis = measured[name].get("windowMs")
+            if frames:
+                per_frame[name] = millis / frames
+        if len(per_frame) < 2:
+            continue
+        fastest = min(per_frame.values())
+        for name, rate in per_frame.items():
+            if fastest > 0 and rate > TIMING_OUTLIER * fastest:
+                outliers.append(
+                    f"{value}: {name} read {rate:.2f} ms a frame against the fastest arm of its own generation's"
+                    f" {fastest:.2f} ({rate / fastest:.2f}x), so the machine moved under it - section 115 says to"
+                    f" discard this arm and not to average it")
     # And the window itself: a fullscreen arm renders the display's own mode, so the resolution is a scene
     # property the harness cannot pin with --width/--height and has to judge here. Measured: two arms of one
     # configuration photographed 1920x1200 and 3600x2338 - but only a capture with a picture in it is a
@@ -382,6 +416,10 @@ def main() -> int:
         print()
         print("scene drift: " + "; ".join(drift) + f" (scene tolerance {SCENE_TOLERANCE:.1f}%,"
               f" content tolerance {CONTENT_TOLERANCE:.1f}%)", file=sys.stderr)
+
+    if outliers:
+        print()
+        print("arm outlier: " + "; ".join(outliers), file=sys.stderr)
 
 
     # The rate is the two numbers the probe printed divided by each other and not a second opinion:
@@ -443,9 +481,10 @@ def main() -> int:
               f"keep it awake, and run the session again.", file=sys.stderr)
         return 4
 
-    if drift:
+    if drift or outliers:
         # A drifted arm's time column is not comparable with the first arm's, and a refusal is the only
-        # reading of that which cannot be mistaken for a result.
+        # reading of that which cannot be mistaken for a result - and an arm the machine spoiled is the same
+        # fault arriving through the clock instead of through the counters.
         return 3
 
     return 0
