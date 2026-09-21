@@ -1634,7 +1634,16 @@ fixture channel that does not need one).
   section 58 asks for - two coplanar surfaces where the biased one must win, read on both generations - is not
   built. The fix and its four pins are a separate commit from any performance work, as section 58 requires.
 
-- **The content drift is mostly the window's definition, and that is now measured.** `run/drift-nopack` (same
+- **The content drift is decomposed and NOT LOCALISED, and the tick term is smaller than it first looked.**
+  The decomposition of the traced windows, exactly: a frame is **7 passes** in the steady state, **13** on a
+  tick frame and **5** in one stretch, so a window's total is `7*600 + 6*T - 2*S` with `T` the tick frames and
+  `S` the reduced ones. `m4t1`: 436*7 + 134*5 + 30*13 = **4112** against its measured 4100 (the 134-frame
+  stretch at 5 passes is worth -268 passes, six times the tick term's +180); `m4t2`: 572*7 + 28*13 = 4368
+  against 4368; `m4t3`: 562*7 + 7*5 + 1*11 + 30*13 = 4370 against 4370. So **the tick term is real but worth
+  about 4% of a window, and a ~340 ms stretch with two passes absent is worth about 6%** - which is the shape
+  the drift has, and a least-squares fit of the two coefficients over three arms with tick counts 27.9-30.7 is
+  ill-conditioned and returns nonsense, so it is NOT fitted and the mechanism stays NOT LOCALISED.
+- **What the tick finding does establish is the cadence, not the size.** `run/drift-nopack` (same
   six-arm M3/M4 interleave, no pack, with the per-frame trace on) shows what the per-frame pass count of this
   path's no-pack frame actually is: **7 passes in the steady state, 13 on one frame every 49.6-50.0 ms** - the
   client's 20 Hz tick, measured in wall time and not in frames (`run/drift-nopack/m4t2`: spikes spaced 21.4

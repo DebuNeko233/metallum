@@ -5270,16 +5270,23 @@ The frame spacing moves with the frame rate and the wall spacing does not: six e
 frame that coincides with the client's **20 Hz game tick**. And one arm holds 134 consecutive frames at **5**
 passes - two passes absent for about 340 ms - which is a second, state-shaped variation.
 
-**Why that becomes "content drift" between arms.** The probe's window is a fixed **frame** count, so the number
-of tick frames inside a 600-frame window is `windowWall / 50 ms`. Metal 3's frame rate is constant, so every one
-of its windows contains the same number of them and its counters are identical to the byte (`depthAttachments`
-1800 and `loadedMiB` 26836.1 / 26900.0 / 26900.0 in the three arms). This path's frame rate is the pacing
-mixture, so its windows contain different numbers and its counters differ - and the guard's 2% and 5% tolerances
-were calibrated on the reference's steady frame rate, which is why they fire here.
+**Why that becomes "content drift" between arms, and how much of it each term is worth.** A 600-frame window
+holds `windowWall / 50 ms` tick frames, so its total is `7*600 + 6*T - 2*S` with `T` the tick frames and `S` the
+frames in a reduced stretch - and the three arms decompose exactly: `m4t1` 436*7 + 134*5 + 30*13 = 4112 against
+its measured 4100, `m4t2` 572*7 + 28*13 = 4368 against 4368, `m4t3` 562*7 + 7*5 + 1*11 + 30*13 = 4370 against
+4370. The tick term is therefore worth about **+4%** of a window (27.9-30.7 tick frames in this session) and the
+134-frame stretch at 5 passes about **-6%**: both are of the same order, neither is the whole story, and a
+least-squares fit of the two coefficients over three arms whose tick counts span 10% is ill-conditioned and
+returns nonsense, so it is not fitted. **The mechanism stays NOT LOCALISED**; what is established is the
+cadence (50 ms) and that Metal 3's constant frame rate is why its counters do not move at all (its three arms
+read `depthAttachments` 1800 and `loadedMiB` 26836.1 / 26900.0 / 26900.0 exactly).
 
-**The remedy is a window definition, not a Metal4 change**: pin the window by game ticks or by wall time, or
-report the content counters per second and per tick beside the per-frame ones, and re-run the rung. That is the
-next measurement task, and it is a change to the harness and the probe rather than to the renderer.
+**The remedy is a window definition, not a Metal4 change** - but which normalisation is right is not obvious,
+and one of them has already been refuted (below): content per second makes the *reference* drift. What the
+decomposition above says is that a window total is `a*frames + b*ticks - c*reduced`, so the comparable
+quantities are the **coefficients** and not any single normalisation of the total, and getting them needs the
+probe to say how many ticks and how many reduced frames its window held. That is the next measurement task, and
+it is a change to the harness and the probe rather than to the renderer.
 
 **And one genuine scene difference survives it.** In the same session one arm's window drew 157 draws a frame
 where the other two drew 326, and its draws fell from 223 to 109 across the window - a world-content difference
