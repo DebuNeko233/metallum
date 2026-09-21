@@ -125,18 +125,26 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 ## What is left, in the order the plan asks for it
 
 ```
-1. C2/C4's unresolved        the entity family's wall and the shadow interval on the second pack -
-   walls                     both need a machine that holds one state for a session, which this one
-                             does not. C3's completion is DONE: at 55 per cent every world pass follows
-                             the scale on all three packs (the window's own size falls to exactly one
-                             pass a frame, the interface's), the shadow map is sized by the pack's own
-                             settings, and without a pack there is no scaled world at all.
+1. THE OWNER'S DECISION      the shadow map's default, and the one product question this programme
+                             produced. `ShadowAmortisation.DEFAULT_FRAMES` is 1 kept frame and the
+                             selector already offers 2, so raising the default changes what every
+                             player gets without asking - section 59's fourth pause. The measurement
+                             is done on both packs where the reuse applies: interval 2 is worth
+                             5.7 per cent on MakeUp and 3.0 on Complementary, structure exact in the
+                             same arms (the shadow map's own passes fall from 900 to 800 a window on
+                             MakeUp and from 1000 to 897 on Complementary, and the engine's own line
+                             reads 300 draws in 600 frames against 200). What is missing is an eye:
+                             the value 1 is inherited from a judgement about a map kept WHOLE, which
+                             the movers being drawn back in retired, and nobody has looked at the
+                             ground's three-frame lag since.
 2. E4, dynamic resolution    only after 1, and only with hysteresis, cooldown, step limits and a
                              stability window, as section 36 requires.
 ```
 
 Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed
-by the CPU round's exit condition, C1-C7, D1 with D2/D3 closed by it, E1/E2, and F1-F4.
+by the CPU round's exit condition, C1-C7 with both of C2's wall questions settled by repetition (the entity
+family at 0.13 per cent and Complementary's interval at 3.0, eight arms each), D1 with D2/D3 closed by it,
+E1/E2, and F1-F4. All twelve of this repository's contracts and Vitrail's 267 tests pass on this head.
 
 **Track F is complete**, and its last item closed the plan's largest recorded candidate. An on-disk Metal
 pipeline cache was recorded at F1/F3 as "0.26-1.6 s a launch, the largest measured startup item left"; F4

@@ -249,9 +249,24 @@ MakeUp            interval 0   7.383   (2 arms, 0.01 % apart)
                   interval 1   6.726   (5 arms in 4 sessions, 0.4 % apart)   <- shipped default
                   interval 2   6.344   (2 arms, 0.3 % apart, one session whose reference pair read 6.740/6.734)
 Complementary     interval 0   9.194   (2 arms, 0.3 % apart)
-                  interval 1   8.289   (4 arms, 0.4 % apart)   <- shipped default
-                  interval 2   8.031   (2 arms 9.7 % apart: 8.031 and 8.808)   UNRESOLVED
+                  interval 1   8.285   (4 arms in 2 sessions, 0.3 % apart)   <- shipped default
+                  interval 2   8.035   (4 arms in 2 sessions, 0.14 % apart)
 ```
+
+**Complementary's interval-2 pair was unresolved when this section was first written** (8.031 against 8.808, 9.7
+per cent apart) and it is settled here by repetition, which is what the plan's own rule asks for: eight more arms
+over two sessions put interval 1 at 8.285, 8.287, 8.290 and 8.311 and interval 2 at 8.035, 8.036, 8.037 and
+8.046 - each configuration's four arms inside 0.3 per cent, the two configurations **3.0 per cent** apart, and
+the mechanism exact in the same arms: `2048x2048` falls from 1000 passes a window to 897 and the engine's own
+line reads `drawn into it 300 times in the last 600 frames` against `200`.
+
+**So the interval-2 candidate is worth 3.0 per cent on Complementary and 5.7 on MakeUp**, measured on the two
+packs where the reuse applies at all, with the structure exact on both. What it is not is shipped: the setting
+the candidate moves is a player's, `ShadowAmortisation.DEFAULT_FRAMES` is 1 and the selector already offers 2, so
+raising the default is a change to what every player gets without asking - section 59's fourth pause - and what
+the reference's own note says is missing is an *eye*: the map kept whole at three frames read as a bug and the
+movers are drawn back in now, so what ages is the ground and nobody has looked at it. The measurement is done and
+the decision is the owner's.
 
 **What the shipped reuse is worth is therefore measured, and on the one pair that is semantically correct rather
 than diagnostic**: interval 1 against interval 0 on MakeUp is **0.657 ms of a 6.73 ms frame, 9.8 per cent**.
@@ -261,12 +276,12 @@ carry), and the interval arms give `interval 0 - interval 1 = 0.657 ms` for `ras
 put one drawn 4080x4080 raster at **1.5 to 2.0 ms** and one kept map at **0.1 to 0.7 ms**, and the interval-2
 prediction `(raster + keep) / 3 = 0.29 to 0.45 ms` lands around the **0.385 ms measured**.
 
-**The interval-2 candidate is KEPT as a measurement and DEFERRED as a change.** It is worth 5.7 per cent on
-MakeUp - above the plan's five per cent gate - but on Complementary its two arms differ by 9.7 per cent, which is
-more than either the effect or the plan's noise floor, so the second of the two real packs the high-risk gate
-requires is not satisfied yet. Nothing is broken by leaving it: the selector already offers nought, one and two,
-so a player who wants the longer arm can choose it today; the only question the measurement would settle is what
-the **default** should be, and one pack is not enough to move a default on.
+**The interval-2 candidate is KEPT as a measurement, measured on both packs, and left as the owner's
+decision.** It is worth 5.7 per cent on MakeUp and 3.0 on Complementary (above), which satisfies the "two real
+packs" half of the plan's high-risk gate and leaves two things: one of the two packs is under the five per cent
+the gate asks for, and the map is three frames old instead of two for the ground, which no screenshot of a still
+camera can show. Nothing is broken by leaving it: the selector already offers nought, one and two, so a player
+who wants the longer arm can choose it today; only the **default** is in question.
 
 ## The family the corpus cannot show: the things that move
 
@@ -291,10 +306,21 @@ is `4080 x 4080 x 4 bytes x 2` for the pass's load and store, to the mebibyte, s
 **full map's traffic for a handful of texels of content**, once a frame, and it can never be amortised: they move,
 which is the whole reason the engine's reuse covers the opaque world and nothing else.
 
-**Their wall price is NOT RESOLVED.** The removal arm reads 6.865 and 6.854 (0.2 per cent apart) while the two
-arms that draw them read 6.574 and 6.868 (4.5 per cent apart), so the arm with less work sits *inside* the spread
-of the arm with more - and one of the pairs even orders the wrong way. This session is a case of the rule above:
-the repeats disagree by more than the effect, so the answer is unresolved rather than a small number.
+**Their wall price is 0.13 per cent**, and it took repetition to say so. The first session had the removal arm
+at 6.865 and 6.854 against 6.574 and 6.868 for the arms that draw them - the arm with less work inside the spread
+of the arm with more - and the rule above says that is unresolved rather than a small number. Eight more arms
+over two sessions settle it:
+
+```
+movers removed   6.853  6.854  6.866  6.872      (4 arms, 0.3 per cent apart)
+movers drawn     6.862  6.875  6.878  6.885      (4 arms, 0.3 per cent apart)
+                 +0.009 ms a frame, +0.13 per cent
+```
+
+So the movers' shadow pass - one full-size pass a frame and 129 MiB of attachment traffic with it - costs
+**thirteen hundredths of one per cent of a frame**, which agrees with C7's finding next door: on this backend a
+large fall in attachment bytes does not move the frame, because the frame is not attachment-bound. The family is
+CLOSED: structure measured exactly, wall measured to a tenth of a per cent, and no candidate in it.
 
 ## Correctness
 
@@ -326,19 +352,18 @@ once, so the map's own chain cannot be separated from the pack's; the previous p
 
 **NOT MEASURED - the voxel family.** The voxel write is inside the same fragment program as the raster and no
 switch takes it out without changing what the pack's shader does. The entity family, which was in the same
-position at the end of the corpus work, is measured in the section above: five movers, one extra full-size pass a
-frame, 129 MiB of attachment traffic a frame, and a wall price this session could not resolve.
+position at the end of the corpus work, is closed in the section above: five movers, one extra full-size pass a
+frame, 129 MiB of attachment traffic a frame, and a wall price of 0.13 per cent over eight arms.
 
 ## Residual
 
-- **The machine's arm-to-arm spread is NOT ATTRIBUTED.** Identical structure, identical configuration, 47 per
-  cent apart across arms; no display-mode move, no foreign submitter visible in the GPU trace, no CPU
-  explanation. Every wall figure here is a minimum over repeats for that reason, and an effect smaller than
-  about 5 per cent is not resolvable today.
-- **Complementary's interval-2 pair did not resolve** (8.031 against 8.808, 9.7 per cent), and one session was
-  run without a reference arm of its own, which is why it is not in the table: a session without one yields
-  numbers that cannot be placed on any scale. Both are protocol faults of this round, recorded in
-  `docs/performance-testing.md`.
+- **The machine's arm-to-arm spread is NOT ATTRIBUTED**, and it is intermittent rather than constant: the
+  sessions that closed the entity family and Complementary's interval reproduced to 0.1-0.3 per cent across all
+  eight arms each, where earlier ones scattered by 47. Every wall figure here is a minimum over repeats, and the
+  repeats now say which sessions are usable instead of the machine being written off wholesale.
+- **Complementary's interval-2 pair is resolved** (3.0 per cent over eight arms, above), and the one session
+  run without a reference arm of its own is still not in any table: a session without one yields numbers that
+  cannot be placed on any scale. That protocol fault is recorded in `docs/performance-testing.md`.
 - **The keep's blit accounting is not separated** from the rest of the frame's copies.
 - **The shadow walk's CPU cost is still unmeasured** - 148 walks a second keeping 1700 sections is a cost on the
   render thread and this round priced only the GPU side.
@@ -347,8 +372,10 @@ frame, 129 MiB of attachment traffic a frame, and a wall price this session coul
 
 1. **A resolving measurement of the entity family and of the Complementary interval**, in sessions whose arms
    carry their own reference and whose repeats agree - which needs the machine to hold one state for the length
-   of a session.
-2. **C7's corpus** and **C3's remaining three scales**, unchanged from the list above.
+   of a session. **Both were taken and both are closed in this section above**: eight arms each, the entity
+   family at +0.13 per cent and Complementary's interval at 3.0, with every configuration's own repeats inside
+   0.3 per cent.
+2. **C7's corpus** and **C3's remaining three scales**, both done in this document's later sections.
 
 ---
 
@@ -677,7 +704,21 @@ none of them is guessed at any more, and each has a data reason for the decision
 
 ## Next
 
-1. **C3's remaining three scales** and the **entity/interval re-measurement**, both of which need a machine that
-   holds one state for a session.
-2. **Track F's recorded candidate** - an on-disk Metal pipeline cache worth 0.26-1.6 s a launch - which is the
-   largest measured startup item left and has a phase report of its own to earn.
+1. **C3's remaining three scales** and the **entity/interval re-measurement**: the scales are done in the next
+   section and the walls are closed in the C2 section.
+2. **Track F's recorded candidate** - an on-disk Metal pipeline cache, then recorded at 0.26-1.6 s a launch.
+   **That figure was the wall of the warm-up's parallel job and the archive is REJECTED on its measured size**
+   in `docs/startup-and-cache.md` F4: a launch asks the Metal compiler for 874 things, 36.6 ms, worst 0.29 ms.
+
+---
+
+# Where this document stands
+
+Track C is complete on one corpus and one protocol. C1 built the structural census, C3 asked which passes a
+render scale leaves behind and answered it on all four scenes, C2 decomposed the shadow stage and settled both of
+its wall questions by repetition, C4/C5/C6 measured the copies, the feedback targets and the chains, and C7 took
+the attachment traffic across the three packs. Every figure in it is a count, a rate or a minimum over repeats,
+and every verdict carries either a mechanism that reproduces in an independent counter or a named reason it could
+not be resolved. The one thing Track C leaves open is not a measurement: it is whether the shadow map's default
+should move from one kept frame to the selector's two, worth 5.7 and 3.0 per cent on the two packs where the
+reuse applies, which is the owner's to decide because it changes what every player gets without asking.
