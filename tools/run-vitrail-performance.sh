@@ -504,7 +504,15 @@ else:
 clouds = os.environ.get("VITRAIL_PROFILE_CLOUD_MODE", "false")
 if os.environ.get("VITRAIL_PROFILE_CLOUDS") != "true":
     clouds = "false"
+# `exclusiveFullscreen` is written true for the same reason and it cost a session to learn: a *non-exclusive*
+# fullscreen client is put in its own Space, and a photograph of the display then shows whichever Space is
+# current - measured, all four arms of the sky session captured the browser while `lsappinfo front` answered
+# `java`, so the comparison's picture column read "99.54 per cent of pixels differ" between two arms of one
+# generation. Exclusive fullscreen makes the client the display's content, which is what a photograph of the
+# display is for. It is written here rather than left to the instance because the harness owns the window mode
+# for the length of a session and puts the instance back afterwards.
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
+           "exclusiveFullscreen": "true",
            "renderClouds": f'"{clouds}"', "preferredGraphicsBackend": '"default"',
            "startedCleanly": "true",
            "overrideWidth": override_width, "overrideHeight": override_height}

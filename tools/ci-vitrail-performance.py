@@ -875,6 +875,10 @@ for needle, why in (
      "and the owner's next manual launch is a fullscreen one"),
     ('cp -f "$game_dir/options.txt" "$out_dir/options-before.txt"',
      "the instance's options are not kept before they are overwritten, so there is nothing to put back"),
+    ('"exclusiveFullscreen": "true",',
+     "the measurement profile no longer asks for exclusive fullscreen, so a fullscreen arm is put in its own "
+     "Space and the photograph of the display is of whatever Space is current instead of the game - measured, "
+     "the picture column then read 99.54 per cent of pixels differing between two arms of one generation"),
     ("note: --fullscreen asks the game for its own fullscreen mode",
      "asking for the game's fullscreen is no longer said to move the display's mode, so a session that must "
      "not touch the screen has nothing to read"),
