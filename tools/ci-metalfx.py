@@ -286,4 +286,19 @@ if "MetalFx.scale(" in m4_encoder:
         "object for this command model"
     )
 
+# And the diagnostic that makes this generation answer "no" about the scaler, which is what turned section 124's
+# missing fallback reading into a measured shape: with it set, the eligibility clause (metalFxParityForMetal4)
+# refuses the generation before a frame is drawn, so the reachable fallback is the per-configuration refusal.
+fx = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4" / "Metal4Fx.java"
+      ).read_text(encoding="utf-8")
+for needle, why in (
+    ('Boolean.getBoolean("metallum.probeNoMetalFx")',
+     "the MetalFX refusal probe is gone, so the eligibility clause of the Metal 4 gate can no longer be measured"),
+    ("so this session answers as a device without Metal FX",
+     "the refusal probe no longer says which answer was given, so a session that refused the generation cannot "
+     "be told from one whose device really lacks the scaler"),
+):
+    if needle not in fx:
+        raise SystemExit("MetalFX availability contract: " + why)
+
 print("MetalFX availability contract: PASS")

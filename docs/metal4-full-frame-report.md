@@ -750,6 +750,37 @@ ever refused in a session, so the fallback is code and not a reading), the outpu
 device (40 of 40) and **not in a live frame** (blocker 17's note), and no asymmetric fixture has been scaled
 through the frame path.
 
+**And the fallback was then probed for, which is how the *shape* of that gap was found rather than guessed.** A
+diagnostic was added that makes this generation's capability answer **no** as if the device had
+(`-Dmetallum.probeNoMetalFx=true`), and the session it produced did not reach the frame path at all:
+
+```text
+the device does not satisfy the Metal 4 minimum contract (the request was -Dmetallum.execution=metal4)
+Failed to create backend Metal
+Metal device initialization failed (metallum.execution=metal4 was asked for and this device does not satisfy
+    the Metal 4 minimum contract: ... metalFx=true ...), so this session will not run the Metal 3 reference
+    path either
+Using graphics backend OpenGL
+```
+
+The mechanism is in the capability record and it is deliberate: `metal4MinimumContract()` is the command
+structure's own list and does not mention the scaler, but **eligibility is a second question** -
+`metalFxParityForMetal4()` is `!metal3Scaler || metal4Scaler`, so a device that can scale on Metal 3 and cannot
+on Metal 4 is **refused Metal 4 rather than demoted to a path that cannot scale**. So:
+
+- **section 124's "failure falls back safely" cannot be reached by removing the capability.** The gate refuses
+  the generation before a frame is drawn; the road that *is* reachable is the per-configuration refusal - a
+  scaler that fails to *create* for one size, which is what `Metal4Fx.refused` holds and what a reading would
+  have to provoke. That is the honest status of the item: not a reading nobody took of a road nobody drives.
+- **and the clause is not an AUTO risk, which was checked rather than assumed.** `AUTO`'s eligibility is
+  `metal4MinimumContract() && metal4CommandBuffer() && metal4RenderEncoder() && metal4ArgumentTable() &&
+  metalFxParityForMetal4()`, so a device that scales on Metal 3 and not on Metal 4 is **demoted to the reference
+  path** with `whyNot` naming the clause - the safe direction, and the reason the parity clause sits in the
+  eligibility expression rather than only in the refusal message. Writing it out matters because
+  `metal4MinimumContract()` alone does *not* carry it, so a reader of that method would expect Metal 4 to be
+  selected on exactly the device where the selector says no. The consequence of the clause is therefore confined
+  to the **forced** road, which is the behaviour section 76 owns and which this reading deliberately leaves alone.
+
 ## Performance
 
 **The two generations have now been run against each other, in one session, on the same world at the same size:**

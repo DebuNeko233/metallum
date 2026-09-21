@@ -84,6 +84,17 @@ public final class Metal4Fx implements AutoCloseable {
      * @param device the Metal device handle
      */
     public static boolean supported(final MemorySegment device) {
+        // Diagnostic, off unless asked for: answer no as if the device had, so the road this path takes when a
+        // scaler is not available is a measurement rather than a reading of the code. It never weakens the real
+        // answer - the property is asked first and the device is not consulted at all when it is set - and the
+        // reason string says which of the two answered.
+        if (Boolean.getBoolean("metallum.probeNoMetalFx")) {
+            asked = true;
+            supported = false;
+            reason = "metallum.probeNoMetalFx was asked for, so this session answers as a device without Metal FX";
+            return false;
+        }
+
         if (asked) {
             return supported;
         }
