@@ -1611,11 +1611,72 @@ answered rather than only what is left.
    reuse (`-Dmetallum.metal4RingSlots`), the transient arena and the argument tables, each of which can be varied
    and re-measured, and that is the session this one hands over to.
 
+   **And the ring's own depth was then driven as a lever rather than watched, which names one mechanism and
+   excludes it as the cause.** `-Dmetallum.metal4RingSlots=N` is a diagnostic switch the migration already had
+   (one slot is what makes a fault trace's last commands the faulting submission's); `run/m4-rings` ran four
+   Metal 4 arms of one configuration at one, two, three and four frames in flight:
+
+   ```text
+   arm      slots  ms a frame  wallP50  wallP95   gpuM4P50   drawable wait  submitWindow total  submit p50
+   slots1     1      20.08      20.14    21.25     18.31       11.11 ms        11031.24 ms      18.41 ms
+   slots2     2      18.24      18.17    20.45     18.35       16.71 ms         6635.65 ms      14.68 ms
+   slots3     3      18.32       9.53    37.14     18.48     1610.68 ms          951.49 ms       0.00 ms
+   slots4     4      24.37      16.90    48.46     24.39     1742.78 ms            0.77 ms       0.00 ms
+   ```
+
+   - **The two populations are the slot-reuse wait, and one slot proves it by removing them.** At three slots the
+     arm's frames are bimodal - P50 9.53 against P95 37.14, a 3.9x gap - while its submission wait is *zero for
+     most frames* (p50 0.00 ms) and totals 951 ms, so the waiting is concentrated in a few frames rather than
+     spread. At **one slot every frame waits for the previous submission** (submitWindow p50 18.41 ms, total
+     11031 ms, which is the entire window) and the bimodality is **gone**: P50 20.14 against P95 21.25, a 1.06x
+     gap. So the fast and slow populations of the default depth are the frames that find their third-oldest
+     submission complete and the frames that do not - the first of this blocker's named candidates, measured.
+   - **And it is not what makes an arm slow, which is the useful half.** Four slots removes the submission wait
+     almost entirely (total 0.77 ms, p50 0.00) and is the **slowest arm of the four** - 24.37 ms a frame, its
+     own commit feedback 24.39 - while the default three slots, with 951 ms of submission waiting, is 18.32 and
+     18.48. More room to run ahead bought nothing and cost a third of the frame. The three arms at one, two and
+     three slots read their own GPU time **18.31, 18.35 and 18.48 ms - a 0.9% spread**, the tightest this path
+     has produced; the fourth reads 24.39, and its own commit windows sum to its whole wall time (14629 against
+     14621 ms), so the GPU was busy for all of it. **What this session cannot say is whether the fourth slot made
+     the GPU's work slower or made the driver's per-commit window wider**; what it can say is that the ring depth
+     is not a free variable above the migration's own number, and that a spread of the kind blocker 16 is about
+     is not the slot wait.
+   - **The load trace again fails to order the arms**, on its first session as a harness feature: the machine's
+     own one-minute average rose from 4.12 (slots1) through 4.54 and 5.49 to 5.77 (slots4) as the session ran, and
+     the arm at the *highest* load was the slow one while the arm at the *second highest* was the fastest.
+
+   **And it was repeated, which is when a reading stops being an anecdote.** `run/m4-rings2`, the same four arms in
+   the same order, completed three of them:
+
+   ```text
+   slots1  12137.59 ms / 600   20.23 ms a frame   wallP50 20.28  wallP95 21.30 (1.05x)   gpuM4P50 18.48
+   slots2  11045.75 ms / 600   18.41               wallP50 18.42  wallP95 20.71 (1.12x)   gpuM4P50 18.44
+   slots3  10908.45 ms / 600   18.18               wallP50  9.45  wallP95 36.94 (3.91x)   gpuM4P50 18.23
+   ```
+
+   The shape repeats to the digit that matters: the bimodality is 3.91x at three slots, 1.12x at two and **1.05x at
+   one**, and the *six* arms of the two sessions at one, two and three slots read their own commit feedback
+   **18.23, 18.31, 18.35, 18.44, 18.48 and 18.48 ms - a 1.4% spread across two sessions and three configurations**.
+   That is the tightest this path has ever read, and it says the machinery is not drifting; what moves the arm
+   totals is what happens *around* the commit. The fourth arm of the repeat produced **no window at all**: the pack
+   reached its first full frame, the encoder ran 1402 submissions and closed cleanly (`complete=true`, ring state
+   naming four awaited submissions, so the switch took effect) 27 s later - two seconds after the settle ended -
+   with no probe line and no fault, exception or restart in its log. **NOT LOCALISED**: it is the same
+   "no window" shape as the forced-Metal-4 session of blocker 18 and it is not the path refusing anything, so it
+   is recorded as a second instance of a harness-shaped end rather than as a property of four slots. The repeat's
+   traces also carry `window-opened` in all four arms, which is the fix below verified in a live session rather
+   than in the code.
+
    **The harness now keeps that evidence by itself.** Every arm writes `load-trace.txt` beside `load.txt` - the
    same reading every five seconds, with `window-opened` and `window-closed` lines so a later reader can slice it
    to the frames the probe counted, bounded at 240 samples and stopped on **both** ways an arm can end (its window
    closes, or it never reaches one). `tools/ci-vitrail-performance.py` pins the trace, the two markers, the stop
-   and the bound, and each of those five checks was mutation-proved.
+   and the bound, and each of those checks was mutation-proved. **And the markers were not there in that session's
+   four traces, which the first run of the new code is what found**: the tracer had redirected its own file while
+   the arm appended its markers to the same one, so the tracer's descriptor carried its own offset and its next
+   sample landed on the marker the arm had just written, erasing it - `window-opened` was absent from all four arms.
+   The file is emptied once per arm and every writer appends now, and the contract refuses the redirecting form and
+   the missing truncation (both mutation-proved) rather than trusting the shape that produced the loss.
 
 17. ~~**Minecraft's own GUI, HUD and text are not drawn by this path at all**~~ - **FIXED, and the mechanism is
    named.** The whole interface was missing on Metal 4 while the world rendered, reported from play and confirmed

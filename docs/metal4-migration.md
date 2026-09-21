@@ -4244,6 +4244,77 @@ non-zero base vertex in the frame belonged to the GUI, so the base vertex was th
 as a shift of the vertex buffer's address left the frame byte-identical, which says the base vertex was being
 applied, and that probe was reverted rather than kept.
 
+### The arm spread: the machine is refuted by a trace, the slot wait is named and is not the cost
+
+Two Metal 4 arms of one session differ by up to 50% while the Metal 3 arms beside them agree to 0.2%, and the
+harness had exactly one instrument for that question: the kernel's load average, written at each arm's start and
+at its window's close. That instrument cannot answer it. `vm.loadavg` is a one-minute average, so a burst of half a
+minute barely moves it, and `run/perf-ab6` is a session that shows equal load at both ends of an arm whose own cost
+moved by half. **A spread that is not the machine's has to be visible as not the machine's**, and that needs the
+reading taken *while* the arm runs.
+
+So the harness keeps it now. Every arm writes `load-trace.txt` beside `load.txt` - the same reading every five
+seconds, with `window-opened` and `window-closed` markers so a reader can slice the trace to the frames the probe
+counted, bounded at 240 samples, and stopped on both ways an arm can end. Verifying that the markers survive a live
+run is what found the bug in the first version: the tracer redirected its own file while the arm appended its
+markers to the same one, so the tracer's descriptor carried its own offset and its next sample landed exactly on
+the marker just written, erasing it. `window-opened` was in **none** of the four arms' traces - a boundary no
+reader could slice by. The file is emptied once per arm and every writer appends now, and the contract refuses the
+redirecting form and the missing truncation, both mutation-proved. **A static pin is not a reading**: the contract
+passed on the code that lost the marker, and only a session said so.
+
+`run/m4-loadtrace` was the first session with the trace: four Metal 4 arms of one configuration, the same pack,
+world, target, window and 25 s of settle, `-Dmetallum.metal4FrameStats=true`. They read 21.10, 18.52, 18.22 and
+21.57 ms a frame. The **fastest arm ran at the highest load** (mean 4.28 against the slowest-but-one's 2.78) and,
+bucketed against each arm's own sixty-frame cost, the correlation of load with cost is negative in three arms of
+four (-0.30, -0.13, -0.08, +0.27). Three other things that session settled:
+
+- **The scene drift the comparer refuses the session for does not order the cost.** The guard refused all four arms
+  (`renderPasses` of m4c -2.3% against m4a, `depthAttachments` of m4b +2.4%, tolerances 2% and 5%), and the drift is
+  still not the cost: m4b opened *more* render passes a frame than m4c and was not slower.
+- **The display is a constant, not a variable.** All six of that day's sessions left the same byte-identical
+  156220-byte capture - the flat black a locked or asleep display produces - so the session whose three arms agreed
+  to 1.6% and the session whose arms did not had the same display state. It is also the one reason every picture
+  column of that day is void.
+- **`Metal 4 frame stats`'s `msPerFrame` is the encode, not the frame period** - it begins at a frame's first encode
+  and is taken at that frame's commit, so it excludes the drawable wait and the CPU between frames, where the
+  probe's `windowMs/windowFrames` is the period. They differ by 1.8x to 2.6x and the ratio moves arm to arm, so the
+  earlier reading of "9.67 ms in one sixty-frame bucket and 18.71 in another" is the **encode** moving; it is the
+  right instrument for that and the wrong one for a frame rate.
+
+**Then the blocker's own first-named candidate was driven as a lever instead of watched.**
+`-Dmetallum.metal4RingSlots=N` is a switch the migration already had for fault traces; `run/m4-rings` ran four
+Metal 4 arms at one, two, three and four frames in flight:
+
+```text
+arm      slots  ms a frame  wallP50  wallP95   gpuM4P50   drawable wait  submitWindow total  submit p50
+slots1     1      20.08      20.14    21.25     18.31       11.11 ms        11031.24 ms      18.41 ms
+slots2     2      18.24      18.17    20.45     18.35       16.71 ms         6635.65 ms      14.68 ms
+slots3     3      18.32       9.53    37.14     18.48     1610.68 ms          951.49 ms       0.00 ms
+slots4     4      24.37      16.90    48.46     24.39     1742.78 ms            0.77 ms       0.00 ms
+```
+
+The two populations are the slot wait, and one slot proves it by removing them: three slots is bimodal (P50 9.53
+against P95 37.14) with a submission wait of *zero for most frames* and 951 ms concentrated in a few, and one slot
+makes every frame wait for the previous submission (p50 18.41 ms, 11031 ms in total) and leaves P50 20.14 against
+P95 21.25 - a 1.06x gap instead of 3.9x. **And the slot wait is not what makes an arm slow**: four slots removes the
+submission wait almost entirely (0.77 ms) and is the slowest arm of the four, 24.37 ms with 24.39 of its own commit
+feedback, while the three arms at one, two and three slots read their own GPU time 18.31, 18.35 and 18.48 - a 0.9%
+spread, the tightest this path has produced. Above the migration's own depth the ring is not a free variable, and a
+spread of this kind is not the ring's wait. What is **NOT LOCALISED** is what the fourth slot did: whether it made
+the GPU's work slower or made the driver's per-commit window wider is not something this session can separate.
+
+The session was then repeated, and that is what makes it a reading rather than an anecdote. `run/m4-rings2`, the
+same four arms in the same order, completed three: the bimodality is 3.91x at three slots, 1.12x at two and 1.05x
+at one, the same shape to the digit; and the *six* arms of the two sessions at those three depths read their own
+commit feedback **18.23, 18.31, 18.35, 18.44, 18.48 and 18.48 ms - 1.4% across two sessions and three
+configurations**, the tightest this path has ever read. The fourth arm of the repeat produced no window at all: the
+pack reached its first full frame, the encoder ran 1402 submissions and closed cleanly (its ring state naming four
+awaited submissions, so the switch took effect) 27 s later, two seconds after the settle ended, with no probe line
+and no fault in its log. That is recorded as a second instance of a harness-shaped end - the same shape as the
+forced-Metal-4 session that landed on OpenGL - and not as a property of four slots, because one session's four-slot
+arm completed and this one's did not.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
