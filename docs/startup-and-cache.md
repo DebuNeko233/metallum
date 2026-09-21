@@ -36,12 +36,15 @@ With the families in, flattening the chain's units cost D ms over E of them with
 ```
 
 **`--cold-cache` is the switch that was missing.** Both caches live in the instance
-(`run/vitrail/modules/<build>` and `run/vitrail/translations/<build>`), keyed on the shader text and the build,
-so *every* session this programme had ever run measured the warm path - the corpus's four packs read
-`574 units served, 0 built` because the caches had been filled by the first session of that build. The flag
-removes both directories before the session's first arm and prints what it removed (`19M, 672 file(s)` and
-`16M, 298 file(s)` the first time); every arm is a fresh launch of the same build, so a session with the flag on
-its first arm is a reload experiment with one cold arm and the rest warm.
+(`run/vitrail/modules/<build>` and `run/vitrail/translations/<build>`), keyed on the shader text and the build, so
+a session that does not remove them measures whatever an earlier session of the same build left behind. That is
+readable in the corpus itself: under one build, `no-pack` built 6 units, `MakeUp` built none (an earlier session
+had filled it), `Complementary` built **86** - the first load of that pack under that build - and `Photon` built
+none. What the corpus never had was a load with the caches removed on purpose, and without one the cold number
+appears only by accident, in whichever pack happens to be first. The flag removes both directories before the
+session's first arm and prints what it removed (`19M, 672 file(s)` and `16M, 298 file(s)` the first time); every
+arm is a fresh launch of the same build, so a session with the flag on its first arm is a reload experiment with
+one cold arm and the rest warm.
 
 `tools/vitrail-load-census.py` reads the four into one table per session, and the load wall is the arm's own log
 timestamps from its first line to `This pack's first full frame opened`.
@@ -110,18 +113,30 @@ it: the cache answers "same input" exactly and says nothing about "nearly the sa
 
 ## F3 - the second and third load
 
-Answerable in one session because every arm is a fresh launch of the same jar:
+Answerable in one session because every arm is a fresh launch of the same jar, and answerable across sessions
+because the counts say which arms were cold. A cold arm is one that built units; a warm arm built none.
 
 ```
-                     cold        warm (repeats)          saving
-MakeUp               11-12 s     8 s (5 arms, 2 sessions)  3-4 s
-Complementary        15 s        11 / 9 / 8 s              4-7 s
+pack            arms                    cold (built > 0)          warm (built = 0)
+MakeUp          c2-makeup               11 s  (187 built)         8, 8, 10, 10 s
+                c2b-interval                                       8, 8, 9 s
+                c2c-interval2                                      9, 8, 8 s
+                f1-makeup               11 s  (187 built)         8, 8, 8 s
+                f2-makeup               12 s  (187 built)         8 s
+Complementary   f1-complementary        15 s  (191 built)         11, 9, 8 s
 ```
 
-The cold load's extra seconds are the compiles themselves, and the engine's own spans name them: **1747 ms of
-module making and 563 ms of translating** on MakeUp against 18-21 ms and 166-194 ms warm; **1807 ms and
-1212 ms** on Complementary against 27-40 ms and 260-416 ms. So the cache is worth 2.3-3.0 s of a checkout's
-first load, and it is worth all of it from the second launch on.
+So the cold/warm split is a replicate, not one session: **three cold MakeUp arms in three sessions each built
+187 units and took 11-12 s**, and sixteen warm MakeUp arms in five sessions built none and took **8 s on twelve
+of them and 9-10 s on four**. The wall is looser than the counts - nothing here is as tight as "0 built" - and
+the modal warm figure is the one to quote. Complementary has one cold arm and three warm ones, so its 15 s
+against 8-11 s is one session's reading.
+
+The cold load's extra seconds are the compiles themselves, and the engine's own spans name them: **1734-1763 ms
+of module making and 529-563 ms of translating** on MakeUp against 18-23 ms and 164-244 ms warm; **1807 ms and
+1212 ms** on Complementary against 27-40 ms and 260-416 ms. So the cache is worth about 2.3-2.4 s of a
+checkout's first load - the modal warm load is 8 s and the cold ones are 11-12 s - and it is worth all of it
+from the second launch on.
 
 One detail worth keeping: Complementary's warm arms **descend** (11, 9, 8 s) while MakeUp's are flat at 8 s.
 Something beyond the two shader caches is still warming across the first warm arm - the pack archive in the

@@ -52,7 +52,7 @@ Track F  shader/pipeline/startup      F1/F2/F3 DONE (docs/startup-and-cache.md):
                                       NOTHING (module cache 574/574, translation 45/45) and a cold one builds
                                       187 units in 1747 ms plus 563 ms of translating; a distinct input is built
                                       once and read 3.05 times a load; 105 of the two packs' inputs are the same
-                                      input; a warm launch saves 3-4 s on MakeUp and 4-7 s on Complementary. What
+                                      input; a warm load is 8 s against a cold 11-12 s on MakeUp (3 cold arms, 16 warm). What
                                       no cache covers is the Metal pipeline state, remade every launch at
                                       0.26-1.6 s - RECORDED as the next candidate, not implemented; F4 not started
 Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines,
