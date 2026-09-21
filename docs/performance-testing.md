@@ -86,6 +86,36 @@ session, on the same machine state, and read them before reading the A/B.
 at that moment; a pair whose two arms differ by more than the floor and whose sign flips when the
 order flips is machine state rather than the switch.
 
+**Every session carries a reference arm of its own, and it is repeated.** A configuration measured in a session
+that holds no arm of a second configuration cannot be placed on any scale: measured while collecting C2, one
+four-arm session was run with two configurations and no reference among them, so its two numbers (6.59 and 6.78 ms
+a frame) could not be compared with the 8.29 ms the same pack reads in the sessions that do have one - the two
+were measured in different machine states and nothing in the session says which. So a session that means to
+compare two configurations measures at least one of them twice, and the repeats are read before the difference:
+they are the only thing in the session that says whether it held one state.
+
+**Read minima, not means, when the machine is shared.** The noise here is one-sided - another client of the GPU
+can only make a frame slower - so the reading worth comparing is the smallest over repeats. Measured: one
+configuration (interval 1 of the shadow amortisation on MakeUp) read 6.726, 6.734, 6.734, 6.740 and 6.750 across
+five arms in three sessions, 0.4 per cent apart, while arms of identical structure and the same configuration in
+disturbed windows read up to 9.917 - 47 per cent. A configuration whose own repeats disagree by more than the
+effect is reported as **unresolved** and not averaged, and a candidate whose second real pack is unresolved is not
+shipped.
+
+**A removal arm is not a pair of arms that draw the same frame.** The comparison's scene-drift guard refuses
+every removal session, correctly, because the arms differ exactly where the switch says they should: one fewer
+shadow pass in 600 frames moves `depthAttachments` by 2.2 per cent in a session whose two references agree to
+0.4. Read that refusal as "here is how much the arms differ", and check that the difference is the mechanism's
+own - the shadow map's pass count, the attachment traffic, the blit count - rather than as a drifted scene.
+
+**An arm states the command generation it ran in, and the harness refuses the wrong one.**
+`--expect-execution metal3|metal4` reads the probe's own `executingGeneration` and refuses the arm otherwise,
+quoting the session's `Vitrail Metal preference` line. It exists because the generation is machine state this
+harness does not write - `vitrail/metal-execution.txt` is the game's own setting - and a whole session of the C2
+measurement was collected on Metal 4 while the corpus it was to be read against is Metal 3, with every structural
+counter within a per cent of the baseline's. Pass `-Dmetallum.execution=metal3` to the arm itself; the property
+outranks the stored choice.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:

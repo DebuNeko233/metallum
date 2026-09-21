@@ -30,7 +30,13 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       frame's GPU work is the terrain's indirect draws and attachment traffic;
                                       at 55 % exactly one pass a frame stays at the window's size (the
                                       interface), so C3's "heavy pass left full-res" is REJECTED for that
-                                      pack; C2/C4-C7 not started
+                                      pack. C2 DONE for the two packs where reuse applies, in the same
+                                      document: the shadow map decomposes exactly (300 opaque + 600
+                                      translucent passes a 600-frame window), the shipped reuse of the map is
+                                      worth 9.8 % on MakeUp, the selector's own maximum is worth another
+                                      5.9 % there and is UNRESOLVED on Complementary, so raising the default
+                                      interval is DEFERRED; the entity and voxel families are NOT MEASURED;
+                                      C4-C7 not started
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
                                       with the binding census it closes the CPU micro-optimisation round
@@ -41,7 +47,9 @@ Track E  MetalFX spatial              E1 pinned (DONE); E2 ladder DONE (docs/met
                                       binding applied the option's file-format default over the player's
                                       stored scale - a player-visible defect, not only a measurement one)
 Track F  shader/pipeline/startup      F1-F4 not started
-Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines);
+Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines,
+                                      the command-generation guard, the reference-arm and minimum-over-repeats
+                                      rules);
                                       G4 (profiler stop rule) is policy, recorded below
 ```
 
@@ -70,6 +78,17 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
   slow engine (measured: 100.00 ms a frame at exactly two client ticks a frame).
 - A profiler that crashes the JVM or changes the frame is not used for a verdict; an explicit census replaces it.
 - A counter that only counts cannot say whether a road is a cost. The A1 census prices the road it names.
+- A removal arm changes the frame's structure by design, so the comparison's scene-drift guard refuses its
+  session. That refusal is read as "the arms differ, and by this much", and the difference is checked against the
+  mechanism rather than against a tolerance (docs/performance-testing.md).
+- Every session carries a reference arm of its own and repeats it, and the wall is read as the **minimum over
+  repeats** because the machine's noise is one-sided. Measured while collecting C2: identical structure, identical
+  configuration, 47 per cent apart between arms - and one configuration reproduced to 0.4 per cent across five
+  arms in three sessions. A configuration whose repeats disagree by more than the effect is UNRESOLVED, not
+  averaged, and a candidate with an unresolved second pack is not shipped.
+- An arm states the command generation it ran in (`--expect-execution`), because the generation is the game's own
+  stored setting and a whole C2 session was collected on Metal 4 against a Metal 3 corpus without one counter
+  showing it.
 ```
 
 ## What each new document owns
@@ -77,7 +96,8 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 ```
 docs/metal3-performance-round2.md   Track A: the native-call census and what it names
 docs/vitrail-cpu-performance.md     Track B (to be written with B1)
-docs/vitrail-gpu-performance.md     Track C (to be written with C1)
+docs/vitrail-gpu-performance.md     Track C: the corpus (C1), the scale audit (C3) and the shadow
+                                    stage (C2)
 docs/bridge-overhead.md             Track D (to be written with D1)
 docs/metalfx-performance.md         Track E (to be written with E2)
 docs/performance-testing.md         the harness, the session rules and the picture evidence
