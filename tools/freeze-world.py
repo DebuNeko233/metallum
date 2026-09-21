@@ -250,7 +250,7 @@ SPECTATOR = 3
 NOON = FROZEN_TIME
 
 
-def freeze(root: Compound, time: int) -> Compound:
+def freeze(root: Compound, time: int, weather: str = "clear") -> Compound:
     data_tag, data = entry(root, "Data")
     if data_tag != TAG_COMPOUND:
         raise ValueError("this level.dat has no Data compound")
@@ -261,7 +261,7 @@ def freeze(root: Compound, time: int) -> Compound:
     # snake_case where most of the compound is not - and a run of this tool checks which key the game
     # keeps by reading the save the client leaves behind. Writing a compound the game ignores costs
     # nothing; writing only the wrong one costs the whole fixture.
-    quiet_weather(root)
+    quiet_weather(root, weather)
 
     for key in ("GameRules", "game_rules"):
         rules_tag, rules = entry(data, key)
@@ -436,8 +436,20 @@ def freeze_clock(path: Path, time: int) -> bool:
     return True
 
 
-def freeze_weather_file(path: Path) -> bool:
-    """Stops the rain and the thunder the save was left holding, in the file this schema keeps."""
+# What the weather is *left* in, which is a different question from the cycle that would change it.
+# A measurement of vanilla's own rendering needs rain because rain is a particle system of its own - and
+# the rule that stops the weather cycle, which every measurement sets, does nothing about the weather a
+# save already holds. So the state is a switch here, and `rainTime` is pushed out with it because the
+# countdown is what ends a storm even with the cycle off.
+WEATHER_STATES = {
+    "clear": (0, 0, 0, 0),
+    "rain": (1, 0, 1000000, 1000000),
+    "thunder": (1, 1, 1000000, 1000000),
+}
+
+
+def freeze_weather_file(path: Path, weather: str = "clear") -> bool:
+    """Leaves the weather in the state asked for, in the file this schema keeps."""
     if not path.is_file():
         return False
 
@@ -446,37 +458,52 @@ def freeze_weather_file(path: Path) -> bool:
     if tag != TAG_COMPOUND:
         return False
 
-    for key in ("raining", "thundering"):
-        set_entry(data, key, TAG_BYTE, 0)
+    raining, thundering, rain_time, thunder_time = WEATHER_STATES[weather]
+    for key, value in (("raining", raining), ("thundering", thundering)):
+        set_entry(data, key, TAG_BYTE, value)
+    if weather != "clear":
+        # Only a state that is on needs its countdown pushed out, and the clear state writes exactly the
+        # two entries it wrote before this option existed - a baseline's save is not moved by a switch it
+        # did not ask for.
+        for key, value in (("rainTime", rain_time), ("thunderTime", thunder_time)):
+            set_entry(data, key, TAG_INT, value)
     save_level_dat(path, root)
 
     return True
 
 
-def freeze_world_data(save: Path, time: int) -> tuple:
+def freeze_world_data(save: Path, time: int, weather: str = "clear") -> tuple:
     """Freezes the clock, the weather and the rules where this schema actually keeps them.
 
     The three answers are worth separating: a save written by an older schema has none of these
     files, and a fixture that silently froze nothing is worse than one that says so.
     """
     return (freeze_clock(world_data_file(save, "world_clocks"), time),
-            freeze_weather_file(world_data_file(save, "weather")),
+            freeze_weather_file(world_data_file(save, "weather"), weather),
             freeze_rules(world_data_file(save, "game_rules")))
 
 
-def quiet_weather(root: Compound) -> bool:
-    """Stops the rain and the thunder a save was left holding.
+def quiet_weather(root: Compound, weather: str = "clear") -> bool:
+    """Leaves the weather in the state asked for, under the spelling `level.dat` keeps.
 
     The rule that stops the weather cycle stops it *changing* and does nothing about what it already
     is, so a world saved in a storm keeps raining for the whole of a measurement, and rain is drawn
-    and animated in every frame of one.
+    and animated in every frame of one - which is a fault in a controlled comparison and the whole
+    point in a measurement of vanilla's own rendering.
     """
     data_tag, data = entry(root, "Data")
     if data_tag != TAG_COMPOUND:
         return False
 
-    for key in ("raining", "thundering"):
-        set_entry(data, key, TAG_BYTE, 0)
+    raining, thundering, rain_time, thunder_time = WEATHER_STATES[weather]
+    for key, value in (("raining", raining), ("thundering", thundering)):
+        set_entry(data, key, TAG_BYTE, value)
+    if weather != "clear":
+        # Only a state that is on needs its countdown pushed out, and the clear state writes exactly the
+        # two entries it wrote before this option existed - a baseline's save is not moved by a switch it
+        # did not ask for.
+        for key, value in (("rainTime", rain_time), ("thunderTime", thunder_time)):
+            set_entry(data, key, TAG_INT, value)
     return True
 
 
@@ -527,6 +554,33 @@ def self_test() -> None:
             if name not in ("GameRules", "game_rules", "raining", "thundering")]
     if kept != [("Time", TAG_LONG, NOON), ("LevelName", TAG_STRING, "a world")]:
         raise SystemExit("self-test: an unrelated entry was disturbed")
+
+    # The weather states, which are the one thing this tool writes *on* as well as off: a measurement of
+    # vanilla's own rendering needs rain, and the clear state must stay exactly the two flags it always was
+    # so that a baseline written before this option existed is not moved by it.
+    # Its own document, and not the one above: `freeze` writes into the compound it is given, so reusing
+    # that fixture would rewrite the entries the checks above are about.
+    weather_world: Compound = [
+        ("Data", TAG_COMPOUND, [
+            ("Time", TAG_LONG, 1234),
+            ("raining", TAG_BYTE, 1),
+            ("thundering", TAG_BYTE, 1),
+        ]),
+    ]
+    _, clear_data = entry(freeze(weather_world, NOON, "clear"), "Data")
+    if [name for name, _, _ in clear_data if name in ("rainTime", "thunderTime")]:
+        raise SystemExit("self-test: the clear state writes a countdown it never used to")
+    if entry(clear_data, "raining") != (TAG_BYTE, 0) or entry(clear_data, "thundering") != (TAG_BYTE, 0):
+        raise SystemExit("self-test: the clear state does not stop the rain")
+    _, rainy_data = entry(freeze(weather_world, NOON, "rain"), "Data")
+    if entry(rainy_data, "raining") != (TAG_BYTE, 1) or entry(rainy_data, "thundering") != (TAG_BYTE, 0):
+        raise SystemExit("self-test: the rain state does not leave it raining without thunder")
+    if entry(rainy_data, "rainTime") != (TAG_INT, WEATHER_STATES["rain"][2]):
+        raise SystemExit("self-test: the rain state does not push the countdown out, so a storm with the"
+                         " cycle off still ends")
+    _, stormy_data = entry(freeze(weather_world, NOON, "thunder"), "Data")
+    if entry(stormy_data, "thundering") != (TAG_BYTE, 1):
+        raise SystemExit("self-test: the thunder state does not leave it thundering")
     for key in ("raining", "thundering"):
         if entry(frozen_data, key) != (TAG_BYTE, 0):
             raise SystemExit(f"self-test: a storm the save was holding was left in it: {key}")
@@ -614,6 +668,10 @@ def main() -> int:
         time = int(args[args.index("--time") + 1])
     still = "--still-life" in args
     spectate = "--spectator" in args
+    weather = args[args.index("--weather") + 1] if "--weather" in args else "clear"
+    if weather not in WEATHER_STATES:
+        print("--weather wants one of " + ", ".join(WEATHER_STATES), file=sys.stderr)
+        return 2
     position = None
     if "--at" in args:
         position = [float(axis) for axis in args[args.index("--at") + 1].split(",")]
@@ -630,16 +688,16 @@ def main() -> int:
 
     root = load_level_dat(level)
     before = level.read_bytes()
-    save_level_dat(level, freeze(root, time))
+    save_level_dat(level, freeze(root, time, weather))
     after = level.read_bytes()
-    clock, weather, rules = freeze_world_data(save, time)
-    if before == after and clock and weather:
+    clock, weather_frozen, rules = freeze_world_data(save, time, weather)
+    if before == after and clock and weather_frozen:
         print(f"{save} was already frozen", file=sys.stderr)
     else:
-        print(f"Froze {save}: the overworld clock pinned to {time}"
+        print(f"Froze {save}: the overworld clock pinned to {time}, the weather {weather}"
               + (", the rules set" if rules else ", and no rules file to set"))
 
-    absent = [name for name, present in (("clock", clock), ("weather", weather), ("rules", rules))
+    absent = [name for name, present in (("clock", clock), ("weather", weather_frozen), ("rules", rules))
               if not present]
     if absent:
         print(f"  no {' or '.join(absent)} under data/minecraft, so this save is an older schema and "

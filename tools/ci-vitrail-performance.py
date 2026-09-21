@@ -109,10 +109,18 @@ if "run/" not in GITIGNORE.read_text(encoding="utf-8"):
 # A comparison is two launches of one world, and a live world does not draw the same frame twice: the
 # sun moves, mobs spawn and weather comes and goes. The staged world is frozen before the client starts,
 # and the tool that does it proves its own round-trip before it is trusted with a real save.
-if 'tools/freeze-world.py" "$saves_dir/$world_name" --still-life --spectator' not in launcher:
+# The weather is passed because the state a world is *left* in decides what vanilla draws, and the still-life
+# scene stays the default: a comparison wants neither the storm the save was holding nor a mob that moved
+# between two launches, and a measurement of what vanilla draws asks for both by switch.
+if 'tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator' not in launcher:
     raise SystemExit(
-        "the harness does not freeze the world it stages, or leaves its entities or the player's own "
-        "body in it, so two launches draw two scenes"
+        "the harness does not freeze the world it stages, or does not say what weather it leaves it in, so "
+        "two launches draw two scenes"
+    )
+if '$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life")' not in launcher:
+    raise SystemExit(
+        "the still-life scene is no longer the default, so an entity left in the world makes two launches of "
+        "one configuration draw two different frames"
     )
 subprocess.run(["python3", str(ROOT / "tools/freeze-world.py"), "--self-test"], check=True)
 if "--continue-world" not in launcher or 'rm -rf "$saves_dir/$world_name"' not in launcher:
@@ -233,6 +241,54 @@ if 'if [[ "$compare_status" == 4 || "${picture_void:-0}" == 1 ]]; then' not in l
 # Two windows of different lengths are not two windows of one thing, so --frames has to reach the
 # probe's own budget rather than being a number the harness keeps to itself.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# A pack's frame is not vanilla's frame, and the switches are how the difference is measured
+#
+# A pack draws its own clouds, so every pack comparison sets `renderClouds` false and every baseline this
+# harness has taken has no vanilla clouds in it. Vanilla's own rendering - clouds, the weather's particles,
+# mobs - is a different question and needs the things themselves in the frame, which is what these three
+# switches are for. Each is off by default, because a baseline written before them is not moved by a switch
+# nobody asked for.
+# ---------------------------------------------------------------------------
+for needle, why in (
+    ("--vanilla-clouds) vanilla_clouds=", "the harness cannot put the game's own clouds in a frame, so a "
+     "measurement of vanilla's rendering has to edit the instance by hand"),
+    ('"renderClouds": f', "the profile still writes one fixed answer for renderClouds, so the "
+     "clouds switch cannot reach the game's options"),
+    ('VITRAIL_PROFILE_CLOUDS', "the clouds switch never reaches the profile writer"),
+    ("--weather) weather=", "the harness cannot leave the world raining, so vanilla's largest particle system "
+     "cannot be in a frame without a keyboard"),
+    ("--keep-entities) keep_entities=true", "the harness always takes the world's entities out, so nothing a "
+     "mob or a block entity draws can be measured"),
+    ("--vanilla-particles) vanilla_particles=true", "the harness cannot stage the vanilla particle fixture"),
+    ('cp -R "$repo_root/tools/fixtures/vanilla-showcase" "$saves_dir/$world_name/datapacks/showcase"',
+     "the particle fixture is not copied from the repository, so the scene would live in an unversioned save"),
+    ('grep -q "Found new data pack file/showcase" "$run_dir/latest.log"',
+     "an arm that staged the particle fixture is not checked against the game having found it, so a scene with "
+     "no particles in it reads as a scene with particles"),
+    ('grep -q "Failed to load function showcase:tick" "$run_dir/latest.log"',
+     "an arm is not refused when the game refuses the fixture's function, which is how a fixture that stages and "
+     "emits nothing passes for one that works"),
+):
+    if needle not in launcher:
+        raise SystemExit("vitrail performance harness: " + why)
+fixture = ROOT / "tools" / "fixtures" / "vanilla-showcase"
+for path, why in (
+    (fixture / "pack.mcmeta", "the particle fixture has no pack metadata, so the game will not load it"),
+    (fixture / "data" / "minecraft" / "tags" / "function" / "tick.json",
+     "the fixture has no tick tag, so its function never runs"),
+    (fixture / "data" / "showcase" / "function" / "tick.mcfunction",
+     "the fixture has no tick function, so the switch stages an empty datapack"),
+):
+    if not path.is_file():
+        raise SystemExit("vitrail performance harness: " + why)
+if "particle minecraft:flame" not in (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text():
+    raise SystemExit("vitrail performance harness: the tick function emits no particle, so the fixture stages "
+                     "nothing into the frame")
+if "execute at @a" not in (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text():
+    raise SystemExit("vitrail performance harness: the particles are not emitted at the camera, so they would "
+                     "land wherever the world's spawn is and not in the frame")
+
 if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
     raise SystemExit("--frames never reaches the probe, so the window length is not the harness's")
 

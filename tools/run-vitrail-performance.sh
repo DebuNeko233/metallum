@@ -45,6 +45,10 @@ met_all=0
 fresh_world=true
 no_pack=false
 fixture_pack=false
+vanilla_clouds=off
+weather=clear
+keep_entities=false
+vanilla_particles=false
 fullscreen=false
 expect_target=""
 fullscreen_size=""
@@ -111,6 +115,17 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          a run whose result is not a claim.
   --out DIR              where the collected logs and pictures go.
   --keep                 leave the collected dev instance in place instead of clearing the marker.
+  --vanilla-clouds on|off  the game's own clouds in the frame (default off, because a pack draws its own).
+                         A measurement of vanilla's rendering needs them on; a pack comparison does not.
+  --weather clear|rain|thunder
+                         what the world is left holding, with the weather cycle off either way. Rain is a
+                         particle system of its own, so this is how vanilla's particles get into a frame
+                         without a keyboard.
+  --keep-entities        keep the world's mobs and other entities instead of taking them out. For a
+                         correctness reading of what a frame draws, not for a comparison of two arms.
+  --vanilla-particles    stage tools/fixtures/vanilla-showcase - a tick function that emits the game's own
+                         particle types around the camera - into the world. The particles are vanilla's, the
+                         counts are the same in every arm, and nothing has to be typed into the game.
   --continue-world       let each run carry on from the world the last one saved instead of
                          starting from the staged copy again. Off by default, because the world's
                          clock runs while a session is loaded and a scene lit by a moved sun is a
@@ -157,6 +172,10 @@ while [[ $# -gt 0 ]]; do
 		--settle) settle_seconds="$2"; shift 2 ;;
 		--out) out_dir="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
+		--vanilla-clouds) vanilla_clouds="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+		--weather) weather="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+		--keep-entities) keep_entities=true; shift ;;
+		--vanilla-particles) vanilla_particles=true; shift ;;
 		--continue-world) fresh_world=false; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -182,6 +201,15 @@ fi
 game_dir="$repo_root/run"
 marker_dir="$game_dir/metallum"
 marker="$marker_dir/probe-frames"
+if [[ "$vanilla_clouds" != on && "$vanilla_clouds" != off ]]; then
+	echo "--vanilla-clouds wants on or off" >&2
+	exit 2
+fi
+if [[ "$weather" != clear && "$weather" != rain && "$weather" != thunder ]]; then
+	echo "--weather wants clear, rain or thunder" >&2
+	exit 2
+fi
+export VITRAIL_PROFILE_CLOUDS="$([[ "$vanilla_clouds" == on ]] && echo true || echo false)"
 export VITRAIL_PROFILE_FULLSCREEN="$fullscreen"
 export VITRAIL_PROFILE_FULLSCREEN_SIZE="$fullscreen_size"
 saves_dir="$game_dir/saves"
@@ -335,8 +363,9 @@ if "x" in size:
     override_width, override_height = width.strip(), height.strip()
 else:
     override_width, override_height = "0", "0"
+clouds = "true" if os.environ.get("VITRAIL_PROFILE_CLOUDS") == "true" else "false"
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
-           "renderClouds": '"false"', "preferredGraphicsBackend": '"default"',
+           "renderClouds": f'"{clouds}"', "preferredGraphicsBackend": '"default"',
            "startedCleanly": "true",
            "overrideWidth": override_width, "overrideHeight": override_height}
 lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
@@ -351,7 +380,7 @@ for name, value in profile.items():
         lines.append(f"{name}:{value}")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 OPTIONS
-echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds off, Metal HUD off" >&2
+echo "measurement profile: maxFps 260, vsync off, $([[ "$fullscreen" == true ]] && echo fullscreen || echo windowed), vanilla clouds $vanilla_clouds, weather $weather, Metal HUD off" >&2
 
 # The Metal path is the one being measured, and a run that came up on another backend would measure
 # nothing at all.
@@ -521,7 +550,20 @@ for run in "${runs[@]}"; do
 	# with it, because a player draws their own entity and their hand and those are the last things inside
 	# a frame that vary: with them, two runs of one configuration differ in five to nine per cent of their
 	# texture and sampler counts, which is enough to swamp an effect of a few per cent.
-	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --still-life --spectator \
+	# The entities and the weather are *switches* here and not constants, because "vanilla's own frame" is a
+	# different question from "one pack's frame under one controlled scene": a measurement of particles, of
+	# clouds or of what a mob draws needs the thing itself in the frame, and the still-life scene that makes
+	# two arms comparable is exactly what takes it out.
+	# The particle fixture is staged from the repository rather than left in a save under run/, which is not
+	# versioned: a scene a claim rests on has to be reconstructible from what is committed.
+	if [[ "$vanilla_particles" == true ]]; then
+		rm -rf "$saves_dir/$world_name/datapacks/showcase"
+		mkdir -p "$saves_dir/$world_name/datapacks"
+		cp -R "$repo_root/tools/fixtures/vanilla-showcase" "$saves_dir/$world_name/datapacks/showcase"
+		echo "Staged the vanilla particle fixture into $world_name" >&2
+	fi
+	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator \
+		$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life") \
 		${aim_args[@]+"${aim_args[@]}"}
 
 	# The marker is removed before the launch and created only once the pack has drawn a full frame.
@@ -613,6 +655,19 @@ for run in "${runs[@]}"; do
 		met_all=1
 	fi
 
+	# A fixture that stages and does not load is the false green this harness exists to refuse: the first
+	# version of the particle function wrote the older positional options and this version refused the whole
+	# function, so the scene carried no particles while every log line said the fixture had been copied in.
+	if [[ "$vanilla_particles" == true ]]; then
+		if ! grep -q "Found new data pack file/showcase" "$run_dir/latest.log"; then
+			echo "Run '$name' staged the particle fixture and the game never found it, so this arm's scene has no particles in it" >&2
+			run_failed=1
+		fi
+		if grep -q "Failed to load function showcase:tick" "$run_dir/latest.log"; then
+			echo "Run '$name' staged the particle fixture and the game refused its tick function, so this arm's scene has no particles in it" >&2
+			run_failed=1
+		fi
+	fi
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
 	grep -F "$arm_pattern" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
 
