@@ -119,6 +119,10 @@ def main() -> int:
         raise SystemExit("unified performance report: the module cache census is not carried")
     if arm["census"]["target_drawn"][:3] != ["ComplementaryReimagined_r5.9.1", "world0", "minecraft:overworld"]:
         raise SystemExit("unified performance report: the pack and the target are not carried")
+    if arm["pacing"].get("wallTail") != round(11.69 / 10.86, 2):
+        raise SystemExit(
+            f"unified performance report: the window's tail against its own P99 is not reported - {arm['pacing']}"
+        )
     if arm["waits"]["submitWindow"]["calls"] != 1200:
         raise SystemExit("unified performance report: the instrumented waits are not carried as their own group")
     if "p50" in arm.get("other", {}):

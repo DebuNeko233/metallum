@@ -191,6 +191,14 @@ once-a-second check and the readback, late enough in the settle that the world h
 every frame the probe counts. The contract pins the order - the request is created before the marker is touched -
 because the two orders are one line apart in the source and a session apart in what they measure.
 
+**A window's tail is reported, and the corpus's is clean.** `vitrail-performance-report.py` carries
+`pacing.wallTail`, the worst frame over the window's own P99. Across the **85 arms this programme has recorded**
+the median is **1.06** - an ordinary distribution - and the two arms above seven are both the programme's own
+instrument experiments rather than scenes: one is the readback that landed inside the window it was measuring
+(24.95, the 273 ms above) and the other is an occluded client that paused mid-arm (9.87, and refused twice over by
+the pause guard and the settle guard). A ratio is reported rather than refused because one stall is not what makes
+a window invalid; what a reader needs is to see it before believing a P99.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:

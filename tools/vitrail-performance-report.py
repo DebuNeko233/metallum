@@ -165,6 +165,16 @@ def arm_report(arm: Path) -> dict[str, object]:
     if other:
         report["other"] = other
 
+    # The window's tail against its own P99. A ratio near one is an ordinary distribution and a large one is a
+    # frame the environment put in the window - measured across this programme's eighty-five recorded arms the
+    # median is 1.06, and the two arms above seven are both its own instrument experiments, one of which was a
+    # readback landing inside the window it was measuring and the other an occluded client that paused. It is
+    # reported rather than refused because a single stall is not what makes a window invalid: what a reader needs
+    # is to see it before believing a P99.
+    pacing = report.get("pacing")
+    if isinstance(pacing, dict) and pacing.get("wallP99"):
+        pacing["wallTail"] = round(pacing["wallMax"] / pacing["wallP99"], 2)
+
     report["census"] = censuses(log)
     load = arm / "load.txt"
     if load.is_file():
