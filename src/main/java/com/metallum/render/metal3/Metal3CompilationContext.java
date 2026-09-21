@@ -139,7 +139,15 @@ final class Metal3CompilationContext {
     synchronized MemorySegment getOrCompileFunction(final String msl, final String entryPoint) {
         return this.functionCache.computeIfAbsent(
                 new MslFunctionKey(msl, entryPoint, MetalShaderLanguageProfile.selected().token()),
-                key -> this.device.newFunction(key.msl(), key.entryPoint())
+                key -> {
+                    // Timed around the Metal call alone, as a pipeline's creation is: what the device was
+                    // asked to do is what a launch's compilation is made of.
+                    long startNanos = System.nanoTime();
+                    MemorySegment function = this.device.newFunction(key.msl(), key.entryPoint());
+                    MetalFrameProbe.functionCompiled(System.nanoTime() - startNanos);
+
+                    return function;
+                }
         );
     }
 

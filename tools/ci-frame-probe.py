@@ -522,16 +522,22 @@ for index, line in enumerate(lines):
     # hash the cache lookup beside it just did - and the key, which reads seven strings, is hashed only when
     # the identity is new.
     census_unarmed = "pipelineRequested" in declaration
+    # The third door, and the same reason as the census's: a function compile belongs to a launch, and a
+    # window opens long after the load that made them, so a counter gated on the marker reports zero on a pack
+    # that built hundreds. It is three atomic increments per distinct MSL and entry point - not per frame, and
+    # not per draw - and it is what makes the other half of a pipeline's creation visible at all.
+    functions_unarmed = "functionCompiled" in declaration
     if first != "if (!armed()) {" and not (
             (counts_unarmed and first == "metal4FeedbacksTotal.incrementAndGet();")
-            or (census_unarmed and first == "if (censusClosed) {")):
+            or (census_unarmed and first == "if (censusClosed) {")
+            or (functions_unarmed and first == "unarmedFunctions.incrementAndGet();")):
         raise SystemExit(
             f"frame probe: {declaration} does not open with the armed() guard, so an unarmed call "
             "is no longer a single field read"
         )
     guarded.append(declaration)
 
-if len(guarded) != 59:
+if len(guarded) != 60:
     raise SystemExit(
         "frame probe: expected 38 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
@@ -552,7 +558,9 @@ if len(guarded) != 59:
         "viewport, the scissor, three draw forms - primitives, indexed and indirect - and the two fence "
         "operations - and one for the indirect-draw loop, which is the only road the census prices rather "
         "than counts - and one for a pass's own target size, which is C1's split between the "
-        "passes that follow a scaled world and the ones still at the window's size), found "
+        "passes that follow a scaled world and the ones still at the window's size - and one for the MSL to "
+        "function compile, which with the pipeline state is the whole of what a launch asks the Metal compiler "
+        "for and was the half with no clock at all), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
@@ -773,6 +781,72 @@ if not start < created < stopped:
     raise SystemExit("pipeline compile counter: the Metal pipeline creation is not wrapped by the two timestamps")
 if pipeline.count("newRenderPipelineState(") != 1:
     raise SystemExit("pipeline compile counter: a second creation site in this file must be counted as well")
+
+# Counter 5: the same compiles counted OUTSIDE a window, and split by the thread that paid for them.
+#
+# The window the harness counts opens after the pack's first full frame and a 25 second settle, so every
+# compile a load does is invisible to the two counters above - a session whose pack built 187 units reads
+# `compiles=0 compileMs=0.00`, which is correct and is the misreading this pair exists to prevent. The split
+# by thread is the answer: a worker's compile is work overlapped with the load, a render thread's is a draw
+# that asked for a pipeline before the warm-up reached it.
+require("frame-probe unarmed compile census", probe, (
+    "private static final java.util.concurrent.atomic.AtomicInteger unarmedCompiles =",
+    "private static final java.util.concurrent.atomic.AtomicLong unarmedCompileMaxNanos =",
+    "private static final java.util.concurrent.atomic.AtomicInteger unarmedRenderCompiles =",
+    "unarmedCompiles.incrementAndGet();",
+    "unarmedCompileNanos.addAndGet(nanos);",
+    "unarmedCompileMaxNanos.accumulateAndGet(nanos, Math::max);",
+    "if (RenderSystem.isOnRenderThread()) {",
+    "unarmedRenderCompiles.incrementAndGet();",
+    "unarmedRenderCompileNanos.addAndGet(nanos);",
+    '"unarmedCompiles={} unarmedCompileMs={} unarmedCompileMaxMs={} "',
+    '"unarmedRenderCompiles={} unarmedRenderCompileMs={} "',
+    "unarmedCompiles.get(),",
+    "unarmedRenderCompiles.get(),",
+))
+# And the other half of a launch's Metal work, which had no clock at all: the MSL to function compile. A
+# pipeline is two Metal calls - a function per stage and the pipeline state over them - and timing only the
+# second made a whole launch's compilation look like the 25 ms the states cost.
+require("frame-probe function compile census", probe, (
+    "public static void functionCompiled(final long nanos) {",
+    "unarmedFunctions.incrementAndGet();",
+    "unarmedFunctionNanos.addAndGet(nanos);",
+    "unarmedFunctionMaxNanos.accumulateAndGet(nanos, Math::max);",
+    "unarmedRenderFunctions.incrementAndGet();",
+    '"unarmedFunctions={} unarmedFunctionMs={} unarmedFunctionMaxMs={} "',
+    '"unarmedRenderFunctions={} unarmedRenderFunctionMs={} "',
+    "unarmedFunctions.get(),",
+    "unarmedRenderFunctions.get(),",
+))
+metal3 = (ROOT / "src/main/java/com/metallum/render/metal3/Metal3CompilationContext.java").read_text(encoding="utf-8")
+require("function compile call site", metal3, (
+    "long startNanos = System.nanoTime();",
+    "MemorySegment function = this.device.newFunction(key.msl(), key.entryPoint());",
+    "MetalFrameProbe.functionCompiled(System.nanoTime() - startNanos);",
+))
+order(
+    metal3,
+    "MemorySegment function = this.device.newFunction(key.msl(), key.entryPoint());",
+    "MetalFrameProbe.functionCompiled(System.nanoTime() - startNanos);",
+    "function compile census: the Metal call is not the span the counter is given",
+)
+if "MetalFrameProbe.functionCompiled" in (
+        ROOT / "src/main/java/com/metallum/render/metal4/Metal4CompilationContext.java").read_text(encoding="utf-8"):
+    raise SystemExit(
+        "function compile census: Metal 4 is frozen and its function cache is left alone on purpose; a "
+        "counter added there is work done for a path no decision in the plan is about"
+    )
+# The split is only real if the unarmed branch stops returning silently: a counter added beside the old
+# `return;` and never reached is a field nobody fills, which reads as zero on every pack in the world.
+compiled_at = probe.index("public static void pipelineCompiled(final long nanos) {")
+unarmed = probe.index("if (!armed()) {", compiled_at)
+counter = probe.index("unarmedCompiles.incrementAndGet();", compiled_at)
+plain_return = probe.index("return;", unarmed)
+if counter < unarmed or counter > plain_return:
+    raise SystemExit(
+        "frame-probe unarmed compile census: the counter is not inside the branch that runs when the probe "
+        "is unarmed, so a load's compiles are still dropped"
+    )
 
 # ---------------------------------------------------------------------------
 # The argument-buffer binding state shadow

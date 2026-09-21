@@ -4,6 +4,7 @@ import com.metallum.render.MetalExecutionTelemetry;
 
 import com.metallum.Metallum;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.metallum.mtl.MTLTexture;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -265,6 +266,54 @@ public final class MetalFrameProbe {
     /** Session totals: pipeline creation is not a per-frame event, so it is read as a session cost. */
     private static int compiles;
     private static long compileNanos;
+
+    /**
+     * The same work counted OUTSIDE a window - a pack's load, and the world's first seconds - which is where
+     * the question F4 has about a load actually lives.
+     * <p>
+     * The two sets are kept apart on purpose. Everything above is measured between the probe's arm and its
+     * report, which the harness opens after the pack's first full frame and a 25 second settle; a compile that
+     * happens before that is invisible to it by construction, and reading {@code compiles=0} off a window in
+     * which 187 units were built is the misreading this pair exists to prevent.
+     * <p>
+     * <strong>The split by thread is the answer and not a detail.</strong> A pipeline built on a warm-up worker
+     * is work overlapped with the load; a pipeline built on the <em>render thread</em> is a draw that asked for
+     * one before the warm-up reached it, which is the hitch the warm-up exists to prevent and the only part of
+     * a load's compiling an archive could turn into a read.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger unarmedCompiles =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong unarmedCompileNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** The worst single compile outside a window, which is the spike F1 asks for and no total shows. */
+    private static final java.util.concurrent.atomic.AtomicLong unarmedCompileMaxNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicInteger unarmedRenderCompiles =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong unarmedRenderCompileNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * The other half of the same question: the Metal function compile, which turns the MSL this engine
+     * generated into something the device can build a pipeline from.
+     * <p>
+     * <strong>It was the unmeasured half and it is the one that decides F4.</strong> A pipeline's creation is
+     * two Metal calls - a function per stage and the pipeline state over them - and only the second was timed,
+     * which made a launch's whole Metal compilation look like the 25 milliseconds the pipeline states cost. What
+     * the engine reports as "N of M leftover pipelines compiled ahead of their first draw, Z ms of background
+     * work" is the WALL of the background job across three threads, translation and module building included,
+     * and it was being read as if it were this.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger unarmedFunctions =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong unarmedFunctionNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong unarmedFunctionMaxNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicInteger unarmedRenderFunctions =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicLong unarmedRenderFunctionNanos =
+            new java.util.concurrent.atomic.AtomicLong();
     /** Pipeline identities and descriptions seen since process start, for the cache question. */
     private static final Set<RenderPipeline> pipelineIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
     private static final Set<MetalPipelineKey> pipelineKeys = new java.util.HashSet<>();
@@ -1567,6 +1616,19 @@ public final class MetalFrameProbe {
 
     public static void pipelineCompiled(final long nanos) {
         if (!armed()) {
+            // Counted rather than dropped, and split by the thread that paid for it: see the fields above for
+            // why a load's compile is the number F4 needs and why a render-thread one is not the same as a
+            // worker's. Atomics because the warm-up compiles from three worker threads while the render
+            // thread may compile a first draw at the same moment.
+            unarmedCompiles.incrementAndGet();
+            unarmedCompileNanos.addAndGet(nanos);
+            unarmedCompileMaxNanos.accumulateAndGet(nanos, Math::max);
+
+            if (RenderSystem.isOnRenderThread()) {
+                unarmedRenderCompiles.incrementAndGet();
+                unarmedRenderCompileNanos.addAndGet(nanos);
+            }
+
             return;
         }
 
@@ -1656,6 +1718,10 @@ public final class MetalFrameProbe {
                         + "depthAttachments={} depthLoadedMiB={} depthStoredMiB={} blits={} blittedMiB={} "
                         + "pipeline={} texture={} sampler={} buffer={} viewport={} scissor={} depthBias={} "
                         + "compiles={} compileMs={} "
+                        + "unarmedCompiles={} unarmedCompileMs={} unarmedCompileMaxMs={} "
+                        + "unarmedRenderCompiles={} unarmedRenderCompileMs={} "
+                        + "unarmedFunctions={} unarmedFunctionMs={} unarmedFunctionMaxMs={} "
+                        + "unarmedRenderFunctions={} unarmedRenderFunctionMs={} "
                         + "pipelineIdentities={} pipelineKeys={} "
                         + "wallP50={} wallP95={} wallP99={} wallMax={} wallMaxAt={} gpuP50={} gpuP95={} gpuP99={} gpuMax={} "
                         + "gpuM4P50={} gpuM4P95={} gpuM4P99={} gpuM4Max={} "
@@ -1693,6 +1759,16 @@ public final class MetalFrameProbe {
                 depthBiases,
                 compiles,
                 millis(compileNanos),
+                unarmedCompiles.get(),
+                millis(unarmedCompileNanos.get()),
+                String.format(Locale.ROOT, "%.2f", unarmedCompileMaxNanos.get() / 1_000_000.0),
+                unarmedRenderCompiles.get(),
+                millis(unarmedRenderCompileNanos.get()),
+                unarmedFunctions.get(),
+                millis(unarmedFunctionNanos.get()),
+                String.format(Locale.ROOT, "%.2f", unarmedFunctionMaxNanos.get() / 1_000_000.0),
+                unarmedRenderFunctions.get(),
+                millis(unarmedRenderFunctionNanos.get()),
                 identityCount,
                 keyCount,
                 percentile(wallTimes, wallSamples, 0.50),
@@ -1898,6 +1974,24 @@ public final class MetalFrameProbe {
         double[] grown = count == samples.length ? java.util.Arrays.copyOf(samples, samples.length * 2) : samples;
         grown[count] = value;
         return grown;
+    }
+
+    /**
+     * One Metal function compile, timed around the device call alone, counted exactly as a pipeline is.
+     * <p>
+     * Called from the Metal 3 road's function cache, which is the only place a function is made. Metal 4's is
+     * left alone deliberately: that generation is frozen, and a counter on it would be work done for a path no
+     * decision here is about.
+     */
+    public static void functionCompiled(final long nanos) {
+        unarmedFunctions.incrementAndGet();
+        unarmedFunctionNanos.addAndGet(nanos);
+        unarmedFunctionMaxNanos.accumulateAndGet(nanos, Math::max);
+
+        if (RenderSystem.isOnRenderThread()) {
+            unarmedRenderFunctions.incrementAndGet();
+            unarmedRenderFunctionNanos.addAndGet(nanos);
+        }
     }
 
     private static void reset() {
