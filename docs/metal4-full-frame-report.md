@@ -1047,12 +1047,37 @@ answered rather than only what is left.
    (~4.7 hours of nanoseconds, the unit the sampler measured) and the range resolve returns exactly the values
    the per-entry road does, so neither the clock nor the packing is what is wrong.
 
-   What is left is that the passes write different attachments and nothing reads either, so nothing stops the GPU
-   ordering them as it likes - and an `afterStage:` stamp fires when *that encoder's* fragment stage drains,
-   which for independent work is not an order at all. **The next shape is a real dependency**: each pass sampling
-   the previous pass's attachment forces the order the stamps assume. Until that passes, no per-pass GPU time is
-   reported and the census stays red on this smoke - a smoke that went green by keeping the two ends that agreed
-   would be reporting a per-pass time that is not one.
+   **The explanation that followed - overlap - was tested and is wrong**, and so are the two after it:
+
+   ```text
+   explanation given   the passes wrote different attachments and nothing read either, so their fragment work
+                       could overlap and an after-stage stamp is not an order
+   the test            every step writes ONE texture, the first clearing it and each later one LOADING what the
+                       step before stored - pass N cannot begin until pass N-1 has stored, which no GPU may
+                       reorder, and it is the smallest dependency this API can express
+   the result          the stamps invert in exactly the same place, by the same ~226,000 ticks
+   ```
+
+   The header's warning that `Precise` "may cause splitting of command encoders" was the second candidate and is
+   also gone - both granularities give the same shape. The third was that the inversion follows the work, and the
+   curve run **descending** settles it:
+
+   ```text
+   ascending    1 -> 35,008    16 -> 249,857    256 -> -227,076    4096 -> 226,983
+   descending   4096 -> 270,315  256 -> 708      16 -> -127          1 -> -96,434
+   ```
+
+   The inversion stays at **entry 3** whichever way the counts run, so it is a property of the entry's position
+   and not of what the passes drew; its magnitude collapses from ~226,000 ticks to ~120 when the heavy steps come
+   first, so what moves it is the work *around* the entry rather than the entry's own count. Two stamps 120 ns
+   apart are not an order either - they are two events at one sampling point.
+
+   What is left is that the sampling point is the **driver's rather than the caller's**, which is what
+   `Relaxed`'s own documentation says of itself ("it may sample at command encoder boundaries") and what the
+   numbers now show of both. A difference between two of these stamps is therefore not the work between them, and
+   **no per-pass GPU time is reported from this road** until one is found that samples where it is told to. The
+   smoke stays red for that reason, and a smoke that went green by keeping the two ends that agreed would be
+   reporting a per-pass time that is not one.
 
    **The workload is proven present before the timing is judged**, which is what separates the two explanations:
    the large pass clears its attachment to black and draws the shader's colour, a pixel is read back, and every

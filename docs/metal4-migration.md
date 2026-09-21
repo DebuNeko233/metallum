@@ -3992,12 +3992,32 @@ splitting of command encoders" is a real hazard and not this one. What is left i
 different attachments and nothing reads either, so nothing orders them - an `afterStage:` stamp fires when that
 encoder's fragment stage drains, and for independent work that is not an order.
 
-**The next shape is a real dependency**: each pass sampling the previous pass's attachment would force the order
-the stamps assume. That is the experiment section 90's smoke is waiting on, and **until it passes no per-pass GPU
-time is reported** - the census stays red so that an unproven instrument cannot look green, which is section 96's
-rule applied to an instrument rather than to an optimisation. A smoke that went green by keeping the two draw
-counts whose ends happened to agree (4096 against 1 reads 6.8x) would have reported a per-pass time that is not
-one; the curve is what showed it, and the curve stays.
+**The explanation that followed was tested and is refuted, and so are the two after it.** The first said the
+passes wrote different attachments and nothing read either, so their fragment work could overlap. The test gives
+every step the *same* texture, the first clearing it and each later one **loading** what the step before stored -
+pass N cannot begin until pass N-1 has stored, which no GPU may reorder, and it is the smallest dependency this
+API can express. The stamps invert in exactly the same place, by the same ~226,000 ticks. The header's warning
+that `Precise` "may cause splitting of command encoders" is the second candidate and is also gone: both
+granularities give the same shape. The third - that the inversion follows the work - is settled by running the
+curve **descending**:
+
+```text
+ascending    1 -> 35,008    16 -> 249,857    256 -> -227,076    4096 -> 226,983
+descending   4096 -> 270,315  256 -> 708      16 -> -127          1 -> -96,434
+```
+
+The inversion stays at entry 3 whichever way the counts run, so it is **positional**; its magnitude collapses
+from ~226,000 ticks to ~120 when the heavy steps come first, so what moves it is the work *around* the entry and
+not the entry's own count. Two stamps 120 ns apart are two events at one sampling point, not an order.
+
+What is left is that **the sampling point is the driver's rather than the caller's** - which is what `Relaxed`'s
+own documentation says of itself, "it may sample at command encoder boundaries", and what the numbers now show of
+both granularities. So a difference between two stamps is not the work between them, and **no per-pass GPU time
+is reported from this road** until one is found that samples where it is told to. The census stays red so that an
+unproven instrument cannot look green, which is section 96's rule applied to an instrument rather than to an
+optimisation. A smoke that went green by keeping the two draw counts whose ends happened to agree (4096 against 1
+reads 6.8x) would have reported a per-pass time that is not one; the curve is what showed it, and the curve
+stays.
 
 ## Risks
 
