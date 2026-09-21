@@ -1606,3 +1606,78 @@ behind them and no second pack; Vitrail's `wide-resources-contract` fixture, whi
 images through a single pipeline, is the one that would test the shape harder, and it has not been run on this
 path. And the argument-buffer writes are not deduplicated - every binding write re-encodes into the buffer, which
 is correctness-first and section 50's order, not the finished shape.
+
+
+## The definition of done, item by item
+
+Section 122 lists the items the phrase "Metal 4 full-frame implementation complete? YES" is allowed to rest on.
+This is that list with the state each item actually has, and where each reading is:
+
+```text
+[MEASURED]   Cold-probe problem either fixed or still explicitly blocks AUTO
+             registered as intermittent (blockers 5 and 6); 30 cold processes are the harness's job and AUTO
+             stays blocked until they pass - the item as written, satisfied by being explicit
+[MEASURED]   Metal4 execution provider exists          Metal4Path, one queue, selectedGeneration/executingGeneration
+[MEASURED]   Metal4 frame encoder exists               Metal4FrameEncoder, one command buffer and one commit a frame
+[MEASURED]   native render smoke passes                the cold census, every field 50 of 50
+[MEASURED]   no-pack frame passes                      run/nopack-ab1, four arms, one frame a generation, no fault
+[MEASURED]   Vitrail fullscreen smoke passes           the fixture packs' passes run through this path
+[MEASURED]   MRT passes                                four attachments cleared, drawn and read back, both arms
+[MEASURED]   depth passes                              two depth fixtures read on both arms
+[MEASURED]   argument-table binding passes             the production binding path, photon's wide pipeline through it
+[MEASURED]   blit passes                               blits 5400 and blittedMiB 101022.1 equal on both
+                                                       generations in every session of the ladder
+[MEASURED]   compute passes                            compute-storage-contract dispatches twice a frame on this path
+[MEASURED]   synchronization fixtures pass             section 60's seven fixtures and 61's three directions
+[MEASURED]   presentation owned by full M4 path        the frame's own command buffer and queue; the sidecar is not
+                                                       started when this path executes
+[MEASURED]   resize passes                             the lifecycle session's 2560x1440 -> 3200x1800 -> 2560x1440
+[MEASURED]   reload passes                             F3+T through delayTextureReload, caches cleared, chain rebuilt
+[MEASURED]   dimension passes                          the nether teleport in the same session as the frame
+[MEASURED]   shutdown clean                            Stopping!, BUILD SUCCESSFUL, zero teardown warnings
+[MEASURED]   M3 forced path unchanged                  -Dmetallum.execution=metal3 runs the reference path, and the
+                                                       no-pack ladder reads it identical across four sessions
+[FINDING]    fallback works                            the Metal 3 *fallback* is verified; what is NOT is the
+                                                       forced-Metal-4 path finding it - see blocker 18
+[MEASURED]   architecture CI green                     twelve contracts, every new one mutation-proved
+[ONGOING]    real Apple Silicon validation complete    every reading in this report is from this machine, and the
+                                                       work that remains is the state a quiet machine is needed for
+[MEASURED]   docs updated                              this report and docs/metal4-migration.md
+```
+
+**So the phrase is still not earned, and the two items that stop it are named**: the cold probe's intermittency
+(which blocks AUTO and not the implementation) and the forced-Metal-4 fallback below. Everything else on the list
+has a reading behind it, and the readings are in this report rather than in a summary of it.
+
+## Blocker 18, found while trying to run the cold probe under Metal API validation
+
+`MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1` is the environment's own validation layer, and it is the only way to
+have the driver say *why* a native call is refused - so it was tried on the cold probe and on a forced Metal 4
+launch. The probe process prints nothing at all under it (the harness reports `process-printed-nothing` for every
+cold run), and a client launched under it reports:
+
+```text
+Metal device capabilities: metal3Family=true metal4Family=true queue=true allocator=true buffer=true
+                          argumentTable=false render=false compute=true residency=true viewPools=true
+                          compiler=true metalFx=true
+Metal execution: Metal 4 probe: the first attempt in this process failed at pixel (the uniform pass drew
+                 (0, 0, 0, 0) where (64, 128, 191, 255) was asked for ...), and the second ...
+Failed to create backend Metal: Metal device initialization failed: metallum.execution=metal4 was asked for,
+                 and this device does not satisfy the Metal 4 minimum contract
+Using graphics backend OpenGL
+```
+
+Two findings, neither of them the GUI fault this round was about, and both worth having:
+
+- **The validation layer is not usable here.** It makes the probe's own `argumentTable` and `render` capabilities
+  read false, which is either the layer refusing something the probe does or the probe doing something the layer
+  will not accept - and either way the device then satisfies no Metal 4 contract at all. So the road to "let the
+  driver name the fault" is closed in this environment until that is understood, and every native claim in this
+  report rests on the cold census and on measured pictures rather than on the validation layer's agreement.
+- **A forced Metal 4 launch whose device fails the contract ends on OpenGL, not on Metal 3.** Section 76 says a
+  device that cannot satisfy `-Dmetallum.execution=metal4` must not crash and must say what happened, and that is
+  what it does - the two lines above are printed - but the engine that picks up the frame afterwards is the
+  OpenGL backend, where this project's whole comparison assumes the Metal 3 reference. A developer who forces
+  Metal 4 on a device that cannot take it therefore measures neither generation, and nothing in the log says the
+  reference path was skipped. **NOT FIXED, and it is the second item on the definition of done above**: the
+  fallback should land on Metal 3, or the session should end rather than measuring another engine.
