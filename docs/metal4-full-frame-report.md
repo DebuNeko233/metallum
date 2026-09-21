@@ -1708,6 +1708,14 @@ the performance *distribution* is explained (the drawable handover's quantum) bu
 to serve is not yet measurable, so promoting Metal 4 would be promoting a path whose frame-rate claim rests on a
 mixture nobody has bounded on a real scene.
 
+**And the performance gate has since been filled in, which does not change the decision.** Three of the four
+rungs are now measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is not on this machine):
+this path is 1.63-1.78x slower on the work-light scene, 19-21% faster at the median and 5% slower at P95 on
+Complementary, and 23-50% slower at the median and 81% slower at P95 on Photon - with its own commit interval
+lower than the reference's on the first two and equal on the third. So the performance line reads "not acceptable
+as a production default on two of three rungs, and the mechanism is one extra display handover of latency", which
+is section 70's C rather than its B: the distribution is explained, the cost is not.
+
 What would move it, in the order the gates are listed: the content-drift blocker above (one experiment: trace the
 per-frame content counters through the window and watch them move), the cold probe's distribution (a harness that
 runs the probe's first pass alone in volume), and the two picture residuals (a screenshot road that works, or a
