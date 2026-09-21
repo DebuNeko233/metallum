@@ -221,8 +221,11 @@ process from a bad draw.
 Metal 4 development continues under it, which is what section 15 asks for.
 
 Two details a reader of that block should not misread. The harness **exits non-zero on this run**, and the only
-red line is `GPU pass time`, which is blocker 15 - the counter sampling points that do not attribute a pass - and
-not the capability probe: the cold failures are zero. And the first hypothesis recorded above, **lazy driver
+red line is `GPU pass time`, which was blocker 15 - and which is **green now**: that line was the counter smoke
+failing on its own arithmetic (a duplicated heap index, two sampling forms in one curve, and a first pass that was
+both the clearing pass and the command buffer's first encoder), not the capability probe, whose cold failures are
+and were zero. A fresh run of the same harness reads `GPU pass time: 3 passed 0 failed`, so the harness no longer
+exits non-zero on that line. And the first hypothesis recorded above, **lazy driver
 initialisation on first use**, is still un-run: the experiment is a first probe with a throwaway commit before
 the real sequence, or a first probe that runs only its first pass, and neither has been tried. With fifty
 probes passing, the next useful shape for it is a harness that runs the probe's first pass *alone* in a fresh
@@ -1055,7 +1058,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it. **Both halves of the presented frame are readable on both generations** behind `-Dmetallum.drawableReadback=true` (the layer's `framebufferOnly` off, the picture the triangle sampled *and* the drawable it wrote copied into a shared buffer, read when the slot completes, one formatter in the shared layer) | yes - 30 presents a window; **and the two arms compared on one scene, one fixture, one switch, at ten and at forty seconds of settle (1366/1372 and 4951/4953 readbacks): both present the fixture's acceptance colour (pure green, red and blue at zero), and on both arms the picture read is the drawable written, frame for frame - so the present pass is the identity on this fixture and the difference is frame content, not present treatment.** One difference is measured and persists forty seconds: the Metal 4 frame is flat green with **alpha 0** where the Metal 3 frame is flat opaque green - invisible on an opaque layer, mechanism not yet localised (the pack's write into the game's target, a later pass, or the sampling of it), and its experiment is a pass-boundary copy plus a fixture whose colour is asymmetric and whose alpha is not 1. The "gentle radial ramp (230..255)" registered in an earlier round is **withdrawn**: it was the Metal 3 arm's frame still cross-fading from the loading screen, and at forty seconds that arm reads flat opaque green. **Orientation is PROVEN on a second, diagnostic fixture** (four quadrant colours at alpha 0.5): both arms present the same arrangement sample for sample - the present draw swaps the two ends of the memory-vertical axis and nothing else - and the RGBA8/BGRA8 channel conversion is correct on both. **The alpha is not the pack's**: the shader's alpha moved 1.0 to 0.5 and the stored alpha did not move on either arm (255 on Metal 3, 0 on Metal 4), so the difference is in the frame's own clear rather than in the pack's write, and which writer owns that channel is not yet localised. **The full-frame path is the session's only Metal 4 submission structure**: the present-only sidecar is not started when Metal 4 executes (measured before and after the convergence change - its start line 1 time and one commit-feedback registration against 0, with the frame encoder presenting 1964 then 2182 frames), and it is still started for the reference shell, a Metal 3-executing session with the property on. **Blocker 17 narrows this row rather than leaving it**: the present is faithful - the picture the triangle samples is the texture the GUI's pass wrote and a forced clear through that pass appears on screen - so what is missing was never handed to it | yes |
 | MetalFX spatial | yes         | **a second path, not a parameter of the first** - this generation's own compiler (`newCompilerWithDescriptor:error:`), its own scaler made by the descriptor's Metal 4 spelling, its own configuration-keyed cache, and an encode into a `MTL4CommandBuffer` | **yes, in a live frame**: `metalFxAvailable()` answers the scaler path's own existence, and at renderscale=55 Vitrail logs `The 55% render scale brings the picture back with MetalFX` on this path with the reference arm's program set (333 identities, 712 compiles) and the pack's own scaled targets (704x396, 1408x792) on both. Output orientation for the scaler is NOT MEASURED | yes |
-| counters        | whole frame | **CLOSED FOR THIS SHAPE, and what it does not give is as measured as what it does.** The heap road works - a `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule, which the ring already implements), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device, measured by sampling the CPU and GPU clocks together twice. **But no sampling point tried attributes a pass's work**, and three explanations are refuted rather than open: 4096 fullscreen draws report 6.8x one draw while 128 report *less* than one (so not a floor), the inversion survives a real load-after-store dependency on one shared attachment (so not overlap), both granularities give the same shape (so not the header's `Precise` splitting warning), and it stays at entry 3 with the curve reversed while its magnitude falls from ~226,000 ticks to ~120 (so not the work). What remains is that the sampling point is the driver's, not the caller's. **Therefore per-pass GPU time is NOT AVAILABLE from this road**, and section 92's three kinds of data are: CPU encode timing (have), whole-command-buffer driver timing (have, `MTL4CommitFeedback.GPUStartTime/GPUEndTime`, reported as `gpuM4P50/P95/P99/Max`), GPU counter timing (**not available**). Section 90's smoke is RED, the census with it, and section 95's candidates must be argued without a per-pass GPU time until a road is found that samples where it is told to. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; a whole frame and, for this path, the same as a whole command buffer, because the frame is one commit | yes |
+| counters        | whole frame | **The heap road works and it now has a reading: `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device, measured by sampling the CPU and GPU clocks together twice (`gpuTicksPerCpuNs=1.0000`). **And an ordered partition of the work**: one command-buffer marker per pass boundary (`MTL4CommandBuffer.h`: it "captures a timestamp after work prior to this command in the command buffer is complete"), a warm-up pass outside the curve, and four steps above the road's own floor - 64, 256, 1024 and 4096 fullscreen draws read 6,075-6,843, 18,343-19,110, 54,178-54,304 and 166,420-173,445 ticks, monotone in every probe, the heavy steps repeating to two per cent. The floor is measured too: below roughly two thousand ticks an interval is not ordered (with the same fixes and counts of 1 and 16, 256 and 4096 repeated to two per cent while 1 and 16 swapped order). Section 90's smoke is GREEN, so section 92's third kind of data - **GPU counter timing at command-buffer granularity** - is available beside the CPU encode timing and the whole-commit driver timing. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; a whole frame and, for this path, the same as a whole command buffer, because the frame is one commit | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
 and its blanks are the work. A `yes` in `M4 real frame` means the harness collected it from a frame the client
@@ -1360,8 +1363,11 @@ answered rather than only what is left.
    a fixture whose scaled output is read back at the input's size and compared against a pattern the input could
    not have produced late.
 
-15. **The GPU timestamp road works and its sampling points do not attribute a pass, so section 90's smoke is
-   red.** What is proven: `MTL4CounterHeap` is made, timestamps written into it resolve on the CPU after the
+15. ~~**The GPU timestamp road works and its sampling points do not attribute a pass, so section 90's smoke is
+   red.**~~ - **FIXED, and the sampling points were never the problem: the smoke was.** The whole of this item
+   below is kept because it is the record of what was measured and of the three wrong explanations that were
+   ruled out honestly - and because the resolution is that the road was right all along. The mechanism is at the
+   end of the item. What is proven: `MTL4CounterHeap` is made, timestamps written into it resolve on the CPU after the
    ring's own shared-event wait (the header states that rule and the ring already implements it), the three
    readings are monotonic, and the unit is a **nanosecond** - measured rather than assumed, by sampling
    `sampleTimestamps:gpuTimestamp:` twice around a sleep and finding the GPU and CPU deltas equal to the tick
@@ -1447,6 +1453,46 @@ answered rather than only what is left.
    the large pass clears its attachment to black and draws the shader's colour, a pixel is read back, and every
    reading says `drawsLanded=true`. Without that check, "the draws cost nothing" and "the timestamps are not
    execution points" are the same measurement, and they are different faults.
+
+   **RESOLVED: the road attributes a pass, and the three defects were the smoke's own.** Every inversion above was
+   arithmetic. The loop writes one boundary per step at `step + 1`, so a four-step curve fills entries 1 to 4 with
+   entry 0 as the start - and a leftover marker from a three-marker two-pass shape wrote **entry 2 a second time,
+   after every step had been encoded**. Entry 2 therefore held "the end of everything" while entry 3 held "the end
+   of step 2", and `stamps[3] < stamps[2]` was true by construction: the ~226,000-tick inversion, its collapse to
+   ~120 when the heavy steps came first, and every reading built on "the interval between two stamps is not the
+   work between them" came from that one line. Two more defects were behind the rest of the scatter: the
+   boundaries mixed **two sampling forms** (entry 0 was the command buffer's marker, entries 1-4 the render
+   encoder's after-stage ones), and the curve's first step was both the command buffer's **first encoder and its
+   only clearing pass**, which made the lightest step the most expensive in every probe (~27,000-33,000 ticks for
+   one draw against ~1,000-22,000 for sixteen).
+
+   With one form, one write per entry, and a warm-up pass the curve does not count, the readings are an ordered
+   partition of the work - and they also measure the road's own floor:
+
+   ```text
+   probe  64 draws   256 draws   1024 draws   4096 draws
+   1         6105       18382        54246       171134
+   2         6729       18566        54283       170540
+   3         6720       18343        54304       166420
+   4         6075       18852        54296       166634
+   ```
+
+   Monotone in every probe, the two heavy steps repeating to about two per cent, 3 of 3 and 4 of 4 probes passing
+   (`gpuTime=true`), with `rangeAgrees=true`, `drawsLanded=true` and the unit still a nanosecond
+   (`gpuTicksPerCpuNs=1.0000`, now reported as the ratio of the two deltas rather than as the absolute first
+   stamp). **The floor is the road's and it is now part of the smoke's design**: with the same fixes and the old
+   counts, 256 and 4096 repeated to two per cent while 1 and 16 *swapped order between probes* (1,069 against
+   1,919 ticks the other way round), so an interval below roughly two thousand ticks on this device is not
+   ordered, and the curve is `{64, 256, 1024, 4096}` because every step has to be above it.
+
+   **What this changes for sections 92 and 95.** Section 90's acceptance - "increasing shader work, reported GPU
+   work increases" - is now **MET**, and section 92's three kinds of data are all three available: CPU encode
+   timing, whole-command-buffer driver timing (`MTL4CommitFeedback.GPUStartTime/GPUEndTime`), and **GPU counter
+   timing, at command-buffer granularity and above the floor**. Section 95's candidates can now be ranked by a
+   GPU-side attribution rather than by a whole-frame A/B alone. What is *not* claimed is a within-pass sample:
+   the granularity this smoke uses has no stage, each marker sits at an encoder boundary, and where a driver
+   places a stamp *inside* one encoder is still the driver's - which no longer matters, because the smoke brackets
+   passes and not fragments.
 
    What is left to try, in the order the evidence suggests: the GPU-timeline resolve
    (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve

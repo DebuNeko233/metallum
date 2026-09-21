@@ -4373,6 +4373,62 @@ and **`m3a` against `m3b` - the reference against itself - 0.99 and 0.40%, with 
 from another, on a pinned scene in one session. That is the correctness half of this round and it is measured, not
 argued.
 
+### The counter road was never the problem: section 90's smoke was failing on its own arithmetic
+
+Section 90 asks for the smallest GPU-counter smoke there is - one pass, a known workload, a timestamp before and
+after it, and the property that more work reads as more time - and this smoke has been red since it was written.
+Blocker 15 recorded the verdict the readings seemed to force: the heap, the resolve and the unit all work, but the
+timestamps do not partition the work, `stamps[3] < stamps[2]` in every probe, and the remaining explanation was
+that "the sampling point is the driver's rather than the caller's".
+
+Reading the two headers side by side is what moved it. `MTL4CommandBuffer.h` says of its own marker: "captures a
+timestamp after work prior to this command in the command buffer is complete. Work after this call may or may not
+have started." That is a pass boundary - no stage, no granularity - exactly what a curve of passes needs. The
+render encoder's form takes both (`writeTimestampWithGranularity:afterStage:intoHeap:atIndex:`), and its
+`Relaxed` documentation says it "may sample at command encoder boundaries". The smoke's start marker was the
+command buffer's and its boundaries were the encoder's, so the curve was a mixture of two sampling points. And
+under that, a line: the loop writes one boundary per step at `step + 1`, filling entries 1 to 4 with entry 0 as
+the start, and a leftover marker from a three-marker two-pass shape wrote **entry 2 a second time, after every
+step**. Entry 2 held "the end of everything" while entry 3 held "the end of step 2", so the inversion was true by
+construction - and its magnitude, and its collapse to ~120 ticks when the heavy steps came first, were that
+line's arithmetic too.
+
+Three changes, each measured rather than assumed:
+
+- **one marker per boundary, from one site**, written after the pass's encoder is closed;
+- **one form for every entry**, the command buffer's, with the header's sentence as the reason;
+- **a warm-up pass the curve does not count**, because the curve's first step was the command buffer's first
+  encoder *and* its only clearing pass, and it reported ~27,000-33,000 ticks against the sixteen-draw step's
+  ~1,000-22,000 - the lightest step the most expensive one.
+
+With those in, the curve is monotone and repeatable, and a fourth thing turned out to be worth measuring rather
+than fixing: the road has a **floor**. With the same fixes and the old counts of 1, 16, 256 and 4096, the two
+heavy steps repeated to two per cent while 1 and 16 *swapped order between probes* (1,069 against 1,919 ticks the
+other way round). So an interval below roughly two thousand ticks on this device is not ordered, and the curve is
+`{64, 256, 1024, 4096}` because every step has to be above the floor:
+
+```text
+probe  64 draws   256 draws   1024 draws   4096 draws
+1         6105       18382        54246       171134
+2         6729       18566        54283       170540
+3         6720       18343        54304       166420
+4         6075       18852        54296       166634
+
+gpuTime=true in 3 of 3 and 4 of 4 probes, rangeAgrees=true, drawsLanded=true, gpuTicksPerCpuNs=1.0000
+```
+
+The unit field is corrected in the same round and for the same reason: it printed the absolute first GPU stamp
+over a million where a reader checking the tick's unit needs the ratio of the two deltas, which is 1.0000 - a tick
+is a nanosecond, and now the line says so.
+
+What that unblocks is the reason it mattered. Section 92 asks for three kinds of timing to be kept apart and there
+are now three: CPU encode timing, whole-commit driver timing (`MTL4CommitFeedback.GPUStartTime/GPUEndTime`), and
+**GPU counter timing at command-buffer granularity**, above the floor. Section 95's candidates - argument-table
+write dedup, residency batching, barrier narrowing, encoder reuse, descriptor reuse, allocator sizing - can be
+ranked by a GPU-side attribution instead of a whole-frame A/B alone, which is what section 96 asks for before any
+of them is touched. What is still not claimed is a sample *inside* one pass: every marker sits at an encoder
+boundary, and that is now by design rather than by defeat.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
