@@ -125,27 +125,26 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 ## What is left, in the order the plan asks for it
 
 ```
-1. F4's unarmed-window        the pipeline warm-up's span is NOT on the load's critical path - it is
-   counter                   joined only at client shutdown, with a 2 s cap, and its line lands 5-10 s
-                             into an 8-15 s load (docs/startup-and-cache.md, F4). So the recorded
-                             "0.26-1.6 s a launch" candidate is WITHDRAWN as stated: what an archive
-                             could buy is the CPU it takes from the load and any first draw that beat
-                             it, and neither is measured. `MetalFrameProbe.pipelineCompiled` is gated
-                             on the measurement window, so no load-time or first-frame compile is
-                             counted at all. That counter is the next step, and it sizes or dismisses
-                             the archive.
-2. C3's remaining three      the corpus's other scenes at a render scale, for C3's completeness.
-   scales
-3. C4/C2's unresolved        the entity family's wall and the shadow interval on the second pack -
+1. C3's remaining three      the corpus's other scenes at a render scale, for C3's completeness. Four
+   scales                    sessions, no new instrument, and structural - the machine cannot spoil it.
+2. C2/C4's unresolved        the entity family's wall and the shadow interval on the second pack -
    walls                     both need a machine that holds one state for a session, which this one
                              does not (47 per cent between arms of one configuration).
-4. E4, dynamic resolution    only after 2 and 3, and only with hysteresis, cooldown, step limits and
+3. E4, dynamic resolution    only after 1 and 2, and only with hysteresis, cooldown, step limits and
                              a stability window, as section 36 requires.
 ```
 
 Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed
-by the CPU round's exit condition, C1-C7, D1 with D2/D3 closed by it, E1/E2, F1-F3, and the harness work
-of track G.
+by the CPU round's exit condition, C1-C7, D1 with D2/D3 closed by it, E1/E2, and F1-F4.
+
+**Track F is complete**, and its last item closed the plan's largest recorded candidate. An on-disk Metal
+pipeline cache was recorded at F1/F3 as "0.26-1.6 s a launch, the largest measured startup item left"; F4
+measured what a launch actually asks the Metal compiler for - **874 calls, 168 functions and 706 pipeline
+states, 36.6 ms in total, worst single 0.29 ms** - and the archive is REJECTED on that size (rules G and E of
+section 5). The 0.26-1.6 s was the wall of the warm-up's parallel job, which contains the translation and
+module building the module cache already covers and which the load never awaits, `FamilyWarmup.awaitAll` being
+called once, at client shutdown. F1's compile count, compile ms and worst spike are answerable for the first
+time, which is what that item was holding open.
 
 ## What each new document owns
 

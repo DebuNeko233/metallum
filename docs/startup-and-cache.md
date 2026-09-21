@@ -193,10 +193,11 @@ existed and what was missing was a cold arm and a table.
 **RECORDED, NOT IMPLEMENTED - an on-disk Metal pipeline cache.** 0.26-1.6 s a launch by the warm-up spans, on
 every launch, with no disk cache of any kind behind it today.
 
-**CORRECTION - the frame probe's `compiles` and `compileMs` fields are window-scoped.** They read
-`compiles=0 compileMs=0.00` in every corpus window because the compiles happen before the window opens, which is
-correct and is not "nothing was compiled": the load's compiles are the `1747 ms over 125 modules` line above.
-A reader who takes those two fields as the session's compile cost reads zero for a load that built 187 units.
+**CORRECTION - the frame probe's `compiles` and `compileMs` fields count only while the probe is armed.**
+They are session totals and are never reset, but the counter returns early when the window is closed, so they read
+`compiles=0 compileMs=0.00` in every corpus window although the load built 187 units and created hundreds of
+pipelines. They are not "nothing was compiled" and they are not window-scoped either - they are armed-scoped, and
+F4's section below adds the unarmed pair that measures what a load really does.
 
 **NOT MEASURED - the in-session reload.** F3+T reloads the pack without restarting the client, and this harness
 presses no keys; the relaunch is the proxy. `ModuleCache`'s own note says F3+T already hits, because the load
@@ -213,7 +214,7 @@ number stays out of the disk key - so the prediction is "0 built", and it is a p
 - **Complementary's descending warm arms are not attributed** (11, 9, 8 s).
 - **The near-duplicate case of F2 is unmeasured** by construction of the key.
 
-# F4 - the pipeline warm-up, and a correction to what it was worth
+# F4 - the pipeline warm-up, measured and dismissed
 
 ## Question
 
@@ -252,24 +253,69 @@ see. What an archive could buy is therefore two smaller things:
    window, and the window opens after the pack's first full frame and a 25 s settle - so every compile that
    happens during a load or in the world's first seconds is invisible by construction.
 
+## The instrument that sizes it
+
+Two additions to the frame probe, both counting rather than changing anything:
+
+- **The unarmed window.** `compiles` and `compileMs` are counted only between the probe's arm and its report, and
+  the harness arms it after the pack's first full frame and a 25 s settle - so a session whose pack built 187
+  units read `compiles=0 compileMs=0.00`, which is correct and was read here as "nothing was compiled". The
+  probe now counts the same work **outside** a window, split by the thread that paid for it, because a pipeline
+  built on a warm-up worker is overlapped with the load and one built on the render thread is a draw that asked
+  for it before the warm-up reached it.
+- **The other half of the work.** A pipeline is two Metal calls - a function per stage, then the pipeline state
+  over them - and only the second was timed. `Metal3CompilationContext.getOrCompileFunction` now reports the
+  first, timed around the device call alone. Metal 4's is left alone: that generation is frozen, and a counter on
+  it would be work done for a path no decision here is about.
+
+## A/B - what a launch actually asks the Metal compiler for
+
+One warm arm on MakeUp, 600-frame window, `run/f4-functions`. Counts and times are session totals for the whole
+launch, and a second session (`run/f4-baseline`, pipeline half only) is the repeat.
+
+```
+                      count   total ms   worst ms   of them on the render thread
+MSL to function         168      10.28       0.25     113 functions,  5.69 ms
+pipeline state          706      26.32       0.29     272 states,    10.68 ms
+                     ------   --------   --------
+whole launch            874      36.60       0.29     385 events,    16.37 ms
+
+repeat of the pipeline half: 706 states, 24.63 ms, worst 0.27 ms, 272 on the render thread
+```
+
+**That is the entire prize for an on-disk Metal pipeline cache: about 37 ms per launch**, spent as 874 events
+whose worst single one is **0.29 ms**, on a load that takes 8-12 s and a frame that takes 6.7 ms. And the
+"0.26-1.6 s a launch" the candidate was recorded with is now explained rather than merely withdrawn: that figure
+is the wall of the warm-up's parallel job (`62 of 62 leftover pipelines ..., 273 ms` and `155 of 155 ..., 515 ms`
+in this same session), which includes the chain expansion, the translation and the module building - work the
+module cache already covers and the load never waits for.
+
+## Correctness
+
+- Nothing about a compile changed: both counters time the same Metal calls they always did and add an
+  accumulator beside them. The two sessions agree on the counts exactly (706 states, 272 on the render thread)
+  and on the totals to 6 per cent, on a scene whose `loadedMiB` is identical to the corpus's to the tenth.
+- The probe's instrumentation contract passes with the two new entry points pinned, the unarmed branch pinned as
+  the one that counts rather than returns silently, and a third "counts unarmed" door opened explicitly with its
+  reason - the same shape the pipeline census and the Metal 4 feedback counter already had.
+- The engine's compile count and Vitrail's own warm-up line are two readings of the same launch and they are
+  consistent: 62 + 155 warmed pipelines against 168 function compiles and 706 pipeline states.
+
 ## Decision
 
-**DEFERRED, and the candidate corrected.** The record at F1/F3 that an on-disk pipeline cache is worth
-"0.26-1.6 s a launch" is withdrawn: that figure is the span of background work the load overlaps, and neither of
-the two things an archive could actually buy is measured. A change that removes work nobody waits for, sized by a
-span nobody waits on, is not a candidate yet - it is a hypothesis with a number attached to the wrong quantity.
+**REJECTED - an on-disk Metal pipeline cache.** 37 ms a launch, 874 events, none of them larger than 0.29 ms, on
+a load of 8-12 s: 0.3-0.5 per cent of the load and invisible in any frame. Section 5's rules G and E both apply,
+and the candidate recorded at F1/F3 is withdrawn rather than deferred - it was a real measurement of the wrong
+quantity.
 
-**What would size it**: a counter for the *unarmed* window. The engine already has the two accumulators
-(`MetalFrameProbe.pipelineCompiled` and its window gate); what it needs is to count and report the compiles from
-the pack load to the first seconds of the world - how many, their total time, and the worst single one - and to
-say whether any of them was a *first draw* compiling on the render thread rather than a background worker
-finishing it. That is the same instrument F1 asks for as "max compile spike", and it is the next step here.
+**KEPT - the two counters.** F1 asks for the compile count, the compile ms and the largest spike, and until now
+none of the three could be answered for the Metal side: the counts existed inside a window that opens after the
+work, and the spike had no clock at all. They are answered now: **874 compiles, 36.6 ms, worst 0.29 ms per
+launch**, and the render-thread split says how much of it a first draw paid for itself.
 
 ## Next
 
-1. **F4's unarmed-window counter**, which sizes or dismisses the pipeline archive: compiles from the load to the
-   first seconds of the world, their total, and the worst one.
-2. **The max compile spike** generally, which the same addition gives - F1 asks for it and today's census has
-   totals per load and no maximum.
-3. Back to the GPU list: **C3's remaining three scales**, which is structural and unaffected by the machine's
-   frame-time spread.
+Track F is now complete: F1 (the census, with the compile count, ms and worst spike), F2 (the reuse count), F3
+(the cold and warm load) and F4 (the warm-up, and the archive rejected on its measured size). What is left of the
+plan is in `docs/long-term-performance-plan.md` - C3's remaining three scales, the two walls this machine cannot
+resolve, and E4 last.
