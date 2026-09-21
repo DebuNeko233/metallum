@@ -4480,6 +4480,69 @@ for a *speedup*: what a marker between two passes does to the driver's schedulin
 mechanism (section 96) before it is believed, and the obvious first hypothesis - that serialising two passes at a
 boundary costs less than letting them overlap - is a hypothesis and not a reading.
 
+### Vanilla's own frame: clouds, rain and the game's particles, in the overworld
+
+Every measurement this migration had taken was a shader pack's frame, and every one of them had `renderClouds`
+false because a pack draws its own clouds. So the things a pack *replaces* - the game's cloud pass, the weather's
+particles, the mobs - had never been in a frame that was measured, and a migration can lose exactly those without
+noticing. The user's direction was to test the overworld with vanilla's own rendering in scope, and this is the
+round that made that possible and read it.
+
+Four switches, each off by default so that no baseline written before them moves:
+
+  - `--vanilla-clouds on|off` writes `renderClouds`, which the profile had hardcoded to false;
+  - `--weather clear|rain|thunder` leaves the world in that state with the weather cycle still off. The cycle
+    rule stops the weather *changing* and does nothing about what the save already holds, so rain - vanilla's
+    largest particle system - needs the state written, not the cycle;
+  - `--keep-entities` keeps the world's mobs instead of taking them out, for a correctness reading rather than an
+    A/B (the still-life scene stays the default, because an entity that moved makes two launches two scenes);
+  - `--vanilla-particles` stages `tools/fixtures/vanilla-showcase`, a world datapack whose tick function emits
+    twenty of the game's own particle types at the camera every tick - the one deterministic way to get particles
+    into a frame when nothing can press a key or break a block.
+
+**The fixture earned its refusal before it earned its reading.** The first version wrote the older positional
+options for the particles that take them - `particle minecraft:dust 1.0 0.4 0.1 1.5 ...` - and this game version
+refused the **whole function** ("Can't parse particle options: No key scale in MapLike[{}]; No key color in
+MapLike[{}]"), so the datapack was found, loaded, and emitted nothing while every harness line said the fixture
+had been copied in: a scene with no particles in it that reads as a scene with particles, which is the false green
+this programme keeps paying for. The harness now refuses an arm whose log does not say the datapack was found or
+does say the tick function failed, and both checks are pinned and mutation-proved. The moment they were in place
+the first run was refused, the options were rewritten as maps, and the second run drew them.
+
+`run/vanilla-clouds` - overworld, no shader pack, clouds on, weather clear, no particles, still-life, 600 frames,
+arms interleaved M3/M4/M3/M4 - is the reading:
+
+```text
+arm  gen  ms a frame  frames/s  own GPU time  drawable wait p50  loadedMiB  storedMiB  depthAtt.  clearEnc.  renderPasses
+m3a  M3     2.17       460.7      0.84 ms        0.02 ms          26921.3     79655.7     1800          0          1956
+m4a  M4     2.54       393.8      0.90 ms        0.77 ms         106129.5    224781.8     5400       3000          2586
+m3b  M3     2.16       463.2      0.86 ms        0.02 ms          26921.3     79655.7     1800          0          1956
+m4b  M4     2.46       407.3      0.89 ms        0.87 ms         106108.2    224760.5     5400       3000          2580
+```
+
+Three things follow. **The game's own cloud pass is drawn on this path and drawn right**: the pictures put M3
+against M4 at 0.21% and 0.40% of pixels differing, against the reference's own 0.24% between its two arms. **The
+GPU work is the same to 5%** (0.84/0.86 against 0.89/0.90 ms) while the period is 13-17% longer, which is the
+shape every earlier session had: the difference is in the waits, this path waiting on the drawable where the
+reference waits on its submission index. And **the structural footprint is the pack frames' footprint exactly** -
+five clear encoders a frame against none, depth attachments 3x, loadedMiB +294%, renderPasses +32%, no viewport
+call where the reference makes 4.3 - none of it moved by a cloud, a raindrop or a particle.
+
+`run/vanilla-overworld` is the same scene with rain and the particles in it, and it produced the round's other
+lesson: **two arms of the reference itself differ in 68.45% of pixels there** (mean channel difference 35.64),
+because rain streaks and particle offsets are animated and two launches land on different phases. The generation
+comparison in that session, 43.65, is the same order - so it says nothing about the path, and the lesson is the
+plan's own section 116 arriving in a vanilla scene rather than a temporal pack: a picture verdict needs a scene
+whose pixels do not move between launches. The counters were the reading there, and they are the same ones the
+cloud session gives to four digits (loadedMiB 106130 against 106129): the traffic this path reports is its pass
+structure and not the scene.
+
+**What is NOT MEASURED**, said plainly because the surface is now wide: a deterministic particle or rain scene
+(the fixture's emission is random by construction, so its pixels move between launches - a per-tick pattern with
+no spread, or one tick photographed while frozen, is what a picture verdict on particles needs); what the mobs and
+block entities draw on this path, which is what `--keep-entities` is for and which no session has yet read; and
+the pack-and-vanilla-features combination, since every session above is a no-pack one.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

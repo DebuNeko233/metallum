@@ -459,6 +459,69 @@ scissor: PARTLY - the pass's own scissor is set, cleared and measured on the dev
          load action that only holds for the whole attachment
 ```
 
+## Vanilla's own frame in the overworld
+
+Every comparison this report had taken was a *pack's* frame, and every one of them set `renderClouds` false, because
+a pack draws its own clouds. Vanilla's own rendering - clouds, the weather's particles, the mobs - was therefore
+never in a frame that was measured, and the things a pack replaces are exactly the things a migration can lose
+without noticing. Three switches on the harness and one tracked fixture close that gap, and this is what they read.
+
+```text
+--vanilla-clouds on|off     renderClouds: off is the default because a pack draws its own, and on is what a
+                            measurement of the game's own rendering needs
+--weather clear|rain|thunder  what the world is left holding, with the weather cycle off either way; rain is a
+                            particle system of its own and this is how vanilla's particles enter a frame
+--keep-entities             keep the mobs and block entities instead of taking them out (correctness, not A/B)
+--vanilla-particles         stage tools/fixtures/vanilla-showcase: a world datapack whose tick function emits
+                            twenty of the game's own particle types at the camera, every tick
+```
+
+**The fixture is staged from the repository and the run is refused if it does not load**, which is not tidiness: the
+first version wrote the positional particle options (`particle minecraft:dust 1.0 0.4 0.1 1.5 ...`) and this game
+version refused the **whole function** - `Can't parse particle options: No key scale in MapLike[{}]` - so the scene
+staged, loaded as a datapack and emitted nothing at all while every line said the fixture had been copied in. The
+harness now refuses an arm whose log does not say the pack was found or does say the tick function failed.
+
+**Reading one: vanilla's own frame is drawn correctly by this path, clouds and particles included.**
+`run/vanilla-clouds` - overworld, no pack, clouds on, weather clear, 600 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+arm  gen  ms a frame  frames/s  own GPU time  wallP50  drawable wait p50  loadedMiB  storedMiB  depthAtt.  clearEnc.  renderPasses
+m3a  M3     2.17       460.7      0.84 ms        1.32      0.02 ms          26921.3     79655.7     1800          0          1956
+m4a  M4     2.54       393.8      0.90 ms        1.66      0.77 ms         106129.5    224781.8     5400       3000          2586
+m3b  M3     2.16       463.2      0.86 ms        1.18      0.02 ms          26921.3     79655.7     1800          0          1956
+m4b  M4     2.46       407.3      0.89 ms        1.54      0.87 ms         106108.2    224760.5     5400       3000          2580
+
+pictures:  m3a vs m3b  0.02 mean, 0.24% of pixels differ     (the reference against itself)
+           m3a vs m4a  0.02 mean, 0.21% of pixels differ
+           m3a vs m4b  0.01 mean, 0.40% of pixels differ
+```
+
+**This path draws the game's own cloud pass, and it draws it as the reference does** - to 0.21-0.40% of pixels
+against the reference's own 0.24% between two arms of one configuration. The GPU work is the same within 5% (0.84
+and 0.86 against 0.89 and 0.90 ms) and the *period* is 13-17% longer, which is the same shape the pack sessions
+showed: the difference is in the waits, not in the drawing (this path waits on the drawable, 0.77-0.87 ms at the
+median where the reference waits on its submission index and its drawable wait is 0.02 ms).
+
+**Reading two: the structural footprint on a vanilla frame is the same one the pack frames showed.** Five clear
+encoders a frame against the reference's none, `depthAttachments` 3x, `loadedMiB` +294%, `storedMiB` +182%,
+`renderPasses` +32%, and no viewport call at all where the reference makes ~4.3 a frame with one scissor a frame
+against its ~4.3-6.3 - all of it section 62's deliberate first version (a clear is a pass of its own; each pass
+loads what the one before stored), and none of it changed by clouds, rain or particles: the particles-and-rain
+session reads the *same* `loadedMiB` to four digits (106130 against 106129). The traffic this path reports is its
+own pass structure and not the scene.
+
+**Reading three: with rain and particles in the frame, a cross-launch picture comparison is void, and that is
+measured rather than assumed.** `run/vanilla-overworld` - same scene with weather `rain` and the particle fixture
+staged: `m3a` against `m3b`, **two arms of the reference itself**, differ in **68.45% of pixels** (mean channel
+difference 35.64), because rain streaks and particle positions are animated and two launches land on different
+phases. The generation comparison in that session is 43.65 (M3 vs M4) - the same order as the reference's own 35.64
+- so it says **nothing** about the path, and the counters are the reading there (the fixture loaded, the frame rate
+is 208-360 a second against 400-460 with clouds alone, and the structure is the same as reading two's). What is
+**NOT MEASURED** is a *deterministic* particle or rain scene: the fixture emits at random offsets, so its pixels
+move between launches by construction, and a picture verdict on particles needs a fixture whose emission is fixed -
+a per-tick pattern with no spread, or a single tick's particles photographed while frozen.
+
 ## Resource Binding
 
 ```
