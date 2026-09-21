@@ -1271,6 +1271,33 @@ answered rather than only what is left.
    reporting its first pair would be the mistake this blocker exists to prevent. The record is in the Performance
    section above and in `docs/metal4-migration.md`.
 
+   **Re-run after the copy-road fix, and the spread is still there - with the same structure and the same waits,
+   which is the useful part.** Session `run/perf-ab6`, the same shape as `run/perf-ab4` (Complementary, four arms,
+   600 frames a window, 25 s of settle, 3200x1800):
+
+   ```text
+   arm   wallP50  wallP95  wallP99   gpuP50/gpuM4P50  windowMs   drawable wait p95  submitWindow p95  loadedMiB
+   m3a    21.07    22.65    22.95    21.06 / 0.00      12623      0.03 ms            20.32 ms          ...
+   m4a     9.51    37.45    37.83     0.00 / 18.55     11095      7.59 ms            16.78 ms          394175.0
+   m3b    21.02    22.66    23.02    21.04 / 0.00      12621      0.03 ms            20.37 ms          ...
+   m4b    27.04    54.74    56.02     0.00 / 27.74     16618      7.58 ms            17.98 ms          403045.3
+
+   machine load, sampled at each arm's start and end (15 cpus): m4a 4.33 -> 4.26, m4b 4.27 -> 4.76
+   ```
+
+   Metal 3's arms agree to **0.2%**; this path's differ by **184%** on P50 and by **50%** on its own GPU
+   feedback. Four things are ruled out by the readings rather than by argument: the **scene** (loadedMiB
+   394175.0 against 403045.3, `blits 5400` and `blittedMiB 101022.1` identical to the digit, `depthAttachments`
+   5872 against 5938, `pipelineIdentities 333` and `compiles 0` in both), the **machine** (the load samples above
+   are the same to a tenth within each arm, and the instrument exists precisely to say so), the **wait sites**
+   (drawable p95 7.59 against 7.58 ms, submission p95 16.78 against 17.98), and the **structure** (every counter
+   within 2%). What differs is the frame's own cost - and `m4a`'s shape is the interesting one: `wallP50 9.51`
+   against `wallP95 37.45` means its 600 frames fall into two populations, while `m4b`'s cluster near 27. A
+   generation whose frame cost takes two different values on the same input is not a performance measurement
+   problem, it is a **frame-cost** problem, and it is the first thing the next session on this path should
+   characterise: whether the two populations are the ring's slot reuse, the transient arena, the argument tables,
+   or a residency commit landing inside one frame in two.
+
 17. ~~**Minecraft's own GUI, HUD and text are not drawn by this path at all**~~ - **FIXED, and the mechanism is
    named.** The whole interface was missing on Metal 4 while the world rendered, reported from play and confirmed
    here. It was not the fragment stage, not blending, not depth, not culling, not the attachments and not a lost
