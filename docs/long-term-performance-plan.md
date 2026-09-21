@@ -43,7 +43,10 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       frame on MakeUp and 2.6 on Photon for about 1 % of a frame where a
                                       session can resolve one - REJECTED as a default; feedback snapshots are
                                       ZERO on every corpus pack; every mip chain has the reader that asked
-                                      for it, and the census now says which target. C7 remains
+                                      for it, and the census now says which target. C7 DONE: the attachment
+                                      traffic falls 17-38 % with the elision switch and the wall does not move -
+                                      two clean sessions at -1.1 % and +0.3 % - so the plan's own stop rule fires
+                                      and the switch stays off. Phase 53's list is measured end to end
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
                                       with the binding census it closes the CPU micro-optimisation round

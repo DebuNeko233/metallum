@@ -497,7 +497,102 @@ at all.
 
 ## Next
 
-1. **C7's attachment traffic** on the same three packs, which is the last item of the plan's phase 53 list that
-   has not been measured on this corpus.
-2. **C3's remaining three scales**, and the entity/interval re-measurement, both of which need a machine that
+1. **C3's remaining three scales**, and the entity/interval re-measurement, both of which need a machine that
    holds one state for a session.
+2. **The plan's phase 53 list is now measured end to end** on this corpus; what is left of Track C is the
+   completeness work above.
+
+---
+
+# C7 - the attachment traffic
+
+Starting Metallum SHA: `10e7021`
+Ending Metallum SHA: `10e7021` + this round's documents
+Starting Vitrail SHA: `bb5db273`
+Ending Vitrail SHA: `bb5db273`
+
+## Question
+
+The plan asks for `elideTargetTraffic` to be re-measured across the corpus rather than on one scene, and it
+names the verdict in advance: **if the loaded and stored mebibytes fall a long way and the wall never moves,
+stop.** The switch is the earlier programme's, off by default, and it answers two separate questions at once - a
+pass that writes every pixel of an attachment has no use for what stood there (the load becomes a fill), and a
+target nothing reads afterwards has no use for what it leaves (the store does not happen).
+
+## Instrument
+
+The frame probe's `loadedMiB`, `storedMiB` and `depthAttachments`, which are exact counts of attachment traffic,
+and the per-program load-time line that already says how many of a pass's targets nothing reads afterwards:
+
+```
+nothing reads what it leaves in 1 of its 2 targets      MakeUp (one program), Photon (one program)
+nothing reads what it leaves in 2 of its 2 targets      MakeUp (another program)
+nothing reads what it leaves in 2 of its 3 targets      Complementary (one program)
+```
+
+Three arms a pack, one session each: `plain`, `elide` (`-Dvitrail.elideTargetTraffic=true`), `plain-b`.
+
+## A/B
+
+```
+scene           arm      ms/f     loadedMiB/f          storedMiB/f        depthAtt/f
+MakeUp          plain    6.717    385.8                461.4              7.5
+                plain-b  6.730    385.8                461.4              7.5     (0.2 % apart)
+                elide    6.644    319.8  -66.0 -17.1%  435.0  -26.4  -5.7%  7.5
+Complementary   plain    8.286    321.8                460.1              7.5
+                plain-b  9.834    342.2                480.4              7.9     (drifted: structure differs)
+                elide    7.713    216.1 -105.7 -32.9%  442.2  -17.9  -3.9%  7.5
+Photon          plain   11.769    415.5                535.4              8.0
+                plain-b 11.813    415.5                535.5              8.0     (0.4 % apart)
+                elide   11.808    257.4 -158.1 -38.1%  526.7   -8.7  -1.6%  8.0
+```
+
+**The traffic falls a long way and the frame does not move.** Two of the three sessions are clean - their own
+reference pairs agree to 0.2 and 0.4 per cent - and in them the load traffic falls **17.1** and **38.1 per cent**
+while the frame time moves **-1.1 per cent** and **+0.3 per cent**, both at or inside this programme's
+resolution floor. The third pack's session drifted so far between its references (18.7 per cent, and its
+structure with it) that its frame time carries no verdict at all; its traffic, which is a count, still does:
+**-32.9 per cent**.
+
+The load and the store are not the same size and the reason is in the mechanism rather than in the packs: a
+full-screen pass that overwrites its attachment can always drop the load, so the load saving is spread over every
+such pass, where the store can only be dropped for a target nothing reads afterwards, which the load-time lines
+above say is one or two targets of one program. Photon's **158.1 MiB a frame** of load against 8.7 of store is
+that asymmetry at its widest.
+
+## Correctness
+
+- Nothing changed: the switch is the earlier programme's, off by default, and neither repository was touched for
+  this measurement.
+- The traffic counters are exact and agree with the corpus to the tenth (`385.8` loaded on MakeUp, `415.5` on
+  Photon, `321.8` on Complementary), so the arms drew the same frame.
+- Every arm reported Metal 3 and its target through the harness's guards; the drifted Complementary session was
+  caught by the same guard that refuses one, and is reported as drifted rather than used.
+
+## Decision
+
+**STOP - and the switch stays off by default.** The plan's own stop rule for this item fires exactly: a large fall
+in loaded and stored mebibytes with no movement in the wall. Correct, counter-confirmed, and not where a frame's
+time is - on three packs rather than the one the earlier programme had, with two of the three sessions clean
+enough to resolve a one per cent difference and neither showing one.
+
+**What this closes.** With C1 and C3 (the corpus and the scale audit), C2 (shadow), C4/C5/C6 (copies, feedback,
+chains) and C7 (attachment traffic), the plan's phase 53 list - shadow, full-resolution pass, copy, attachment
+traffic, mipmap, feedback - is measured end to end on this corpus, and success criterion 8 is met for all six:
+none of them is guessed at any more, and each has a data reason for the decision it carries.
+
+## Residual
+
+- **The Complementary frame time is UNRESOLVED** for this item (its session drifted), so C7 has two clean packs
+  and one drifted - the stop rule fires on the two, and the third's traffic alone is reported.
+- **The elision is not separated into its load half and its store half by any arm**: one switch does both, and a
+  future reader wanting to know which half buys what would need one switch each.
+- **Solas, the fifth scene the plan names for C7, is not in the corpus** - the pack has never been staged on this
+  machine, and the plan's own rule is that a new pack extends the corpus rather than redefining it.
+
+## Next
+
+1. **C3's remaining three scales** and the **entity/interval re-measurement**, both of which need a machine that
+   holds one state for a session.
+2. **Track F's recorded candidate** - an on-disk Metal pipeline cache worth 0.26-1.6 s a launch - which is the
+   largest measured startup item left and has a phase report of its own to earn.
