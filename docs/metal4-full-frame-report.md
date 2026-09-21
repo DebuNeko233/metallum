@@ -648,9 +648,36 @@ difference in the band the blocks occupy - 0.7% of pixels over 8, with the same 
 small difference is **NOT LOCALISED**: the only time-varying thing among the five is the enchanting table's book,
 which is a hypothesis and not a reading, and separating it needs a scene without it.
 
+**And the first pack configuration in which this path's two arms agree exactly is also the first in which it is
+inside section 5's gate - which is a reading, not a verdict.** Every pack session before this one had a Metal 4 arm
+17-49% slower than the reference; the fixture scenes made a pack scene available with vanilla content in it, so one
+was run twice, Complementary with the entity and block-entity fixtures, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+                run/pack-vanilla (refused: content drift)   run/pack-vanilla2 (exit 0)
+arm  gen  ms a frame   vs m3a    own GPU ms/frame    ms a frame   vs m3a    wallP50   own GPU ms/frame
+m3a  M3     18.96       -             19.03            20.19         -        20.20        20.26
+m4a  M4     19.06      +0.5%          16.77            20.64       +2.2%      16.86        18.09
+m3b  M3     19.43      +2.5%          19.50            20.42       +1.1%      20.39        20.49
+m4b  M4     22.97     +21.1%          22.93            20.64       +2.2%      16.84        19.14
+```
+
+The repeat is the one to read: **this path's two arms are identical to two decimals (20.64 and 20.64) and both
+2.2% above the reference, whose own arms differ by 1.1%** - inside the `<= ~3%` section 5 asks for before AUTO.
+Three things about it are worth more than the number. **This path's own GPU time is *lower* than the reference's**
+(18.09 and 19.14 against 20.26 and 20.49 ms a frame), so the 2.2% is not GPU work and cannot be read as one. **Its
+median frame is *shorter* than the reference's** (16.86 against 20.20) while its mean is longer, which is a
+distribution that is more skewed rather than uniformly slower. **And the comparable counters agree exactly**
+(`pipelineIdentities 333` in all four arms, `blits 2700` and `blittedMiB 50511.0` to the digit) where the native
+call counts do not (24213 against 12670 pipeline sets, six clear encoders a frame against one) - section 70's rule
+holding on a real pack. The first session of the pair is refused by the comparer for content drift between arms of
+one generation (7-11%), which is the pack's own variability and section 116's warning; its 21% arm is why a repeat
+was needed before any of this was writable.
+
 **What is NOT MEASURED**, said plainly because the surface is now wide: a particle or rain scene whose picture can
-be compared across launches; what the one block-entity arm's small middle-band difference is; and the
-pack-and-vanilla-features combination, since every session above is a no-pack one.
+be compared across launches; what the one block-entity arm's small middle-band difference is; and whether that
+2.2% is what a pack scene *is* - one configuration, one session's repeat, against the 17-49% the other pack
+configurations read, and the difference between those configurations is now the performance question.
 
 ## Resource Binding
 

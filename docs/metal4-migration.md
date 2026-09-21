@@ -4719,6 +4719,42 @@ blocks occupy, which is one fifth of the difference the entity scene showed befo
 **NOT LOCALISED** - the only time-varying thing among the five is the enchanting table's book, which is a
 hypothesis and would need a scene without it to separate.
 
+### The first pack scene where this path is inside the gate, and the three things that are not the number
+
+Every pack session before this one had a Metal 4 arm 17-49% slower than the reference. The fixture scenes made a
+pack scene available with vanilla content in it - a pack that must draw mobs, a dropped item, an armour stand, an
+experience orb and five block entities through its own deferred pipeline - so it was run twice, Complementary with
+both fixtures, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+                run/pack-vanilla (refused: content drift)   run/pack-vanilla2 (exit 0)
+arm  gen  ms a frame   vs m3a    own GPU ms/frame    ms a frame   vs m3a    wallP50   own GPU ms/frame
+m3a  M3     18.96       -             19.03            20.19         -        20.20        20.26
+m4a  M4     19.06      +0.5%          16.77            20.64       +2.2%      16.86        18.09
+m3b  M3     19.43      +2.5%          19.50            20.42       +1.1%      20.39        20.49
+m4b  M4     22.97     +21.1%          22.93            20.64       +2.2%      16.84        19.14
+```
+
+The repeat is the one to read, and the first thing it says is that a repeat was needed: the first session carries a
+21% arm and the comparer refuses it for content drift between the arms of one generation (7-11%), which is the
+pack's own variability and section 116's warning about temporal packs. In the repeat this path's two arms are
+**identical to two decimals (20.64 and 20.64)** and both **2.2%** above a reference whose own arms differ by 1.1% -
+inside the `<= ~3%` section 5 asks for before AUTO - and the session is accepted, exit 0.
+
+Three details matter more than the number. This path's own GPU time is **lower** than the reference's (18.09 and
+19.14 against 20.26 and 20.49 ms a frame), so the 2.2% is not GPU work and must not be written as if it were. Its
+**median** frame is *shorter* than the reference's (16.86 against 20.20) while its mean is longer: a distribution
+that is more skewed, not one that is uniformly slower - which is the same shape the whole performance thread has
+had, the frame period being a wait on one side and work on the other. And the counters section 70 calls comparable
+agree exactly (`pipelineIdentities 333` in all four arms, `blits 2700`, `blittedMiB 50511.0` to the digit) while the
+native call counts do not (24213 pipeline sets against 12670, six clear encoders a frame against one), which is the
+first pack session where that rule could be applied to a scene with vanilla content in it.
+
+**What this does not say** is that this path is within 3% of the reference, and the difference between the
+configurations is now the question: the no-pack frame at 400 frames a second read +11-17%, the pack staircase's
+45-frame-a-second scenes read +17-49%, and this one +2.2% with less GPU work. One configuration, one repeat, and
+section 123 is not met on it.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
