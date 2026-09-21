@@ -153,37 +153,56 @@ than in the frame path, and neither has been run yet.
 measured 1 of 50 cold and 1 of 20 warm with a one-target probe, and the sentence in this report that read that
 as "equally frequent cold and warm" is withdrawn.
 
-**And eighty cold processes passed, which is section 14's Path B and not a resolution.** The harness was run
+**And a hundred and eighty cold probes passed, which is section 14's Path B and not a resolution.** The harness was run
 twice today on this machine - `--cold-runs 30 --warm-runs 20` and then `--cold-runs 50 --warm-runs 20` - and the
 second subsumes neither the first nor the shape it measured, so both are kept:
 
 ```text
-run                                     cold processes   cold failures   warm probes   warm failures
---cold-runs 30 --warm-runs 20           30               0               20            0
---cold-runs 50 --warm-runs 20           50               0               20            0
-                                        ----------------------------------------------------------
-                                        80               0               40            0
-one cold probe costs ~0.5 s, and the warm repeats after the first cost ~110-125 ms each
+run                                                cold processes  probes  failures  warm  warm failures
+--cold-runs 30 --warm-runs 20                      30              30      0         20    0
+--cold-runs 50 --warm-runs 20                      50              50      0         20    0
+--cold-runs 20 --probes-per-process 5 --warm 20    20              100     0         20    0
+                                                   ----------------------------------------------
+                                                   100             180     0         60    0
+one cold probe costs ~0.5 s, and the probes after a process's first cost ~110-125 ms each
 sampled draws, allocator rings, colour attaches, multi-targets, depth draws, depth samples, mip chains,
 MetalFX spatial, compute, storage images, bound layouts, texture copies, depth clears, fence waits,
 indexed draws, residency sets, indirect draws, compute->pass, compute->draw, copy->pass: 50 passed, 0 failed
 GPU pass time: 0 passed, 50 failed
 ```
 
-So the intermittency **did not reproduce in eighty cold probes**, the probe is fast enough to make that a
+So the intermittency **did not reproduce in a hundred and eighty cold probes**, the probe is fast enough to make that a
 measurement rather than an occasion (half a second against the seventy a client launch costs, which was section
 10's goal), and the failure **stays registered** as intermittent - section 14 forbids deleting it because the
 harness could not reproduce it.
 
-**What the eighty do and do not say, because the two are easy to run together.** They say the current probe
-shape did not fail in eighty cold processes on this machine in this session, which is the strongest single
+**What the hundred and eighty do and do not say, because the two are easy to run together.** They say the current probe
+shape did not fail in a hundred and eighty cold probes on this machine in this session, which is the strongest single
 reading the harness can produce without a failure to localise. They do **not** say the fault is gone: no failure
 means **no stage and no mechanism**, so nothing has been fixed, and the historical rate of about one in
 twenty-five was measured with the **older probe shape** - the shape changed between that round and this one, and
 the report already withdrew the sentence that read the old cold and warm rates as equally frequent for exactly
 that reason. A fault that no longer reproduces in a shape that has changed is a fault whose status is
 **NOT PROVEN either way**, and the honest sentence is the one section 14 asks for: not reproducible today, still
-registered, still blocking AUTO. **AUTO stays blocked** by it, `-Dmetallum.execution=metal4` stays forced and EXPERIMENTAL, and
+registered, still blocking AUTO. **And the shape of a first use in a process is measurable, even though the fault is not.** The third run put five
+probes in each cold process - the harness's own `--probes-per-process`, which exists because *"one probe a process
+cannot tell a process that is bad from a draw that went wrong"* - and the per-attempt times say what the recorded
+hypothesis is about:
+
+```text
+process 1 attempt 1  490.7 ms   attempt 2  119.6 ms   attempt 3  110.3 ms   attempt 4  119.6 ms
+process 1 attempt 5  112.3 ms   process 2 attempt 1  488.2 ms
+```
+
+**The first probe in a process costs about four times what the rest cost, in every process, cold or warm** - so
+the thing the recorded hypothesis names, lazy initialisation on first use, is really there and has a signature.
+What it does **not** do, in 180 probes across 100 processes today, is fail: a first probe that is slower and
+correct is a different thing from a first probe that is wrong one time in twenty-five. That sharpens the
+hypothesis rather than confirming it, and it says where the next attempt should look - the 4x window is where a
+fault would live, and the experiment is the first pass alone, in volume, with `--probes-per-process` telling a bad
+process from a bad draw.
+
+**AUTO stays blocked** by it, `-Dmetallum.execution=metal4` stays forced and EXPERIMENTAL, and
 Metal 4 development continues under it, which is what section 15 asks for.
 
 Two details a reader of that block should not misread. The harness **exits non-zero on this run**, and the only
