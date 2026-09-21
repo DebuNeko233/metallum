@@ -4193,6 +4193,14 @@ against 12, so the next state to compare between the generations is the **vertex
 - the one object of the user's list that this round did not diff, because both generations' builders are
 character-for-character the same and the difference, if there is one, is in what the descriptor receives.
 
+**Two state differences between the generations surfaced while looking, and neither is this fault.** The Metal 3
+pass sets `setFrontFacingWinding(MTLWinding.Clockwise)` on every pipeline change and this one does not; setting it
+here explicitly changed no sampled pixel, and the probe was reverted - the M4 encoder's default winding is
+clockwise, as the reference generation's explicit call assumes. And the Metal 3 pass **applies the depth bias** a
+pipeline carries (`setDepthBias:slopeScale:clamp:`) where this one stores the bias in its artifact and never sets
+it: that is a real gap in this generation's state, it belongs to shadow and depth-offset geometry rather than to
+the GUI, and it should be fixed and measured on its own rather than folded into this question.
+
 The residue is named rather than guessed: the GUI is encoded, its target is the presented one, its pass's writes
 reach the screen when a clear is forced through them, and its fragments are never produced. The experiments that
 would separate the remaining candidates are recorded in the report's blocker 17. **The work that was next in the
