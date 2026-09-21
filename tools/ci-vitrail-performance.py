@@ -846,6 +846,26 @@ for needed, why in (
     if needed not in named:
         raise SystemExit("Vitrail performance harness contract: " + why)
 
+# --- whether the picture column can read anything on this scene ------------------------------------------
+# A session whose own arms move by as much as the generations do has a picture column that measures the scene
+# and not the switch, and the first session staged with the particle fixture is exactly that one: its reference
+# arms differ by 9.11% of pixels where the largest cross-generation difference is 8.80%. The comparer therefore
+# carries each pair's share beyond eight levels back with its sentence and says when the generations cannot be
+# separated by picture, instead of printing five numbers a reader would take as a verdict.
+for needle, why in (
+    ("            100 * beyond / count)",
+     "the picture comparison no longer returns the share of pixels beyond eight levels, so nothing can read the "
+     "scene's own movement against the difference the session is measuring"),
+    ("        own = [value for value, same in picture_spread if same and value >= 0.0]",
+     "the comparer no longer separates the arms of one generation from the cross-generation pairs, so it cannot "
+     "say whether its picture column is a reading of the switch or of the scene"),
+    ("so this scene cannot separate the generations by picture",
+     "the comparer prints cross-generation picture differences without saying when the scene's own arms move at "
+     "least as much - which is the reading a fixture-staged session invites and cannot support"),
+):
+    if needle not in comparer:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 PROBE_SOURCE = ROOT / "src/main/java/com/metallum/render/shared/MetalFrameProbe.java"
 if "windowTicks={} framesPerTick={}" not in PROBE_SOURCE.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the probe no longer reports the tick sampling the "

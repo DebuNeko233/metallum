@@ -177,9 +177,16 @@ def flat_colour(png: tuple[int, int, list[tuple[int, int, int]]]) -> tuple[int, 
 
 
 def compare_pictures(left: tuple[int, int, list[tuple[int, int, int]]],
-                     right: tuple[int, int, list[tuple[int, int, int]]]) -> str:
+                     right: tuple[int, int, list[tuple[int, int, int]]]) -> tuple[str, float]:
+    """The two captures' difference, and the share of pixels beyond eight levels.
+
+    The share comes back beside the sentence because it is what decides whether the picture column can read
+    anything on this scene at all: a scene whose own arms move by more than the generations do has a picture
+    column that measures the scene and not the switch, and the caller says so rather than printing a number a
+    reader would take as a cross-generation verdict.
+    """
     if left[0] != right[0] or left[1] != right[1]:
-        return f"different sizes: {left[0]}x{left[1]} against {right[0]}x{right[1]}"
+        return f"different sizes: {left[0]}x{left[1]} against {right[0]}x{right[1]}", -1.0
 
     total = 0
     moved = 0
@@ -207,7 +214,8 @@ def compare_pictures(left: tuple[int, int, list[tuple[int, int, int]]],
             f"{100 * moved / count:.2f}% of pixels differ at all, "
             f"{100 * beyond / count:.2f}% differ by more than 8, "
             f"{100 * beyond_two / count:.2f}% by more than 2, "
-            f"worst {worst} at {worst_at[0]},{worst_at[1]}")
+            f"worst {worst} at {worst_at[0]},{worst_at[1]}",
+            100 * beyond / count)
 
 
 def main() -> int:
@@ -477,6 +485,10 @@ def main() -> int:
 
     if len(runs) > 1:
         print()
+        # Which arm pairs are one generation and which are two, so the scene's own movement can be read
+        # against the difference the session is measuring. A picture column is only a reading of the switch
+        # while the generations differ by more than the scene's own arms do.
+        picture_spread: list[tuple[float, bool]] = []
         for run in runs[1:]:
             if first.name in unreadable or run.name in unreadable:
                 print(f"picture, {first.name} against {run.name}: no picture on one side")
@@ -490,8 +502,20 @@ def main() -> int:
                       f" colour ({colour[0]},{colour[1]},{colour[2]}), so there is no picture to compare and"
                       f" no arm's screen was photographed")
                 continue
-            print(f"picture, {first.name} against {run.name}: "
-                  f"{compare_pictures(captures[first.name], captures[run.name])}")
+            words, beyond = compare_pictures(captures[first.name], captures[run.name])
+            print(f"picture, {first.name} against {run.name}: {words}")
+            same_generation = (generations[first.name] is not None
+                               and generations[first.name] == generations[run.name])
+            picture_spread.append((beyond, same_generation))
+
+        own = [value for value, same in picture_spread if same and value >= 0.0]
+        cross = [value for value, same in picture_spread if not same and value >= 0.0]
+        if own and cross and max(own) >= max(cross):
+            print(f"picture spread: the arms of one generation differ from each other by {max(own):.3f}% of"
+                  f" pixels (by more than 8) against the largest cross-generation difference of"
+                  f" {max(cross):.3f}%, so this scene cannot separate the generations by picture - its own"
+                  f" arms move at least as much, and the counters and the times are what this session"
+                  f" measured")
 
     if flat:
         print(f"picture evidence is void: {', '.join(sorted(flat))} captured a single colour, so no arm's "
