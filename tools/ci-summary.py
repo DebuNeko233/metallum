@@ -44,6 +44,12 @@ CLAIMS = (
     # rather than against the summary's copy of itself.
     ("the acceptance baseline's MakeUp traffic", "385.8", "385.8", "vitrail-gpu-performance.md"),
     ("the acceptance baseline's no-pack traffic", "18.3", "18.3", "vitrail-gpu-performance.md"),
+    # The acceptance's own correction: the scene that read +6.9 per cent against a baseline four hours older was
+    # re-run with the baseline's code, and the two agree. Both halves are pinned, because a correction is a figure
+    # like any other and the page most likely to be read alone is the one that would keep the old reading.
+    ("the baseline's code re-measured in the acceptance's machine state", "1.795 ms a frame", "1.795",
+     "performance-testing.md"),
+    ("the acceptance no-pack arm's tail", "2.63 ms", "2.63 ms", "performance-testing.md"),
 )
 
 # The one line the page is for: the success criteria, and the one that is not met.

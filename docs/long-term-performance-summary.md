@@ -138,7 +138,9 @@ Criterion 1 - Metal 3 has no visible regression - is the one criterion that is a
 changes did, and it was checked rather than assumed: the four-scene corpus was re-run on the head carrying all of
 them (the labelled mipmap census, the unarmed and function compile counters, the client-screenshot probe, the
 mixins, the harness guards), against the C1 corpus that predates every one of them. One arm a scene, the same
-protocol, 600-frame windows.
+protocol, 600-frame windows. The two collections are four and a half hours apart, and the one scene whose reading
+moved across that gap was then re-measured with the baseline's own code in the acceptance's own machine state -
+the paragraph below on no-pack, which is the correction this page would otherwise be missing.
 
 ```
 scene            ms/f base   ms/f now    delta   loadedMiB/f base  now   storedMiB/f base  now
@@ -151,9 +153,21 @@ Photon              12.958     11.810    -8.9%         416.1      415.6        5
 **MakeUp reproduces to the digit** - `loadedMiB`, `storedMiB`, `depthAttachments`, `blits`, `blittedMiB`,
 `renderPasses` and `pipelineIdentities` are identical to the baseline session - and the other three agree on
 every world pass count, every attachment counter and every copy counter to within a tenth of a per cent. The
-frame times are -0.2 and -0.1 per cent on the two packs whose baselines are strongest; Photon's -8.9 is inside
-the spread that scene has shown between its own arms (8.4 per cent) and no-pack's +6.9 is 0.1 ms on a 1.7 ms
-frame.
+frame times are -0.2 and -0.1 per cent on the two packs whose baselines are strongest.
+
+**Photon's -8.9 is the baseline's own arm being the high one, and not an improvement.** Five arms of that scene,
+in four other sessions, read 11.769 to 11.810 ms a frame; the acceptance arm is one of them, and the baseline's
+12.958 is one of the two that stand apart.
+
+**No-pack's +6.9 was the machine, and that was measured rather than argued.** Its arm read 1.793 ms a frame with a
+95th percentile of 2.63 ms and a GPU 95th of 2.10, against the baseline's 1.678 with a 95th of 1.79 and a GPU 95th
+of 1.44, and three arms of the head reproduced it to two decimal places - a step, not a scatter. So both
+repositories' runtime was put back to the baseline's own commits (`8f05f7c`, `6afce954`), nothing else changed, and
+the same scene then read **1.795 ms a frame with a 95th percentile of 2.64** and a GPU 95th of 2.11: the baseline's
+own code, in the acceptance's own machine state, reads what the head reads. The six per cent is the environment the
+two sessions were taken in, and the rule it produced is in `docs/performance-testing.md` - a baseline from another
+session is re-measured before it is compared against, and no-pack, the one uncapped scene (558 frames a second
+against a 120 Hz display), is where anything else on the GPU arrives first.
 
 `passSizes` is the one column that differs, and it differs by the same amount at every size at once (20 against
 22, 99 against 100, 156 against 142): that is the **load-time mip cascade**, a one-off chain whose tail lands
@@ -166,8 +180,12 @@ And the picture column was taken by the client itself on every scene: `picture-s
 ## The success criteria, audited
 
 ```
-1.  Metal 3 has no visible regression          MET - the corpus reproduces its counters to the tenth and every
-                                               contract passes on this head
+1.  Metal 3 has no visible regression          MET - every contract passes on this head, the two pack scenes
+                                               whose baselines are strongest reproduce their frame times and
+                                               their counters to 0.2 per cent, and the scene that did not
+                                               (no-pack, +6.9) was re-measured with the baseline's own code in
+                                               the same machine state and reads the same as the head: the six
+                                               per cent was the session, not the change
 2.  Metal 3's CPU/native cost is audited       MET - A1's census, priced
 3.  Vitrail's frame hot path is moved forward  MET AS MEASURED - there is nothing per-frame left worth moving:
                                                the seam is 0.066-0.70 %, redundant binds 0.1-0.3 %

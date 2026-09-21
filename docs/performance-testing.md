@@ -102,6 +102,23 @@ disturbed windows read up to 9.917 - 47 per cent. A configuration whose own repe
 effect is reported as **unresolved** and not averaged, and a candidate whose second real pack is unresolved is not
 shipped.
 
+**A baseline measured in another machine state is not a baseline, and no-pack is where it shows.** The corpus's own
+baseline was collected at 22:05 and the acceptance arms at 02:43, four and a half hours later, and the scene whose
+frames are shortest paid for the difference: the head read 1.793, 1.783 and 1.783 ms a frame, with a 95th percentile
+of 2.63 ms and a GPU 95th of 2.10, against the baseline's 1.678 with a 95th percentile of 1.79 and a GPU 95th of
+1.44 - a step and not a scatter, since three arms reproduced it to two decimal places while the two pack scenes
+whose counters agree reproduced across the same boundary to 0.2 per cent (the third, Photon, has arms reading 11.8
+in four sessions and 13.0-13.2 in two, and its baseline arm is one of the high ones). Which of the two readings was
+the machine had to be
+measured rather than argued, so both repositories' runtime was put back to the baseline's own commits (`8f05f7c`,
+`6afce954`), nothing else was changed, and that arm read **1.795 ms a frame with a 95th percentile of 2.64** and a
+GPU 95th of 2.11: the baseline's own code, tonight, reading tonight's numbers. The programme's changes are within
+0.1 per cent of the baseline's code on that scene, and the six per cent was the environment. So an acceptance
+comparison whose baseline comes from another session **re-measures the baseline's code in the new session**, and a
+scene is read across a boundary only where that re-measurement was made. No-pack is the scene that pays first: it is
+the only one running uncapped (558 frames a second against a 120 Hz display), so its tail is where anything else on
+the GPU arrives.
+
 **A removal arm is not a pair of arms that draw the same frame.** The comparison's scene-drift guard refuses
 every removal session, correctly, because the arms differ exactly where the switch says they should: one fewer
 shadow pass in 600 frames moves `depthAttachments` by 2.2 per cent in a session whose two references agree to
