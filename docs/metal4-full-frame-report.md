@@ -618,9 +618,39 @@ lower  (70-90%)              0.02 (0.0%)     0.00 (0.0%)     0.03 (0.1%)
 occupy is **identical** (0.00) in both generation comparisons, and the one pixel all three disagree at is the same
 pixel - which is what a cross-launch difference looks like and not a generation difference.
 
+**And the block entities, which are neither terrain nor entities, are drawn the same too.** What a *block's own*
+renderer draws - a chest's model, a bell, a banner's cloth, a shulker box, an enchanting table's book - had never
+been in a measured frame. `tools/fixtures/vanilla-blocks` places five of them, and the way it places them is three
+measurements old: `unless block ^1 ^1 ^4 minecraft:chest` never fired (the fixture's liveness line shows the
+function running 1138 times in a sixty-frame arm with not one placement, so a block predicate does not resolve `^`
+the way an entity's position does), `~` did not fix it either, and a four-way diagnostic separated the parts -
+`if block ~ ~ ~ minecraft:air` never matches, at the server's position or the player's, while
+`if block <position> minecraft:chest` matches as soon as a command has *placed* a block there. A block predicate
+reads a position a command has made real, so it cannot guard the command that makes it real; the fixture therefore
+places first and proves with an entity (a marker summoned once per block, the `say` firing while it is absent, the
+`setblock` at the marker's own position every tick). `run/vanilla-blockents`, clouds on, 300 frames:
+
+```text
+picture, m3a against m3b:  mean 0.02, 0.45% of pixels differ at all   (the reference against itself)
+picture, m3a against m4a:  mean 0.02, 0.27% of pixels differ at all
+picture, m3a against m4b:  mean 0.12, 2.11% of pixels differ at all
+   - the same worst pixel, 217 at (3547,43), in all three
+
+by band:                     m3a vs m3b      m3a vs m4a      m3a vs m4b
+sky   (top 12%)              0.07 (0.1%)     0.10 (0.1%)     0.27 (0.2%)
+middle (40-60%)              0.04 (0.1%)     0.02 (0.0%)     0.34 (0.7%)
+lower  (70-90%)              0.00 (0.0%)     0.00 (0.0%)     0.03 (0.1%)
+```
+
+**So the block entities are drawn on both generations**: one Metal 4 arm reproduces the reference to better than the
+reference reproduces itself in every band (middle 0.02 against 0.04), and the other differs by 0.34 of mean channel
+difference in the band the blocks occupy - 0.7% of pixels over 8, with the same worst pixel as every other arm. That
+small difference is **NOT LOCALISED**: the only time-varying thing among the five is the enchanting table's book,
+which is a hypothesis and not a reading, and separating it needs a scene without it.
+
 **What is NOT MEASURED**, said plainly because the surface is now wide: a particle or rain scene whose picture can
-be compared across launches; and the pack-and-vanilla-features combination, since every session above is a no-pack
-one.
+be compared across launches; what the one block-entity arm's small middle-band difference is; and the
+pack-and-vanilla-features combination, since every session above is a no-pack one.
 
 ## Resource Binding
 

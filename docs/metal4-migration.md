@@ -4672,6 +4672,53 @@ a cross-launch difference looks like and not a generation difference. The second
 every capture was one flat colour, and the harness refused the session on it - which is the guard doing its job
 rather than a lost measurement, since the reading above is from the session whose display was awake.
 
+### Block entities, and a block predicate that cannot guard the command that makes its position real
+
+What a *block's own* renderer draws - a chest's model, a bell, a banner's cloth, a shulker box, an enchanting
+table's book - is neither terrain nor an entity in the entity stores, so no scene this harness had measured
+contained one. `tools/fixtures/vanilla-blocks` places five of them in front of the camera, and it took three
+measured failures to find a form that works:
+
+```text
+unless block ^1 ^1 ^4 minecraft:chest     the fixture's liveness line showed the function running 1138 times
+                                          in a sixty-frame arm, and not one placement fired - so a block
+                                          predicate does not resolve `^` the way an entity's position does
+unless block ~1 ~1 ~4 minecraft:chest     the same 1142 runs, the same zero placements
+
+and a four-way diagnostic, one arm, sixty frames:
+  say A                                   1146   the function runs
+  execute if block ~ ~ ~ minecraft:air     0     never matches, at the server's own position
+  execute at @a if block ~ ~ ~ air         0     never matches at the player's either
+  setblock ~2 ~1 ~4 chest, then if block   1146  matches as soon as a command has *placed* a block there
+```
+
+A block predicate reads a position a command has made real, which is why it cannot guard the command that makes it
+real. So the fixture places first and proves with an entity, using only forms the entity fixture had already
+proven: a marker entity summoned once per block with the `^` form and an `unless entity` guard, a `say` that fires
+while the marker is absent, and a `setblock ~ ~ ~` at the marker's own position every tick - idempotent, so it
+cannot be skipped and cannot drift. Each of the five fires a stable two times an arm in every arm, and the harness
+compares the arms' placements with each other.
+
+The reading, `run/vanilla-blockents`, clouds on, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+picture, m3a against m3b:  mean 0.02, 0.45% of pixels differ at all   (the reference against itself)
+picture, m3a against m4a:  mean 0.02, 0.27% of pixels differ at all
+picture, m3a against m4b:  mean 0.12, 2.11% of pixels differ at all
+   - the same worst pixel, 217 at (3547,43), in all three
+
+by band:                     m3a vs m3b      m3a vs m4a      m3a vs m4b
+sky   (top 12%)              0.07 (0.1%)     0.10 (0.1%)     0.27 (0.2%)
+middle (40-60%)              0.04 (0.1%)     0.02 (0.0%)     0.34 (0.7%)
+lower  (70-90%)              0.00 (0.0%)     0.00 (0.0%)     0.03 (0.1%)
+```
+
+**Block entities are drawn on both generations.** One Metal 4 arm reproduces the reference better than the
+reference reproduces itself in every band; the other differs by 0.34 of mean channel difference in the band the
+blocks occupy, which is one fifth of the difference the entity scene showed before its fixture was fixed and is
+**NOT LOCALISED** - the only time-varying thing among the five is the enchanting table's book, which is a
+hypothesis and would need a scene without it to separate.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
