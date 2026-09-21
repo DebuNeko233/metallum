@@ -5358,3 +5358,45 @@ sections 47 and 49 the two GPU columns are not subtracted; the wall column is th
 
 **The ladder therefore advances**: rung 1 is measured, so MakeUp is next - and the same guards, the same
 interleave and the same tick instrument apply to it.
+
+### The ladder's third rung, and the second rung's artifact
+
+Two things happened on the way up the ladder, and the smaller one is that **`MakeUp-UltraFast-9.5e` is no longer
+on this machine**: the correctness ladder ran it earlier (330 pipeline identities on both arms, no fault of any
+kind), and a search of the disk now finds only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b`. Its
+performance rung is therefore **NOT MEASURED, artifact absent** - a statement about this machine and not about the
+path - and the ladder continues with the rungs whose packs exist. Recorded rather than skipped silently, because a
+ladder whose missing rung is invisible is a ladder that reads as complete.
+
+**The third rung is Complementary, six arms interleaved M3/M4/M3/M4/M3/M4, and every arm passed its window
+guard** - the pack drawn, 21 render passes a frame, 5400 copy-backs, `pipelineIdentities 333` in all six, no
+`GPURestart`, no validation error.
+
+```text
+arm   wall P50   wall P95   wall P99   own GPU P50   ticks   frames/tick   loadedMiB
+m3a    20.65      27.19      29.17       20.91         250       2.40        316592.4
+m3b    21.12      27.51      28.85       20.92         251       2.39        316812.1
+m3c    18.75      21.77      24.09       18.87         224       2.68        311314.1
+m4a    16.74      28.93      30.55       18.29         228       2.63        379273.5
+m4b    16.75      28.75      30.54       18.14         227       2.64        364816.2
+m4c    25.07      33.48      41.72       27.56         330       1.82        384632.9
+```
+
+**The tick instrument is what makes the session readable.** `m3c` covered 224 client ticks where `m3a`/`m3b`
+covered 250/251, and `m4c` covered 330 where `m4a`/`m4b` covered 228/227 - and a window is a fixed frame count, so
+a different tick count *is* a different frame rate. Those two arms were not measuring the same slice of the
+client's life as their siblings, so per section 115 they are named and not averaged, and the comparison is between
+the matched pairs: **`m3a`/`m3b` (20.65 and 21.12 ms, 2.3% apart) and `m4a`/`m4b` (16.74 and 16.75, 0.06%
+apart)**.
+
+**What the rung says**: at the median this path is **19-21% faster** on this scene (16.74/16.75 against
+20.65/21.12 ms) while its own commit interval is 18.14/18.29 against the reference's 20.91/20.92 - and at **P95 it
+is 5% slower** (28.75/28.93 against 27.19/27.51), which is the same mixture this report has measured twice: a
+frame lands on one display handover or two, and this path's landing is less even. Structure is identical
+(`blits 5400`, `pipelineIdentities 333`, 21 passes a frame) and the pictures are inside the reference's own
+spread (`m3a` against `m4b` 0.55% of pixels by more than 8, against `m3c` 0.44%).
+
+So the ladder's measured shape is a contrast: **work-light scene, this path far slower because of pacing; pack
+scene, faster at the median and slower in the tail because of the same mixture** - and on both, its own commit
+interval is the lower of the two, which is the one quantity sections 47 and 49 forbid subtracting. Photon is the
+remaining rung whose pack exists.

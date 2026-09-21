@@ -1618,6 +1618,47 @@ and its blanks are the work. A `yes` in `M4 real frame` means the harness collec
 drew and presented; a capability with no live-frame reading is `n/a` rather than inferred from a smoke, because a
 capability proven in a process with no window is not the same claim.
 
+### The §93 ladder: what has been measured, rung by rung
+
+The table §69 asks for, with only valid sessions in it and each rung's own guards recorded. **Rung 2 is not in it
+because its artifact is not on this machine**: `MakeUp-UltraFast-9.5e` was staged for the correctness ladder
+earlier (330 pipeline identities on both arms, no fault of any kind) and a search of this machine now finds no
+copy of it - only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain. So its *performance* rung is
+**NOT MEASURED, artifact absent**, and the ladder continues with the rungs whose packs exist.
+
+| workload | M3 wall P50 | M3 P95 | M4 wall P50 | M4 P95 | M4 distribution | verdict |
+| -------- | ----------- | ------ | ----------- | ------ | --------------- | ------- |
+| no-pack (`run/ticks-nopack`) | 8.33 (8.33, 8.33) | 8.83-8.88 | 13.56-14.85 | 15.94-15.95 | upper mode stable to 0.06%, P50 moves with the mixture | **MEASURED: this path 1.63-1.78x slower**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
+| MakeUp UltraFast | - | - | - | - | - | **NOT MEASURED: the pack archive is not on this machine** |
+| Complementary (`run/rung3-complementary`) | 20.65, 21.12 | 27.19, 27.51 | 16.74, 16.75 | 28.75, 28.93 | P50 repeats to 0.06%, P95 is 5% wider than the reference's | **MEASURED: this path 19-21% faster at the median and 5% slower at P95** |
+| Photon | - | - | - | - | - | not run |
+
+**How the Complementary rung reads, and why only four of its six arms are in the table.** Six arms were
+interleaved M3/M4/M3/M4/M3/M4 and **every arm passed its window guard** (the pack drawn, 21 render passes a
+frame, 5400 copy-backs, `pipelineIdentities 333` in all six), but the tick instrument shows that the session's
+machine state moved twice: `m3c` covered **224** client ticks where `m3a`/`m3b` covered 250/251, and `m4c`
+covered **330** where `m4a`/`m4b` covered 228/227 - the window is a fixed frame count, so a different tick count
+*is* a different frame rate, and those two arms were not measuring the same slice of the client's life as their
+siblings. The matched pairs are therefore `m3a`/`m3b` (P50 20.65 and 21.12, 2.3% apart) and `m4a`/`m4b` (16.74 and
+16.75, **0.06%** apart), and the comparison is between those. Per section 115 the unmatched arms are named and
+not averaged.
+
+- **At the median this path is faster on this scene** - 16.74/16.75 against 20.65/21.12 ms, 19-21% - while its
+  own commit interval is 18.14/18.29 against the reference's 20.91/20.92. Per sections 47 and 49 the two GPU
+  columns are not subtracted; the wall column is the comparison.
+- **At P95 it is slower**: 28.75/28.93 against 27.19/27.51 - a 5% wider tail, which is the mixture this report
+  has now measured twice (a frame lands on one handover or two, and this path's landing is less even).
+- **The structure is the same**: `blits 5400`, `blittedMiB 101022.1`-class copy-back volume, `pipelineIdentities
+  333`, 21 render passes a frame, no `GPURestart` and no validation error in any arm.
+- **And the picture comparison is inside the reference's own spread**: `m3a` against `m4b` differs in 0.55% of
+  pixels by more than 8, against `m3c` in 0.44% - a cross-generation difference no larger than the reference's
+  own arm-to-arm difference on this scene (section 69's kind of reading, not a screenshot verdict).
+
+**So the ladder's measured shape is two rungs and a contrast**: on the work-light scene this path is far slower
+and the reason is pacing; on the pack scene it is faster at the median and slower in the tail, and the reason is
+the same mixture. Its own commit interval is lower than the reference's on both, which is the quantity the two
+APIs do not let us subtract.
+
 ## AUTO readiness
 
 The decision the plan allows three forms of, taken gate by gate and with the evidence each line rests on.
