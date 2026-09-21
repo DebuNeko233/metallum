@@ -1679,5 +1679,9 @@ Two findings, neither of them the GUI fault this round was about, and both worth
   what it does - the two lines above are printed - but the engine that picks up the frame afterwards is the
   OpenGL backend, where this project's whole comparison assumes the Metal 3 reference. A developer who forces
   Metal 4 on a device that cannot take it therefore measures neither generation, and nothing in the log says the
-  reference path was skipped. **NOT FIXED, and it is the second item on the definition of done above**: the
-  fallback should land on Metal 3, or the session should end rather than measuring another engine.
+  reference path was skipped. **The silence is fixed (commit `d5dba49`): the refusal now says the Metal 3
+  reference path is not being taken either and names the switch that takes it**, so the session is no longer
+  able to measure OpenGL without saying so. What is **NOT FIXED** is the behaviour itself, and it is deliberately
+  not touched: this project's public behaviour for a forced generation the device cannot satisfy is a startup
+  failure rather than a silent demotion, so landing on Metal 3 would be a change to that behaviour rather than a
+  repair of it - the decision belongs with the plan's section 76, not with this reading.
