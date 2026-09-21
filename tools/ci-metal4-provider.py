@@ -1841,4 +1841,60 @@ if 'Metal 4 trace: presenting picture 0x{} {}x{} into a drawable 0x{} {}x{}' not
                      "writes, so a frame with content missing cannot be told from a present that read another "
                      "texture")
 
+# And every road that moves bytes declares both of its ends resident.
+#
+# This is the shape a whole interface's absence took. The Metal 4 header asks a copy's resources to be marked in an
+# MTLResidencySet, this engine's model declares them with useResource, and an undeclared resource makes a copy do
+# nothing on this API - silently, with no error and no fault. copyToBuffer was the one road that declared neither
+# end, and it is the road Minecraft's own staged vertex buffer uses: the GUI's, the particles' and the entities'
+# vertices arrived as zeros, every triangle collapsed to a point, and the draws were encoded, correctly bound,
+# correctly stated and invisible on a frame whose world (drawn from Sodium's own buffers) was perfect. Measured on
+# a forced Metal 4 title screen: the picture readback's mean went from (19, 17, 11) with no GUI in it to
+# (40, 39, 33) with the buttons and the logo sampled, against Metal 3's own (40, 39, 33) on the same screen.
+COPIERS = (
+    "writeToBuffer", "copyToBuffer", "writeToTexture", "copyBufferToTexture", "copyTextureToTexture",
+    "copyTextureToBuffer",
+)
+for name in COPIERS:
+    signature = "void " + name + "("
+    found = 0
+    encoding = 0
+    at = 0
+    while True:
+        start = encoder.find(signature, at)
+        if start < 0:
+            break
+        at = start + 1
+        found += 1
+        body = encoder[start:encoder.find("\n    }", start)]
+        # An overload that only hands its arguments to another overload encodes nothing and declares nothing, and
+        # that is not the road this rule is about; the one that talks to the encoder is.
+        if "copyEncoder()" not in body and ".copy" not in body.split("copyEncoder()")[0]:
+            continue
+        if "copyEncoder()" not in body:
+            continue
+        encoding += 1
+        if "useResource" not in body:
+            raise SystemExit("metal 4 provider: " + name + " encodes a copy without declaring either end resident,"
+                             " and this engine's model makes an undeclared resource a copy that does nothing -"
+                             " measured as the whole of Minecraft's GUI, particles and entities missing from a"
+                             " frame whose world was correct")
+    if found == 0 or encoding == 0:
+        raise SystemExit("metal 4 provider: " + name + " is not an encoding road in the frame encoder any more, so"
+                         " the road this contract is about has moved and the check is stale")
+
+# And the rasterizer probe stays available, because it is what separated "this draw wrote nothing" from "this draw
+# wrote something that looks like its background" - the reading that ended the hunt for Minecraft's GUI.
+compiler = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "metal4"
+            / "Metal4PipelineCompiler.java").read_text(encoding="utf-8")
+for needle, why in (
+    ('System.getProperty("metallum.probeForceColour")',
+     "the forced-colour probe is gone, so a draw that produces no pixel can no longer be told from one whose pixel "
+     "matches its background"),
+    ("out.fragColor = float4(1.0, 0.0, 1.0, 1.0);",
+     "the forced-colour probe no longer forces a colour, so it probes nothing"),
+):
+    if needle not in compiler:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")

@@ -79,13 +79,26 @@ final class Metal4PipelineCompiler {
                         + " buffer those resources were laid out in could not be made");
             }
 
+            // Diagnostic, off unless asked for: paint the pipelines whose location contains a given word a flat
+            // magenta, so "this draw produced no pixel" and "this draw produced a pixel whose colour happens to
+            // look like the background" stop being the same reading. Nothing else about the pipeline changes,
+            // which is what makes it a probe of the rasterizer rather than of the shader. Measured with it on a
+            // forced Metal 4 title screen: the GUI's own pipelines produce no pixel of any colour.
+            String forcedColour = System.getProperty("metallum.probeForceColour");
+            String fragmentMsl = translated.fragmentMsl();
+            if (forcedColour != null && !forcedColour.isEmpty()
+                    && pipeline.getLocation().toString().contains(forcedColour)) {
+                fragmentMsl = fragmentMsl.replace("    return out;",
+                        "    out.fragColor = float4(1.0, 0.0, 1.0, 1.0);\n    return out;");
+            }
+
             return new Metal4CompiledRenderPipeline(
                     MetalPipelineKey.of(pipeline, MetalShaderLanguageProfile.selected().token(),
                             translated.usesArgumentBuffers()),
                     compilation,
                     pipeline,
                     translated.vertexMsl(),
-                    translated.fragmentMsl(),
+                    fragmentMsl,
                     translated.vertexEntryPoint(),
                     translated.fragmentEntryPoint(),
                     translated.resources(),

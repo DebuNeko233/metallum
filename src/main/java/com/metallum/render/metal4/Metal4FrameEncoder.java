@@ -640,6 +640,16 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     /** Copies bytes between two slices of GPU memory. */
     @Override
     public void copyToBuffer(final @NonNull GpuBufferSlice source, final @NonNull GpuBufferSlice target) {
+        // Both ends are declared, which every other copy road in this class already did and this one did not.
+        //
+        // Measured, and it cost this path Minecraft's whole interface: the game's own staged vertex buffer fills a
+        // CPU-visible staging buffer and moves it with this call, and an undeclared resource makes a copy do
+        // nothing on this API - silently, with no error and no fault. So the GUI's, the particles' and the
+        // entities' vertices arrived as zeros, every triangle of them collapsed to a point, and the draws were
+        // encoded, correctly bound, correctly stated and invisible. The world still rendered because Sodium fills
+        // its own buffers and the engine's other upload roads always declared theirs.
+        useResource(bufferOf(source.buffer()).metalBuffer().handle());
+        useResource(bufferOf(target.buffer()).metalBuffer().handle());
         if (!copyEncoder().copyBufferToBuffer(bufferOf(source.buffer()).nativeHandle(), source.offset(),
                 bufferOf(target.buffer()).nativeHandle(), target.offset(), source.length())) {
             throw new IllegalStateException("the Metal 4 copy pass refused a " + source.length() + "-byte buffer"
