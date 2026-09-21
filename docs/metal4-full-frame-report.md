@@ -1942,7 +1942,9 @@ answered rather than only what is left.
    needs a picture - the no-pack frame's appearance and the fixture pack's acceptance test - and needs the
    machine's display awake.
 5. **The intermittent capability-probe failure** - 2 of 70, stage `pixel`, two surviving hypotheses. Blocks
-   AUTO, does not block implementation.
+   AUTO, does not block implementation - and the retry policy that mitigates it is now exercised on demand
+   rather than asserted (`-Dmetallum.probeInjectFirstFailure=true`: `retried=true success=true` in 3 of 3 cold
+   processes, with the failure preserved and marked as injected), which prices the mechanism and not the fault.
 6. **The storage-image smoke still loses its second dispatch, and the census now measures the rate at which
    it does.** The earlier rounds' reading was that this was fixed - "50 of 50 in this round's census and 124 of
    124 in a four-process hunt" after `canWriteStorageImage` was changed to make a table *and* an encoder per
