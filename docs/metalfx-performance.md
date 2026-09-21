@@ -125,15 +125,33 @@ than its own 100 per cent cell, and it is exactly the kind of number a ladder re
 have published as a regression.
 
 **A standalone retry of each passed and read `1286x804 ... render scale 67%`** (MakeUp and Photon, 5.4 ms and
-8.94 ms a frame), so 67 per cent is a scale this engine holds - the earlier failures are a race and not a rule.
-A file watcher over one passing retry saw the harness's own write and nothing else. **The other writer is NOT
-IDENTIFIED.** The two candidates, neither measured: the engine's own video-settings binding writing a defaulted
-value at startup (`ConfigEntry.renderScale` builds a Sodium option with a 5-per-cent step range and an empty
-storage handler, so the option's value is its default until the player moves it), and a previous session's client
-writing on world-leave inside the next session's window. Both are worth pinning because the same road can move a
-*player's* scale under them and the only reason this round caught it is that the harness fingerprints the file.
-That the guard worked is the instrument's credit; that the write happened at all is a defect left open, and it is
-recorded here as **BLOCKED - writer not identified**, not as a MetalFX result.
+8.94 ms a frame), so 67 per cent is a scale this engine holds - the failures are a race and not a rule.
+
+**And the race is timed.** A watcher over a back-to-back pair (one-second samples against the harness's own
+clock) caught it whole:
+
+```
+21:51:02  the harness writes renderscale=75 for the first cell
+21:51:31  the file is still 75 while that cell draws (its log reads 1440x900, render scale 75%)
+21:51:35  the harness writes renderscale=67 for the second cell
+21:51:37  the second client loads Sodium's configuration
+21:51:40  the second client's log says "The render scale is 100%, so the world is drawn at the window's own
+          size and MetalFX is off" - so the file it read already said 100
+21:51:42  the watcher sees renderscale=100
+```
+
+So the write lands **between the harness's write and the next client's read** - a window of about two seconds,
+while the first cell's client is dying and the second is starting - and the second client never learns the scale
+it was given. A separate run with nothing else on the machine wrote 75, drew at 75 per cent and left the file
+alone for the forty-five seconds after its client exited, which is why this is a race and not a rule.
+**The writer is still NOT IDENTIFIED**, and the two candidates are both in the engine: the Sodium video-settings
+binding applying the option's default (`ConfigEntry.renderScale` builds the option with an empty storage handler,
+so its value is the default 100 until a player moves the slider - and the binding is the only writer of that key
+in the tree), and the dying client's world-leave road. Pinning it needs one instrument: a line in
+`PackChoice.renderScale(Path, int)` naming its caller, which is the next step below. It is worth pinning because
+the same road can move a **player's** stored scale, and the only reason this round caught it is that the harness
+fingerprints the file. That the guard worked is the instrument's credit; that the write happened at all is a
+defect left open, and it is recorded as **BLOCKED - writer not identified**, not as a MetalFX result.
 
 ## Decision
 
@@ -168,9 +186,10 @@ one has a writer moving the file under it.
 
 ## Next
 
-1. **Pin the pack-selection writer** - a one-cell diagnostic with the file watched and the engine's config roads
-   instrumented - because a scale that moves itself is a correctness problem for the player and a measurement
-   problem for this track.
+1. **Pin the pack-selection writer** - one log line in `PackChoice.renderScale(Path, int)` naming its caller, run
+   over a back-to-back pair - because a scale that moves itself is a correctness problem for the player and a
+   measurement problem for this track. The timing above says the write lands in the two seconds between one
+   client's exit and the next client's read, which is exactly the window a caller-naming line would close.
 2. **E2's second half**: the same ladder with the shadow map scale at 50 per cent and 100 per cent on
    Complementary (the pack with shadows), since the two scales move different halves of the frame.
 3. **C1's structural census** next, which the plan puts after the scale ladder, so the GPU work the ladder
