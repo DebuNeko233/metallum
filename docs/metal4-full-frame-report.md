@@ -1310,9 +1310,26 @@ answered rather than only what is left.
    * the Metal 3 arms' buffer binds are within 0.2% of each other
    ```
 
-   So the pair the summary called "+31.8%" is a pair whose **frames were not the same frame**: the second Metal 4
-   arm made 4453 more draws and bound 7676 more textures than the first, while the two Metal 3 arms of the same
-   session agreed to a third of a per cent. Metal 3's wall time did not move for its own 2% content drift because
+   **And that reading was wrong, which is the more useful half of it.** `pipeline`, `texture` and `buffer` are
+   native call counts, not content: Metal 3's pass counts a pipeline *change* where this path counts a pipeline
+   *set per draw*, and the texture and buffer counters are fills that include the re-fills every pipeline change
+   causes - the counters section 70 says are not comparable. Measured directly from the per-pass trace, session
+   `run/m4-content`, two Metal 4 arms of one session, normalised per traced frame:
+
+   ```text
+                                   m4a        m4b        difference
+   draws a frame                   1110.2     1118.1     +0.7%, all of it the shadow pass's own coverage
+   passes a frame                  20.55      20.55      none, to two decimals
+   clears a frame                  2.33       2.33       none, to two decimals
+   by pass, per frame              Vitrail shadow chunk 778.23 -> 785.32 (+7.09)
+                                   Vitrail chunk        293.60 -> 294.32 (+0.72)
+                                   every other pass      within a hundredth
+   ```
+
+   So the two Metal 4 arms **did draw the same frame**, to seven parts in a thousand, and the +12.2% of pipeline
+   sets was a state-set difference on arms that drew the same frame. The content guard this round added is built
+   on the three counters that mean the same thing on both generations and grow with what the frame drew -
+   `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
    frame at a 20 ms p95 where this path's is called once); this path's frame time *is* its work, so content drift
    lands in its wall time directly. **The comparison was unreadable, not the generation** - and the instrument now
