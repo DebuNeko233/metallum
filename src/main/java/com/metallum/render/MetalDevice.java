@@ -492,16 +492,28 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
                 "Metal",
                 1.0F,
                 new DeviceLimits(16, 256, 16384, maxMemoryAllocationSize, 0, 8),
-                // The features this backend answers for, as measured rather than assumed. `persistentMapping`
-                // is false because a session that claimed it lost the world: Sodium stages its chunk meshes through
-                // a persistently mapped buffer when the flag is set, and on the Metal 4 path that staging never
-                // produced a single uploaded mesh - the no-pack frame was one flat clear colour for 4958 frames
-                // and Sodium's upload step reported results every frame while its arena was never allocated. With
-                // the flag withdrawn the same launch draws the world, and a Metal 3 launch is unchanged. Where the
-                // mapped path loses the data is not localised, so the claim is withdrawn until it is - the
-                // engine-staged path this selects instead goes through `writeToBuffer`, which both generations
-                // implement.
-                new DeviceFeatures(false, false, true, true, true, false, false),
+                // The features this backend answers for, as measured rather than assumed - and the one of them
+                // that is a fact about a GENERATION rather than about the device.
+                //
+                // `persistentMapping` was withdrawn for the whole device by `ab741fc`, when a session that
+                // advertised it lost the world: Sodium stages its chunk meshes through a persistently mapped
+                // buffer when the flag is set, and on the Metal 4 path that staging produced no uploaded mesh at
+                // all - the no-pack frame was one flat clear for 4958 frames while Sodium's upload step reported
+                // results every frame and its geometry arena was never allocated. Withdrawing it fixed Metal 4.
+                //
+                // What that commit could not leave alone was Metal 3, which had advertised the flag since the
+                // backend existed and whose frames were never the ones losing meshes. A device-level answer is
+                // the wrong shape for a generation-level fact: it made one generation's workaround decide the
+                // other generation's upload road, which is the leak the performance audit's first phase exists
+                // to close. The value is therefore derived from what EXECUTES this session - true where the
+                // Metal 3 path encodes the frame, false where Metal 4 does - and
+                // `-Dmetallum.persistentMapping=true|false` overrides it so the two roads can be A/B'd on one
+                // generation without a rebuild.
+                //
+                // Where the mapped path loses the data ON METAL 4 is still not localised, so Metal 4 keeps the
+                // engine-staged road through `writeToBuffer`, which both generations implement.
+                new DeviceFeatures(false, false, true, true, true, false,
+                        persistentMappingFor(this.services.executing())),
                 extensions,
                 new HintsAndWorkarounds(false, false),
                 type
@@ -511,5 +523,48 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
     @Nullable
     private String resolveDebugLabel(@Nullable final Supplier<String> label) {
         return this.useLabels() && label != null ? label.get() : null;
+    }
+
+    /** The diagnostic switch that overrides {@link #persistentMappingFor} for an A/B on one generation. */
+    static final String PERSISTENT_MAPPING_PROPERTY = "metallum.persistentMapping";
+
+    /**
+     * Whether this session advertises {@code persistentMapping}, which decides how Sodium stages its chunk
+     * meshes - a buffer the CPU maps once and keeps mapped, or the engine's staged road through
+     * {@code writeToBuffer}.
+     * <p>
+     * A generation answers this, not the device: Metal 3 has advertised the flag since this backend existed and
+     * its frames were never the ones losing meshes, while Metal 4 lost every uploaded mesh behind it and keeps
+     * the engine-staged road until that is localised. The answer is said once per session rather than left to be
+     * inferred from a frame that merely looks right, because "the world drew" cannot tell these two roads apart.
+     * <p>
+     * The property exists for the audit that has to price the two roads on ONE generation: with the generation
+     * as the only input, an A/B of Metal 3's own two roads would need a rebuild, and a comparison across two
+     * builds is not a comparison. A word the property does not know is refused out loud and the generation
+     * answers, rather than a typo quietly selecting false.
+     *
+     * @param executing the generation that encodes this session's frame
+     * @return whether {@code persistentMapping} is advertised
+     */
+    static boolean persistentMappingFor(final MetalApiGeneration executing) {
+        Boolean asked = null;
+        String word = System.getProperty(PERSISTENT_MAPPING_PROPERTY);
+        if (word != null) {
+            String trimmed = word.trim();
+            if (trimmed.equalsIgnoreCase("true")) {
+                asked = Boolean.TRUE;
+            } else if (trimmed.equalsIgnoreCase("false")) {
+                asked = Boolean.FALSE;
+            } else {
+                com.metallum.Metallum.LOGGER.warn("Metal device: {}={} is not a boolean, so the generation's own "
+                        + "answer stands", PERSISTENT_MAPPING_PROPERTY, word);
+            }
+        }
+        boolean advertised = asked != null ? asked : executing == MetalApiGeneration.METAL3;
+        com.metallum.Metallum.LOGGER.info("Metal device: persistentMapping={} ({} executes the frame{}, from {})",
+                advertised, executing.token(),
+                asked == null ? "" : ", " + PERSISTENT_MAPPING_PROPERTY + "=" + asked,
+                asked == null ? "the executing generation" : "the property");
+        return advertised;
     }
 }

@@ -714,3 +714,51 @@ constant: it is a check that every ring believes the same depth. What the baseli
 window is neither idle nor obviously worth widening - `submitWindow` p50 0.00 ms, p95 5.82-5.92 ms
 against a 7.30 ms frame, total 3214 ms over 1200 calls - and that the frame is GPU-bound, so running the
 CPU further ahead cannot make the card faster.
+
+## Post-M4 regression audit: persistentMapping
+
+**A Metal 4 correctness workaround had been deciding Metal 3's upload road.** `ab741fc` withdrew the
+`persistentMapping` device feature for the whole device, and it was right to: with the flag advertised, Sodium's
+`MojangStagingBuffer` picks `MappedStagingBuffer` and on the Metal 4 path not one chunk mesh ever arrived - a
+no-pack frame was one flat clear for 4958 readbacks while Sodium's own upload step reported build results every
+frame and the geometry arena was never allocated. Where the mapped road loses the data on that generation is
+still not localised, so Metal 4 keeps the engine-staged road through `writeToBuffer`.
+
+**What was wrong was the shape, not the withdrawal.** `DeviceFeatures` is built once, by `buildDeviceInfo`, and
+both generations read it: the flag is a fact about a generation - Metal 3 had advertised it since this backend
+existed and its frames were never the ones losing meshes - and a device-level answer made one generation's
+workaround change the other generation's staging strategy. That is the cross-generation leak this audit's first
+phase exists to close. The value is now derived from what executes:
+`persistentMappingFor(this.services.executing())` answers true where the Metal 3 path encodes the frame and false
+where Metal 4 does, `tools/ci-contracts.py` pins both halves of that rule and refuses the old literal by name,
+and three mutations of the rule are caught.
+
+**The A/B, on one generation, one session, one scene** (`run/pm-ab`; no-pack, spectator, fullscreen at
+1920x1200, `--at 548.5,80,-248.5 --yaw 45 --pitch -25`, 25 s settle, 600-frame windows, `-Dmetallum.execution=metal3`
+on every arm, the only variable being `-Dmetallum.persistentMapping=`):
+
+```
+                window mean    wallP50   P95     P99     max     M3 GPU/frame
+mapped1          1.905 ms      1.83      2.64    2.94    5.96      1.374 ms
+staged1          1.922         1.85      2.65    2.79    2.96      1.438
+mapped2          1.917         1.79      2.63    2.81    2.88      1.479
+staged2          2.011         1.93      2.61    2.75    2.89      1.516
+```
+
+**Decision: KEPT - Metal 3 advertises `persistentMapping=true`, as it did before the workaround.** The sign is
+the same in both adjacent pairs (mapped 0.9 per cent faster, then 4.7 per cent faster) and the road is never
+worse, but the honest reading of the magnitude is *not worse* rather than *faster*: the session drifted
+monotonically - the per-frame GPU interval rises 1.374, 1.438, 1.479, 1.516 across the four arms in the order
+they ran - and a drift of that size is the same order as the difference being measured, which is why the
+comparison is read pair by pair and not across the whole session. Repeating the arms in the opposite order on a
+quiet machine is what would price the road; nothing here is large enough to need it before the road is restored,
+because the withdrawal was never a Metal 3 result.
+
+**Correctness holds, and it is the picture rather than the counter that says so.** Both roads drew the same
+scene: the mapped arm's capture and the staged arm's capture carry the same terrain, trees, water and cloud
+edges, and the whole-frame comparison between two arms of the *same* road reads 0.09 mean / worst 65 - as large
+as the reading between the two roads (0.17 mean / worst 65), which is cloud animation and antialiasing rather
+than content. Sodium's own upload counter prints on both: `call 3, 3 frames seen, 3 of those calls carried
+results, 29 results in total` on the mapped arm against `call 3 ... 4 results in total` on the staged one. The
+counter alone is exactly the instrument that failed to notice the Metal 4 loss, so it is quoted as corroboration
+and the captures are the evidence.

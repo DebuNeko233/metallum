@@ -1781,10 +1781,21 @@ for needle, why in (
 # terrain cells are the Metal 3 arm's own, cell for cell - and a Metal 3 launch is byte for byte unchanged. Where
 # the mapped path loses the data is not localised, so the claim stays withdrawn until it is: the engine-staged
 # path this selects instead goes through `writeToBuffer`, which both generations implement.
-if "new DeviceFeatures(false, false, true, true, true, false, false)," not in device_source:
-    raise SystemExit("metal 4 provider: the device advertises persistently mapped buffers again, and a session "
-                     "that stages through them loses the world's geometry on this path - measured as a no-pack "
-                     "frame that is one flat clear while Sodium's arena is never allocated")
+#
+# The withdrawal was written for the whole device, though, and the flag is a fact about a generation: Metal 3
+# advertised it since the backend existed and its frames were never the ones losing meshes, so the device-level
+# answer made one generation's workaround decide the other generation's upload road. It is derived from what
+# executes now, and what this pin refuses is the shape that leaked: a literal here would put the device - which
+# knows nothing about the frame path - back in charge of a generation's answer. `tools/ci-contracts.py` holds
+# the other half of the rule, including the generation test itself.
+if "new DeviceFeatures(false, false, true, true, true, false, false)," in device_source:
+    raise SystemExit("metal 4 provider: the device advertises persistently mapped buffers again as a device-wide "
+                     "literal, so one generation's workaround would decide the other generation's staging road - "
+                     "and on this path a session that stages through a mapped buffer loses the world's geometry: "
+                     "measured as a no-pack frame that is one flat clear while Sodium's arena is never allocated")
+if "persistentMappingFor(this.services.executing())" not in device_source:
+    raise SystemExit("metal 4 provider: persistentMapping is not answered from what executes, so Metal 4's "
+                     "engine-staged road and Metal 3's own could not be told apart")
 
 # --- and a draw is counted by every path that encodes one -----------------------------------------------
 # The pass's counters are what its own trace line and the frame's `drawsPerFrame` are made of. The indirect

@@ -94,6 +94,23 @@ require("Metal mapped-buffer allocation", "src/main/java/com/metallum/render/sha
     "return new GpuBufferSlice.MappedView(this.slice(offset, length), mapped, () -> {",
     "this.sliceStorage(offset, data.remaining()).put(data.duplicate());",
 ))
+require("Generation-specific persistent mapping", "src/main/java/com/metallum/render/MetalDevice.java", (
+    # The device-level answer that made one generation's workaround decide the other's upload road, and the
+    # audit's first task: Sodium stages its chunk meshes through a persistently mapped buffer when this flag is
+    # advertised, so the flag decides which upload road a generation takes. It was withdrawn for the whole device
+    # by ab741fc, when the mapped road lost every mesh on Metal 4 - a fact about that generation, not about the
+    # device - and Metal 3, which had advertised it since the backend existed, paid for it.
+    "persistentMappingFor(this.services.executing())",
+    'static final String PERSISTENT_MAPPING_PROPERTY = "metallum.persistentMapping";',
+    "boolean advertised = asked != null ? asked : executing == MetalApiGeneration.METAL3;",
+    "Metal device: persistentMapping={} ({} executes the frame{}, from {})",
+))
+# And the shape it replaced is refused by name: a literal in the feature list would put the device back in
+# charge of a generation's answer, which is the leak this pin exists to keep closed. The proof is a mutation -
+# restoring the old literal fails this file.
+forbid("Device-wide persistent mapping", read("src/main/java/com/metallum/render/MetalDevice.java"), (
+    "new DeviceFeatures(false, false, true, true, true, false, false)",
+))
 require("Metal texture allocation", "src/main/java/com/metallum/render/shared/MetalGpuTexture.java", (
     "this.mtlPixelFormat = MTLPixelFormat.from(format);",
     "descriptor.pixelFormat(this.mtlPixelFormat);",
