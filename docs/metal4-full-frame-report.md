@@ -1544,6 +1544,10 @@ generations, is a separate P2 item and is not priced here.
 
 ## Phase C3 - a period is the client's own work plus the previous frame's encode
 
+**SHAs.** Metallum `5bd877a` at the start (Phase F1's own commit), Vitrail `712d6452`, untouched; this phase's
+commit is **`460f028`**, which carries the analyser's decomposition, the window correction and its pins, and this
+section together.
+
 **Question.** C1/C2 moved the wait between the ring and the display and left the wall where it was; F1 removed
 the CPU-upload road. A frame trace still says a period is bimodal without saying which interval grew, so the
 question this phase answers is: **what is a frame's period made of, and which part of it does this path own?**
