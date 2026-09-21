@@ -4429,6 +4429,57 @@ ranked by a GPU-side attribution instead of a whole-frame A/B alone, which is wh
 of them is touched. What is still not claimed is a sample *inside* one pass: every marker sits at an encoder
 boundary, and that is now by design rather than by defeat.
 
+### The first per-pass GPU time of a real frame, and the claim it overturns
+
+Section 92 asked for three kinds of timing to be kept apart. Two of them existed: the CPU's encode time, and the
+driver's own `GPUStartTime`/`GPUEndTime` for a submission. The third - GPU counter ticks between markers this path
+places - became available when the smoke was fixed (a duplicated heap index, two sampling forms in one curve and a
+first step that was both the clearing pass and the command buffer's first encoder), and this is the round that
+pointed it at a real frame.
+
+`-Dmetallum.metal4PassTimes=true` puts one command-buffer marker behind every pass the M4 path opens, and reads the
+intervals when the ring begins that slot again - which is exactly where the header's condition is met, because the
+ring's `beginFrame` has already waited for that slot's previous submission to complete. One heap per slot, the
+marker written through the same `MTL4CounterHeap.writeTimestamp` the smoke uses (one sender for the selector in the
+whole engine), the present counted as a pass like any other, and a line that names the kind of timing, the road's
+2 us floor, and the ticks as microseconds a frame.
+
+On Complementary, forced Metal 4, 600 frames:
+
+```text
+Metal 4 GPU pass time (GPU ticks between markers this path placed, never the CPU's encode time):
+  frames=600 labels=43 totalUsAFrame=378.301 unread=0 floorUs=2.0
+  top=[Vitrail world-1/composite1 241.068, Vitrail world-1/composite6 18.949, Vitrail shadow chunk 10.876,
+       Blit render target 10.716, Vitrail world-1/deferred1 9.814, Vitrail world-1/composite 9.665,
+       Vitrail chunk 9.230, Vitrail world-1/composite5 7.869] and 35 more
+```
+
+Two things follow, and the second is the one that matters.
+
+**The frame's GPU time has a shape now.** `world-1/composite1` is 241.068 us of the 378.301 the markers attribute -
+64% of the frame's measured GPU time in one pass, with the next heaviest at 18.949. Whatever the next optimisation
+round is about, it starts here, and it starts from a GPU-side number rather than from a native call count.
+
+**And the claim the previous round made is overturned by it.** That round read `run/m4-ab7` as "this path asks the
+GPU for 16-35% more time a frame", on the strength of the commit window and a device utilization of 100%. The
+counter says the frame's own pass work is **378 microseconds** while the commit window is 19.4 milliseconds - and
+the header says why: `MTL4CommandQueue`'s `waitForDrawable:` "schedules a wait operation on the command queue to
+ensure the display is no longer using a specific Metal drawable... before executing any subsequent commands". That
+wait is *inside* the commit, so `MTL4CommitFeedback.GPUStartTime/GPUEndTime` measures the wait for the display plus
+the work, not the work. The 100% utilization is not evidence about this frame either: the same session's own trace
+reads the accelerator 85-87% busy between arms with no game running, because Edge, UURemoteServer and WindowServer
+are on it. **So Metal 3 and Metal 4 do not differ by 17-35% of renderer work; they differ by 17-35% of presented
+rate, and the two timings that differ are the two waits** - Metal 3's submission-index wait against this path's
+drawable handover. The performance question is not answered; it is finally being asked with the right instrument.
+
+**And the instrument does something to what it measures, which section 91 predicted and this session confirmed.**
+Four arms of one session - reader off, on, off, on - read **21.79 and 21.80 ms a frame with it off and 19.37 and
+19.45 with it on**. The markers made the frame **11% faster**, twice over. So the table is a diagnostic reading and
+never a performance verdict, the switch stays off by default, and the effect is now the migration's first candidate
+for a *speedup*: what a marker between two passes does to the driver's scheduling has to be measured as its own
+mechanism (section 96) before it is believed, and the obvious first hypothesis - that serialising two passes at a
+boundary costs less than letting them overlap - is a hypothesis and not a reading.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

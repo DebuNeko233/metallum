@@ -1001,7 +1001,9 @@ from the same session's GPU trace: device utilization mean 100.0%, max 100%, in 
   it is far outside section 5's "median regression <= ~3%". **Per section 97 this path therefore stays forced and
   experimental, AUTO is not enabled on it, and the next question is not "is it slower" (measured: yes) but "which
   of the frame's work is bigger"**, which needs the per-pass GPU attribution that blocker 15 says the timestamp
-  road does not give.
+  road does not give. **That attribution has since arrived and this bullet is corrected by it**: see the per-pass
+  table below, which reads the frame's own pass work at 378 us of this bullet's 19.4 ms window - so what the
+  16-35% compares is the two *pacing waits*, and "more GPU time" is not the right description of it.
 - **And the two generations are paced by different resources, which is a standing caveat on every wall-clock
   comparison here.** Metal 3's frame *is* its submission-index wait (1200 waits a window, p95 ~21 ms, totalling
   the window, with 8-56 ms of drawable wait); this path's is its **drawable handover** (7191 and 7138 ms a window,
@@ -1025,6 +1027,43 @@ GPU is oversubscribed by construction here - and, measured in the same session, 
 during its own windows, so the M3/M4 figures above are not a contention artefact. What they are not is a
 production frame rate on a quiet machine: section 123 stays unmet for that reason as well as for the range, and
 the machine-state half of it is now named rather than suspected.
+
+**And then the third kind of timing arrived, and it overturns the paragraph above.** `-Dmetallum.metal4PassTimes=true`
+puts one command-buffer marker behind every pass this path opens and reads the intervals when the ring begins that
+slot again - the road section 90's smoke proved, with the unit and the floor it measured. On the same pack, forced
+Metal 4, 600 frames:
+
+```text
+Metal 4 GPU pass time (GPU ticks between markers this path placed, never the CPU's encode time):
+  frames=600 labels=43 totalUsAFrame=378.301 unread=0 floorUs=2.0
+  top=[Vitrail world-1/composite1 241.068, Vitrail world-1/composite6 18.949, Vitrail shadow chunk 10.876,
+       Blit render target 10.716, Vitrail world-1/deferred1 9.814, Vitrail world-1/composite 9.665,
+       Vitrail chunk 9.230, Vitrail world-1/composite5 7.869] and 35 more
+```
+
+Three readings, and the second one is a correction to this section:
+
+- **The frame's own GPU work is 378 microseconds.** Every pass of the frame, marked and attributed:
+  `world-1/composite1` alone is **241.068 us, 64% of the attributed time**, and the next heaviest is 18.949 us.
+  That is the per-pass GPU attribution section 92 asked for, on a real frame, for the first time - and it says
+  where this path's GPU time actually goes rather than which pass had the most native calls.
+- **The commit window is not that work, and the header says why.** `MTL4CommandQueue`'s `waitForDrawable:`
+  "schedules a wait operation on the command queue to ensure the display is no longer using a specific Metal
+  drawable... before executing any subsequent commands" - a queue-level wait *inside* the commit, so
+  `MTL4CommitFeedback.GPUStartTime/GPUEndTime` measures the wait for the display plus the work. With 378 us of work
+  in a 19.4 ms window, **the paragraph above is wrong as a work claim**: "this path asks the GPU for 16-35% more
+  time a frame" compared two *pacing waits* (Metal 3's submission-index wait against this path's drawable wait) and
+  not two amounts of GPU work. The 100% device utilization it leaned on is not evidence about this frame either -
+  the same session's trace reads 85-87% busy between arms with no game running, so the accelerator is shared with
+  Edge, UURemoteServer and WindowServer. **What survives is narrower and still true**: on this machine in this
+  environment Metal 3 and Metal 4 deliver 49 and 42-46 frames a second, so the *presented rate* differs by
+  17-35% - and per section 92 the two timings that differ are the two waits, not the two renderers.
+- **And the instrument changes the thing it measures, which is section 91's case exactly.** Four arms of one
+  session - reader off, on, off, on - read **21.79 and 21.80 ms a frame with it off and 19.37 and 19.45 with it
+  on**: the markers make the frame **11% faster**, twice over. So the table is a diagnostic reading and never a
+  performance verdict, the switch stays off by default, and what a marker between two passes does to the driver's
+  scheduling is a question of its own - the first candidate this migration has for a *speedup* rather than a cost,
+  and one that has to be measured as its own mechanism before it is believed.
 
 ## Capability matrix
 
@@ -1504,11 +1543,13 @@ answered rather than only what is left.
 
 16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
    effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
-   MEASURED.** *(Superseded in part, and kept because the chain that got there is the record: `run/m4-ab7` - a
-   session whose GPU trace reads device utilization 100% in all four arms, and whose arms are interleaved
-   M3/M4/M3/M4 - measured this path at 23.85 and 27.45 ms a frame against the reference's 20.31 and 20.70, so the
-   comparison has now been made and its answer is that this path is **16-35% slower**, with the spread below
-   narrowed from 47.7% to 15%. See the Performance section and blocker 16's own last paragraphs.)*
+   MEASURED.** *(Superseded twice, and kept because the chain that got there is the record. `run/m4-ab7` measured
+   this path at 23.85 and 27.45 ms a frame against the reference's 20.31 and 20.70, arms interleaved M3/M4/M3/M4,
+   with the GPU trace reading device utilization 100% in all four - and that was read as "16-35% more GPU time".
+   The per-pass counter that followed (the Performance section's `run/m4-passtimes`) reads the frame's own pass
+   work at **378 us of a 19.4 ms window**, because `MTL4CommandQueue`'s `waitForDrawable:` is a queue-level wait
+   inside the commit: what the 16-35% compares is therefore **the two generations' pacing waits and not their
+   renderer work**, and the performance question stays open with a far sharper instrument now pointed at it.)*
    Session `run/perf-ab4` (exit 0, `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25
    --expect-target 3200x1800`, Complementary on the staged nether `PerfWorld`) measured Metal 3 twice at
    `wallP50 21.17` and `21.29` - **0.6% apart**, the harness answering the same number - and Metal 4 twice at
@@ -1650,11 +1691,13 @@ answered rather than only what is left.
    either a quiet machine or a pacing site of its own. At the time this paragraph was written **NOT MEASURED** was
    the honest verdict for the Metal 3 against Metal 4 performance comparison, and the blocker was narrowed to that
    - a pacing and machine-state question rather than an unexplained generation difference. **It has since been
-   measured, and by the reading rather than by argument** (the Performance section's interleaved M3/M4/M3/M4
-   session, `run/m4-ab7`, with the GPU at device utilization 100% in all four arms): this path asks the GPU for
-   **16-35% more time a frame** - 23.85 and 27.45 ms against 20.31 and 20.70 - which is outside section 5's
-   `<= ~3%` acceptance, so section 97 keeps this path forced and experimental and the gate stays unmet for a
-   second, sharper reason: not "unmeasured" but **measured and beyond the threshold**. The content guard this round added is built
+   measured, and then re-measured with a better instrument, which changed what the number is** (the Performance
+   section carries both readings): `run/m4-ab7` put this path at 23.85 and 27.45 ms a frame against the
+   reference's 20.31 and 20.70, and the per-pass counter that followed reads the frame's own pass work at **378 us
+   of a 19.4 ms window**, because `MTL4CommandQueue`'s `waitForDrawable:` is a queue-level wait inside the commit.
+   So the two generations differ by their **pacing waits**, "this path asks the GPU for more work" is **REFUTED as
+   a work claim**, and the gate stays unmet for a sharper reason than "unmeasured" - but not the one first written
+   here: the presented *rate* still differs by 17-35% and its cause is not yet localised. The content guard this round added is built
    on the three counters that mean the same thing on both generations and grow with what the frame drew -
    `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
