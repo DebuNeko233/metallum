@@ -1298,6 +1298,31 @@ answered rather than only what is left.
    characterise: whether the two populations are the ring's slot reuse, the transient arena, the argument tables,
    or a residency commit landing inside one frame in two.
 
+   **And the content counters name most of it.** The same four arms, read for what the frame *did* rather than
+   what it cost:
+
+   ```text
+   arm   draws (pipeline)   texture binds   buffer binds   loadedMiB   depthAtt.   wallP50   gpu (own API)
+   m3a   16990              48464           59433*         309384.0    2377        21.07     21.06
+   m3b   17048  (+0.3%)     48575  (+0.2%)  59433*         315756.1    2435        21.02     21.04
+   m4a   36603              52127           40533          394175.0    5872         9.51     18.55
+   m4b   41056  (+12.2%)    59803  (+14.7%) 46636  (+15.1%) 403045.3   5938        27.04     27.74
+   * the Metal 3 arms' buffer binds are within 0.2% of each other
+   ```
+
+   So the pair the summary called "+31.8%" is a pair whose **frames were not the same frame**: the second Metal 4
+   arm made 4453 more draws and bound 7676 more textures than the first, while the two Metal 3 arms of the same
+   session agreed to a third of a per cent. Metal 3's wall time did not move for its own 2% content drift because
+   its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
+   frame at a 20 ms p95 where this path's is called once); this path's frame time *is* its work, so content drift
+   lands in its wall time directly. **The comparison was unreadable, not the generation** - and the instrument now
+   says so: `vitrail-performance-compare.py` judges the arms of one generation against each other (commit
+   `a352db3`), on the counters a frozen scene pins exactly and on the frame's content within 5%, which is the
+   plan's own performance gate. `run/perf-ab6` is refused with its reason; `run/nopack-ab1` passes it. What is
+   still **NOT LOCALISED** is what made the two Metal 4 arms draw different amounts at all - the world, the pack,
+   the target and the window were the same, and the Metal 3 arms in the same session saw the same content - so
+   that is the question the next session on this path opens with.
+
 17. ~~**Minecraft's own GUI, HUD and text are not drawn by this path at all**~~ - **FIXED, and the mechanism is
    named.** The whole interface was missing on Metal 4 while the world rendered, reported from play and confirmed
    here. It was not the fragment stage, not blending, not depth, not culling, not the attachments and not a lost
