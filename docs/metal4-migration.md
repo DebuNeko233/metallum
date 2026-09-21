@@ -5958,6 +5958,14 @@ bytes the shader reads are therefore the CPU's by construction, and the device-l
 texel-buffer smoke, where a CPU-filled shared range comes back byte for byte. The invariant is pinned in
 `tools/ci-contracts.py`.
 
+**And a diagnostic that answers no at contract time cannot price a per-frame fallback.** Trying to reach the
+scaler's refusal road live with `-Dmetallum.probeNoMetalFx=true` on a forced Metal 4 launch does not get there:
+the switch makes `Metal4Fx.supported` answer false, `metal4Fx=false` is part of the Metal 4 minimum contract, so
+the device fails the contract, `MetalBackend.createDevice` throws inside the launch and the game chooses OpenGL
+afterwards - a fresh live reading of blocker 18's shape, and unchanged on purpose. The switch is honest about
+what it is ("this session answers as a device without Metal FX"); it is simply a device-level answer, not a
+per-frame one.
+
 **What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
 sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
 `(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations

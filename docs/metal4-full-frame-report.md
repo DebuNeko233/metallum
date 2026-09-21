@@ -3249,7 +3249,19 @@ This is that list with the state each item actually has, and where each reading 
 [MEASURED]   M3 forced path unchanged                  -Dmetallum.execution=metal3 runs the reference path, and the
                                                        no-pack ladder reads it identical across four sessions
 [FINDING]    fallback works                            the Metal 3 *fallback* is verified; what is NOT is the
-                                                       forced-Metal-4 path finding it - see blocker 18
+                                                       forced-Metal-4 path finding it - see blocker 18.
+                                                       **Re-read live on 2026-09-21 while trying to reach the
+                                                       scaler's refusal road**: with `-Dmetallum.probeNoMetalFx=true`
+                                                       on a forced Metal 4 launch the capability line reads
+                                                       `metal4Fx=false`, the device fails the minimum contract,
+                                                       `MetalBackend.createDevice` throws inside the launch, and
+                                                       the game then chooses OpenGL - "the game chooses the
+                                                       backend after this and, measured, that is OpenGL". The
+                                                       semantics are unchanged and deliberate (a forced mode fails
+                                                       rather than silently downgrading), and they are the reason
+                                                       that switch cannot be used to price the scaler's fallback
+                                                       road in a live session: it answers no at contract time, not
+                                                       per frame.
 [MEASURED]   architecture CI green                     twelve contracts, every new one mutation-proved
 [ONGOING]    real Apple Silicon validation complete    every reading in this report is from this machine, and the
                                                        work that remains is the state a quiet machine is needed for
