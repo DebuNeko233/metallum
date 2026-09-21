@@ -1634,6 +1634,23 @@ fixture channel that does not need one).
   section 58 asks for - two coplanar surfaces where the biased one must win, read on both generations - is not
   built. The fix and its four pins are a separate commit from any performance work, as section 58 requires.
 
+- **The content drift is mostly the window's definition, and that is now measured.** `run/drift-nopack` (same
+  six-arm M3/M4 interleave, no pack, with the per-frame trace on) shows what the per-frame pass count of this
+  path's no-pack frame actually is: **7 passes in the steady state, 13 on one frame every 49.6-50.0 ms** - the
+  client's 20 Hz tick, measured in wall time and not in frames (`run/drift-nopack/m4t2`: spikes spaced 21.4
+  frames but 49.6 ms; `m4t3`: 19.3 frames, 50.0 ms; `m4t1`: 20.2 frames, 49.8 ms) - and 5 passes for a
+  contiguous 134-frame stretch in one arm. The probe's window is a fixed **frame** count, so the number of
+  tick-frames inside it is `windowWall / 50 ms`: **Metal 3's frame rate is constant, so its window always contains
+  the same number of them and its content counters are identical to the byte (`depthAttachments 1800` and
+  `loadedMiB 26836/26900/26900` in all three arms), while this path's frame rate is the pacing mixture, so its
+  windows contain different numbers and its counters differ.** The guard's 2%/5% tolerances were calibrated on the
+  reference's steady frame rate, and on this path they measure the window's sampling before they measure the
+  frame. **The remedy is a window definition and not a Metal4 change**: pin the window by game ticks or by wall
+  time, or report the content counters per second and per tick beside the per-frame ones, before the rung is
+  re-run.
+- **And a genuine scene difference sits beside it.** In the same session one M4 arm's window drew 157 draws a
+  frame where the other two drew 326, falling from 223 to 109 across the window - a world-content difference that
+  no normalisation removes, and the reason the rung still needs a scene guard after the window is fixed.
 - **This path's frame content is not stable across launches within one session, and it blocks the first rung of
   section 93's ladder.** `run/perf93-nopack`: Metal 3's three arms are identical to the byte in every content
   counter (`loadedMiB 28498.5`, `storedMiB 81232.9`, `depthAttachments 1800`, `identities 99` all three times,

@@ -5249,3 +5249,38 @@ available and the forced Metal 3 fallback is verified, so nothing about this dec
 already had. The three things that would move it, in the gates' own order: the content-drift experiment, the cold
 probe's distribution, and a screenshot road (or a fixture channel that does not need one) for the two picture
 residuals.
+
+### The content drift, traced: it is the window's frame count against a 20 Hz tick
+
+The no-pack rung was refused because this path's content counters drifted between arms of one session while the
+reference's were identical to the byte. `run/drift-nopack` reproduced the session with the per-frame trace on -
+the same six arms interleaved M3/M4 - and the trace says what the drift is.
+
+**What this path's no-pack frame does.** The per-frame pass count is **7 in the steady state and 13 on one frame
+every 49.6-50.0 ms**, and the cadence is *wall time*, not frames:
+
+```text
+arm    mean frame wall   spike spacing (frames)   spike spacing (wall)   five-pass frames
+m4t1       2.48 ms              20.17                49.8 ms             134, at 225..363
+m4t2       2.33 ms              21.41                49.6 ms               0
+m4t3       2.57 ms              19.27                50.0 ms               7, at 593..599
+```
+
+The frame spacing moves with the frame rate and the wall spacing does not: six extra render passes land on the
+frame that coincides with the client's **20 Hz game tick**. And one arm holds 134 consecutive frames at **5**
+passes - two passes absent for about 340 ms - which is a second, state-shaped variation.
+
+**Why that becomes "content drift" between arms.** The probe's window is a fixed **frame** count, so the number
+of tick frames inside a 600-frame window is `windowWall / 50 ms`. Metal 3's frame rate is constant, so every one
+of its windows contains the same number of them and its counters are identical to the byte (`depthAttachments`
+1800 and `loadedMiB` 26836.1 / 26900.0 / 26900.0 in the three arms). This path's frame rate is the pacing
+mixture, so its windows contain different numbers and its counters differ - and the guard's 2% and 5% tolerances
+were calibrated on the reference's steady frame rate, which is why they fire here.
+
+**The remedy is a window definition, not a Metal4 change**: pin the window by game ticks or by wall time, or
+report the content counters per second and per tick beside the per-frame ones, and re-run the rung. That is the
+next measurement task, and it is a change to the harness and the probe rather than to the renderer.
+
+**And one genuine scene difference survives it.** In the same session one arm's window drew 157 draws a frame
+where the other two drew 326, and its draws fell from 223 to 109 across the window - a world-content difference
+that normalisation does not remove and that keeps the rung's scene guard necessary after the window is fixed.
