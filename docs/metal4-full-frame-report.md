@@ -1733,7 +1733,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | lifecycle | PASS, two transitions manual | `run/m4-lifecycle`: reload (F3+T's path), resize, leave, close; a dimension change and an in-session pack switch are not driven |
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
-| cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault did not recur and the retry policy was never exercised |
+| cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault itself did not recur - and the retry policy that mitigates it is now exercised on demand (`-Dmetallum.probeInjectFirstFailure=true` reads `retried=true success=true` in 3 of 3 processes, below) |
 | performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone) and the first rung's per-frame content drift is now attributed to two named kinds - the six passes a 20 Hz tick adds and the two particle passes - with the tick half reported by the probe's `windowTicks` and the particle half removed by `--vanilla-particles` (measured: that window holds only two kinds and its arms' counters are identical to the digit); what the gate then says is that this path is slower on two of the three rungs |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
@@ -1748,15 +1748,23 @@ two 8.33 ms handovers) and the content drift that made the first rung's windows 
 named kinds - but a path that is 1.63-1.78x slower than the reference on the work-light scene is not a
 production default, which is section 70's C and not its B.
 
-**The capability gate's retry policy is honest by construction and unexercised in fact.** Section 54 allows
-either a deterministic probe or a retry policy "proven safe and honest". The client's production path asks once
-more where the first answer is no and reports which attempt answered (`retried=true` in the census line), which is
-the honest half: a session can never be promoted on a first answer that was false without that being visible. What
-is *not* available is a measurement of it, because the fault did not recur: **30 raw cold probes and 50
+**The capability gate's retry policy is honest by construction and is now exercised on demand.** Section 54
+allows either a deterministic probe or a retry policy "proven safe and honest". The client's production path asks
+once more where the first answer is no and reports which attempt answered (`retried=true` in the census line),
+which is the honest half - a session can never be promoted on a first answer that was false without that being
+visible - and **that half was unmeasured**, because the fault did not recur: **30 raw cold probes and 50
 production-mode probes (30 cold, 20 warm) all passed with `retried=0`**, against the 21 of 200 that failed in an
-earlier period with nothing in the path changed. So the gate stays NOT MET on the strength of a distribution that
-has been observed and not explained, and the retry policy is recorded as the mitigation it is rather than as a
-proof.
+earlier period with nothing in the path changed. So a switch now asks for the failure the retry answers:
+`-Dmetallum.probeInjectFirstFailure=true` fails the **first** attempt of a process at stage `pixel` - on the check
+the real fault fails on and after the pass has been encoded, submitted and read back - and is spent by that first
+use, so the retry's own attempt is a real one and the failure it produces says in words that it was injected
+rather than leaving a reason string a census could mistake for the device. Measured:
+`tools/metal4-cold-probe.sh --cold-runs 3 --warm-runs 0 --mode production --vmargs
+'-Dmetallum.probeInjectFirstFailure=true'` reads **`retried=true success=true stage=ok` in 3 of 3 processes**,
+with the log line `the first attempt in this process failed at pixel (this first attempt of the process is failed
+on purpose ...)`, and a contract pins the switch, its one-shot spend and its marking. So what is priced is the
+*mechanism*: a first-attempt failure is visible, distinguishable from a device fault, and the capability record
+reads the second attempt. What stays NOT MET is the fault itself, which is still observed and unexplained.
 
 **And the performance gate has since been filled in, which does not change the decision.** Three of the four
 rungs are now measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is not on this machine):

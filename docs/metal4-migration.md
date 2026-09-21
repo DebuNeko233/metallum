@@ -363,6 +363,10 @@ What remains to do about it:
 6. `-Dmetallum.probeRepeat` is a **development diagnostic switch**; it stays out of the normal hot path (it is
    inert unless the property is set, and nothing in the frame path reads it). The new harness does not use it:
    it repeats the probe in its own process, which is the experiment the switch was standing in for.
+7. ~~price the retry policy~~ - **done on demand** rather than by waiting for the fault, which is what the
+   capability gate's alternative rests on: `-Dmetallum.probeInjectFirstFailure=true` fails the first attempt of a
+   process at stage `pixel` and the census reads `retried=true success=true` in 3 of 3 processes, in the section
+   below. It prices the mechanism and not the fault, and the gate stays NOT MET until the fault is.
 
 ### Ownership, not count, is what the frame path's isolation has been moving on
 
@@ -5521,10 +5525,48 @@ That is the third clean period and it settles nothing about the fault, which is 
 What it does settle is the shape of the gate's alternative: section 54 allows a retry policy "proven safe and
 honest", and the honest half is already bought and pinned - the client's production path asks once more where the
 first answer is no and the census line reports which attempt answered, so a first answer that was false can never
-be promoted without appearing in the evidence. The *safe* half cannot be measured while the fault does not recur:
-there is no failing first attempt in 50 probes to watch a second attempt recover. So the gate stays NOT MET, the
-retry policy is recorded as a mitigation and not as a proof, and the next census that catches a `retried=true`
-line is the one that will price it.
+be promoted without appearing in the evidence. The *safe* half could not be measured while the fault does not
+recur: there was no failing first attempt in 50 probes to watch a second attempt recover. So the gate stays NOT
+MET, the retry policy was recorded as a mitigation and not as a proof, and the next census that catches a
+`retried=true` line is the one that would price it.
+
+### The retry policy, priced by asking for the failure it answers
+
+Waiting for a fault that has not recurred in 240 probes is not a plan, and the *mechanism* half of the policy is
+measurable on demand: what the census prints when a first attempt fails, and whether a first-attempt failure can
+be told from a device fault. So `MTL4Probe` carries a diagnostic switch,
+`-Dmetallum.probeInjectFirstFailure=true`, that fails the **first** `canBindAndDraw` of a process at stage
+`pixel`. It fails on the check the real fault fails on - after the pass has been encoded, submitted and read
+back, not at the probe's entry, which would price the retry's bookkeeping instead of the path - and the injection
+is spent by that first use, so the second attempt of the process is a real one. The reason string says in words
+that the attempt was failed on purpose and reports the readback it saw, because a census line that could not tell
+an injected failure from a device fault would be worse than no switch at all.
+
+Measured, `tools/metal4-cold-probe.sh --cold-runs 3 --warm-runs 0 --mode production --vmargs
+'-Dmetallum.probeInjectFirstFailure=true'`:
+
+```text
+process 1 attempt 1 retried true success true stage ok ...
+process 2 attempt 1 retried true success true stage ok ...
+process 3 attempt 1 retried true success true stage ok ...
+```
+
+and the same run's log, from one process started with the switch and its stderr kept:
+
+```text
+Metal 4 probe: the first attempt in this process failed at pixel (this first attempt of the process is failed on
+purpose (-Dmetallum.probeInjectFirstFailure), so the retry that answers a real first-attempt fault can be priced;
+the readback itself was (64, 128, 191, 255) where (64, 128, 191, 255) was asked for), and the second answered true
+- the capability record reads the second
+```
+
+So the policy is now exercised rather than asserted: `retried=true` reaches the census, the failure is preserved
+and marked, and the capability answer is the second attempt's. **What this does not do is explain the fault** -
+the injection is a fact about this path and not about the device, and the gate stays NOT MET until the real
+intermittency is either reproduced with its distribution or replaced by a deterministic probe. The harness gained
+`--vmargs` for it, which is also how any future diagnostic reaches a probe process, and
+`tools/ci-metal4-cold-probe.py` pins the switch's name, its one-shot spend, its marking and the harness's ability
+to pass it.
 
 ### Section 60's audit: six refusals, no callers, no workload left behind
 
