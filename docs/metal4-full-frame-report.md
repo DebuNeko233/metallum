@@ -512,15 +512,49 @@ session reads the *same* `loadedMiB` to four digits (106130 against 106129). The
 own pass structure and not the scene.
 
 **Reading three: with rain and particles in the frame, a cross-launch picture comparison is void, and that is
-measured rather than assumed.** `run/vanilla-overworld` - same scene with weather `rain` and the particle fixture
+measured rather than assumed.** (This reading was taken with the fixture as it was then - particles emitted with a
+spread and a speed. The fixture has since been rewritten to remove both, and the reading below says why that was
+not enough either.) `run/vanilla-overworld` - same scene with weather `rain` and the particle fixture
 staged: `m3a` against `m3b`, **two arms of the reference itself**, differ in **68.45% of pixels** (mean channel
 difference 35.64), because rain streaks and particle positions are animated and two launches land on different
 phases. The generation comparison in that session is 43.65 (M3 vs M4) - the same order as the reference's own 35.64
 - so it says **nothing** about the path, and the counters are the reading there (the fixture loaded, the frame rate
 is 208-360 a second against 400-460 with clouds alone, and the structure is the same as reading two's). What is
-**NOT MEASURED** is a *deterministic* particle or rain scene: the fixture emits at random offsets, so its pixels
-move between launches by construction, and a picture verdict on particles needs a fixture whose emission is fixed -
-a per-tick pattern with no spread, or a single tick's particles photographed while frozen.
+**NOT MEASURED** is a *deterministic* particle or rain scene: the fixture emitted at random offsets, so its pixels
+moved between launches by construction, and a picture verdict on particles needed a fixture whose emission is
+fixed.
+
+**The deterministic fixture was then built, and it is still not deterministic - which is the second reading.** The
+first fixture emitted each particle with a spread and a speed, so a copy with `0 0 0 0 1` after each position
+became the second: no spread box, no speed, one particle, at a cell of a grid in front of the camera (local `^`
+coordinates) with one cell per render family. `run/vanilla-grid`, same scene and flags:
+
+```text
+                                      mean channel difference   pixels differing   differing by more than 8
+m3a vs m3b, no particles (run/vanilla-clouds)      0.02               0.24%               0.03%
+m3a vs m3b, the still grid                         12.18              24.83%              19.24%
+m3a vs m4a, the still grid                         12.14              24.85%              18.88%
+m3a vs m4b, the still grid (the outlier arm)       14.80              42.02%              25.85%
+
+and what the particles add, each arm against the same scene with none:
+m3a 14.88 / 27.69%    m3b 5.92 / 17.35%    m4a 5.77 / 17.19%    m4b 8.21 / 40.77%
+```
+
+Three things are readable there and no more. **The particles are drawn on both generations**: each arm differs from
+the particle-free scene by 5.8 to 14.9 of mean channel difference, so the fixture reaches the frame. **This path's
+particle contribution is inside the reference's own spread** (m4a 5.77 against m3b 5.92 and m3a 14.88), so nothing
+about it is generation-specific - and it cannot be, because the contribution's own spread across three arms is
+2.5x, which is the phase of a randomly-lived field and not a renderer. **And a cross-launch picture comparison of
+a particle scene stays NOT MEASURED**, twice over and now for a named reason: particle lifetimes are drawn per
+particle, so which particles a frame holds depends on the tick the screenshot lands on. A picture verdict on
+particles needs an emission whose *appearance* does not age - one tick's particles photographed while frozen, or a
+static block-entity form - and neither is built.
+
+**One more thing that session shows and the harness does not yet guard.** `m4b` read **10.68 ms a frame against
+`m4a`'s 2.46** (its own commit feedback 4.23 against 1.11, its drawable wait 8.06 ms at the median): an arm-level
+outlier of 433%, which section 115 says to discard. The harness refused nothing, because a session with two
+generations in it skips the structural drift check by design - its own line says so - so an outlier of that size
+has to be noticed by reading the table. **An outlier guard for the two-generation case is owed.**
 
 ## Resource Binding
 

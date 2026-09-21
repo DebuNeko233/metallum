@@ -4543,6 +4543,47 @@ no spread, or one tick photographed while frozen, is what a picture verdict on p
 block entities draw on this path, which is what `--keep-entities` is for and which no session has yet read; and
 the pack-and-vanilla-features combination, since every session above is a no-pack one.
 
+### The particle grid, and why vanilla's particles still have no picture verdict
+
+The first particle fixture emitted every type with a spread and a speed - what a player sees - and the harness
+photographs one frame of each launch, so the reading it produced was the animation's: with rain and those
+particles in the frame, **two arms of the reference implementation itself differed in 68.45% of pixels**. The
+obvious fix was to take the motion out: every particle now goes out with `0 0 0 0 1` after its position - no spread
+box, no speed, one particle - at a cell of a grid in front of the camera in local (`^`) coordinates, one cell per
+render family. Stillness by construction, and a scene that should be the same picture in every launch.
+
+It is not, and the measurement said so before anyone could believe otherwise. `run/vanilla-grid`, the same scene
+and flags as `run/vanilla-clouds`:
+
+```text
+                                      mean channel difference   pixels differing   differing by more than 8
+m3a vs m3b, no particles (clouds only)             0.02               0.24%               0.03%
+m3a vs m3b, the still grid                         12.18              24.83%              19.24%
+m3a vs m4a, the still grid                         12.14              24.85%              18.88%
+
+what the particles add, each arm against the same scene with none:
+m3a 14.88 / 27.69%    m3b 5.92 / 17.35%    m4a 5.77 / 17.19%
+```
+
+Three things, and no more, are readable there. The particles **are** drawn on both generations - each arm differs
+from the particle-free scene by 5.8 to 14.9 of mean channel difference, so the fixture reaches the frame. This
+path's contribution is **inside the reference's own spread** (m4a 5.77 against m3b 5.92 and m3a 14.88), so nothing
+about it is generation-specific. And the picture verdict on vanilla particles stays **NOT MEASURED**, now for a
+named reason rather than a suspicion: a particle's lifetime is drawn per particle, so which particles a frame
+holds - and how faded they are - depends on the tick the screenshot lands on. Taking the spread and the speed out
+removed the particles' *motion* and not their *randomness*.
+
+What that would need is an emission whose appearance does not age: one tick's particles photographed while frozen,
+or a static block-entity form whose texture animation is driven by the frozen clock. Neither is built, and this is
+recorded as the second attempt rather than as a fixture that works.
+
+The same session carried a second lesson about the harness. Its fourth arm read **10.68 ms a frame against the
+second M4 arm's 2.46** - 4.23 against 1.11 of its own commit feedback, 8.06 ms of drawable wait at the median -
+an arm-level outlier of 433% that section 115 says to discard. Nothing refused it: a session with two generations
+in it skips the structural drift check by design, and its own line says so, so the outlier has to be noticed by
+reading the table. **An outlier guard for the two-generation case is owed**, and it is the next harness change
+rather than a note.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
