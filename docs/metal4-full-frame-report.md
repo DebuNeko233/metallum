@@ -1327,7 +1327,35 @@ answered rather than only what is left.
    ```
 
    So the two Metal 4 arms **did draw the same frame**, to seven parts in a thousand, and the +12.2% of pipeline
-   sets was a state-set difference on arms that drew the same frame. The content guard this round added is built
+   sets was a state-set difference on arms that drew the same frame.
+
+   **Four consecutive Metal 4 arms on one session say where the spread lives.** `run/m4-four`, same pack, world,
+   target and window, 600 frames an arm, 25 s of settle:
+
+   ```text
+   arm   wallP50  wallP95  gpuM4P50   windowMs  loadedMiB   depthAtt.  blits  ids  compiles  load start->end
+   m4a     9.55    37.60    18.58      11104    354843.2    5474       5400   333  0         2.50 -> 2.92
+   m4b     9.50    37.40    18.40      11048    410962.7    ...        5400   333  0         2.92 -> 3.52
+   m4c     9.44    36.97    18.18      10934    385826.7    ...        5400   333  0         3.52 -> 3.52
+   m4d    27.13    54.49    27.60      16502    356156.3    5464       5400   333  0         6.28 -> 5.15
+   ```
+
+   Three arms read **18.18-18.58 ms** of their own GPU time - a spread of **2.2%** - and the fourth reads 27.60,
+   and the fourth is the arm whose **machine load sample was twice the others'** at its start (6.28 against
+   2.50-3.52 on 15 cpus). Its waits are the same as the fast arm's (drawable p95 7.59 ms in both, submission p95
+   16.39 against 17.75) and its frame is the same frame (`blits 5400` to the digit, `depthAttachments` 5474
+   against 5464, 333 pipeline identities, 0 compiles). **So the cost of this path is stable to 2.2% across
+   consecutive arms on a quiet machine, the outlier is the arm the machine was busy for, and that is the first
+   time the load instrument has attributed anything.** It is not the whole story: `run/perf-ab6`'s slow arm had
+   load samples equal to its fast arm's (4.27 -> 4.76 against 4.33 -> 4.26). What is left to try is the frame's
+   own per-frame counters - `-Dmetallum.metal4FrameStats=true` prints passes, encoders, tables, draws and
+   **residency declarations** once every sixty frames - on a session where an outlier appears, because a
+   residency set or table count that grows with the session is the one state a session-level cause would show up
+   in.
+
+   **For section 123's gate this is the reading that matters**: the number §93 needs is readable when the
+   machine is quiet and the arms are consecutive (2.2% spread, all four frames identical), and the outlier has to
+   be discarded rather than averaged - which is what `run/m4-four` now lets a reader do. The content guard this round added is built
    on the three counters that mean the same thing on both generations and grow with what the frame drew -
    `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
