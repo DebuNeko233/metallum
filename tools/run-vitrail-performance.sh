@@ -598,7 +598,22 @@ for run in "${runs[@]}"; do
 		# can move: without this a session can collect two arms that agree with each other on a target the
 		# baseline never used, and every number in them is about a different frame.
 		if [[ -n "$expect_target" ]]; then
-			drawn_target="$(grep -o 'The world renders at [0-9]*x[0-9]*' "$run_dir/latest.log" | tail -1 | sed 's/.*renders at //')"
+			# Two wordings, because the line that states the target has been written both ways: the frame probe's
+			# own `The world renders at WxH`, and the pack's `Drawing <pack> from <root> for <dimension>, at WxH,
+			# N full screen passes`. Reading only the first made the guard report "never said what size it drew
+			# the world at" on a Vitrail build that says the second - a guard that cannot see the fact it guards
+			# is worse than none, because it reads as a scene that cannot be pinned rather than as a grep that
+			# stopped matching.
+			#
+			# **Both lookups are `|| true` on purpose, and the reason is a measurement this guard cost.** The
+			# first is a `grep` for a line a Vitrail build may not print, and under `set -o pipefail` a grep that
+			# matches nothing fails its pipeline - so the guard did not fall through to the second wording, it
+			# **killed the harness** between the first arm and the second, with no line saying why. A guard that
+			# aborts a session measures nothing, and the failure looked like "the session stopped after one arm".
+			drawn_target="$(grep -o 'The world renders at [0-9]*x[0-9]*' "$run_dir/latest.log" | tail -1 | sed 's/.*renders at //' || true)"
+			if [[ -z "$drawn_target" ]]; then
+				drawn_target="$(grep -oE 'Drawing .* at [0-9]+x[0-9]+, [0-9]+ full screen' "$run_dir/latest.log" | tail -1 | grep -oE '[0-9]+x[0-9]+' | head -1 || true)"
+			fi
 			if [[ -z "$drawn_target" ]]; then
 				echo "Run '$name' never said what size it drew the world at, so the target it measured cannot be checked against $expect_target" >&2
 				scene_bad=1

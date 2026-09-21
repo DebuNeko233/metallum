@@ -421,6 +421,22 @@ for needle, why in (
     ("The world renders at [0-9]*x[0-9]*",
      "the target is not read from the log's own line, which is the only place that says which size the "
      "world was really drawn at"),
+    # And the two ways that reader can be blind, both measured on a real session:
+    #
+    #   - a Vitrail build states the target with the pack's own `Drawing <pack> ... at WxH, N full screen`
+    #     line and not with the probe's, so a reader that knows one wording reports "never said what size it
+    #     drew the world at" for a session that said it plainly;
+    #   - and under `set -o pipefail` a `grep` that matches nothing fails its pipeline, so the *fallback* to
+    #     the second wording never ran - the guard **killed the harness** between the first arm and the
+    #     second, and the failure read as "the session stopped after one arm" with no line saying why. The
+    #     `|| true` is what makes a missing line a reported condition rather than an aborted session.
+    ("Drawing .* at [0-9]+x[0-9]+, [0-9]+ full screen",
+     "the second wording of the target line is not read, so a session whose Vitrail states the target that "
+     "way cannot be pinned at all"),
+    ("tail -1 | sed 's/.*renders at //' || true)",
+     "the first target lookup is not tolerant of finding nothing, so under pipefail a build that does not "
+     "print that line kills the harness instead of falling through to the second wording"),
+    ("head -1 || true)", "the second target lookup is not tolerant either"),
 ):
     if needle not in harness:
         raise SystemExit(why)
