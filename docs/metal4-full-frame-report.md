@@ -1028,9 +1028,31 @@ answered rather than only what is left.
    More work reports **less** time, and neither magnitude is near what the work must cost - 128 megafragments
    cannot be under a millisecond, and one fullscreen clear of 64 MiB cannot be 16 microseconds. Both roads were
    tried and both behave the same way: the command buffer's `writeTimestampIntoHeap:atIndex:` and the render
-   encoder's `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` with `Precise` and the fragment stage.
-   The header's own wording for the first is the hint - "work after this call may or may not have started" - so
-   what it marks is where the command processor has reached and not where the GPU has finished.
+   encoder's `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:`. The header's own wording for the first
+   is the hint - "work after this call may or may not have started" - so what it marks is where the command
+   processor has reached and not where the GPU has finished.
+
+   **The mechanism is now measured, and it is order.** A third shape brackets one pass per draw count, ascending,
+   each with its own encoder's after-fragment stamp:
+
+   ```text
+   1 draw -> 35,008 ticks    16 -> 249,857    256 -> -227,076    4096 -> 226,983
+   ```
+
+   The third stamp is **earlier** than the second by about 227,000 ticks, in **every** probe - 6 of 6 at
+   `Precise` and 4 of 4 at `Relaxed` - and the last stamp lands within a hundred ticks of the second. So the
+   stamps are not in submission order, systematically, and **it is not the granularity**: the header's warning
+   that `Precise` "may cause splitting of command encoders" was the right kind of candidate and the reading rules
+   it out, because both granularities give the same curve. The absolute values are a plausible machine clock
+   (~4.7 hours of nanoseconds, the unit the sampler measured) and the range resolve returns exactly the values
+   the per-entry road does, so neither the clock nor the packing is what is wrong.
+
+   What is left is that the passes write different attachments and nothing reads either, so nothing stops the GPU
+   ordering them as it likes - and an `afterStage:` stamp fires when *that encoder's* fragment stage drains,
+   which for independent work is not an order at all. **The next shape is a real dependency**: each pass sampling
+   the previous pass's attachment forces the order the stamps assume. Until that passes, no per-pass GPU time is
+   reported and the census stays red on this smoke - a smoke that went green by keeping the two ends that agreed
+   would be reporting a per-pass time that is not one.
 
    **The workload is proven present before the timing is judged**, which is what separates the two explanations:
    the large pass clears its attachment to black and draws the shader's colour, a pixel is read back, and every

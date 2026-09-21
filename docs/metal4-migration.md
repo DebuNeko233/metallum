@@ -3976,14 +3976,28 @@ and every reading says `drawsLanded=true`. Without that, "the draws cost nothing
 execution points" produce the same measurement, and they are different faults - so the pass's clear colour
 differs from the shader's deliberately, and the pixel is what separates them.
 
-**What is left to try**, in the order the evidence suggests: the GPU-timeline resolve
-(`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve in
-the command stream rather than on the CPU timeline; resolving a range of entries at once rather than one at a
-time; and the whole-frame road the frame path already uses, `MTL4CommitFeedback.GPUStartTime/GPUEndTime`, which
-does produce plausible per-frame times and may be the only attribution this API gives. **Until one of them
-brackets execution, no per-pass GPU time is reported**, and the census stays red on this smoke so that an
-unproven instrument cannot look green - which is section 96's rule applied to an instrument rather than to an
-optimisation.
+**Then the mechanism turned out to be order, and it is measured.** A third shape brackets one pass per draw
+count, ascending, each with its own encoder's after-fragment stamp:
+
+```text
+1 draw -> 35,008 ticks    16 -> 249,857    256 -> -227,076    4096 -> 226,983
+```
+
+The third stamp is **earlier** than the second by about 227,000 ticks in every probe - 6 of 6 at `Precise`, 4 of
+4 at `Relaxed` - and the last lands within a hundred ticks of the second. Three candidate explanations were
+removed by reading rather than by argument: the values are a plausible machine clock (~4.7 hours of
+nanoseconds, the unit the sampler measured); the range resolve returns exactly what the per-entry road does, so
+the packing is right; and the granularity makes no difference, so the header's warning that `Precise` "may cause
+splitting of command encoders" is a real hazard and not this one. What is left is that the passes write
+different attachments and nothing reads either, so nothing orders them - an `afterStage:` stamp fires when that
+encoder's fragment stage drains, and for independent work that is not an order.
+
+**The next shape is a real dependency**: each pass sampling the previous pass's attachment would force the order
+the stamps assume. That is the experiment section 90's smoke is waiting on, and **until it passes no per-pass GPU
+time is reported** - the census stays red so that an unproven instrument cannot look green, which is section 96's
+rule applied to an instrument rather than to an optimisation. A smoke that went green by keeping the two draw
+counts whose ends happened to agree (4096 against 1 reads 6.8x) would have reported a per-pass time that is not
+one; the curve is what showed it, and the curve stays.
 
 ## Risks
 
