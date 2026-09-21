@@ -709,6 +709,56 @@ The Metal 3 reference on the pinned scene is
 `run/m3-final`, and it is the baseline any Metal 4 frame will be read against - always with
 `--fullscreen-size` and `--expect-target` set, and with nothing else running on the machine.
 
+**And the no-pack frame - section 37's first comparison - was taken between the two generations after the copy
+road was fixed, four arms in one session on the staged `PerfWorld`, window 1600x900, `--frames 600 --settle 25`
+(`run/nopack-ab1`, `--no-pack`).** Every arm reports the Metal backend and its own generation
+(`selectedGeneration=metal4 executingGeneration=metal4`, and metal3's own), no arm has a GPU fault, a restart or
+an `Unimplemented` line, and every arm drew the world rather than a screen: 4 render pass openers a frame and
+47.5 MiB of attachment traffic a frame on the Metal 3 side, 6.3 openers a frame on this one.
+
+```text
+counter                        m3a        m4a        m3b        m4b      M4/M3
+wallP50 (ms)                   8.23       8.48       8.37       8.40     +3.0%, +0.4%
+wallP95 / wallP99              9.36/9.47  9.13/9.53  8.98/9.42  8.94/9.48
+drawable wait p50 (ms)         7.57       7.55       7.57       7.57     the pace, in both
+submitWindow wait p50          0.00       0.00       0.00       0.00
+gpuP50 / gpuM4P50              2.21       2.55       2.21       2.52     not comparable - two APIs
+pipelineIdentities / keys      99/99      99/99      99/99      99/99    equal
+compiles / compileMs           0 / 0.00   0 / 0.00   0 / 0.00   0 / 0.00  equal
+render pass openers            2400       3768       2400       3636     +57%, +52%
+blit encoders                  960        1300       974        1300     +35%, +33%
+compute encoders               0          0          0          0        equal
+clear encoders (passes)        0          3000       0          3000     the pass-per-clear structure
+clears folded into passes      1800       0          1800       0        the same structure, other side
+loadedMiB                      28498.5    141350.1   28498.5    135549.3 x4.96, x4.76
+storedMiB                      81232.9    260002.4   81232.9    254201.7 x3.20, x3.13
+depthAttachments               1800       6168       1800       6036     x3.43, x3.35
+depthLoadedMiB / storedMiB     0.0/39550.8 69609.4/135527.3 ...        this path loads the depth it clears
+blits / blittedMiB             0 / 0.0    0 / 0.0    0 / 0.0    0 / 0.0  equal - neither needs one here
+viewport sets / scissor sets   3000/3360  0/600      3000/3374  0/600    this path sets no viewport
+presents                       600        600        600        600      every frame
+```
+
+Three readings and not one verdict:
+
+- **The pace is the display's in both generations, and it is the same site in both**: `drawable wait p50 7.57 ms`
+  against a `wallP50` of 8.2-8.5 ms, with the submission window paying `0.00`. So this scene is capped by the
+  display's hand-over and the two generations agree to **3.0%** on P50 and within a tenth of a millisecond on
+  P95/P99 - which is a *correctness* reading rather than a performance verdict, and the reason a no-pack scene
+  cannot be one: there is nothing left to measure when the display is the pacer.
+- **The structural differences are exactly the registered mechanisms and nothing new**: this path opens a pass per
+  logical pass and a pass per clear (openers 2400 → 3700, clear encoders 0 → 3000 where Metal 3 folds 1800 clears
+  into the passes that use them), and therefore loads and stores the attachments it clears. `pipelineIdentities`
+  99 on every arm, `compiles` 0 on every arm and `blits` 0 on every arm say the two paths draw the same programs,
+  in the same number, with no compilation and no copy in either.
+- **The two GPU numbers are recorded and not compared.** `gpuP50` is `MTLCommandBuffer.gpuMillis` and
+  `gpuM4P50` is `MTL4CommitFeedback.GPUStartTime/GPUEndTime`: two APIs, and section 92's rule that the timing kinds
+  are not interchangeable until that is established still holds.
+
+The picture column of this session is void - the display was locked, every capture is one flat colour and the
+harness says so and ends non-zero for it - so no pixel of either generation was read here. The frames themselves
+were read for the fix above, in sessions with the display in the same state.
+
 **The two generations were then run against each other on a real pack, four arms in one session, and the
 result is NOT MEASURED - for a measured reason.** Session `run/perf-ab4`, exit 0, arm order
 `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25 --expect-target 3200x1800`, window 1600x900, pack
