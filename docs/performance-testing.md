@@ -97,7 +97,7 @@ they are the only thing in the session that says whether it held one state.
 **Read minima, not means, when the machine is shared.** The noise here is one-sided - another client of the GPU
 can only make a frame slower - so the reading worth comparing is the smallest over repeats. Measured: one
 configuration (interval 1 of the shadow amortisation on MakeUp) read 6.726, 6.734, 6.734, 6.740 and 6.750 across
-five arms in three sessions, 0.4 per cent apart, while arms of identical structure and the same configuration in
+five arms in four sessions, 0.4 per cent apart, while arms of identical structure and the same configuration in
 disturbed windows read up to 9.917 - 47 per cent. A configuration whose own repeats disagree by more than the
 effect is reported as **unresolved** and not averaged, and a candidate whose second real pack is unresolved is not
 shipped.

@@ -226,7 +226,7 @@ issues them beyond that is NOT ATTRIBUTED here.
 ## The wall, and the estimator this machine allows
 
 The machine would not hold still. Arms of **identical structure** - same pass counts, `loadedMiB` within 0.3 per
-cent - read between 5.77 and 9.92 ms a frame across sessions, and within one session two arms of one
+cent - read between 6.57 and 9.92 ms a frame across sessions, and within one session two arms of one
 configuration read 9.92 and 7.07. The display mode was the same before every session (`1800x1169@120`, id 66) and
 no arm moved it; the machine's load average was **lower** during the slower arm (3.85 against 5.81); the GPU
 trace shows the device at 100 per cent with the client as `fLastSubmissionPID` in every sampled window of every
@@ -237,7 +237,7 @@ worth comparing between two configurations is the **minimum over repeats**, and 
 that the minimum is real. They can: one configuration (interval 1 on MakeUp) read
 
 ```
-6.726  6.734  6.734  6.740  6.750        five arms, three sessions, 0.4 per cent apart
+6.726  6.734  6.734  6.740  6.750        five arms, four sessions, 0.4 per cent apart
 ```
 
 while the same configuration in a disturbed arm read up to 9.917. So the intervals below are compared on minima,
@@ -246,7 +246,7 @@ averaged.
 
 ```
 MakeUp            interval 0   7.383   (2 arms, 0.01 % apart)
-                  interval 1   6.726   (5 arms, 0.4 % apart)   <- shipped default
+                  interval 1   6.726   (5 arms in 4 sessions, 0.4 % apart)   <- shipped default
                   interval 2   6.344   (2 arms, 0.3 % apart, one session whose reference pair read 6.740/6.734)
 Complementary     interval 0   9.194   (2 arms, 0.3 % apart)
                   interval 1   8.289   (4 arms, 0.4 % apart)   <- shipped default
@@ -254,13 +254,14 @@ Complementary     interval 0   9.194   (2 arms, 0.3 % apart)
 ```
 
 **What the shipped reuse is worth is therefore measured, and on the one pair that is semantically correct rather
-than diagnostic**: interval 1 against interval 0 on MakeUp is **0.657 ms of a 6.73 ms frame, 9.8 per cent**, on
-two roads that agree with each other - the removal arms give `no translucent - no chunk layers = 1.345 ms` for
-`raster + keep`, and the interval arms give `interval 0 - interval 1 = 0.657 ms` for `raster - keep`, so one
-drawn raster costs about **2.00 ms** and one kept map about **0.69 ms**, and the interval-2 prediction
-`(raster + keep) / 3 = 0.448 ms` lands within 12 per cent of the 0.396 ms measured.
+than diagnostic**: interval 1 against interval 0 on MakeUp is **0.657 ms of a 6.73 ms frame, 9.8 per cent**.
+Two roads bound the two costs it trades. The removal arms give `no translucent - no chunk layers = 1.345 ms` for
+`raster + keep` (0.880 against the same session's other removal arm, which is the spread those diagnostic arms
+carry), and the interval arms give `interval 0 - interval 1 = 0.657 ms` for `raster - keep`; solved together they
+put one drawn 4080x4080 raster at **1.5 to 2.0 ms** and one kept map at **0.1 to 0.7 ms**, and the interval-2
+prediction `(raster + keep) / 3 = 0.29 to 0.45 ms` lands around the **0.385 ms measured**.
 
-**The interval-2 candidate is KEPT as a measurement and DEFERRED as a change.** It is worth 5.9 per cent on
+**The interval-2 candidate is KEPT as a measurement and DEFERRED as a change.** It is worth 5.7 per cent on
 MakeUp - above the plan's five per cent gate - but on Complementary its two arms differ by 9.7 per cent, which is
 more than either the effect or the plan's noise floor, so the second of the two real packs the high-risk gate
 requires is not satisfied yet. Nothing is broken by leaving it: the selector already offers nought, one and two,
@@ -313,7 +314,7 @@ the repeats disagree by more than the effect, so the answer is unresolved rather
 
 **KEPT - the finding, not a change.** The shadow stage's decomposition is measured on the two packs where the
 engine's reuse applies, and the shipped reuse is worth **9.8 per cent** on MakeUp; the selector's own maximum is
-worth another **5.9 per cent** there and is unresolved on Complementary. No code changed for either: the arms are
+worth another **5.7 per cent** there and is unresolved on Complementary. No code changed for either: the arms are
 default-off probes and the one addition is the interval override that makes the comparison possible.
 
 **DEFERRED - raising the default interval from one to two.** Above the gate on one pack, unresolved on the

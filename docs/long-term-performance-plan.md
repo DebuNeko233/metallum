@@ -34,7 +34,7 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       document: the shadow map decomposes exactly (300 opaque + 600
                                       translucent passes a 600-frame window), the shipped reuse of the map is
                                       worth 9.8 % on MakeUp, the selector's own maximum is worth another
-                                      5.9 % there and is UNRESOLVED on Complementary, so raising the default
+                                      5.7 % there and is UNRESOLVED on Complementary, so raising the default
                                       interval is DEFERRED; the entity family is measured (one extra full-size pass and 129 MiB
                                       of attachment traffic a frame, wall unresolved) and the voxel family is
                                       NOT MEASURED;
@@ -86,7 +86,7 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 - Every session carries a reference arm of its own and repeats it, and the wall is read as the **minimum over
   repeats** because the machine's noise is one-sided. Measured while collecting C2: identical structure, identical
   configuration, 47 per cent apart between arms - and one configuration reproduced to 0.4 per cent across five
-  arms in three sessions. A configuration whose repeats disagree by more than the effect is UNRESOLVED, not
+  arms in four sessions. A configuration whose repeats disagree by more than the effect is UNRESOLVED, not
   averaged, and a candidate with an unresolved second pack is not shipped.
 - An arm states the command generation it ran in (`--expect-execution`), because the generation is the game's own
   stored setting and a whole C2 session was collected on Metal 4 against a Metal 3 corpus without one counter
