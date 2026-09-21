@@ -146,8 +146,9 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // nothing else prints: `selectedGeneration` in the frame probe comes from the telemetry, not from this
         // instance. Two of these lines - one from an AUTO launch, one from a forced Metal 3 launch - are what
         // says the services really carry the selection.
-        com.metallum.Metallum.LOGGER.info("Metal execution seam: selectedGeneration={} executingGeneration={} mode={} referenceShell={} framePathReady={}",
+        com.metallum.Metallum.LOGGER.info("Metal execution seam: selectedGeneration={} executingGeneration={} requestedPreference={} mode={} referenceShell={} framePathReady={}",
                 this.services.selected().token(), this.services.executing().token(),
+                decision.preference().word(),
                 this.services.framePathReady() ? "own-path" : "reference-shell",
                 this.services.isReferenceShell(), this.services.framePathReady());
 

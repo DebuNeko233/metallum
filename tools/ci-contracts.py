@@ -1453,10 +1453,12 @@ require("the frame's queue belongs to the generation that encodes the frame",
 # and not a constant" had nothing to read it with: `selectedGeneration` in the frame probe comes from the
 # telemetry, so before this line an AUTO launch that chose Metal 4 and a forced Metal 3 launch printed the same
 # thing at this seam. Pinned because a log line nobody guards is a log line somebody deletes.
-require("the seam prints the generation the services themselves carry",
+require("the seam prints the generation the services themselves carry, and what the launch asked for",
         "src/main/java/com/metallum/render/MetalDevice.java", (
-    '"Metal execution seam: selectedGeneration={} executingGeneration={} mode={} referenceShell={} framePathReady={}"',
+    '"Metal execution seam: selectedGeneration={} executingGeneration={} requestedPreference={} mode={}'
+    ' referenceShell={} framePathReady={}"',
     "this.services.selected().token(), this.services.executing().token(),",
+    "decision.preference().word(),",
     "this.services.framePathReady() ? \"own-path\" : \"reference-shell\",",
     "this.services.isReferenceShell(), this.services.framePathReady());",
 ))
@@ -1489,6 +1491,22 @@ require("the services say what executes, not only what was chosen",
     # about is that the services answer with what executes, so it now requires the parameter.
     "return executing;",
 ))
+require("a launch that names no generation is Metal 3",
+        "src/main/java/com/metallum/render/execution/MetalExecutionPreference.java", (
+    "public static final MetalExecutionPreference DEFAULT = FORCE_METAL3;",
+    "String asked = System.getProperty(PROPERTY);",
+    "return DEFAULT;",
+))
+# The absent property is the ordinary case and must not be a capability question: reading it as AUTO is what
+# put `selectedGeneration=metal4 executingGeneration=metal3 referenceShell=true` in a normal startup's log.
+_preference_source = (ROOT / "src/main/java/com/metallum/render/execution/MetalExecutionPreference.java"
+                      ).read_text(encoding="utf-8")
+if "System.getProperty(PROPERTY, AUTO.word)" in _preference_source:
+    raise SystemExit("architecture contract: an absent metallum.execution reads as AUTO again, so an ordinary "
+                     "startup selects a generation it does not execute")
+if "return AUTO;" in _preference_source:
+    raise SystemExit("architecture contract: the preference falls back to AUTO, which is a diagnostic mode and "
+                     "not what a player who never chose a generation should run")
 require("the preference is one property with three words",
         "src/main/java/com/metallum/render/execution/MetalExecutionPreference.java", (
     'public static final String PROPERTY = "metallum.execution";',
