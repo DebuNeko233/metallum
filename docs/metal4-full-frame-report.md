@@ -674,10 +674,35 @@ holding on a real pack. The first session of the pair is refused by the comparer
 one generation (7-11%), which is the pack's own variability and section 116's warning; its 21% arm is why a repeat
 was needed before any of this was writable.
 
+**And the repeatability the gate rests on can now be bounded, because there are enough recorded sessions to do
+it.** Every session whose arms of one generation were the *same configuration* - which is what a repeat is, and a
+session whose arms differ by a switch is not one - read from disk, 29 generation-sessions in all:
+
+```text
+Metal 3, 11 sessions   1.00x  perf-ab6, nopack-ab1, vanilla-mobs3, vanilla-blockents
+                       1.01x  pack-vanilla2, vanilla-clouds           1.02x  pack-vanilla, m4-ab7, perf-ab4
+                       1.10x  perf-ab5                               1.32x  vanilla-overworld (the rain-and-
+                                                                             particles scene, whose content moves too)
+Metal 4, 18 sessions   1.00x  pack-vanilla2, m4-content, m4-passtimes, nopack-ab1, vanilla-blockents
+                       1.01x  vanilla-mobs3    1.03x  vanilla-clouds  1.11x  m4-rings2
+                       1.15x  m4-ab7, vanilla-overworld              1.18x  m4-loadtrace    1.19x  perf-ab5
+                       1.21x  pack-vanilla     1.23x  m4-gputrace    1.34x  m4-stats
+                       1.42x  perf-ab4         1.50x  perf-ab6       1.51x  m4-four
+```
+
+**So the same configuration repeats to 1.00-1.10x on the reference and to 1.00-1.51x on this path, in the same
+sessions and on the same machine** - and this path *can* repeat exactly, in six of its eighteen sessions. That is
+the sharpest form blocker 16's question takes, and it is why the gate is not met on one good session: a
+comparison whose two arms can differ by half is a comparison whose answer is a range, and the range is wider than
+the effect section 5 asks about. What the wide sessions have in common is not the load samples - `perf-ab6`'s
+arms began at 4.3 and 4.3 and differ by 1.50x, `m4-stats`' slow arm's load *fell*, `m4-gputrace`'s fastest arm's
+load *rose* - and the outlier guard now names the arm in each of those cases rather than averaging it in.
+
 **What is NOT MEASURED**, said plainly because the surface is now wide: a particle or rain scene whose picture can
-be compared across launches; what the one block-entity arm's small middle-band difference is; and whether that
-2.2% is what a pack scene *is* - one configuration, one session's repeat, against the 17-49% the other pack
-configurations read, and the difference between those configurations is now the performance question.
+be compared across launches; what the one block-entity arm's small middle-band difference is; whether that 2.2% is
+what a pack scene *is*; and **what makes this path's arms differ by up to half while the reference's agree** -
+which, after eighteen sessions, is the single question standing between this report and section 123's performance
+item.
 
 ## Resource Binding
 

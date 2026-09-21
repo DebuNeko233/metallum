@@ -4755,6 +4755,42 @@ configurations is now the question: the no-pack frame at 400 frames a second rea
 45-frame-a-second scenes read +17-49%, and this one +2.2% with less GPU work. One configuration, one repeat, and
 section 123 is not met on it.
 
+### Eighteen repeats: what the reference repeats to, and what this path repeats to
+
+The performance question has been "which configurations differ" since the pack parity session, and the honest way
+to ask it is about *repeatability* rather than about any one number. Every recorded session whose arms of one
+generation were the same configuration - a repeat, as opposed to a session whose arms differ by a switch - was read
+off disk: 29 generation-sessions.
+
+```text
+Metal 3, 11 sessions   1.00x  perf-ab6, nopack-ab1, vanilla-mobs3, vanilla-blockents
+                       1.01x  pack-vanilla2, vanilla-clouds           1.02x  pack-vanilla, m4-ab7, perf-ab4
+                       1.10x  perf-ab5                               1.32x  vanilla-overworld (the rain-and-
+                                                                             particles scene, whose content moves too)
+Metal 4, 18 sessions   1.00x  pack-vanilla2, m4-content, m4-passtimes, nopack-ab1, vanilla-blockents
+                       1.01x  vanilla-mobs3    1.03x  vanilla-clouds  1.11x  m4-rings2
+                       1.15x  m4-ab7, vanilla-overworld              1.18x  m4-loadtrace    1.19x  perf-ab5
+                       1.21x  pack-vanilla     1.23x  m4-gputrace    1.34x  m4-stats
+                       1.42x  perf-ab4         1.50x  perf-ab6       1.51x  m4-four
+```
+
+The reference repeats to **1.00-1.10x** (its one wide session is the rain-and-particles scene, whose *content*
+moves between launches as well) and this path repeats to **1.00-1.51x** - and this path can repeat exactly, in six
+of its eighteen sessions. That is blocker 16 in its sharpest form: a comparison whose two arms can differ by half
+gives a range, and the range is wider than the effect section 5 asks about.
+
+And the wide sessions are not the busy-machine ones, which the load instrument has now been able to test across
+enough sessions to say: `perf-ab6`'s arms began at 4.3 and 4.3 and differ by 1.50x; `m4-stats`' slow arm's load
+*fell* over its run; `m4-gputrace`'s fastest arm's load *rose* over its. The one session where the load did name
+the arm is `m4-four`, whose 27.50 ms arm began at 6.3 while the other three began at 2.5-3.5. So the machine is
+one of the ways an arm is spoiled and not the only one, which is exactly why the comparer now *names* the arm
+instead of arguing about it.
+
+**What is left is one question**: what makes this path's arms differ by up to half while the reference's agree.
+Eighteen repeats say it is not the configuration, not the scene, not the load samples, and not the frame's own
+GPU work (which is *lower* on this path in the pack parity session). It is the single item standing between this
+report and section 123's performance line.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
