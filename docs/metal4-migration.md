@@ -3927,6 +3927,64 @@ same timebase as the frame's `MTL4CommitFeedback.GPUStartTime/GPUEndTime`, or a 
 device's own conversion; and what an empty or single-entry range resolves to. Both are cheap to answer in a
 process with no window in it, which is where section 90's smoke goes.
 
+### The first counter smoke: the road works, the unit is a nanosecond, and the sampling points do not attribute
+
+Section 90's smoke follows the header reading from the round before it, and its first version is red - which is
+the result, not a setback, because what it establishes is *which* roads give a per-pass GPU time and none of the
+two tried does.
+
+**What works.** `MTL4CounterHeap.create` makes a heap of type `Timestamp` through the device's
+`newCounterHeapWithDescriptor:error:`; timestamps written into it resolve with `resolveCounterRange:`; and the
+resolve is legal after the ring's own wait because the header's stated rule - "signaling an instance of
+`MTLSharedEvent` after any workloads write counters (and waiting on that signal on the CPU) is sufficient to
+ensure synchronization" - is what the ring already does per submission. Nothing new was needed for
+synchronization. Zero is refused as a reading, because the header documents that an invalidated entry resolves
+as zero and a zero is not a time.
+
+**The unit is measured, not assumed.** `sampleTimestamps:gpuTimestamp:` sampled twice around a 20 ms sleep
+returns a GPU delta and a CPU delta that are equal to the tick:
+
+```text
+samplerGpuDeltaTicks=21721000   samplerCpuDeltaNs=21721000
+samplerGpuDeltaTicks=25084959   samplerCpuDeltaNs=25084959
+```
+
+So **a counter tick is a nanosecond on this device**. The header never says the two clocks share a unit, which is
+why it is measured; `MTL4CounterHeap`'s readings can therefore be read as nanoseconds without a conversion
+factor.
+
+**What does not work.** Two passes with a known and very different workload, bracketed by timestamps:
+
+```text
+first attempt   4096x4096 clear     ~16,000 ticks
+                512x512 clear       ~31,000 ticks     (a 64-fold difference in store, backwards)
+second attempt  128 fullscreen draws 14,644 ticks
+                1 fullscreen draw     31,320 ticks     (128 megafragments, one seventh of the time)
+```
+
+The second attempt is the one that settles it. The first varied the attachment's size and both readings came out
+about 31 us, which could have been a clear being cheap; the second varies only *how much is encoded between the
+two markers*, and 128 fullscreen draws over a 1024x1024 attachment cannot cost less than one. It reports less.
+Both sampling roads behave the same way - the command buffer's `writeTimestampIntoHeap:atIndex:` *and* the render
+encoder's `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` with `Precise` and the fragment stage - so
+what those calls mark is where the command processor has reached, not where the GPU has finished. The header's
+own wording for the first is the hint: "work after this call may or may not have started".
+
+**And the instrument proves its own workload is there**, which is the check that keeps the reading honest. The
+large pass clears its attachment to black and draws the shader's colour, a pixel of it is read back on the CPU,
+and every reading says `drawsLanded=true`. Without that, "the draws cost nothing" and "the timestamps are not
+execution points" produce the same measurement, and they are different faults - so the pass's clear colour
+differs from the shader's deliberately, and the pixel is what separates them.
+
+**What is left to try**, in the order the evidence suggests: the GPU-timeline resolve
+(`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve in
+the command stream rather than on the CPU timeline; resolving a range of entries at once rather than one at a
+time; and the whole-frame road the frame path already uses, `MTL4CommitFeedback.GPUStartTime/GPUEndTime`, which
+does produce plausible per-frame times and may be the only attribution this API gives. **Until one of them
+brackets execution, no per-pass GPU time is reported**, and the census stays red on this smoke so that an
+unproven instrument cannot look green - which is section 96's rule applied to an instrument rather than to an
+optimisation.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

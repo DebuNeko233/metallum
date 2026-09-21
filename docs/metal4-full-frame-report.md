@@ -720,7 +720,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it. **Both halves of the presented frame are readable on both generations** behind `-Dmetallum.drawableReadback=true` (the layer's `framebufferOnly` off, the picture the triangle sampled *and* the drawable it wrote copied into a shared buffer, read when the slot completes, one formatter in the shared layer) | yes - 30 presents a window; **and the two arms compared on one scene, one fixture, one switch, at ten and at forty seconds of settle (1366/1372 and 4951/4953 readbacks): both present the fixture's acceptance colour (pure green, red and blue at zero), and on both arms the picture read is the drawable written, frame for frame - so the present pass is the identity on this fixture and the difference is frame content, not present treatment.** One difference is measured and persists forty seconds: the Metal 4 frame is flat green with **alpha 0** where the Metal 3 frame is flat opaque green - invisible on an opaque layer, mechanism not yet localised (the pack's write into the game's target, a later pass, or the sampling of it), and its experiment is a pass-boundary copy plus a fixture whose colour is asymmetric and whose alpha is not 1. The "gentle radial ramp (230..255)" registered in an earlier round is **withdrawn**: it was the Metal 3 arm's frame still cross-fading from the loading screen, and at forty seconds that arm reads flat opaque green. **Orientation is PROVEN on a second, diagnostic fixture** (four quadrant colours at alpha 0.5): both arms present the same arrangement sample for sample - the present draw swaps the two ends of the memory-vertical axis and nothing else - and the RGBA8/BGRA8 channel conversion is correct on both. **The alpha is not the pack's**: the shader's alpha moved 1.0 to 0.5 and the stored alpha did not move on either arm (255 on Metal 3, 0 on Metal 4), so the difference is in the frame's own clear rather than in the pack's write, and which writer owns that channel is not yet localised. **The full-frame path is the session's only Metal 4 submission structure**: the present-only sidecar is not started when Metal 4 executes (measured before and after the convergence change - its start line 1 time and one commit-feedback registration against 0, with the frame encoder presenting 1964 then 2182 frames), and it is still started for the reference shell, a Metal 3-executing session with the property on | yes |
 | MetalFX spatial | yes         | **a second path, not a parameter of the first** - this generation's own compiler (`newCompilerWithDescriptor:error:`), its own scaler made by the descriptor's Metal 4 spelling, its own configuration-keyed cache, and an encode into a `MTL4CommandBuffer` | **yes, in a live frame**: `metalFxAvailable()` answers the scaler path's own existence, and at renderscale=55 Vitrail logs `The 55% render scale brings the picture back with MetalFX` on this path with the reference arm's program set (333 identities, 712 compiles) and the pack's own scaled targets (704x396, 1408x792) on both. Output orientation for the scaler is NOT MEASURED | yes |
-| counters        | whole frame | no - the Metal 3 frame's whole-frame driver time is its own | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; not comparable with Metal 3's `gpuMillis` until section 92 is established. **The per-pass counter road's API is now read off this machine's headers and written into `docs/metal4-migration.md`** - `MTL4CounterHeap` of type `Timestamp`, `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` on a render encoder, and `resolveCounterRange:` on the CPU timeline, whose header states that signalling a shared event after the workloads and waiting for it on the CPU is sufficient - which is what the frame ring already does. No counter smoke exists yet | yes |
+| counters        | whole frame | **the heap road now works and its unit is measured** - a `MTL4CounterHeap` of type Timestamp, timestamps written from the frame's own command buffer, resolved on the CPU after the ring's shared-event wait, monotonic, and `sampleTimestamps:gpuTimestamp:` sampled twice around a sleep returns `gpuDelta=21721000` against `cpuDelta=21721000` ns, so **a counter tick is a nanosecond on this device**. **But its sampling points do not attribute a pass's work**: 128 fullscreen draws report 14,644 ticks where one reports 31,320, with the workload proven present by a pixel readback (`drawsLanded=true`), and the same shape held when the knob was the attachment's size. Neither the command-buffer marker nor the render encoder's after-fragment `Precise` timestamp brackets execution. Blocker 15. Section 90's smoke is therefore RED | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; not comparable with Metal 3's `gpuMillis` until section 92 is established. **The per-pass counter road's API is now read off this machine's headers and written into `docs/metal4-migration.md`** - `MTL4CounterHeap` of type `Timestamp`, `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` on a render encoder, and `resolveCounterRange:` on the CPU timeline, whose header states that signalling a shared event after the workloads and waiting for it on the CPU is sufficient - which is what the frame ring already does. No counter smoke exists yet | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
 and its blanks are the work. A `yes` in `M4 real frame` means the harness collected it from a frame the client
@@ -1011,6 +1011,39 @@ answered rather than only what is left.
    about the API that the render-scale frame is consistent with and does not falsify. The experiment that would is
    a fixture whose scaled output is read back at the input's size and compared against a pattern the input could
    not have produced late.
+
+15. **The GPU timestamp road works and its sampling points do not attribute a pass, so section 90's smoke is
+   red.** What is proven: `MTL4CounterHeap` is made, timestamps written into it resolve on the CPU after the
+   ring's own shared-event wait (the header states that rule and the ring already implements it), the three
+   readings are monotonic, and the unit is a **nanosecond** - measured rather than assumed, by sampling
+   `sampleTimestamps:gpuTimestamp:` twice around a sleep and finding the GPU and CPU deltas equal to the tick
+   (`gpuDelta=21721000` against `cpuDelta=21721000`). What is not:
+
+   ```text
+   workload                                          small            large          ratio
+   128 vs 1 fullscreen draws, 1024x1024              31,320 ticks     14,644 ticks   0.5
+   4096x4096 vs 512x512 clears (before the draws)    ~31,000 ticks    ~16,000 ticks  0.5
+   ```
+
+   More work reports **less** time, and neither magnitude is near what the work must cost - 128 megafragments
+   cannot be under a millisecond, and one fullscreen clear of 64 MiB cannot be 16 microseconds. Both roads were
+   tried and both behave the same way: the command buffer's `writeTimestampIntoHeap:atIndex:` and the render
+   encoder's `writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` with `Precise` and the fragment stage.
+   The header's own wording for the first is the hint - "work after this call may or may not have started" - so
+   what it marks is where the command processor has reached and not where the GPU has finished.
+
+   **The workload is proven present before the timing is judged**, which is what separates the two explanations:
+   the large pass clears its attachment to black and draws the shader's colour, a pixel is read back, and every
+   reading says `drawsLanded=true`. Without that check, "the draws cost nothing" and "the timestamps are not
+   execution points" are the same measurement, and they are different faults.
+
+   What is left to try, in the order the evidence suggests: the GPU-timeline resolve
+   (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve
+   itself in the command stream; more than one entry resolved at once, since this smoke resolves one at a time;
+   and the whole-frame road the frame path already uses (`MTL4CommitFeedback.GPUStartTime/GPUEndTime`), which does
+   produce plausible per-frame times and may be the only attribution this API gives. **Until one of them
+   brackets execution, no per-pass GPU time may be reported**, and the census stays red on this smoke so that an
+   unproven instrument cannot look green.
 
 ## Metal 4 full-frame implementation complete?
 
