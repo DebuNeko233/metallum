@@ -37,8 +37,13 @@ Track C  Vitrail GPU / shader work    C1 corpus DONE and C3 answered (docs/vitra
                                       5.7 % there and is UNRESOLVED on Complementary, so raising the default
                                       interval is DEFERRED; the entity family is measured (one extra full-size pass and 129 MiB
                                       of attachment traffic a frame, wall unresolved) and the voxel family is
-                                      NOT MEASURED;
-                                      C4-C7 not started
+                                      NOT MEASURED. C4/C5/C6 DONE in the same document: the frame-end
+                                      copybacks are 6/4/10 targets a frame (2/0/3 of them read by nothing),
+                                      eliding the unread ones removes exactly those and is worth 17.6 MiB a
+                                      frame on MakeUp and 2.6 on Photon for about 1 % of a frame where a
+                                      session can resolve one - REJECTED as a default; feedback snapshots are
+                                      ZERO on every corpus pack; every mip chain has the reader that asked
+                                      for it, and the census now says which target. C7 remains
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
                                       with the binding census it closes the CPU micro-optimisation round

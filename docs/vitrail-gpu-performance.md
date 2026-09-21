@@ -349,3 +349,155 @@ frame, 129 MiB of attachment traffic a frame, and a wall price this session coul
    carry their own reference and whose repeats agree - which needs the machine to hold one state for the length
    of a session.
 2. **C7's corpus** and **C3's remaining three scales**, unchanged from the list above.
+
+---
+
+# C4, C5 and C6 - the copies, the feedback targets, and the chains
+
+Starting Metallum SHA: `6ac62a6`
+Ending Metallum SHA: `6ac62a6` + this round's documents
+Starting Vitrail SHA: `5b498e70`
+Ending Vitrail SHA: `5b498e70` + this round's labelled mipmap census
+
+## Question
+
+C4 asks which copies are a semantic requirement and which are only a schedule result, and which packs never
+read what they copy. C5 asks how many feedback snapshots a frame takes and what they cost. C6 asks how many mip
+chains are reduced, of which targets, and whether any is filled after nobody reads it. All three are structural
+questions in a programme whose frame-time instrument cannot resolve a few per cent, and two of the three turned
+out to be answerable from counters that already existed.
+
+## Instrument
+
+- **The copybacks are declared at load**, once per pack: *"N targets are copied back from their far half at the
+  end of every frame, because the pack keeps them and the chain left them there: [...], and M of those are read
+  by nothing in the frame"*. The `-Dvitrail.elideTargetCopies` arm, written by the earlier programme and off by
+  default, is what turns that list into a measurement.
+- **The blit counter** (`blits`, `blittedMiB` in the frame probe) is what the earlier programme said was missing
+  when it first looked at this: a copy-back is a transfer, so no attachment counter sees one.
+- **`TargetCopyCensus`** already prints *"Feedback copies: N copies of X MiB in the last M ms"* once a second,
+  and fires only where a geometry program samples a target it also writes.
+- **`MipmapCensus`** already printed chains, levels and pixels; what it could not say was *which* target, and a
+  rate of four chains a second is four images and not one. It now takes the caller's label - a pack target's own
+  name, or `shadow` / `shadowtex1` for the map's two images - and prints the breakdown. The count is taken at the
+  one road both callers reach, so a pack target's chain is counted once.
+
+## A/B - the copybacks, across the corpus
+
+Three arms a pack, one session each: `plain`, `elide`, `plain-b`. Order and counts are the engine's; the frame
+times are the session's own.
+
+```
+scene           copied back   read by nothing   elide removes   blits/600        blittedMiB/600
+MakeUp               6            2             2 copies        5400 -> 4200     143305.7 -> 132758.8
+Complementary        4            0             0               4800 -> 4800      58175.4 ->  58175.4
+Photon              10            3             3 copies        6600 -> 4800      49516.1 ->  47927.3
+no-pack              0            -             -               -                 -
+```
+
+**The declaration and the counter agree on all three packs**, which is the correctness result: the switch removes
+exactly the copies the engine said nothing reads, and no others. What they are worth is exact too: **17.6 MiB a
+frame** on MakeUp, where both unread copies are full-size 1920x1200 targets at 8.79 MiB each, and **2.6 MiB a
+frame** on Photon, where all three are small ones at 0.88 MiB - the resolution ladder it draws into, not the
+window. On Complementary the switch removes nothing at all, because nothing there is unread, and the frame is
+unchanged to the byte.
+
+The frame times, against each session's own repeat pair:
+
+```
+MakeUp          plain 6.731   plain-b 6.740   (0.13 % apart)   elide 6.657   -1.1 %
+Complementary   plain 8.280   plain-b 9.988   (20.6 % apart)   elide 8.323   +0.5 %   (nothing removed)
+Photon          plain 13.158  plain-b 12.144  ( 8.4 % apart)   elide 12.535  -4.7 %   (inside the spread)
+```
+
+**So the copy class is REJECTED as a default, on the corpus rather than on one pack.** One session resolves 1.1
+per cent on the pack whose copies are a seventh of its blit traffic; the other two cannot resolve anything, and
+the pack that removes nothing moves by half a per cent - which is the noise floor of this machine saying what it
+is. That is the same verdict the earlier programme reached on Photon alone, now with three packs and with the
+blit counter that was missing then; section 5's rule G applies, and the switch stays where it is, off by default.
+
+## C5 - feedback snapshots
+
+**Zero, on every pack of the corpus.** `TargetCopyCensus` exists, prints once a second and never fires: none of
+MakeUp, Complementary or Photon samples a colour target on the half it writes, which is the condition that makes
+the engine keep a copy. The mechanism is a semantic workaround and not an optimisation - the public descriptor
+cannot express a pass that reads its own attachment - so C5's "only optimise where a real pack shows a
+significant cost" resolves to nothing to optimise, with the counter standing for the pack that does need it
+(Sildur's water, in the class's own note). **NOT MEASURED on any pack outside this corpus**: no real pack of the
+corpus triggers it, so its cost has never been paid here.
+
+## C6 - the chains, by target
+
+`plain` arms, 600-frame windows, chains a frame derived from the interval and the window's frame rate.
+
+```
+scene           chains/frame   targets
+no-pack             0          none: no pack, no chain
+MakeUp              2.0        colortex0 alt, colortex1
+Complementary       4.0        colortex5 alt, colortex0 alt, colortex3, colortex0
+Photon              2.0        colortex11 alt, colortex5
+```
+
+Every chain is 11 levels (the pack targets' full chain), and every one of them is filled **because a pass asked
+for a lod**: `PackChain` generates a surface's chain at the `lodRead` that precedes the reader and only where the
+surface is not already current for this frame, so a chain nothing reads cannot be filled by construction. The
+map's own two images follow the pack's declaration instead - MakeUp's, Complementary's and Photon's ask for no
+shadow chain at all, which the allocation line says by its silence - and the fixture that does declare them gets
+exactly two, verified this round by running `tests/fixtures/shaderpacks/shadow-mipmap-contract` through the
+performance harness:
+
+```
+Shadow map allocated at 1024x1024, ... and the pack asks for a chain the light fills every frame,
+  10 levels where it reads shadowtex0 and ... where it reads shadowtex1
+Mip chains: 1002 reduced over 1000 ms (1001.1 a second), 10.0 a chain, by target shadowtex1=501,shadow=501
+```
+
+**No candidate: the validity rule the plan asks about is already the rule in force.** A chain is filled for a
+reader that asked for a lod and skipped when it is still true, and the shadow pair exists only where a pack
+declared it. What the new labels add is that a reading of the line can now tell the shadow map's chains from a
+pack's - which the corpus does not exercise, and the fixture does.
+
+## Correctness
+
+- No engine behaviour changed: the copy measurements are the existing switch and the existing counters, and the
+  mipmap census change is counting, a label and a line, with the chain itself filled by the same call it was.
+- The A/B's correctness argument is the engine's own reader analysis: a copyback is elided only where the plan's
+  own read set says nothing reads that target in the frame, which is why Complementary removes nothing.
+- The Vitrail suite passes (267 tests), including two assertions updated for the changed call shape - the
+  capability check and the chain-written pair - and a new test pinning the label flow and the single counting
+  site. The shadow-chain road was then exercised end to end through the fixture above.
+- Every arm reported Metal 3 and its target through the harness's guards, and the scene counters agree with the
+  corpus to the tenth (`loadedMiB 231450.5` on MakeUp, `321.8` a frame on Complementary).
+
+## Decision
+
+**REJECTED - eliding the unread copybacks, as a default.** Correct, counter-confirmed, and 17.6 or 2.6 MiB a
+frame; the one session that resolves a frame time puts it at 1.1 per cent. The switch stays off by default.
+
+**NOTHING TO OPTIMISE - C5.** Zero feedback snapshots across the corpus, with the counter in place for the pack
+that needs one.
+
+**NO CANDIDATE - C6.** Every chain has the reader that asked for it; the shadow pair follows the pack's own
+declaration.
+
+**KEPT - the labelled census.** A chain's target is now in the line, which is what makes C6's question answerable
+at all.
+
+## Residual
+
+- **C4's wall on two of three packs is UNRESOLVED**: Complementary's repeat pair is 20.6 per cent apart and
+  Photon's 8.4, so neither can carry a verdict - the same machine state that limits every frame-time claim in
+  this programme.
+- **C5 is not measured where it costs anything.** No corpus pack takes a feedback copy, so its price on a pack
+  that does (Sildur's water) is unknown.
+- **The copybacks' *sizes* were derived from the counter** (17.6 MiB over 2 copies, 2.6 over 3) rather than read
+  per target; which of the ten Photon targets the three small ones are is not said by any line.
+- **C7 remains**: the attachment-traffic switch (`elideTargetTraffic`) on this corpus, which the plan wants
+  before it is closed.
+
+## Next
+
+1. **C7's attachment traffic** on the same three packs, which is the last item of the plan's phase 53 list that
+   has not been measured on this corpus.
+2. **C3's remaining three scales**, and the entity/interval re-measurement, both of which need a machine that
+   holds one state for a session.
