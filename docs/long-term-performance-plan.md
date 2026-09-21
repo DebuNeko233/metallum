@@ -21,11 +21,15 @@ change, or a deterministic fixture that regresses. A Metal 4 *performance* findi
 ## The tracks, and where each stands
 
 ```
-Track A  Metal 3 performance          A1 census DONE (docs/metal3-performance-round2.md); A2 rejected as measured;
-                                      A3/A4/A5 not started
-Track B  Vitrail CPU / runtime        B1 not started - the next thing
+Track A  Metal 3 performance          A1 census DONE (docs/metal3-performance-round2.md); A2/A3 rejected as
+                                      measured (redundant binds are 0.1-0.3 % of a frame); A4/A5 not started
+Track B  Vitrail CPU / runtime        B1 DONE (docs/vitrail-cpu-performance.md): the frame is 13-17 % CPU
+                                      and allocates 71-183 KiB a frame; JFR rejected by measurement; the
+                                      per-road allocation attribution is the live question
 Track C  Vitrail GPU / shader work    C1-C7 not started
-Track D  Vitrail <-> Metallum         D1 not started - the bridge census
+Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
+                                      already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
+                                      with the binding census it closes the CPU micro-optimisation round
 Track E  MetalFX spatial              E1 pinned; E2 scale ladder not measured
 Track F  shader/pipeline/startup      F1-F4 not started
 Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines);

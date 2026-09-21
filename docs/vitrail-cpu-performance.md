@@ -86,6 +86,28 @@ measured frame rates that is about **42 MB/s and 27 MB/s** of Java allocation on
 now has the baseline it was missing - but this file does not claim which objects they are, because that needs a
 per-road census and not a profiler.
 
+### The reading is stable between windows that draw the same frame, and one window was an outlier
+
+Four windows of one configuration on one scene later in the same round (`run/b1-repeat` arms `a` and `b`, and
+the two windows above):
+
+```
+window                    windowMs   render thread CPU   allocated
+b1-nopack                 1006.54           136.17 ms      42765 KiB
+b1-repeat a                999.99           142.40 ms      36839 KiB
+b1-repeat b               1006.91           144.21 ms      41351 KiB
+run/d1-nopack             1003.51           265.34 ms     291727 KiB
+```
+
+Three of the four agree to 6 % on CPU and 15 % on allocation. The fourth read **1.9x the CPU and 6.8x the
+allocation with every scene counter identical** - same `windowMs`, same `gpuMs` (809 against 820), same
+`encoders` (1920 against 1921), same `loadedMiB`, same `windowTicks` - and its log shows the chunk builder
+restarting its workers 26 seconds before the window opened, which is inside the settle and not inside the window.
+**Why that window allocated 285 MiB is NOT MEASURED.** What it means for reading these numbers is written down
+rather than averaged away: a window's CPU and allocation are readings of *that window's own content*, they can
+move by a factor of several with no counter to show it, and a comparison must be the same-session A/B the rest of
+this file's discipline already requires - with the run-to-run spread quoted beside any claim.
+
 ## Decision
 
 **KEPT: `frameCpuMs` and `allocKiB`**, two readings a window on the line the harness already parses.
