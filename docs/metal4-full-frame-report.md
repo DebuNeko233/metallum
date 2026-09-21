@@ -796,6 +796,22 @@ which is the fault a fixture with a single zero-offset range cannot see, and the
 decoy set at byte zero. `tools/ci-metal4-cold-probe.py` pins the shape, the call, the non-zero offset, the second
 binding and both diagnostic sentences, and each pin was mutation-proved (eight mutations, eight caught).
 
+**And the face data was never copied, which is why nothing about it can be dropped in silence.** The
+acceptance list asks that the bytes the shader reads be shown to be the bytes the CPU generated rather than the
+copy merely having been encoded - the GUI road is the reason, where a copy was encoded and moved nothing for want
+of a residency declaration. For the cloud's buffer the question has a shorter answer, and it is read out of the
+game rather than argued: the renderer builds its face buffer as `MappableRingBuffer(supplier, 258, size)`, and
+`GpuBuffer`'s own constants make that `USAGE_UNIFORM_TEXEL_BUFFER (256) | USAGE_MAP_WRITE (2)` - `CloudInfo`'s is
+`130`, `USAGE_UNIFORM | USAGE_MAP_WRITE`. It then maps it write-only (`map(false, true)`), and on this backend a
+mapped buffer **is** the allocation the GPU reads: `MetalGpuBuffer.toMtlResourceOptions` puts every buffer whose
+usage includes `MAP_WRITE` (or `MAP_READ`, `INDEX`, `HINT_CLIENT_STORAGE`) in `MTLStorageMode.Shared`, `map(...)`
+hands out a view of that same storage, and the view's own close action is **empty** - there is no staging buffer
+and no copy encoder on this road at all. So the two ends the copy checklist names are one object, and the
+device-level proof is the texel-buffer smoke above, where a CPU-filled shared range is read back through a
+buffer-backed view byte for byte. `tools/ci-contracts.py` now pins the invariant as "Metal mapped-buffer
+allocation" - the storage-mode rule, the view over the buffer's own storage, the empty close action and
+`writeDirect`'s direct write - and all four pins were mutation-proved.
+
 **And one thing is left: this path's overworld frame is lighter than the reference's.** On those same captures the
 sky and the clouds are both shifted toward white on Metal 4 - sky at one column reading `(125,155,225)` at the top
 against `(172,190,227)`, a roughly constant offset down the whole column - so a whole-frame pixel comparison still

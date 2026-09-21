@@ -83,6 +83,17 @@ for mapping in (
 if "case LESS_THAN_OR_EQUAL -> LessEqual;" not in compare:
     raise SystemExit("Missing forward-depth compare mapping")
 
+require("Metal mapped-buffer allocation", "src/main/java/com/metallum/render/shared/MetalGpuBuffer.java", (
+    # The invariant a mapped upload rests on, and the reason the cloud's face data needs no copy at all: a
+    # buffer the CPU writes is the buffer the GPU reads - one shared allocation, handed out as a view of its own
+    # storage, with nothing to encode on close. A staging path here would put a copy between the two, and a
+    # copy that is encoded but not resident is one the engine has already been bitten by once (the GUI road).
+    "MTLStorageMode storageMode = isCpuAccessible(usage) || isDynamic(usage) ? MTLStorageMode.Shared "
+    ": MTLStorageMode.Private;",
+    "ByteBuffer mapped = this.sliceStorage(offset, length);",
+    "return new GpuBufferSlice.MappedView(this.slice(offset, length), mapped, () -> {",
+    "this.sliceStorage(offset, data.remaining()).put(data.duplicate());",
+))
 require("Metal texture allocation", "src/main/java/com/metallum/render/shared/MetalGpuTexture.java", (
     "this.mtlPixelFormat = MTLPixelFormat.from(format);",
     "descriptor.pixelFormat(this.mtlPixelFormat);",

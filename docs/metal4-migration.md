@@ -5950,6 +5950,14 @@ the control is measured too - with the second re-point removed, on the device, t
 read the other buffer's texel 0 colour (1, 0, 0, 255) at column 0 where its own texel 0's 2 was asked for, so
 the table's binding was not the one this pass was given`, and the harness exits non-zero on it.
 
+**And the face data is not copied, so no residency can be missing on that road.** The renderer's own bytecode
+builds the face buffer as an `R8_SINT` texel buffer with `USAGE_UNIFORM_TEXEL_BUFFER | USAGE_MAP_WRITE` (258) and
+maps it write-only; a mapped buffer on this backend is created `MTLStorageMode.Shared`, its mapped view *is* the
+buffer's own storage, and the view's close action is empty - one allocation, no staging, no copy encoder. The
+bytes the shader reads are therefore the CPU's by construction, and the device-level reading is the probe's
+texel-buffer smoke, where a CPU-filled shared range comes back byte for byte. The invariant is pinned in
+`tools/ci-contracts.py`.
+
 **What remains, recorded rather than folded in:** the Metal 4 overworld frame is *lighter* than the reference's -
 sky and clouds both shifted toward white by a roughly constant offset (sky `(125,155,225)` against
 `(172,190,227)` at the top of one column) - so a whole-frame picture comparison still separates the generations
