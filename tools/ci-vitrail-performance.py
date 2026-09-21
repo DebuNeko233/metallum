@@ -437,6 +437,21 @@ for needle, why in (
      "the first target lookup is not tolerant of finding nothing, so under pipefail a build that does not "
      "print that line kills the harness instead of falling through to the second wording"),
     ("head -1 || true)", "the second target lookup is not tolerant either"),
+    # And the machine, which is the one input to an arm's wall time that is not this program's. Measured:
+    # session run/perf-ab4's two Metal 3 arms agreed to 0.6 per cent while its two Metal 4 arms differed by
+    # 47.7, with the same 8 ms difference on both sides of the encoder - a spread in the frame that no log
+    # line could attribute, because the harness recorded nothing about what else the machine was doing.
+    ("cpus %s\\n", "the machine's CPU count is not recorded, so a load average cannot be read as a fraction "
+                   "of the machine"),
+    ("printf 'start %s\\n' \"$(load_average)\"",
+     "the load average at the arm's start is not recorded, which is half of what makes a spread between two "
+     "arms readable"),
+    ("printf 'end %s\\n' \"$(load_average)\" >> \"$run_dir/load.txt\"",
+     "the load average when the window closed is not recorded, so an arm whose machine got busy while it "
+     "drew cannot be told from one whose frame was slower"),
+    ("sysctl -n vm.loadavg", "the load average is not read from the kernel, so it is read from a shell "
+                             "command's wording and not from a number"),
+    ("load.txt", "nothing in the harness names the file the machine state is written to"),
 ):
     if needle not in harness:
         raise SystemExit(why)

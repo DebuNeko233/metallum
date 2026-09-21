@@ -90,8 +90,10 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          every run, so the arms of a session and the sessions of a programme are all on
                          one target.
   --expect-target WxH    refuse a run whose world is not drawn at this size, read from the log's own
-                         "The world renders at WxH" line. The render target is not pinned by anything
-                         else: the display has several fullscreen modes, the game takes the one the
+                         "The world renders at WxH" line or - for a Vitrail build that states it the
+                         pack's way - its "Drawing <pack> ... at WxH, N full screen passes" line; a build
+                         that says neither is refused rather than passed. The render target is not pinned by
+                         anything else: the display has several fullscreen modes, the game takes the one the
                          display is already in, and a crashed client can leave it on another - measured,
                          one JFR crash moved every later run from 1056x660 to 1760x990 and two arms of
                          one session were measured on a target 2.2x the baseline's. Two arms that agree
@@ -115,8 +117,9 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          different scene: a comparison across runs that share a save measures the
                          sun rather than the switch.
 
-Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log}, and the harness ends by
-printing the comparison between them.
+Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log,load.txt}, where load.txt is
+the kernel's load average at the arm's start and at its window's close - the pair that says whether a
+spread between two arms came with a busy machine. The harness ends by printing the comparison.
 USAGE
 }
 
@@ -387,6 +390,18 @@ echo "Measuring with $(basename "$jar")"
 # prints: the pack's first full frame, and the probe's window. A launcher that has already exited is
 # waited on no longer: a launch that failed says so in seconds, and a harness that sat out its whole
 # timeout for a client that never started would be a harness nobody runs.
+# How busy the machine was, which is the one input to a frame's wall time that is not this program's.
+#
+# It is sampled because the harness's own most recent comparison could not be read: session run/perf-ab4's
+# two Metal 3 arms agreed to 0.6 per cent and its two Metal 4 arms differed by 47.7, with the difference
+# the same magnitude on both sides of the encoder - so the spread is in the frame, and nothing in the log
+# says whether the machine was quiet for one arm and not the other. This does not measure the machine, it
+# records what the kernel said it was, so a later reader can separate a spread that came with a load from
+# one that did not. Read from the kernel rather than `uptime`'s wording, which differs by build.
+load_average() {
+	sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//' || uptime
+}
+
 wait_for_log() {
 	local pattern="$1" deadline="$2" launcher="$3"
 	while [[ "$(date +%s)" -lt "$deadline" ]]; do
@@ -436,6 +451,13 @@ for run in "${runs[@]}"; do
 	run_dir="$out_dir/$name"
 	rm -rf "$run_dir"
 	mkdir -p "$run_dir"
+	# What the machine was doing when this arm started, and what it was doing when the window closed. The
+	# pair is what makes a spread between two arms of one generation readable: a difference that arrives with
+	# a load is the machine's, and one that does not is the frame's.
+	{
+		printf 'cpus %s\n' "$(sysctl -n hw.ncpu 2>/dev/null || echo unknown)"
+		printf 'start %s\n' "$(load_average)"
+	} > "$run_dir/load.txt"
 
 	# The world starts from the staged copy again, unless the caller asked each run to carry on. That
 	# copy holds one time of day and one player position, so two runs of one comparison draw the same
@@ -532,6 +554,7 @@ for run in "${runs[@]}"; do
 	# server to be told which one, and the harness is already standing in front of it.
 	screencapture -x "$run_dir/screen.png" 2>/dev/null || \
 		echo "No screenshot for run '$name'; the display may be locked." >&2
+	printf 'end %s\n' "$(load_average)" >> "$run_dir/load.txt"
 
 	cp -f "$game_dir/logs/latest.log" "$run_dir/latest.log" 2>/dev/null || true
 	# A run that came up on another backend is not this engine's frame, and Vitrail's own rescue is what puts
