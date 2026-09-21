@@ -317,6 +317,97 @@ public final class MetalFrameProbe {
     private static long passDescriptors;
 
     /**
+     * The Metal 3 native-call census: what a frame asks the encoder for, how many native setter calls that
+     * becomes, and how many of them carry a value the slot already has.
+     * <p>
+     * <strong>Why a shadow and not a counter.</strong> A count of binds says how much a frame does; it does not
+     * say how much of it is work. Every one of these calls ends in an {@code objc_msgSend} through a downcall
+     * handle, so the question the long-term plan asks - how much CPU this backend spends on calls whose answer
+     * the encoder already knows - can only be answered by comparing each call against what the slot holds, which
+     * means keeping that state. The shadow is kept <em>here</em> and not in the encoder because it must measure
+     * the opportunity without taking it: nothing below changes what is sent, so a session with the census on is
+     * the same frame with one more number.
+     * <p>
+     * It belongs to the native encoder rather than to the frame: a fresh encoder holds nothing, so
+     * {@link #renderEncoderRecreated} clears it - the one hook that already knows an encoder was made - while a
+     * reused encoder keeps its bindings and the shadow survives {@link #renderEncoderReused}. That distinction
+     * is most of what the number means, because a logical pass that joins an open encoder inherits every slot it
+     * does not rebind.
+     * <p>
+     * Off by default and read once, because it is a diagnostic: with {@code -Dmetallum.m3CallCensus} unset the
+     * call sites below are one boolean test and the shadow is never touched.
+     */
+    private static final boolean CENSUS = Boolean.getBoolean("metallum.m3CallCensus");
+    /** Vertex and fragment: the two stages a render encoder binds to, and the two a bind can reach. */
+    private static final int CENSUS_STAGES = 2;
+    /**
+     * Slots the shadow covers. The texture count is above Metal's own limit for the direct path because a wide
+     * pipeline reaches more through its argument buffer, and a slot outside these arrays is counted as a send
+     * rather than as a repeat: a census may not guess.
+     */
+    private static final int CENSUS_BUFFER_SLOTS = 32;
+    private static final int CENSUS_TEXTURE_SLOTS = 64;
+    private static final int CENSUS_SAMPLER_SLOTS = 16;
+    private static long[] censusBuffers;
+    private static long[] censusTextures;
+    private static long[] censusSamplers;
+    private static long censusPipeline;
+    private static long censusDepthStencil;
+    private static long censusCull = -1L;
+    private static long censusFill = -1L;
+    private static long censusWinding = -1L;
+    private static long censusBias = Long.MIN_VALUE;
+    private static long censusViewport = Long.MIN_VALUE;
+    private static long censusScissor = Long.MIN_VALUE;
+    /** Bind operations asked for, native setter calls sent, and native calls whose value the slot already had. */
+    private static long censusCalls;
+    private static long censusNative;
+    private static long censusPipelineCalls;
+    private static long censusPipelineSame;
+    private static long censusDepthStencils;
+    private static long censusDepthStencilsSame;
+    private static long censusCulls;
+    private static long censusCullsSame;
+    private static long censusFills;
+    private static long censusFillsSame;
+    private static long censusWindings;
+    private static long censusWindingsSame;
+    private static long censusBiases;
+    private static long censusBiasesSame;
+    private static long censusViewports;
+    private static long censusViewportsSame;
+    private static long censusScissors;
+    private static long censusScissorsSame;
+    private static long censusVertexBuffers;
+    private static long censusFragmentBuffers;
+    private static long censusBufferSame;
+    private static long censusVertexTextures;
+    private static long censusFragmentTextures;
+    private static long censusTextureSame;
+    private static long censusVertexSamplers;
+    private static long censusFragmentSamplers;
+    private static long censusSamplerSame;
+    private static long censusDraws;
+    private static long censusDrawsIndexed;
+    private static long censusDrawsIndirect;
+    private static long censusFenceUpdates;
+    private static long censusFenceWaits;
+    /**
+     * The indirect-draw loops: how many the frame ran, how many commands they carried, and what the loop itself
+     * cost the CPU.
+     * <p>
+     * This is the one road the census prices rather than counts. The count alone says the indirect road is the
+     * largest native-call volume in every scene measured - thousands a frame against hundreds of binds - and a
+     * count cannot say whether that is a cost or a curiosity: the calls are all necessary (one per visible
+     * terrain section), so what has to be known is what they cost, and the only honest reading is the loop's own
+     * span. Timed once per loop rather than once per call, because a clock read per call would be measuring the
+     * instrument.
+     */
+    private static long censusIndirectLoops;
+    private static long censusIndirectCommands;
+    private static long censusIndirectNanos;
+
+    /**
      * Why a logical render pass could not join the native render encoder already open, counted once per
      * attempt so that the share of reuses is read and not assumed.
      * <p>
@@ -536,6 +627,10 @@ public final class MetalFrameProbe {
             return;
         }
 
+        // A new native encoder holds no bindings, so the census's shadow of the old one is not a fact about this
+        // one. Cleared here rather than at the pass boundary, because a pass that joins the open encoder keeps
+        // everything the shadow holds and only this hook says an encoder was made instead of joined.
+        clearBindingShadow();
         encReuseAttempts++;
         int counted = 0;
         if (noEncoder) {
@@ -939,6 +1034,402 @@ public final class MetalFrameProbe {
         depthBiases++;
     }
 
+    // ---------------------------------------------------------------- the native-call census, per operation
+    //
+    // One entry point per kind of call a render encoder takes, each taking the value the call carries so the
+    // shadow above can say whether the slot already holds it. The aggregate counters the window line has always
+    // printed are incremented here too - once per *operation*, exactly as the zero-argument versions did - so a
+    // session with the census on and one with it off report the same `buffer=`, `texture=` and `sampler=`, and
+    // the census adds a reading rather than replacing one.
+
+    /**
+     * A buffer was bound to a slot at an offset, for one or both stages.
+     * <p>
+     * The shadow is keyed by handle <em>and</em> offset, because a bind with the same buffer at a different
+     * offset is a different binding and the native call is not removable.
+     */
+    public static void bufferBound(final long handle, final long offset, final int slot,
+                                   final boolean vertex, final boolean fragment) {
+        if (!armed()) {
+            return;
+        }
+        buffers++;
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        if (vertex) {
+            censusVertexBuffers++;
+            censusNative++;
+            if (sameBuffer(0, slot, handle, offset)) {
+                censusBufferSame++;
+            }
+        }
+        if (fragment) {
+            censusFragmentBuffers++;
+            censusNative++;
+            if (sameBuffer(1, slot, handle, offset)) {
+                censusBufferSame++;
+            }
+        }
+    }
+
+    /** A texture was bound to a slot, for one or both stages. */
+    public static void textureBound(final long handle, final int slot, final boolean vertex,
+                                    final boolean fragment) {
+        if (!armed()) {
+            return;
+        }
+        textures++;
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        if (vertex) {
+            censusVertexTextures++;
+            censusNative++;
+            if (sameHandle(censusTextures, 0, CENSUS_TEXTURE_SLOTS, slot, handle)) {
+                censusTextureSame++;
+            }
+        }
+        if (fragment) {
+            censusFragmentTextures++;
+            censusNative++;
+            if (sameHandle(censusTextures, 1, CENSUS_TEXTURE_SLOTS, slot, handle)) {
+                censusTextureSame++;
+            }
+        }
+    }
+
+    /** A sampler was bound to a slot, for one or both stages. */
+    public static void samplerBound(final long handle, final int slot, final boolean vertex,
+                                    final boolean fragment) {
+        if (!armed()) {
+            return;
+        }
+        samplers++;
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        if (vertex) {
+            censusVertexSamplers++;
+            censusNative++;
+            if (sameHandle(censusSamplers, 0, CENSUS_SAMPLER_SLOTS, slot, handle)) {
+                censusSamplerSame++;
+            }
+        }
+        if (fragment) {
+            censusFragmentSamplers++;
+            censusNative++;
+            if (sameHandle(censusSamplers, 1, CENSUS_SAMPLER_SLOTS, slot, handle)) {
+                censusSamplerSame++;
+            }
+        }
+    }
+
+    /** A render pipeline state was set. */
+    public static void pipelineBound(final long handle) {
+        if (!armed()) {
+            return;
+        }
+        pipelines++;
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusPipelineCalls++;
+        censusNative++;
+        if (censusPipeline == handle) {
+            censusPipelineSame++;
+        } else {
+            censusPipeline = handle;
+        }
+    }
+
+    /** A depth-stencil state was set. */
+    public static void depthStencilBound(final long handle) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusDepthStencils++;
+        censusNative++;
+        if (censusDepthStencil == handle) {
+            censusDepthStencilsSame++;
+        } else {
+            censusDepthStencil = handle;
+        }
+    }
+
+    /** The cull mode, the fill mode or the winding order was set. */
+    public static void cullSet(final long mode) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusCulls++;
+        censusNative++;
+        if (censusCull == mode) {
+            censusCullsSame++;
+        } else {
+            censusCull = mode;
+        }
+    }
+
+    /** The triangle fill mode was set. */
+    public static void fillSet(final long mode) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusFills++;
+        censusNative++;
+        if (censusFill == mode) {
+            censusFillsSame++;
+        } else {
+            censusFill = mode;
+        }
+    }
+
+    /** The front-facing winding order was set. */
+    public static void windingSet(final long mode) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusWindings++;
+        censusNative++;
+        if (censusWinding == mode) {
+            censusWindingsSame++;
+        } else {
+            censusWinding = mode;
+        }
+    }
+
+    /** A depth bias was set, with the two floats packed so a comparison is one test. */
+    public static void depthBiasSet(final float constant, final float scaleFactor) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        final long packed = ((long) Float.floatToIntBits(constant) << 32)
+                | (Float.floatToIntBits(scaleFactor) & 0xFFFFFFFFL);
+        censusCalls++;
+        censusBiases++;
+        censusNative++;
+        if (censusBias == packed) {
+            censusBiasesSame++;
+        } else {
+            censusBias = packed;
+        }
+    }
+
+    /** A viewport was set: six doubles packed into the one long the shadow compares. */
+    public static void viewportSet(final double originX, final double originY, final double width,
+                                   final double height, final double near, final double far) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        final long packed = Double.doubleToLongBits(originX) * 31L + Double.doubleToLongBits(originY) * 17L
+                + Double.doubleToLongBits(width) * 13L + Double.doubleToLongBits(height) * 7L
+                + Double.doubleToLongBits(near) * 3L + Double.doubleToLongBits(far);
+        censusCalls++;
+        censusViewports++;
+        censusNative++;
+        if (censusViewport == packed) {
+            censusViewportsSame++;
+        } else {
+            censusViewport = packed;
+        }
+    }
+
+    /** A scissor rect was set, packed into the one long the shadow compares. */
+    public static void scissorSet(final long x, final long y, final long width, final long height) {
+        if (!armed()) {
+            return;
+        }
+        scissors++;
+        if (!CENSUS) {
+            return;
+        }
+
+        final long packed = ((x * 31L + y) * 31L + width) * 31L + height;
+        censusCalls++;
+        censusScissors++;
+        censusNative++;
+        if (censusScissor == packed) {
+            censusScissorsSame++;
+        } else {
+            censusScissor = packed;
+        }
+    }
+
+    /** An indexed draw reached the encoder. */
+    public static void drawIndexedPrimitives(final long indexCount, final long instanceCount) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusDrawsIndexed++;
+    }
+
+    /** A non-indexed draw reached the encoder. */
+    public static void drawPrimitives(final long vertexCount, final long instanceCount) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusDraws++;
+    }
+
+    /** One loop over the game's indirect commands, with what it carried and what the loop cost. */
+    public static void indirectDrawLoop(final int commands, final long nanos) {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusIndirectLoops++;
+        censusIndirectCommands += commands;
+        censusIndirectNanos += nanos;
+    }
+
+    /** An indirect draw reached the encoder. */
+    public static void drawIndirectPrimitives() {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusDrawsIndirect++;
+    }
+
+    /** A fence was updated by an encoder. */
+    public static void fenceUpdated() {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusFenceUpdates++;
+    }
+
+    /** An encoder waited on a fence. */
+    public static void fenceWaited() {
+        if (!armed()) {
+            return;
+        }
+        if (!CENSUS) {
+            return;
+        }
+
+        censusCalls++;
+        censusFenceWaits++;
+    }
+
+    /** Whether a buffer slot already holds this handle and offset, and stores it when it does not. */
+    private static boolean sameBuffer(final int stage, final int slot, final long handle, final long offset) {
+        if (censusBuffers == null) {
+            censusBuffers = new long[CENSUS_STAGES * CENSUS_BUFFER_SLOTS];
+            censusTextures = new long[CENSUS_STAGES * CENSUS_TEXTURE_SLOTS];
+            censusSamplers = new long[CENSUS_STAGES * CENSUS_SAMPLER_SLOTS];
+        }
+        if (slot < 0 || slot >= CENSUS_BUFFER_SLOTS) {
+            return false;
+        }
+        final long packed = handle ^ (offset << 1);
+        final int index = stage * CENSUS_BUFFER_SLOTS + slot;
+        if (censusBuffers[index] == packed) {
+            return true;
+        }
+        censusBuffers[index] = packed;
+        return false;
+    }
+
+    /** Whether a handle-keyed slot already holds this handle, and stores it when it does not. */
+    private static boolean sameHandle(final long[] shadow, final int stage, final int slots, final int slot,
+                                      final long handle) {
+        if (censusTextures == null) {
+            censusBuffers = new long[CENSUS_STAGES * CENSUS_BUFFER_SLOTS];
+            censusTextures = new long[CENSUS_STAGES * CENSUS_TEXTURE_SLOTS];
+            censusSamplers = new long[CENSUS_STAGES * CENSUS_SAMPLER_SLOTS];
+        }
+        if (slot < 0 || slot >= slots) {
+            return false;
+        }
+        final int index = stage * slots + slot;
+        if (shadow[index] == handle) {
+            return true;
+        }
+        shadow[index] = handle;
+        return false;
+    }
+
+    /**
+     * Forgets every binding the shadow holds, because a new native encoder holds none.
+     * <p>
+     * Called from {@link #renderEncoderRecreated}, which is the one place that knows an encoder was made rather
+     * than joined. A missed clear would read a frame's first bind as a repeat of the last encoder's, which is
+     * the one way this census can overstate what could be removed.
+     */
+    private static void clearBindingShadow() {
+        if (censusBuffers == null) {
+            return;
+        }
+        java.util.Arrays.fill(censusBuffers, 0L);
+        java.util.Arrays.fill(censusTextures, 0L);
+        java.util.Arrays.fill(censusSamplers, 0L);
+        censusPipeline = 0L;
+        censusDepthStencil = 0L;
+        censusCull = -1L;
+        censusFill = -1L;
+        censusWinding = -1L;
+        censusBias = Long.MIN_VALUE;
+        censusViewport = Long.MIN_VALUE;
+        censusScissor = Long.MIN_VALUE;
+    }
+
     /**
      * A render pipeline state was created, which happens off the frame path and is therefore read as
      * a session cost beside the per-frame counts.
@@ -1112,6 +1603,64 @@ public final class MetalFrameProbe {
                     argBufferDraws,
                     texelViews,
                     passDescriptors
+            );
+        }
+        if (CENSUS && censusCalls > 0) {
+            // The native-call census: what the frame asked for, what that became in native setter calls, and how
+            // many of those calls carried a value the slot already had. `repeated` is the whole point - it is the
+            // share of this backend's call volume that A2 could remove without changing a pixel, and it is
+            // measured against the encoder's own shadow rather than argued from the call count.
+            Metallum.LOGGER.info(
+                    "frame-probe m3native calls={} native={} repeated={} "
+                            + "pipeline={} pipelineSame={} depthStencil={} depthStencilSame={} "
+                            + "cull={} cullSame={} fill={} fillSame={} winding={} windingSame={} "
+                            + "depthBias={} depthBiasSame={} viewport={} viewportSame={} scissor={} scissorSame={} "
+                            + "vertexBuffer={} fragmentBuffer={} bufferSame={} "
+                            + "vertexTexture={} fragmentTexture={} textureSame={} "
+                            + "vertexSampler={} fragmentSampler={} samplerSame={} "
+                            + "argBufferSet={} argBufferSkipped={} draws={} drawsIndexed={} drawsIndirect={} "
+                            + "indirectLoops={} indirectCommands={} indirectCpuMs={} "
+                            + "fencesUpdated={} fencesWaited={}",
+                    censusCalls,
+                    censusNative,
+                    censusTextureSame + censusSamplerSame + censusBufferSame
+                            + censusPipelineSame + censusDepthStencilsSame + censusCullsSame + censusFillsSame
+                            + censusWindingsSame + censusBiasesSame + censusViewportsSame + censusScissorsSame,
+                    censusPipelineCalls,
+                    censusPipelineSame,
+                    censusDepthStencils,
+                    censusDepthStencilsSame,
+                    censusCulls,
+                    censusCullsSame,
+                    censusFills,
+                    censusFillsSame,
+                    censusWindings,
+                    censusWindingsSame,
+                    censusBiases,
+                    censusBiasesSame,
+                    censusViewports,
+                    censusViewportsSame,
+                    censusScissors,
+                    censusScissorsSame,
+                    censusVertexBuffers,
+                    censusFragmentBuffers,
+                    censusBufferSame,
+                    censusVertexTextures,
+                    censusFragmentTextures,
+                    censusTextureSame,
+                    censusVertexSamplers,
+                    censusFragmentSamplers,
+                    censusSamplerSame,
+                    argBufferSetCalls,
+                    argBufferSetSkipped,
+                    censusDraws,
+                    censusDrawsIndexed,
+                    censusDrawsIndirect,
+                    censusIndirectLoops,
+                    censusIndirectCommands,
+                    String.format(Locale.ROOT, "%.2f", censusIndirectNanos / 1_000_000.0),
+                    censusFenceUpdates,
+                    censusFenceWaits
             );
         }
         if (uploadCalls > 0) {
@@ -1294,6 +1843,43 @@ public final class MetalFrameProbe {
         encReuseSingleContents = 0;
         encReuseSingleNoEncoder = 0;
         encReuseMultiple = 0;
+        // The census's counters reset with the window; its *shadow* does not, because the shadow is a fact about
+        // the native encoder still open and the next window's first bind has to be compared against it.
+        censusCalls = 0;
+        censusNative = 0;
+        censusPipelineCalls = 0;
+        censusPipelineSame = 0;
+        censusDepthStencils = 0;
+        censusDepthStencilsSame = 0;
+        censusCulls = 0;
+        censusCullsSame = 0;
+        censusFills = 0;
+        censusFillsSame = 0;
+        censusWindings = 0;
+        censusWindingsSame = 0;
+        censusBiases = 0;
+        censusBiasesSame = 0;
+        censusViewports = 0;
+        censusViewportsSame = 0;
+        censusScissors = 0;
+        censusScissorsSame = 0;
+        censusVertexBuffers = 0;
+        censusFragmentBuffers = 0;
+        censusBufferSame = 0;
+        censusVertexTextures = 0;
+        censusFragmentTextures = 0;
+        censusTextureSame = 0;
+        censusVertexSamplers = 0;
+        censusFragmentSamplers = 0;
+        censusSamplerSame = 0;
+        censusDraws = 0;
+        censusDrawsIndexed = 0;
+        censusDrawsIndirect = 0;
+        censusFenceUpdates = 0;
+        censusFenceWaits = 0;
+        censusIndirectLoops = 0;
+        censusIndirectCommands = 0;
+        censusIndirectNanos = 0L;
     }
 
     /**

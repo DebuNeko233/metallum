@@ -340,6 +340,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             }
             long firstIndexOffset = offsets.get(ValueLayout.JAVA_LONG, i * 8L);
             int baseVertex = vertices.get(ValueLayout.JAVA_INT, i * 4L);
+            MetalFrameProbe.drawIndexedPrimitives(indexCount, 1);
             enc.drawIndexedPrimitives(primitiveType, indexCount, indexType, indexBufferHandle, firstIndexOffset, 1, baseVertex, 0);
         }
     }
@@ -356,10 +357,18 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         MTLBuffer indexBufferHandle = nativeIndexBuffer.metalBuffer();
         MTLBuffer indirectBuffer = ((MetalGpuBuffer) commands.buffer()).metalBuffer();
         long indirectOffset = commands.offset();
+        // One clock read for the loop and not one per command: the question is what this road costs the CPU,
+        // and a read per call would be measuring the instrument instead. `issued` counts what the loop really
+        // ran, which is the number the census reports beside the loop's span.
+        long indirectBegan = System.nanoTime();
+        int issued = 0;
         for (int i = 0; i < drawCount; i++) {
+            MetalFrameProbe.drawIndirectPrimitives();
             enc.drawIndexedPrimitivesIndirect(primitiveType, indexType, indexBufferHandle, indirectBuffer, indirectOffset);
             indirectOffset += VkDrawIndexedIndirectCommand.SIZEOF;
+            issued++;
         }
+        MetalFrameProbe.indirectDrawLoop(issued, System.nanoTime() - indirectBegan);
     }
 
     @Override
@@ -396,6 +405,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         if (primitiveType == MTLPrimitiveType.TriangleFan) {
             drawTriangleFan(enc, firstVertex, vertexCount, instanceCount, firstInstance);
         } else {
+            MetalFrameProbe.drawPrimitives(vertexCount, instanceCount);
             enc.drawPrimitives(primitiveType, firstVertex, vertexCount, instanceCount, firstInstance);
         }
     }
@@ -420,10 +430,15 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         bindDrawState(enc);
         MTLBuffer indirectBuffer = ((MetalGpuBuffer) commands.buffer()).metalBuffer();
         long indirectOffset = commands.offset();
+        long indirectBegan = System.nanoTime();
+        int issued = 0;
         for (int i = 0; i < drawCount; i++) {
+            MetalFrameProbe.drawIndirectPrimitives();
             enc.drawPrimitivesIndirect(primitiveType, indirectBuffer, indirectOffset);
             indirectOffset += VkDrawIndirectCommand.SIZEOF;
+            issued++;
         }
+        MetalFrameProbe.indirectDrawLoop(issued, System.nanoTime() - indirectBegan);
     }
 
     @Override
@@ -501,7 +516,8 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             }
             MetalGpuBuffer nativeVertexBuffer = (MetalGpuBuffer) vertexBuffer.buffer();
             int metalSlot = firstSlot + slot;
-            MetalFrameProbe.bufferBound();
+            MetalFrameProbe.bufferBound(nativeVertexBuffer.metalBuffer().handle().address(), vertexBuffer.offset(),
+                    metalSlot, true, false);
             enc.setVertexBuffer(nativeVertexBuffer.metalBuffer(), vertexBuffer.offset(), metalSlot);
         }
     }
@@ -524,6 +540,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                 }
             }
             GpuBufferSlice slice = mapped.slice();
+            MetalFrameProbe.drawIndexedPrimitives(indexCount, instanceCount);
             encoder.drawIndexedPrimitives(
                     MTLPrimitiveType.Triangle, indexCount, fanIndexType,
                     ((MetalGpuBuffer) slice.buffer()).metalBuffer(), slice.offset(), instanceCount, firstVertex, baseInstance
@@ -552,12 +569,14 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                     (long) generatedIndexCount * Integer.BYTES, Integer.BYTES, GpuBuffer.USAGE_INDEX)) {
                 expandTriangleFan(mapped.data().asIntBuffer(), nativeIndexBuffer.metalBuffer(), indexOffsetBytes, indexCount, indexType);
                 GpuBufferSlice slice = mapped.slice();
+                MetalFrameProbe.drawIndexedPrimitives(generatedIndexCount, instanceCount);
                 enc.drawIndexedPrimitives(
                         MTLPrimitiveType.Triangle, generatedIndexCount, MTLIndexType.UInt32,
                         ((MetalGpuBuffer) slice.buffer()).metalBuffer(), slice.offset(), instanceCount, baseVertex, baseInstance
                 );
             }
         } else {
+            MetalFrameProbe.drawIndexedPrimitives(indexCount, instanceCount);
             enc.drawIndexedPrimitives(primitiveType, indexCount, indexType, nativeIndexBuffer.metalBuffer(), indexOffsetBytes, instanceCount, baseVertex, baseInstance);
         }
     }
@@ -585,7 +604,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             final long index,
             final int stageMask
     ) {
-        MetalFrameProbe.bufferBound();
+        MetalFrameProbe.bufferBound(buffer.handle().address(), offset, (int) index,
+                (stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0,
+                (stageMask & MetalCompiledRenderPipeline.STAGE_FRAGMENT) != 0);
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexBuffer(buffer, offset, index);
         }
@@ -600,7 +621,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             final long index,
             final int stageMask
     ) {
-        MetalFrameProbe.textureBound();
+        MetalFrameProbe.textureBound(texture.address(), (int) index,
+                (stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0,
+                (stageMask & MetalCompiledRenderPipeline.STAGE_FRAGMENT) != 0);
         if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
             enc.setVertexTexture(texture, index);
         }
@@ -618,9 +641,11 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
     ) {
         // One of each because the two can never be counted apart here: this helper exists for the
         // bindings that always carry a sampler.
-        MetalFrameProbe.textureBound();
-        MetalFrameProbe.samplerBound();
-        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
+        final boolean vertex = (stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0;
+        final boolean fragment = (stageMask & MetalCompiledRenderPipeline.STAGE_FRAGMENT) != 0;
+        MetalFrameProbe.textureBound(texture.address(), (int) index, vertex, fragment);
+        MetalFrameProbe.samplerBound(sampler.address(), (int) index, vertex, fragment);
+        if (vertex) {
             enc.setVertexTexture(texture, index);
             enc.setVertexSamplerState(sampler, index);
         }
@@ -638,9 +663,11 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             final long samplerIndex,
             final int stageMask
     ) {
-        MetalFrameProbe.textureBound();
-        MetalFrameProbe.samplerBound();
-        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {
+        final boolean vertex = (stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0;
+        final boolean fragment = (stageMask & MetalCompiledRenderPipeline.STAGE_FRAGMENT) != 0;
+        MetalFrameProbe.textureBound(texture.address(), (int) textureIndex, vertex, fragment);
+        MetalFrameProbe.samplerBound(sampler.address(), (int) samplerIndex, vertex, fragment);
+        if (vertex) {
             enc.setVertexTexture(texture, textureIndex);
             enc.setVertexSamplerState(sampler, samplerIndex);
         }
@@ -670,7 +697,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             if (ObjC.isNil(pipelineHandle)) {
                 throw new IllegalStateException("Native pipeline is unavailable");
             }
-            MetalFrameProbe.pipelineBound();
+            MetalFrameProbe.pipelineBound(pipelineHandle.address());
             enc.setRenderPipelineState(pipelineHandle);
             pipelineDirty = false;
             if (useDepth) {
@@ -678,6 +705,7 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                 if (ObjC.isNil(depthState)) {
                     throw new IllegalStateException("Native depth state is unavailable");
                 }
+                MetalFrameProbe.depthStencilBound(depthState.address());
                 enc.setDepthStencilState(depthState);
                 // The same census the Metal 4 pass keeps, so a frame that asks for a depth bias can be read on
                 // both generations and cross-generation parity of a *biased* frame becomes a measurement. The
@@ -687,10 +715,15 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                         || compiledPipeline.depthBiasScaleFactor() != 0.0f) {
                     MetalFrameProbe.depthBiasApplied();
                 }
+                MetalFrameProbe.depthBiasSet(compiledPipeline.depthBiasConstant(),
+                        compiledPipeline.depthBiasScaleFactor());
                 enc.setDepthBias(compiledPipeline.depthBiasConstant(), compiledPipeline.depthBiasScaleFactor(), 0.0f);
             }
+            MetalFrameProbe.windingSet(MTLWinding.Clockwise.value);
             enc.setFrontFacingWinding(MTLWinding.Clockwise);
+            MetalFrameProbe.cullSet(compiledPipeline.cullMode().value);
             enc.setCullMode(compiledPipeline.cullMode());
+            MetalFrameProbe.fillSet(compiledPipeline.fillMode().value);
             enc.setTriangleFillMode(compiledPipeline.fillMode());
             dirtyDescriptors.or(compiledPipeline.allResources());
         }
@@ -723,17 +756,23 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         return compiledPipeline.topology();
     }
 
+    /** The one road to a scissor rect, so the census counts what the encoder is really told. */
+    private static void setScissor(final MTLRenderCommandEncoder enc, final long x, final long y,
+                                   final long width, final long height) {
+        MetalFrameProbe.scissorSet(x, y, width, height);
+        enc.setScissorRect(x, y, width, height);
+    }
+
     private void pushEffectiveScissor(final MTLRenderCommandEncoder enc) {
-        MetalFrameProbe.scissorSet();
         int areaLeft = renderArea.x();
         int areaTop = renderArea.y();
         if (!scissorState.enabled()) {
             if (renderArea.x() == 0 && renderArea.y() == 0
                     && renderArea.width() == targetWidth && renderArea.height() == targetHeight) {
-                enc.setScissorRect(0L, 0L, targetWidth, targetHeight);
+                setScissor(enc, 0L, 0L, targetWidth, targetHeight);
                 return;
             }
-            enc.setScissorRect(areaLeft, areaTop, renderArea.width(), renderArea.height());
+            setScissor(enc, areaLeft, areaTop, renderArea.width(), renderArea.height());
             return;
         }
         int areaRight = areaLeft + renderArea.width();
@@ -743,9 +782,9 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
         int right = Math.min(areaRight, scissorState.x() + scissorState.width());
         int bottom = Math.min(areaBottom, scissorState.y() + scissorState.height());
         if (right <= left || bottom <= top) {
-            enc.setScissorRect(0, 0, 0, 0);
+            setScissor(enc, 0, 0, 0, 0);
         } else {
-            enc.setScissorRect(left, top, right - left, bottom - top);
+            setScissor(enc, left, top, right - left, bottom - top);
         }
     }
 
@@ -776,10 +815,10 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
             }
             setArgumentBuffer(layout, buffer);
             if (layout.stageMask() == MetalCompiledRenderPipeline.STAGE_VERTEX) {
-                MetalFrameProbe.bufferBound();
+                MetalFrameProbe.bufferBound(buffer.handle().address(), 0L, layout.bufferIndex(), true, false);
                 enc.setVertexBuffer(buffer, 0L, layout.bufferIndex());
             } else if (layout.stageMask() == MetalCompiledRenderPipeline.STAGE_FRAGMENT) {
-                MetalFrameProbe.bufferBound();
+                MetalFrameProbe.bufferBound(buffer.handle().address(), 0L, layout.bufferIndex(), false, true);
                 enc.setFragmentBuffer(buffer, 0L, layout.bufferIndex());
             } else {
                 throw new IllegalStateException("Argument buffer layout has invalid stage mask " + layout.stageMask());

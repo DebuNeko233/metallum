@@ -259,6 +259,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         endEncoder();
         MetalFrameProbe.encoderOpened(1);
         MTLBlitCommandEncoder encoder = commandBuffer().makeBlitCommandEncoder();
+        MetalFrameProbe.fenceWaited();
         encoder.waitForFence(fence);
         currentEncoder = encoder;
         return encoder;
@@ -275,6 +276,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
         endEncoder();
         MetalFrameProbe.encoderOpened(2);
         MTLComputeCommandEncoder encoder = commandBuffer().makeComputeCommandEncoder();
+        MetalFrameProbe.fenceWaited();
         encoder.waitForFence(fence);
         currentEncoder = encoder;
         return encoder;
@@ -454,13 +456,16 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
                 MetalFrameProbe.encoderEnded(reason);
             }
             if (currentEncoder instanceof MTLRenderCommandEncoder renderEncoder) {
+                MetalFrameProbe.fenceUpdated();
                 renderEncoder.updateFence(fence, MTLRenderStages.VertexAndFragment);
                 if (currentRenderPass != null) {
                     currentRenderPass.invalidateEncoderState();
                 }
             } else if (currentEncoder instanceof MTLBlitCommandEncoder blitEncoder) {
+                MetalFrameProbe.fenceUpdated();
                 blitEncoder.updateFence(fence);
             } else if (currentEncoder instanceof MTLComputeCommandEncoder computeEncoder) {
+                MetalFrameProbe.fenceUpdated();
                 computeEncoder.updateFence(fence);
             }
             currentEncoder.endEncoding();
@@ -628,6 +633,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
                 colorPixelSizes,
                 depthPixelSize
         );
+        MetalFrameProbe.fenceWaited();
         encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);
         currentEncoder = encoder;
         renderColorAttachments = colorAttachments.clone();
@@ -1357,6 +1363,7 @@ public final class MetalCommandEncoder implements MetalFrameEncoder, MetalFrameE
                 texture.pixelSize(),
                 texture.pixelSize()
         );
+        MetalFrameProbe.fenceWaited();
         encoder.waitForFence(fence, MTLRenderStages.VertexAndFragment);
         currentEncoder = encoder;
         texture.recordMaterializedClear(colorClear, depthClear);

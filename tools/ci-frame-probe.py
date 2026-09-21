@@ -312,6 +312,48 @@ require("the encoder split", probe, (
 # live in the shared probe, but the roads that reach them are this generation's own encoder: Metal 3 writes its
 # buffers directly and has none of these three call sites, so pinning the roads against the Metal 3 encoder
 # would be pinning an absence.
+# Phase A1's native-call census: the shadow that says whether a call could have been skipped, the line that
+# reports it, and the one hook that clears the shadow. The census's whole value is the `repeated` figure - the
+# share of this backend's call volume that carries a value the slot already holds - and every one of these
+# pieces is what makes that figure mean anything: the shadow because nothing else knows what the slot holds,
+# the clear because a new native encoder holds nothing, and the opt-in property because a diagnostic may not
+# change what a session that did not ask for it does.
+require("native call census", probe, (
+    'Boolean.getBoolean("metallum.m3CallCensus")',
+    "frame-probe m3native calls={} native={} repeated={} ",
+    "public static void bufferBound(final long handle, final long offset, final int slot,",
+    "public static void textureBound(final long handle, final int slot, final boolean vertex,",
+    "public static void samplerBound(final long handle, final int slot, final boolean vertex,",
+    "public static void pipelineBound(final long handle) {",
+    "public static void depthStencilBound(final long handle) {",
+    "public static void cullSet(final long mode) {",
+    "public static void fillSet(final long mode) {",
+    "public static void windingSet(final long mode) {",
+    "public static void depthBiasSet(final float constant, final float scaleFactor) {",
+    "public static void viewportSet(final double originX, final double originY, final double width,",
+    "public static void scissorSet(final long x, final long y, final long width, final long height) {",
+    "public static void drawIndexedPrimitives(final long indexCount, final long instanceCount) {",
+    "public static void drawPrimitives(final long vertexCount, final long instanceCount) {",
+    "public static void drawIndirectPrimitives() {",
+    "public static void indirectDrawLoop(final int commands, final long nanos) {",
+    "indirectLoops={} indirectCommands={} indirectCpuMs={} ",
+    "public static void fenceUpdated() {",
+    "public static void fenceWaited() {",
+    "private static void clearBindingShadow() {",
+    "censusCalls = 0;",
+))
+require("native call census's shadow clear", probe, ("clearBindingShadow();",))
+if probe.index("clearBindingShadow();") < probe.index("public static void renderEncoderRecreated("):
+    raise SystemExit(
+        "native call census: the binding shadow is not cleared where a native encoder is made, so the first "
+        "bind of a frame would be read as a repeat of the last encoder's - the one way this census can "
+        "overstate what could be removed"
+    )
+if probe.count("clearBindingShadow();") != 1:
+    raise SystemExit(
+        "native call census: the shadow is cleared somewhere other than the one hook that knows an encoder was "
+        "made rather than joined"
+    )
 require("upload census", probe, (
     "public static void uploadedToBuffer(final long bytes, final long nanos) {",
     "public static void uploadedCopyingBuffer(final long bytes, final long nanos) {",
@@ -471,7 +513,7 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 41:
+if len(guarded) != 58:
     raise SystemExit(
         "frame probe: expected 38 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
@@ -486,7 +528,12 @@ if len(guarded) != 41:
         "ever sent, and one for the client tick, and two for the clear-folding census - one for a clear the "
         "frame deferred and one for a deferred clear a pass carried as its own load action - and three for "
         "Phase F's upload census, one per road CPU bytes take into a frame: a staged buffer write, a buffer "
-        "copy and a staged texture write), found "
+        "copy and a staged texture write - and sixteen for the Metal 3 native-call census, which is the one "
+        "reading the long-term plan starts from: a buffer bind, a texture bind, a sampler bind, the pipeline "
+        "state, the depth-stencil state, the cull mode, the fill mode, the winding order, the depth bias, the "
+        "viewport, the scissor, three draw forms - primitives, indexed and indirect - and the two fence "
+        "operations - and one for the indirect-draw loop, which is the only road the census prices rather "
+        "than counts), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:
@@ -638,34 +685,56 @@ if "renderContents = new AttachmentContents[0];" not in encoder:
 # One increment per resource or state pushed at the moment it reaches Metal, so a direct bind, an
 # argument-buffer write and a vertex buffer all count once in their own kind.
 # ---------------------------------------------------------------------------
+# The Metal 3 roads carry the census's own entry points now: each takes the value the call carries, so the
+# shadow in the probe can say whether the slot already holds it. The zero-argument versions stay, because the
+# Metal 4 pass still calls them and a generation that is frozen may not be edited to suit a census.
 require("binding counters", render_pass, (
-    "MetalFrameProbe.pipelineBound();",
-    "MetalFrameProbe.textureBound();",
-    "MetalFrameProbe.samplerBound();",
-    "MetalFrameProbe.bufferBound();",
-    "MetalFrameProbe.scissorSet();",
+    "MetalFrameProbe.pipelineBound(pipelineHandle.address());",
+    "MetalFrameProbe.textureBound(texture.address(), (int) index,",
+    "MetalFrameProbe.samplerBound(sampler.address(), (int) index, vertex, fragment);",
+    "MetalFrameProbe.bufferBound(buffer.handle().address(), offset, (int) index,",
+    "MetalFrameProbe.scissorSet(x, y, width, height);",
+))
+require("the census's state roads", render_pass, (
+    "MetalFrameProbe.depthStencilBound(depthState.address());",
+    "MetalFrameProbe.cullSet(compiledPipeline.cullMode().value);",
+    "MetalFrameProbe.fillSet(compiledPipeline.fillMode().value);",
+    "MetalFrameProbe.windingSet(MTLWinding.Clockwise.value);",
+    "MetalFrameProbe.depthBiasSet(compiledPipeline.depthBiasConstant(),",
+    "MetalFrameProbe.drawPrimitives(vertexCount, instanceCount);",
+    "MetalFrameProbe.drawIndexedPrimitives(indexCount, instanceCount);",
+    "MetalFrameProbe.drawIndirectPrimitives();",
 ))
 require("viewport counter", render_encoder, (
     "import com.metallum.render.shared.MetalFrameProbe;",
-    "MetalFrameProbe.viewportSet();",
+    "MetalFrameProbe.viewportSet(originX, originY, width, height, znear, zfar);",
 ))
-if render_pass.index("MetalFrameProbe.pipelineBound();") > render_pass.index("enc.setRenderPipelineState(pipelineHandle);"):
+require("fence counters", encoder, (
+    "MetalFrameProbe.fenceUpdated();",
+    "MetalFrameProbe.fenceWaited();",
+))
+if render_pass.index("MetalFrameProbe.pipelineBound(pipelineHandle.address());") > render_pass.index("enc.setRenderPipelineState(pipelineHandle);"):
     raise SystemExit("binding counters: the pipeline count is not taken where the pipeline is pushed")
-if render_pass.index("MetalFrameProbe.scissorSet();") < render_pass.index("private void pushEffectiveScissor("):
-    raise SystemExit("binding counters: the scissor count is not taken inside the scissor push")
+if render_pass.index("MetalFrameProbe.scissorSet(x, y, width, height);") < render_pass.index("private static void setScissor("):
+    raise SystemExit("binding counters: the scissor count is not taken inside the one road that sets a scissor")
+if render_pass.count("enc.setScissorRect(") != 1:
+    raise SystemExit("binding counters: a scissor reaches the encoder on a road the census does not count")
 for label, needle in (
-    ("vertex buffer", "MetalFrameProbe.bufferBound();\n            enc.setVertexBuffer(nativeVertexBuffer.metalBuffer(), vertexBuffer.offset(), metalSlot);"),
-    ("direct buffer", "MetalFrameProbe.bufferBound();\n        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {"),
-    ("direct texture", "MetalFrameProbe.textureBound();\n        if ((stageMask & MetalCompiledRenderPipeline.STAGE_VERTEX) != 0) {\n            enc.setVertexTexture(texture, index);"),
-    ("sampled texture", "MetalFrameProbe.textureBound();\n        MetalFrameProbe.samplerBound();"),
+    ("vertex buffer", "MetalFrameProbe.bufferBound(nativeVertexBuffer.metalBuffer().handle().address(),"),
+    ("direct buffer", "MetalFrameProbe.bufferBound(buffer.handle().address(), offset, (int) index,"),
+    ("direct texture", "MetalFrameProbe.textureBound(texture.address(), (int) index,"),
+    ("sampled texture", "MetalFrameProbe.textureBound(texture.address(), (int) index, vertex, fragment);"),
 ):
     if needle not in render_pass:
         raise SystemExit(f"binding counters: the {label} push is not counted where it is pushed")
-if render_pass.count("MetalFrameProbe.samplerBound();") != 3:
+# Counted by the entry point's name rather than by one of its two forms, because the census added a form that
+# carries the value and the argument-buffer road keeps the one that does not: what the counts below assert is
+# that every road into each kind is still counted, whichever form it takes.
+if render_pass.count("MetalFrameProbe.samplerBound(") != 3:
     raise SystemExit("binding counters: a sampled image carries a sampler on both the direct and the argument path")
-if render_pass.count("MetalFrameProbe.textureBound();") != 6:
+if render_pass.count("MetalFrameProbe.textureBound(") != 6:
     raise SystemExit("binding counters: storage and texel-buffer bindings must count as textures too")
-if render_pass.count("MetalFrameProbe.bufferBound();") != 5:
+if render_pass.count("MetalFrameProbe.bufferBound(") != 5:
     raise SystemExit("binding counters: vertex, uniform, storage and argument buffers must all count as buffers")
 
 # ---------------------------------------------------------------------------
