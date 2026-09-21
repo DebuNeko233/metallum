@@ -168,6 +168,39 @@ public final class MTL4CounterHeap implements AutoCloseable {
         return timestamp == 0L ? -1L : timestamp;
     }
 
+    /**
+     * Resolves a range of entries in one call, with -1 wherever one could not be read.
+     * <p>
+     * The header says a range resolves to "tightly packed resolved heap counter values", so this is the road a
+     * caller wants when it has several entries - and having both this and {@link #resolve} is what lets a smoke
+     * check that the per-entry road reads the same numbers rather than trusting one of them.
+     */
+    public long[] resolveRange(final long from, final long count) {
+        long[] values = new long[(int) Math.max(0L, count)];
+        if (from < 0L || count <= 0L || from + count > this.entries) {
+            Arrays.fill(values, -1L);
+            return values;
+        }
+
+        MemorySegment data = RESOLVE.sendPtr(this.handle, from, count);
+        if (ObjC.isNil(data)) {
+            Arrays.fill(values, -1L);
+            return values;
+        }
+        long length = DATA_LENGTH.sendLong(data);
+        MemorySegment bytes = DATA_BYTES.sendPtr(data);
+        if (ObjC.isNil(bytes) || length < count * ENTRY_BYTES) {
+            Arrays.fill(values, -1L);
+            return values;
+        }
+        MemorySegment packed = bytes.reinterpret(length);
+        for (int index = 0; index < values.length; index++) {
+            long value = packed.get(JAVA_LONG, index * ENTRY_BYTES);
+            values[index] = value == 0L ? -1L : value;
+        }
+        return values;
+    }
+
     /** Resolves every entry, with -1 wherever one could not be read. */
     public long[] resolveAll() {
         long[] values = new long[(int) this.entries];

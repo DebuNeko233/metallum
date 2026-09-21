@@ -1568,7 +1568,18 @@ for needle, why in (
     ("samplerGpuDeltaTicks=", "the clock-ratio reading is not reported, so a reader cannot check the unit"),
     ("boolean drew = false;", "the smoke no longer proves its own workload is present"),
     ("drawsLanded=", "the workload proof is not reported"),
-    ("COUNTER_LARGE_DRAWS = 128;", "the workload knob is gone, so the smoke compares nothing"),
+    ("private static final int[] COUNTER_DRAWS = {1, 16, 256, 4096};",
+     "the workload curve is gone, so the smoke compares two chosen ends rather than the response"),
+    ("if (stamps[index] < stamps[index - 1]) {",
+     "the smoke no longer checks that the stamps are in submission order, which is the reading the whole "
+     "counter question turns on: they are not, in every probe, and a smoke that stopped looking would report "
+     "differences between stamps that are not the work between them"),
+    ("GRANULARITY_RELAXED = 0L;", "the relaxed granularity is no longer tried, and the comparison between the "
+     "two granularities is the finding that the header's warning about splitting is not this"),
+    ("GRANULARITY_PRECISE = 1L;", "the precise granularity is no longer kept, so the comparison cannot be made"),
+    ("long[] range = heap.resolveRange(0L, stamps.length);",
+     "the range resolve is gone, so the per-entry road is no longer checked against the road the header says "
+     "returns tightly packed entries"),
     ("clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(",
      "the passes no longer draw, so the workload is a clear again - which was measured not to scale (4096x4096 "
      "and 512x512 both read about 31 us)"),

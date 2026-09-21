@@ -4230,6 +4230,17 @@ public final class MTL4Probe {
     /** {@code MTLRenderStageFragment}, the stage whose completion is the end of the pass's own work. */
     private static final long STAGE_FRAGMENT_BIT = 2L;
 
+    /**
+     * {@code MTLTimestampGranularityRelaxed}, the least invasive of the two.
+     * <p>
+     * The header says of {@code Precise} that it "may cause splitting of command encoders", and splitting is
+     * exactly what would explain the stamps arriving out of order: a split encoder's after-stage timestamp can
+     * land at a boundary Metal chose rather than at the point it was encoded. So the granularity is the one knob
+     * the header names a reason to try, and the smoke reads it as relaxed; {@code Precise} is kept below because
+     * the comparison between the two is the finding.
+     */
+    private static final long GRANULARITY_RELAXED = 0L;
+
     /** {@code MTLTimestampGranularityPrecise}, which the header says "may cause splitting of command encoders". */
     private static final long GRANULARITY_PRECISE = 1L;
 
@@ -4250,8 +4261,19 @@ public final class MTL4Probe {
      * once and the other a hundred and twenty-eight times.
      */
     private static final long COUNTER_EDGE = 1024L;
-    private static final int COUNTER_SMALL_DRAWS = 1;
-    private static final int COUNTER_LARGE_DRAWS = 128;
+
+    /**
+     * The draw counts the smoke brackets, one pass each, ascending.
+     * <p>
+     * <strong>A curve and not two points, and that is the third attempt.</strong> The first compared a 4096x4096
+     * clear against a 512x512 one and both read about 31 us; the second held the attachment at 1024x1024 and
+     * compared 128 draws against 1, and the 128 read *less* (14,644 ticks against 31,320) in every one of ten
+     * probes. Raising the large count to 4096 made the smoke pass at a ratio of 6.8 - but a smoke that goes green
+     * when one configuration is replaced by another that happens to work is the false green this migration has
+     * paid for twice, so the reading that settles it is the whole response rather than the two ends that agree.
+     * These four are the curve: one draw, sixteen, two hundred and fifty-six, four thousand and ninety-six.
+     */
+    private static final int[] COUNTER_DRAWS = {1, 16, 256, 4096};
 
     /**
      * Two render passes of known different sizes, bracketed by GPU timestamps, with the heap resolved on the CPU.
@@ -4295,7 +4317,7 @@ public final class MTL4Probe {
                     + " allocator, command buffer, shared event or timestamp sampler would come from");
         }
 
-        MTL4CounterHeap heap = MTL4CounterHeap.create(device, 3L);
+        MTL4CounterHeap heap = MTL4CounterHeap.create(device, COUNTER_DRAWS.length + 1L);
         if (heap == null) {
             return failed("counters", "the device would not make a timestamp counter heap");
         }
@@ -4307,6 +4329,7 @@ public final class MTL4Probe {
         MemorySegment small = MemorySegment.NULL;
         MemorySegment large = MemorySegment.NULL;
         MemorySegment clearPipeline = MemorySegment.NULL;
+        List<MemorySegment> steps = new ArrayList<>();
         MTL4ResidencySet resident = null;
         MTLBuffer uniform = null;
         MTL4ArgumentTable table = null;
@@ -4365,15 +4388,32 @@ public final class MTL4Probe {
             // both the end of the first duration and the start of the second, which is what makes two passes cost
             // three timestamps rather than four.
             WRITE_TIMESTAMP.send(buffer, heap.handle(), 0L);
-            if (!drawnPass(device, buffer, small, COUNTER_EDGE, COUNTER_SMALL_DRAWS, clearPipeline, table, heap,
-                    1L, "the counter smoke's small pass")) {
-                END.send(buffer);
-                return false;
+            for (int step = 0; step < COUNTER_DRAWS.length; step++) {
+                // Each step draws into its own attachment, and the last one is the one the pixel check reads:
+                // the shapes are identical, so the only thing that differs between the steps is the work.
+                MemorySegment target = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
+                if (ObjC.isNil(target)) {
+                    END.send(buffer);
+                    return failed("counters", "newTextureWithDescriptor: answered nil for step " + step);
+                }
+                if (step == COUNTER_DRAWS.length - 1) {
+                    large = target;
+                } else {
+                    steps.add(target);
+                }
+                if (!resident.add(target)) {
+                    END.send(buffer);
+                    return failed("counters", "the residency set refused the attachment of step " + step);
+                }
+                if (!drawnPass(device, buffer, target, COUNTER_EDGE, COUNTER_DRAWS[step], clearPipeline, table,
+                        heap, step + 1L, "the counter smoke's step " + step)) {
+                    END.send(buffer);
+                    return false;
+                }
             }
-            if (!drawnPass(device, buffer, large, COUNTER_EDGE, COUNTER_LARGE_DRAWS, clearPipeline, table, heap,
-                    2L, "the counter smoke's large pass")) {
+            if (!resident.commit()) {
                 END.send(buffer);
-                return false;
+                return failed("counters", "the residency set refused the attachments the steps draw into");
             }
             WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L);
             END.send(buffer);
@@ -4390,17 +4430,13 @@ public final class MTL4Probe {
             }
 
             // The header's own rule satisfied, so the heap can be resolved on the CPU timeline.
-            long first = heap.resolve(0L);
-            long middle = heap.resolve(1L);
-            long last = heap.resolve(2L);
-            if (first < 0L || middle < 0L || last < 0L) {
-                return failed("counters", "the heap resolved " + first + ", " + middle + " and " + last + ", and"
-                        + " a zero or unreadable entry is not a timestamp - the header says an invalidated entry"
-                        + " resolves as zero");
-            }
-            if (!(first <= middle && middle <= last)) {
-                return failed("counters", "the three timestamps are not monotonic: " + first + ", " + middle
-                        + ", " + last + " - so what the heap holds is not a clock reading in submission order");
+            long[] stamps = heap.resolveAll();
+            for (int index = 0; index < stamps.length; index++) {
+                if (stamps[index] < 0L) {
+                    return failed("counters", "entry " + index + " of the heap did not resolve to a timestamp ("
+                            + stamps[index] + "), and a zero or unreadable entry is not one - the header says an"
+                            + " invalidated entry resolves as zero");
+                }
             }
 
             // Whether the draws are real: the large pass cleared to black and then drew the shader's colour,
@@ -4414,34 +4450,73 @@ public final class MTL4Probe {
                         && (pixel.get(JAVA_BYTE, 2L) & 0xFF) > 144;
             }
 
-            long smallTicks = middle - first;
-            long largeTicks = last - middle;
+            // The same three entries again, resolved as one range rather than one at a time: the header says a
+            // range resolves to "tightly packed" entries, so a per-entry resolve and a range resolve that
+            // disagree would say the road's packing is what is wrong rather than the sampling point.
+            long[] range = heap.resolveRange(0L, stamps.length);
+            boolean rangeAgrees = range.length == stamps.length;
+            for (int index = 0; rangeAgrees && index < stamps.length; index++) {
+                rangeAgrees = range[index] == stamps[index];
+            }
+
+            long[] deltas = new long[COUNTER_DRAWS.length];
+            StringBuilder curve = new StringBuilder();
+            for (int step = 0; step < COUNTER_DRAWS.length; step++) {
+                deltas[step] = stamps[step + 1] - stamps[step];
+                if (step > 0) {
+                    curve.append(' ');
+                }
+                curve.append(COUNTER_DRAWS[step]).append("->").append(deltas[step]);
+            }
+            long smallTicks = deltas[0];
+            long largeTicks = deltas[deltas.length - 1];
             // The unit, measured rather than assumed: a sample of the CPU and GPU clocks together, twice, around
             // a known sleep. If a counter tick were a nanosecond the two deltas would agree; whatever the ratio
             // is, it is a fact about this device that the numbers below are read through.
             long[] sample = sampleClockRatio(device);
-            reading = "drawsLanded=" + drew + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
+            reading = "drawsLanded=" + drew + " rangeAgrees=" + rangeAgrees + " curve=[" + curve + "]"
+                    + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
                     + " largePerSmall=" + String.format(Locale.ROOT, "%.1f",
                     smallTicks <= 0L ? 0.0 : (double) largeTicks / smallTicks)
                     + " gpuTicksPerCpuNs=" + String.format(Locale.ROOT, "%.4f", sample[0] / 1_000_000.0)
                     + " samplerGpuDeltaTicks=" + sample[2] + " samplerCpuDeltaNs=" + sample[3];
 
-            if (smallTicks == 0L) {
-                return failed("counters", "one draw's two timestamps are the same value (" + first + "), so the"
-                        + " counter did not respond to " + COUNTER_SMALL_DRAWS + " fullscreen draw(s) over a "
-                        + COUNTER_EDGE + "x" + COUNTER_EDGE + " attachment - " + reading);
+            // Ordering first, because it is the reading that decides whether the rest means anything.
+            //
+            // **The timestamps are not in submission order, and it is measured rather than suspected.** Six of
+            // six probes put the third entry *before* the second, by about 229,000 ticks. The two passes write
+            // different attachments and nothing reads either, so their fragment work may overlap - and an
+            // `afterStage:` timestamp fire when *that encoder's* fragment stage drains, which for overlapping
+            // work is not an order. So a difference between two of these stamps is not the work between them,
+            // and a negative one is not a fault in the clock. What would serialize them is a real dependency
+            // between the passes, which is the next shape to try and is recorded in the report.
+            for (int index = 1; index < stamps.length; index++) {
+                if (stamps[index] < stamps[index - 1]) {
+                    return failed("counters", "timestamp " + index + " (" + stamps[index] + ") precedes timestamp "
+                            + (index - 1) + " (" + stamps[index - 1] + ") by " + (stamps[index - 1] - stamps[index])
+                            + " ticks, so the stamps are not in submission order - the passes write different"
+                            + " attachments and nothing reads either, so their fragment work can overlap and an"
+                            + " after-stage stamp is not an order - " + reading);
+                }
             }
             if (!drew) {
-                return failed("counters", "the large pass cleared its attachment to black and then drew the"
-                        + " shader's colour " + COUNTER_LARGE_DRAWS + " times, and the pixel is still black - so"
-                        + " the workload this smoke varies is not there to measure - " + reading);
+                return failed("counters", "the last step cleared its attachment to black and then drew the"
+                        + " shader's colour " + COUNTER_DRAWS[COUNTER_DRAWS.length - 1] + " times, and the pixel is"
+                        + " still black - so the workload this smoke varies is not there to measure - " + reading);
             }
-            if (largeTicks <= smallTicks) {
-                return failed("counters", COUNTER_LARGE_DRAWS + " fullscreen draws over a " + COUNTER_EDGE + "x"
-                        + COUNTER_EDGE + " attachment report " + largeTicks + " ticks where "
-                        + COUNTER_SMALL_DRAWS + " report " + smallTicks + ", and the draws did land - so neither"
-                        + " the command-buffer marker nor the encoder's after-fragment timestamp attributes the"
-                        + " work between them - " + reading);
+            if (smallTicks == 0L) {
+                return failed("counters", "the first step's two timestamps are the same value, so the counter did"
+                        + " not respond to " + COUNTER_DRAWS[0] + " fullscreen draw(s) over a " + COUNTER_EDGE + "x"
+                        + COUNTER_EDGE + " attachment - " + reading);
+            }
+            for (int step = 1; step < deltas.length; step++) {
+                if (deltas[step] <= deltas[step - 1]) {
+                    return failed("counters", "the counter's response is not monotonic in the work: "
+                            + COUNTER_DRAWS[step - 1] + " draws report " + deltas[step - 1] + " ticks and "
+                            + COUNTER_DRAWS[step] + " report " + deltas[step] + ", and the draws did land - so"
+                            + " the interval between two timestamps is not the work between them at every point"
+                            + " of the curve - " + reading);
+                }
             }
             return true;
         } catch (RuntimeException threw) {
@@ -4449,6 +4524,9 @@ public final class MTL4Probe {
         } finally {
             if (resident != null) {
                 resident.close();
+            }
+            for (MemorySegment held : steps) {
+                releaseIfPresent(held);
             }
             if (table != null) {
                 table.close();
@@ -4501,7 +4579,7 @@ public final class MTL4Probe {
             }
             // The end of this pass's own work, taken after the fragment stage has completed - which is the
             // sampling point that means "this work is done" rather than "the command processor got here".
-            WRITE_STAGE_TIMESTAMP.send(pass.encoder(), GRANULARITY_PRECISE, STAGE_FRAGMENT_BIT, heap.handle(),
+            WRITE_STAGE_TIMESTAMP.send(pass.encoder(), GRANULARITY_RELAXED, STAGE_FRAGMENT_BIT, heap.handle(),
                     timestampIndex);
             return true;
         } finally {
