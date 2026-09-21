@@ -4979,3 +4979,53 @@ Fifteen contract pins now hold the whole counter apparatus across its two rounds
 options commit that carries the driver's window, the completion wait, the fixed-cost control, the two workloads'
 own readbacks, the area knob, the timeline selector and its ABI words, the entry size, and the three timeline
 fields - and each is mutation-proved: removing any one of them turns `ci-metal4-cold-probe.py` red.
+
+### The encoded drawable wait, priced by leaving it out
+
+The whole-submit interval this path has called its own GPU time is `MTL4CommitFeedback.GPUStartTime/GPUEndTime`,
+and the header says why it cannot be render work while the drawable wait is unseparated: `waitForDrawable:`
+"schedules a wait operation on the command queue to ensure the display is no longer using a specific Metal
+drawable... before executing any subsequent commands". So the one call that encodes that wait is now behind a
+diagnostic switch - `-Dmetallum.metal4NoDrawableWait=true`, off by default, **not a production candidate**, read
+in exactly one place, and reported once in the log of any session that sets it, because an arm has to be able to
+prove which submission it measured. `ci-metal4-provider.py` holds all four of those properties as pins, each
+mutation-proved.
+
+`run/m4-drawwait` is the A/B: Complementary on the staged world, 3200x1800, 600 frames a window, 25 s of settle,
+four arms in section 114's order (**normal, no-wait, normal, no-wait**), the same ring depth and the same target
+in every one.
+
+```text
+arm           wallP50  wallP95  gpuM4P50  gpuM4P95   drawable wait (CPU)      ring wait (CPU)          window mean
+m4-normal-a    24.98    40.66    24.26     25.56    p50 21.29, 10954 ms tot   p95 0.00,     0.50 ms     24.25
+m4-nowait-a    16.59    37.31    18.44     19.30    p50  0.01,     8 ms tot   p95 16.84, 1021 ms tot     18.34
+m4-normal-b    24.93    25.29    21.20     22.42    p50 18.14, 10469 ms tot   p95 0.00,     0.51 ms     21.67
+m4-nowait-b    16.59    37.29    18.37     19.29    p50  0.01,     8 ms tot   p95 16.44, 1014 ms tot     18.33
+```
+
+**What it measured.** Leaving the encoded wait out moves the whole-submit interval by **2.9 to 5.9 ms** (24.26 to
+18.44 and 21.20 to 18.37) and moves the CPU's own pacing from the drawable handover to the ring: 17.4-18.3 ms a
+frame of `nextDrawable` becomes 0.01 ms, and the ring's slot wait appears at 1.7 ms a frame with a 16.8 ms p95.
+The two no-wait arms agree to **0.4%** on the driver interval and to 0.04% on the window mean, where the two
+production arms differ by **14%** - which is blocker 16's spread, and the first session in which a lever moves it.
+
+**What it did not measure.** That the 2.9-5.9 ms is entirely the wait. The two waits are not the same quantity
+(the CPU's handover wait is 17-18 ms a frame where the interval moves 3-6 ms), the pacer moved from one resource
+to the other, and the presented picture changed with the switch - mean channel difference 1.38-1.40 against the
+reference arm's own 0.88, and 17.7-17.8% of pixels differing by more than 2 against 6.6%. So the strong form
+(driver-window delta equal to the CPU wait delta, structures unchanged) did **not** hold, and no sentence of the
+form "the frame's render cost is 18.4 ms" may be written from this session.
+
+**And the faster arm is not a candidate.** The no-wait arms are 33% faster in wall time and 24-30% faster in
+driver interval, and that is precisely the trap section 19 names: the switch changes the ordering the header asks
+for and the picture that comes out. It is a measurement of the submission's structure and not an optimisation,
+and the production path keeps encoding the wait.
+
+The structural counters say the two shapes do the same frame: `metal4Presents 600`, `clearEncoders 3600`,
+`computeEncoders 0`, `blits 5400`, `blittedMiB 101022.1` and `pipelineIdentities 333` in all four arms, with
+`renderPasses` within 4% and the content counters (`loadedMiB`, `depthAttachments`) drifting up to 16%, which is
+this pack's own variability. The session's GPU trace reads the accelerator 86-100% busy throughout, with the
+browser and the remote-desktop server on it as always, so the absolute rates are machine numbers and the deltas
+between the arms are the measurement. No arm reports a `GPURestart`, a validation error or a drawable error, and
+the comparer refused the session for content drift between arms of one configuration - which is why the numbers
+above are read per arm from the logs rather than through its summary.

@@ -1326,6 +1326,54 @@ kind of submission with two more instruments and found the table's numbers are n
   correction above** - it is a wall-clock A/B with the markers as the only variable - but its interpretation is
   narrower now: the markers do not attribute the 11%, they only move it.
 
+**What the encoded drawable wait is worth, measured by leaving it out.** The whole-submit interval
+`MTL4CommitFeedback.GPUStartTime/GPUEndTime` is the number this report has used as "this path's own GPU time", and
+the header says the `MTL4CommandQueue`'s `waitForDrawable:` "schedules a wait operation on the command queue...
+before executing any subsequent commands" - so that interval *contains* the display's pacing. Section 51 of the
+plan forbids calling it rendering work while that is unseparated, so a *diagnostic* switch
+(`-Dmetallum.metal4NoDrawableWait=true`, off by default, logged once in the arm that sets it, and pinned in
+`ci-metal4-provider.py` as read in exactly one place) leaves that one call out and changes nothing else.
+`run/m4-drawwait`: Complementary on the staged world, 3200x1800, 600 frames a window, 25 s of settle, four arms
+interleaved **normal, no-wait, normal, no-wait** - and the arms' own logs prove which submission each one
+measured:
+
+```text
+arm           wallP50  wallP95  gpuM4P50  gpuM4P95   drawable wait (CPU)      ring wait (CPU)          window mean
+m4-normal-a    24.98    40.66    24.26     25.56    p50 21.29, 10954 ms tot   p95 0.00,     0.50 ms     24.25
+m4-nowait-a    16.59    37.31    18.44     19.30    p50  0.01,     8 ms tot   p95 16.84, 1021 ms tot     18.34
+m4-normal-b    24.93    25.29    21.20     22.42    p50 18.14, 10469 ms tot   p95 0.00,     0.51 ms     21.67
+m4-nowait-b    16.59    37.29    18.37     19.29    p50  0.01,     8 ms tot   p95 16.44, 1014 ms tot     18.33
+```
+
+Three verdicts, kept apart because they are three different strengths of claim:
+
+- **MEASURED: leaving the encoded wait out moves the whole-submit interval by 2.9 to 5.9 ms** (24.26 → 18.44 and
+  21.20 → 18.37), and it **moves the CPU's own pacing wait from the drawable handover to the ring slot**
+  (17.4-18.3 ms a frame of `nextDrawable` becomes 0.01 ms, while the ring's slot wait appears at 1.7 ms a frame
+  with a 16.8 ms p95). The structures are the same in all four arms - `metal4Presents 600`, `clearEncoders 3600`,
+  `computeEncoders 0`, `blits 5400`, `blittedMiB 101022.1`, `pipelineIdentities 333` to the digit - with
+  `renderPasses` within 4% and the content counters (`loadedMiB`, `depthAttachments`) drifting up to 16%, which is
+  this pack's own variability and not the switch.
+- **NOT PROVEN: that the 2.9-5.9 ms is *entirely* the wait.** The two waits are not the same quantity - the CPU's
+  handover wait is 17-18 ms a frame and the interval only moves 3-6 ms - and the pacer moved, which is the
+  caveat section 22 names: the no-wait arms are paced by the ring instead. The strong form the plan asks for
+  (driver-window delta ≈ CPU drawable-wait delta, structures unchanged) did **not** hold, so the honest sentence
+  is the one above and not "the frame's render cost is 18.4 ms".
+- **DIAGNOSTIC ONLY, and the faster arm is not a candidate.** The no-wait arms are faster in wall time
+  (24.98/24.93 → 16.59/16.59 ms P50) and their driver interval is stable to 0.4% where the production arms differ
+  by 14% - and that is exactly why the switch must not ship: the presented *picture* changes with it (mean
+  channel difference 1.38-1.40 against the reference arm's own 0.88; 17.7-17.8% of pixels differ by more than 2
+  against 6.6%), the wait is the ordering the header asks for, and removing it changes the submission rather than
+  the work. What the reading is good for is the next question: with the wait out, the interval and the period
+  agree in both arms (18.44 against 18.34, 18.37 against 18.33), which is what a frame whose queue is the
+  bottleneck looks like - and the production configuration adds 2.9-5.9 ms of pacing on top of it.
+
+Two environment readings sit beside the table and are half of what these numbers are: the session's GPU trace
+(`tools/gpu-trace.sh`, `run/m4-drawwait/gpu-trace.txt`) reads the accelerator 86-100% busy through the arms, with
+Edge and the remote-desktop server on it as always, and no arm reports a `GPURestart`, a validation error or a
+drawable error. So the *absolute* rates here are not production numbers, and the *deltas* between arms of one
+session are the measurement.
+
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it

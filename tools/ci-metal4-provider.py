@@ -357,6 +357,35 @@ for needle, why in (
     if needle not in encoder:
         raise SystemExit("metal 4 provider: " + why)
 
+# --- the diagnostic drawable-wait switch, which must stay a diagnostic ------------------------------------
+# The switch exists for one question - what the encoded `waitForDrawable:` contributes to the interval
+# `MTL4CommitFeedback.GPUStartTime/GPUEndTime` reports - and the risk it carries is that a session which
+# measures a faster number adopts it. So the pins say three things: it is off unless the property is set, it is
+# consulted at exactly one place and that place still encodes the wait when it is off, and a session that sets
+# it says so in its own log, because an arm has to be able to prove which submission it measured.
+if 'Boolean.getBoolean("metallum.metal4NoDrawableWait")' not in encoder:
+    raise SystemExit("metal 4 provider: the drawable-wait diagnostic switch is gone, so the wait inside the "
+                     "commit window can no longer be priced by an experiment")
+if "if (!NO_DRAWABLE_WAIT && !this.ring.waitForDrawable(drawable.handle())) {" not in encoder:
+    raise SystemExit("metal 4 provider: the drawable wait is no longer encoded when the switch is off, which is "
+                     "the production path - a diagnostic that also removed the wait by default would ship the "
+                     "diagnostic")
+if "metallum.metal4NoDrawableWait is ON" not in encoder:
+    raise SystemExit("metal 4 provider: a session that leaves the drawable wait out no longer says so in its "
+                     "log, so the arm that measured a different submission cannot be identified from its own "
+                     "evidence")
+if len([line for line in encoder.splitlines()
+        if "NO_DRAWABLE_WAIT" in line and not line.strip().startswith(("*", "//", "/*"))]) != 3:
+    raise SystemExit("metal 4 provider: the drawable-wait switch is read in {} code lines where it must be read "
+                     "in three - its declaration, the present that consults it and the log line that reports it - "
+                     "so a production path may have grown a way to reach it".format(
+                         len([line for line in encoder.splitlines()
+                              if "NO_DRAWABLE_WAIT" in line
+                              and not line.strip().startswith(("*", "//", "/*"))])))
+if "|| NO_DRAWABLE_WAIT" in encoder or "NO_DRAWABLE_WAIT = true" in encoder:
+    raise SystemExit("metal 4 provider: the drawable-wait switch can be on without the property being set, "
+                     "which would make a diagnostic the default submission")
+
 # --- the compilation chain, which is what a draw needs before it needs anything else ---------------------
 # The state now compiles Metal 4 artifacts rather than refusing: the game's GLSL compiler turns a pack's source
 # into SPIR-V, the SHARED translator turns that into MSL and names the resources, and this generation builds its
@@ -762,9 +791,10 @@ for needle, why in (
      "the encoder cannot be presented through, so the surface refuses it and no Metal 4 frame reaches the screen"),
     ("CAMetalDrawable drawable = layer.nextDrawable();",
      "no drawable is taken, so there is nothing to present into"),
-    ("if (!this.ring.waitForDrawable(drawable.handle())) {",
+    ("if (!NO_DRAWABLE_WAIT && !this.ring.waitForDrawable(drawable.handle())) {",
      "the queue is not told which drawable the command buffer about to be committed targets - the half of "
-     "Apple's order that comes first, without which signalDrawable: is an unrecognised selector"),
+     "Apple's order that comes first, without which signalDrawable: is an unrecognised selector - except under "
+     "the diagnostic switch that exists to price exactly this call"),
     ("new AttachmentContents(true, true), null)",
      "the present pass does not say that it stores the drawable and overwrites every pixel of it, so the "
      "drawable would be loaded before a triangle that covers all of it"),

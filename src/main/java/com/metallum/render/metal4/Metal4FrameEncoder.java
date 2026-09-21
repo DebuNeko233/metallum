@@ -236,6 +236,26 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      * also gets the summary.
      */
     private static final boolean STATS = Boolean.getBoolean("metallum.metal4FrameStats");
+
+    /**
+     * Whether this diagnostic session leaves the queue's drawable wait out of the submission.
+     * <p>
+     * <strong>This is an instrument for one question and is not a production candidate.</strong> The question is
+     * what the {@code waitForDrawable:} this path encodes contributes to the interval
+     * {@code MTL4CommitFeedback.GPUStartTime/GPUEndTime} reports, because that wait is a queue-level operation
+     * *inside* the commit and the whole-submit window therefore contains the display's pacing as well as the
+     * frame's work. Leaving it out is legal - the drawable is still the commit's target and the present still
+     * signals it - but it changes the order the header asks for, so a session that sets this is measuring a
+     * different submission and not a better one: **the difference between the two arms is the price of the wait,
+     * and the no-wait arm's window is not the frame's render cost either**, because the queue's scheduling around
+     * a submission without that wait need not be the scheduling around one with it.
+     * <p>
+     * Off by default, read once, and never consulted outside the present below - so a production path cannot
+     * reach it by accident. It exists so that section 51's prohibition ("CommitFeedback duration = pure rendering
+     * work" unless the drawable wait has been separated) can be replaced by a measurement.
+     */
+    private static final boolean NO_DRAWABLE_WAIT = Boolean.getBoolean("metallum.metal4NoDrawableWait");
+
     /** Whether either diagnostic is on, which is what the counters themselves are gated on. */
     private static final boolean COUNTING = TRACE || STATS;
     private long statFrames;
@@ -371,6 +391,15 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         this.picturePending = new boolean[FRAMES_IN_FLIGHT];
         this.pictureWidth = new long[FRAMES_IN_FLIGHT];
         this.pictureHeight = new long[FRAMES_IN_FLIGHT];
+        if (NO_DRAWABLE_WAIT) {
+            // Said once, in the session's own log, because an arm that measured this submission has to be able to
+            // prove which submission it measured: a diagnostic whose switch is invisible in the evidence is a
+            // diagnostic a reader has to take on trust.
+            Metallum.LOGGER.warn("Metal 4 frame encoder: metallum.metal4NoDrawableWait is ON, so this session's"
+                    + " submissions leave the queue's waitForDrawable: out - the whole-submit GPU interval they"
+                    + " report is a diagnostic reading of a different submission and is NOT the frame's render"
+                    + " cost, and this switch is not a production candidate");
+        }
     }
 
     /** The state this encoder was made from, for the helpers that will be handed it rather than the device. */
@@ -1422,8 +1451,10 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             this.copyEncoder.endEncoding();
         }
 
-        // Before the commit, which is Apple's half of the order that comes first.
-        if (!this.ring.waitForDrawable(drawable.handle())) {
+        // Before the commit, which is Apple's half of the order that comes first - and the half a diagnostic
+        // session can leave out to price it. See `NO_DRAWABLE_WAIT`: the switch is not a production candidate and
+        // is not read anywhere but here.
+        if (!NO_DRAWABLE_WAIT && !this.ring.waitForDrawable(drawable.handle())) {
             throw new IllegalStateException("the Metal 4 queue refused waitForDrawable:, so the drawable this"
                     + " frame presents into would not be the one the queue waits for");
         }
