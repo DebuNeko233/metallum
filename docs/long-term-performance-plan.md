@@ -30,7 +30,10 @@ Track C  Vitrail GPU / shader work    C1-C7 not started
 Track D  Vitrail <-> Metallum         D1 DONE (docs/bridge-overhead.md): 0.07-0.70 % of the wall, resolution
                                       already cached (2 lookups a session) - MEASURED-BUT-NOT-WORTH-IT, and
                                       with the binding census it closes the CPU micro-optimisation round
-Track E  MetalFX spatial              E1 pinned; E2 scale ladder not measured
+Track E  MetalFX spatial              E1 pinned (DONE); E2 ladder DONE (docs/metalfx-performance.md):
+                                      55-67 % buys 1.3-1.8x on the two GPU-heavy packs and 1.19x on the
+                                      lightest, with the driver's GPU time falling in step; a pack-selection
+                                      writer races the harness (2 of 21 cells refused) and is NOT IDENTIFIED
 Track F  shader/pipeline/startup      F1-F4 not started
 Track G  measurement infrastructure   G1-G3 partly standing (the harness, the region reader, the census lines);
                                       G4 (profiler stop rule) is policy, recorded below
