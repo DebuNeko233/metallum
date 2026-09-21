@@ -237,6 +237,40 @@ if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
     raise SystemExit("--frames never reaches the probe, so the window length is not the harness's")
 
 # ---------------------------------------------------------------------------
+# A spread *inside* an arm has evidence, not only a spread between arms
+#
+# `load.txt` is the kernel's one-minute average at two instants, and a burst shorter than that average
+# barely moves it: session run/m4-loadtrace's four arms came out 18.22, 18.52, 21.10 and 21.57 ms a
+# frame while the fastest of them ran at the highest load and one arm's own cost moved from 8.50 to
+# 16.43 ms a frame in six buckets with its commands flat, so the endpoints were the one thing that
+# could not say what the machine did in between. The trace is what a later reader correlates against,
+# and it is worthless without knowing which of its samples fall inside the counted window.
+# ---------------------------------------------------------------------------
+if '> "$run_dir/load-trace.txt" 2>/dev/null &' not in launcher:
+    raise SystemExit("the harness keeps only the load at an arm's two ends, so a cost that moved inside "
+                     "one arm has no machine evidence to be read against")
+if 'printf \'window-opened %s\\n\' "$(date +%s)" >> "$run_dir/load-trace.txt"' not in launcher:
+    raise SystemExit("the load trace does not say when the window opened, so no sample of it can be "
+                     "attributed to the frames the probe counted")
+if 'printf \'window-closed %s\\n\' "$(date +%s)" >> "$run_dir/load-trace.txt"' not in launcher:
+    raise SystemExit("the load trace does not say when the window closed, so its samples cannot be "
+                     "bounded at the far end either")
+if 'kill "$load_tracer" 2>/dev/null || true' not in launcher:
+    raise SystemExit("the load tracer is never stopped, so a harness that dies mid-arm leaves a loop "
+                     "sampling the machine behind it")
+# Twice, because an arm can end two ways: its window closes, or it never reaches one. A harness that
+# stops the tracer on only the good path leaks it on exactly the arms that are already going wrong.
+if launcher.count('kill "$load_tracer" 2>/dev/null || true') < 2:
+    raise SystemExit("the load tracer is stopped on one of the two ways an arm can end, so an arm that "
+                     "never reached a window leaves it sampling")
+if 'seq 1 240' not in launcher:
+    raise SystemExit("the load tracer has no sample bound, so a harness that dies before it can stop the "
+                     "tracer leaves it running for the rest of the machine's uptime")
+if "{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt}" not in launcher:
+    raise SystemExit("the harness does not say in its usage that an arm leaves a load trace, so a reader "
+                     "of a session's directory does not know the evidence is there")
+
+# ---------------------------------------------------------------------------
 # The numbers are the probe's own
 #
 # The comparison parses the line the probe printed rather than restating its counters, and refuses a

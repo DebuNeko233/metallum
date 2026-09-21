@@ -1559,6 +1559,64 @@ answered rather than only what is left.
    the target and the window were the same, and the Metal 3 arms in the same session saw the same content - so
    that is the question the next session on this path opens with.
 
+   **That session was run, with an instrument the sessions before it did not have, and it moved the question on.**
+   `run/m4-loadtrace`: four Metal 4 arms of one configuration - the same pack, world, target, window and 25 s of
+   settle - with `-Dmetallum.metal4FrameStats=true`, and the kernel's load average sampled **every five seconds
+   for the whole session** rather than at each arm's two ends:
+
+   ```text
+   arm   ms a frame  wallP50  wallP95   gpuM4P50   load mean/max   drawable wait  submitWindow  passes a frame
+   m4a     21.10      12.38    43.00     21.16      2.78 / 3.08     1703 ms total  1778 ms       21.35
+   m4b     18.52       9.52    37.54     18.55      3.21 / 3.51     1622 ms total   989 ms       21.81
+   m4c     18.22       9.50    36.97     18.16      4.28 / 5.33     1586 ms total   896 ms       21.39
+   m4d     21.57      12.74    43.68     21.55      3.99 / 4.34     1777 ms total  2112 ms       22.07
+   ```
+
+   Four readings, and the first of them is the instrument finally saying something a pair of samples could not:
+
+   - **The machine is refuted by the trace, and inverted rather than merely unproven.** The *fastest* arm ran at
+     the *highest* load (m4c, mean 4.28 against m4a's 2.78) and the slow arms at the low end, and bucketed against
+     each arm's own sixty-frame cost the correlation is **negative in three arms of four** (r = -0.30, -0.13, -0.08,
+     +0.27). A spread that came with a busier machine would have to come with one; this one comes with a quieter
+     one, so blocker 16's earlier "the machine" elimination no longer rests on two endpoints - it rests on the
+     session's own trace.
+   - **The scene drift the harness refuses the session for does not order the cost either.** The comparer refused
+     all four arms (`renderPasses` of m4c is -2.3% against m4a, `depthAttachments` of m4b is +2.4%, against a 2%
+     scene tolerance), so by this project's own rule no arm of this session may be read against another - and the
+     drift is nonetheless not the cost: m4b opened **more** render passes a frame than m4c (21.81 against 21.39)
+     and was not slower, and m4d opened the most (22.07) for a cost that is high but not the highest. The refusal
+     stands as a refusal; the pass count is not the mechanism behind the two levels.
+   - **It is not the display, which is the one machine state every session today shares.** All six sessions of
+     today left the *same* capture: byte-identical 156220-byte files, the flat black a locked or asleep display
+     produces, in `run/nopack-ab1`, `run/m4-content`, `run/m4-four`, `run/m4-stats`, `run/perf-ab6` and this one -
+     so the session whose three arms agreed to 1.6% and the session whose arms did not had the same display state.
+     (Only `run/perf-ab5`, from the 19th, has real captures.) It is also the single reason the picture column of
+     every session above is void, and it is now a *stated* constant of the measurement rather than a suspicion.
+   - **And the instrument had to be read correctly before any of it meant anything.** `Metal 4 frame stats`'s
+     `msPerFrame` is **the encode**: it begins at a frame's first encode and is taken at that frame's commit, so it
+     excludes the drawable wait and the CPU time between frames, where the probe's `windowMs/windowFrames` is the
+     frame *period*. They differ by 1.8x in m4a and 2.6x in m4c, and the ratio itself moves arm to arm, so the two
+     are not one number: this blocker's earlier reading ("9.67 ms in one sixty-frame bucket and 18.71 in another")
+     is the **encode** moving in time, and it is the right instrument for that question and the wrong one for a
+     frame rate.
+
+   What the trace leaves standing is the sharpest statement of this blocker so far: **the path's own encode costs
+   between 7.3 and 16.4 ms a frame for the same commands inside one arm** - m4a's window buckets run 8.50, 9.71,
+   10.28, 10.86, 12.07, 12.41, 13.07, 13.13, 14.24, 16.43 while its `drawsPerFrame` sits at 1212-1216 (+-0.2%) and
+   its `residencyPerFrame` at 1.7-2.7, and m4b's same-shaped work sits at 7.28-9.49. So one arm is not only slower
+   than the other, it is **less stable**, and the four arms fall into two pairs by *every* percentile at once
+   (wallP50 12.38/12.74 against 9.50/9.52, wallP95 43.00/43.68 against 36.97/37.54, `gpuM4P50` 21.16/21.55 against
+   18.16/18.55) - a shifted distribution rather than occasional stalls, which is what a rate difference looks
+   like. The candidates this blocker named are now worth driving as a lever rather than watching: the ring's slot
+   reuse (`-Dmetallum.metal4RingSlots`), the transient arena and the argument tables, each of which can be varied
+   and re-measured, and that is the session this one hands over to.
+
+   **The harness now keeps that evidence by itself.** Every arm writes `load-trace.txt` beside `load.txt` - the
+   same reading every five seconds, with `window-opened` and `window-closed` lines so a later reader can slice it
+   to the frames the probe counted, bounded at 240 samples and stopped on **both** ways an arm can end (its window
+   closes, or it never reaches one). `tools/ci-vitrail-performance.py` pins the trace, the two markers, the stop
+   and the bound, and each of those five checks was mutation-proved.
+
 17. ~~**Minecraft's own GUI, HUD and text are not drawn by this path at all**~~ - **FIXED, and the mechanism is
    named.** The whole interface was missing on Metal 4 while the world rendered, reported from play and confirmed
    here. It was not the fragment stage, not blending, not depth, not culling, not the attachments and not a lost

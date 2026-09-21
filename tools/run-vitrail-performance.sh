@@ -117,9 +117,14 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          different scene: a comparison across runs that share a save measures the
                          sun rather than the switch.
 
-Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log,load.txt}, where load.txt is
-the kernel's load average at the arm's start and at its window's close - the pair that says whether a
-spread between two arms came with a busy machine. The harness ends by printing the comparison.
+Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt},
+where load.txt is the kernel's load average at the arm's start and at its window's close, and
+load-trace.txt is the same reading taken every five seconds while the arm ran, with 'window-opened'
+and 'window-closed' lines bounding the frames the probe counted. The pair in load.txt says whether a
+spread *between* two arms came with a busy machine; the trace says whether a spread *inside* one did,
+which the pair cannot: a burst shorter than the one-minute average barely moves it, so a session can
+show equal load at both ends of an arm whose own cost moved by half. The harness ends by printing the
+comparison.
 USAGE
 }
 
@@ -459,6 +464,24 @@ for run in "${runs[@]}"; do
 		printf 'start %s\n' "$(load_average)"
 	} > "$run_dir/load.txt"
 
+	# And the same reading taken while the arm runs, because the pair above cannot say what happened inside
+	# one. It cannot: `vm.loadavg` is a one-minute average, so a burst of half a minute barely moves it, and
+	# session run/m4-loadtrace's four arms - same pack, world, target, window and 25 s of settle - came out
+	# 18.22, 18.52, 21.10 and 21.57 ms a frame while the *fastest* of them ran at the highest load and
+	# `-Dmetallum.metal4FrameStats=true` showed one arm's own cost moving from 8.50 to 16.43 ms a frame in
+	# six buckets with `drawsPerFrame` flat within half a per cent. A spread that is not the machine's has to
+	# be visible as not the machine's, and that needs the trace, not the endpoints.
+	#
+	# Bounded rather than merely backgrounded: a harness that dies mid-arm (set -e, a timeout, a closed
+	# terminal) must not leave a loop writing to a directory nobody will read, so the loop counts its samples.
+	(
+		for _ in $(seq 1 240); do
+			printf '%s %s\n' "$(date +%s)" "$(load_average)"
+			sleep 5
+		done
+	) > "$run_dir/load-trace.txt" 2>/dev/null &
+	load_tracer=$!
+
 	# The world starts from the staged copy again, unless the caller asked each run to carry on. That
 	# copy holds one time of day and one player position, so two runs of one comparison draw the same
 	# scene rather than two scenes a few minutes of world time apart.
@@ -536,6 +559,7 @@ for run in "${runs[@]}"; do
 		run_failed=1
 		stop_run
 		wait "$launcher" 2>/dev/null || true
+		kill "$load_tracer" 2>/dev/null || true
 		continue
 	fi
 
@@ -544,10 +568,14 @@ for run in "${runs[@]}"; do
 	# configuration still read 4.4 per cent apart with the camera pinned.
 	sleep "$settle_seconds"
 	touch "$marker"
+	printf 'window-opened %s\n' "$(date +%s)" >> "$run_dir/load-trace.txt"
 	if ! wait_for_log "frame-probe" "$deadline" "$launcher"; then
 		echo "Run '$name' never produced a probe window" >&2
 		run_failed=1
 	fi
+	printf 'window-closed %s\n' "$(date +%s)" >> "$run_dir/load-trace.txt"
+	kill "$load_tracer" 2>/dev/null || true
+	wait "$load_tracer" 2>/dev/null || true
 
 	# Taken while the game is still drawing, so the picture is the frame the numbers describe. The
 	# whole screen rather than the game's window, because asking for a window would need the window
