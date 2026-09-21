@@ -971,6 +971,58 @@ second** - the previous session stopped after one arm with no line saying why. I
 tolerates finding neither; all three properties are pinned in `tools/ci-vitrail-performance.py` and each was
 mutation-proved. The full account is in `docs/metal4-migration.md`.
 
+**The first comparison in which the GPU was the bottleneck, and it is the first one this report can read as a
+performance claim.** `run/m4-ab7`: one session, four arms interleaved in section 114's order (**M3, M4, M3, M4**),
+Complementary on the same staged world, 3200x1800, 600 frames a window, 25 s of settle - and, new this round, the
+accelerator's own statistics sampled every two seconds for the whole session (`tools/gpu-trace.sh`: the driver's
+device/renderer/tiler utilization, its memory, and the pid of its most recent submission).
+
+```text
+arm  gen  ms a frame  wallP50  wallP95  own GPU P50     drawable wait          submission wait
+m3a  M3     20.31      20.50    23.72   gpuP50   20.54   p50 0.01,  8 ms tot   1200 calls, p95 21.53, 11156 ms tot
+m4a  M4     23.85      24.23    29.19   gpuM4P50 23.81   p50 15.36, 7191 ms tot    600 calls,         0.56 ms tot
+m3b  M3     20.70      20.81    22.25   gpuP50   20.70   p50 0.01, 56 ms tot   1200 calls, p95 20.07, 11359 ms tot
+m4b  M4     27.45      27.40    30.11   gpuM4P50 27.36   p50 0.49, 7138 ms tot    600 calls,         0.42 ms tot
+
+from the same session's GPU trace: device utilization mean 100.0%, max 100%, in all four arms
+```
+
+- **The GPU was saturated in every arm, which is what makes the period a measure of work rather than of a
+  pacer.** Every previous M3/M4 comparison in this report was taken on a frame that something else paced - the
+  display's handover, or (with the display asleep) this path's own ring - and this one is not: 100.0% device
+  utilization over 14-18 samples an arm, in both generations. **So the two generations are being compared as GPU
+  work for the first time.**
+- **This path asks the GPU for 16-35% more time per frame**: 23.85 and 27.45 ms against Metal 3's 20.31 and 20.70,
+  by its own commit feedback 23.81 and 27.36 against 20.54 and 20.70. Metal 3 repeats to **1.9%**; this path's two
+  arms are **15%** apart, so the honest form of the figure is a range and not a point - and even the cheap end of
+  it is far outside section 5's "median regression <= ~3%". **Per section 97 this path therefore stays forced and
+  experimental, AUTO is not enabled on it, and the next question is not "is it slower" (measured: yes) but "which
+  of the frame's work is bigger"**, which needs the per-pass GPU attribution that blocker 15 says the timestamp
+  road does not give.
+- **And the two generations are paced by different resources, which is a standing caveat on every wall-clock
+  comparison here.** Metal 3's frame *is* its submission-index wait (1200 waits a window, p95 ~21 ms, totalling
+  the window, with 8-56 ms of drawable wait); this path's is its **drawable handover** (7191 and 7138 ms a window,
+  with ~0.5 ms of submission wait). So "Metal 4 is slower" and "Metal 4 waits somewhere else" are two statements
+  about the same table, and only the first is a performance claim - the second is why the two columns are printed
+  side by side rather than subtracted.
+- **The pictures agree as well as Metal 3 agrees with itself.** `m3a` against `m4a`: mean channel difference 1.29,
+  56.30% of pixels differ at all, 0.55% by more than 8, worst 222 at `(3540, 39)`; `m3a` against `m4b`: 1.40,
+  57.72%, 0.94%, worst 222 at the same pixel; and **`m3a` against `m3b` - two arms of the reference itself -
+  0.99, 52.09%, 0.40%, worst 222 at that same pixel**. The worst pixel is the same in all three, so the frame's
+  difference between the generations is of the same size and in the same place as the reference's own
+  arm-to-arm difference, on a pinned scene in one session. This is section 69's kind of reading and not a
+  screenshot verdict: it says the two generations draw the same picture to within the resolution this scene has.
+
+**The environment, which was invisible until this round's trace and is half of what these numbers are.** The
+trace's last field is the pid of the driver's most recent submission, and during these arms it was almost never the
+game's: this machine carries **Microsoft Edge (pid 67625)**, which is rendering the Web GUI this programme is being
+driven through, **UURemoteServer (pid 925)**, a remote-desktop server that captures and encodes the screen, and
+WindowServer. The same trace read the accelerator **85-87% busy between arms with no game running at all**. So the
+GPU is oversubscribed by construction here - and, measured in the same session, the game still got 100% of it
+during its own windows, so the M3/M4 figures above are not a contention artefact. What they are not is a
+production frame rate on a quiet machine: section 123 stays unmet for that reason as well as for the range, and
+the machine-state half of it is now named rather than suspected.
+
 ## Capability matrix
 
 Every cell is a measurement or an explicit absence. `M4 smoke` means proven in a process with no window in it

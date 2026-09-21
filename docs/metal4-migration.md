@@ -4315,6 +4315,64 @@ and no fault in its log. That is recorded as a second instance of a harness-shap
 forced-Metal-4 session that landed on OpenGL - and not as a property of four slots, because one session's four-slot
 arm completed and this one's did not.
 
+### The first comparison the GPU itself was busy for, and the two clients that were already on it
+
+Every M3-against-M4 number this migration has taken was a frame that something else paced: the display's
+handover, or - with the display asleep - this path's own ring, whose slot wait turns a window bimodal. The frame
+period was therefore never the renderer's work, and the arm spreads that blocked the comparison were the pacer
+moving rather than the path. What was missing was a reading of the *resource the claim is about*. The driver
+keeps one, and it costs nothing to read: `ioreg -r -c IOAccelerator` exposes `PerformanceStatistics` - device,
+renderer and tiler utilization, allocated and in-use memory - and `AGCInfo.fLastSubmissionPID`, the process whose
+submission the accelerator handled most recently. `tools/gpu-trace.sh` samples that every two seconds for a
+session, and the harness now starts and stops it so that every session carries the evidence.
+
+It answered two questions at once, and the first one was not the one it was written for. **At idle, with no game
+running, the accelerator is 4-33% busy and the most recent submission belongs to Microsoft Edge (pid 67625)** -
+the browser the Web GUI driving this programme is rendered in - with **UURemoteServer (pid 925)**, a remote-desktop
+server that captures and encodes the screen, and WindowServer beside it. Between the arms of the session below the
+same trace read the accelerator **85-87% busy**. So this machine's GPU is oversubscribed by construction, which no
+host-side load average could ever have shown: those clients are GPU-heavy and CPU-light, which is why five
+sessions of load sampling failed to order a single arm.
+
+`run/m4-ab7` is the comparison that follows from having the instrument: one session, four arms interleaved in the
+plan's own order (M3, M4, M3, M4), Complementary on the staged world at 3200x1800, 600 frames a window and 25 s of
+settle, with the GPU sampled throughout.
+
+```text
+arm  gen  ms a frame  wallP50  wallP95  own GPU P50     drawable wait          submission wait
+m3a  M3     20.31      20.50    23.72   gpuP50   20.54   p50 0.01,  8 ms tot   1200 calls, p95 21.53, 11156 ms tot
+m4a  M4     23.85      24.23    29.19   gpuM4P50 23.81   p50 15.36, 7191 ms tot    600 calls,         0.56 ms tot
+m3b  M3     20.70      20.81    22.25   gpuP50   20.70   p50 0.01, 56 ms tot   1200 calls, p95 20.07, 11359 ms tot
+m4b  M4     27.45      27.40    30.11   gpuM4P50 27.36   p50 0.49, 7138 ms tot    600 calls,         0.42 ms tot
+
+device utilization from the same session's trace: mean 100.0%, max 100%, in all four arms
+```
+
+Three readings, and the first is what makes the other two mean anything:
+
+- **The GPU was saturated in every arm**, so the frame period is GPU work in both generations and the comparison
+  is finally of work rather than of a pacer. That is the condition under which the plan's performance gate can be
+  asked at all.
+- **This path asks the GPU for 16-35% more time a frame** - 23.85 and 27.45 against 20.31 and 20.70, by its own
+  commit feedback 23.81 and 27.36 against 20.54 and 20.70 - with the caveat the arms themselves supply: Metal 3
+  repeats to 1.9% where this path's two arms are 15% apart, so the figure is a range. The cheap end of the range
+  is already far outside the plan's `median regression <= ~3%`, so by section 97 this path stays forced and
+  experimental and AUTO is not enabled on it. **The question has changed shape**: not "is Metal 4 slower" - it is,
+  measured - but "which of the frame's work is bigger", and that is what the counter infrastructure of section 88
+  exists for.
+- **The two generations are paced by different resources, which is why the wall-clock columns are printed beside
+  each other rather than subtracted.** Metal 3's frame is its submission-index wait (1200 waits, p95 ~21 ms,
+  totalling the window, 8-56 ms of drawable wait); this path's is its drawable handover (7191 and 7138 ms) with
+  about half a millisecond of submission wait. A comparison of the two periods is a comparison of two different
+  waits plus whatever work happens to be inside them.
+
+And the pictures, which the session could finally take because the display was awake: `m3a` against `m4a` is a
+mean channel difference of 1.29 with 0.55% of pixels differing by more than 8; `m3a` against `m4b` 1.40 and 0.94%;
+and **`m3a` against `m3b` - the reference against itself - 0.99 and 0.40%, with the same worst pixel, 222 at
+`(3540, 39)`, in all three comparisons**. The generations differ by about what one arm of the reference differs
+from another, on a pinned scene in one session. That is the correctness half of this round and it is measured, not
+argued.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
