@@ -5176,9 +5176,12 @@ the median with `loadedMiB`, `storedMiB`, `depthAttachments` and `pipelineIdenti
 all three; this path's three arms read 12.57, 9.85 and 7.82 (1.61x) and their content counters drift
 monotonically - `loadedMiB` +18.7% then +33.2%, `storedMiB` +9.4% then +16.7%, `depthAttachments` +9.0% then
 +16.5% against the first arm. The world is re-staged from the same copy for every arm, so this is a property of
-the frame this path builds and not of the scene. **NOT LOCALISED**; the leading candidate, recorded as a
-HYPOTHESIS, is the window's phase relative to the client's world streaming - with no pack the frame the harness
-waits for arrives at a different point in the load - and it needs its own experiment.
+the frame this path builds and not of the scene. **NOT LOCALISED for this session**; its leading candidates are
+the window's phase relative to the client's world streaming - with no pack the frame the harness waits for
+arrives at a different point in the load - and the two frame kinds a later session *measured* to move this
+path's counters (the six passes a 20 Hz tick adds, and the two particle passes a frame opens only when its
+render type has work), and it needs its own experiment: a re-run of this rung with the per-frame trace on, which
+is what attributed the drift of `run/drift-nopack` and `run/ticks-nopack`.
 
 **And the distribution is the second confirmation of the pacing mechanism.** Metal 3 sits at 8.33 ms in every
 arm - one quantum of this 120 Hz panel - with its own GPU time (7.3-7.7 ms) just under it, which is a frame that

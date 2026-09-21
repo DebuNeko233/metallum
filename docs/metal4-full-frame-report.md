@@ -2624,10 +2624,12 @@ answered rather than only what is left.
    lands in its wall time directly. **The comparison was unreadable, not the generation** - and the instrument now
    says so: `vitrail-performance-compare.py` judges the arms of one generation against each other (commit
    `a352db3`), on the counters a frozen scene pins exactly and on the frame's content within 5%, which is the
-   plan's own performance gate. `run/perf-ab6` is refused with its reason; `run/nopack-ab1` passes it. What is
-   still **NOT LOCALISED** is what made the two Metal 4 arms draw different amounts at all - the world, the pack,
-   the target and the window were the same, and the Metal 3 arms in the same session saw the same content - so
-   that is the question the next session on this path opens with.
+   plan's own performance gate. `run/perf-ab6` is refused with its reason; `run/nopack-ab1` passes it. What was
+   still **NOT LOCALISED** here is what made the two Metal 4 arms draw different amounts at all - the world, the
+   pack, the target and the window were the same, and the Metal 3 arms in the same session saw the same content -
+   and **it has since been answered for the traced sessions**: the difference is the two particle passes a frame
+   opens only when its render type has work, on 276, 324 and 204 of `run/ticks-nopack`'s arms' 600 frames, which
+   predicts their pass-count difference to the pass (see Remaining blockers).
 
    **That session was run, with an instrument the sessions before it did not have, and it moved the question on.**
    `run/m4-loadtrace`: four Metal 4 arms of one configuration - the same pack, world, target, window and 25 s of
