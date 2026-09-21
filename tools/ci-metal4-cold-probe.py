@@ -1538,48 +1538,65 @@ for needle, why in (
         raise SystemExit("cold-probe harness: " + why)
 
 # ---------------------------------------------------------------------------
-# Section 90's counter smoke: what the road proves and what the sampling points do not
+# Section 90's counter smoke: the road works, and what it took to see it
 #
-# The smoke is red on every probe and that is the honest state, so the pins hold the measurement rather than a
-# verdict. Three facts were bought and each is a way a later edit could quietly turn this into a green that
-# means nothing:
+# The smoke was red for rounds and the pins held the measurement rather than a verdict. The verdict is now
+# in and it is the opposite one: the timestamps DO partition the work, and the three things that made them
+# look as if they did not were defects in the smoke itself. Each is pinned here, because each is a way a
+# later edit could put the smoke back to failing on its own arithmetic:
 #
-#   1. the heap road works - a heap is made, timestamps land in it, they resolve after the ring's shared-event
-#      wait, and they are monotonic. The unit is MEASURED rather than assumed: `sampleTimestamps:gpuTimestamp:`
-#      is sampled twice around a sleep, and the GPU delta and the CPU delta come out equal to the tick
-#      (21721000 against 21721000 ns in the first run), so a counter tick is a nanosecond on this device;
-#   2. neither sampling road attributes a pass's work. 128 fullscreen draws over a 1024x1024 attachment report
-#      LESS time than one (14644 ticks against 31320), and the same shape held when the knob was the
-#      attachment's size - 4096x4096 against 512x512, also about 31 us each. So the pin requires both roads to
-#      have been tried and both to be *reported*, because the finding is the comparison;
-#   3. the workload is proven present before the timing is judged. The large pass clears its attachment to black
-#      and draws the shader's colour, and a pixel of it is read back: without that, "the draws cost nothing" and
-#      "the timestamps are not execution points" are the same reading, and they are different faults.
+#   1. one marker per boundary, written once. The middle boundary used to be written twice - once by its own
+#      step and once, after every step, by a leftover marker from a three-marker shape - so entry 2 held
+#      "the end of everything" and `stamps[3] < stamps[2]` was true by construction;
+#   2. one sampling form for every entry. The start marker was the command buffer's and the boundaries were
+#      the render encoder's after-stage form, which is a mixture of two sampling points;
+#   3. a warm-up pass the curve does not count. The curve's first step was both the command buffer's first
+#      encoder and its only clearing pass, and it reported ~27,000-33,000 ticks against the sixteen-draw
+#      step's ~1,000-22,000 - the lightest step the most expensive one;
+#   4. every step above the road's own floor. Measured with the other three fixed: 256 and 4096 draws repeat
+#      to about two per cent while 1 and 16 swap order between probes (1,069 against 1,919 ticks the other
+#      way), so an interval below roughly two thousand ticks on this device is not ordered. The curve is
+#      `{64, 256, 1024, 4096}` and reads 6,086-6,843, 17,953-19,110, 54,178-54,260 and 170,490-173,445 ticks.
+#
+# The unit is MEASURED rather than assumed and the field that reports it is the ratio of the two deltas:
+# `sampleTimestamps:gpuTimestamp:` twice around a sleep gives gpuDelta/1 cpuDelta = 1.0000, so a tick is a
+# nanosecond on this device.
 # ---------------------------------------------------------------------------
 for needle, why in (
-    ("WRITE_STAGE_TIMESTAMP", "the render encoder's stage timestamp is no longer tried, so the smoke would be "
-     "reporting on one sampling road where two were measured"),
-    ('Msg.ofVoid("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:", JAVA_LONG, JAVA_LONG, ADDRESS,\n'
-     '                    JAVA_LONG)', "the stage-timestamp selector is not the header's"),
     ('Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG)',
-     "the command-buffer marker is no longer written, so the smoke lost the road it first used"),
+     "the command-buffer marker is gone, and it is the smoke's only sampling point"),
+    ("Work after this call may or may not have started", "the header's own statement of what a "
+     "command-buffer marker means is gone, so nothing says why a marker behind a pass is a pass boundary"),
+    ("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:",
+     "the render encoder's stage-and-granularity form is no longer named anywhere, so the form that was tried "
+     "and dropped is not recorded and a later edit could reintroduce a second sampling point without noticing"),
+    ("WRITE_TIMESTAMP.send(buffer, heap.handle(), timestampIndex);",
+     "the boundary markers are not written from one site, so a second form can come back one call at a time"),
+    ("if (timestampIndex >= 0L) {", "the warm-up pass is not excluded from the curve, so the first measured "
+     "step is the clearing pass and the command buffer's first encoder again"),
+    ("\"the counter smoke's warm-up\"", "the warm-up pass is gone, which is the reading that separated the "
+     "first step's cost from the fifteen extra draws"),
+    ("private static final int[] COUNTER_DRAWS = {64, 256, 1024, 4096};",
+     "the curve is not the one measured above the road's floor, so the smoke can fail on a step whose interval "
+     "is inside the noise rather than on the counter"),
+    ("below roughly two thousand ticks on this device is not ordered",
+     "the road's resolution floor is no longer recorded, so the next reader would take the curve's light points "
+     "for a property of the counter"),
+    ("4096 -> 211505", "the four runs the curve was measured with are not in the code, so the numbers behind the "
+     "choice of counts are gone"),
     ("sampleTimestamps:gpuTimestamp:", "the CPU/GPU clock relationship is no longer measured, so the tick's unit "
      "would be an assumption again"),
+    ("(double) sample[2] / sample[3]", "the reported unit is not the ratio of the two deltas, so the field a "
+     "reader checks a tick with is some other number"),
     ("samplerGpuDeltaTicks=", "the clock-ratio reading is not reported, so a reader cannot check the unit"),
     ("boolean drew = false;", "the smoke no longer proves its own workload is present"),
     ("drawsLanded=", "the workload proof is not reported"),
-    ("private static final int[] COUNTER_DRAWS = {1, 16, 256, 4096};",
-     "the workload curve is gone, so the smoke compares two chosen ends rather than the response"),
     ("if (stamps[index] < stamps[index - 1]) {",
      "the smoke no longer checks that the stamps are in submission order, which is the reading the whole "
-     "counter question turns on: they are not, in every probe, and a smoke that stopped looking would report "
-     "differences between stamps that are not the work between them"),
-    ("GRANULARITY_RELAXED = 0L;", "the relaxed granularity is no longer tried, and the comparison between the "
-     "two granularities is the finding that the header's warning about splitting is not this"),
-    ("GRANULARITY_PRECISE = 1L;", "the precise granularity is no longer kept, so the comparison cannot be made"),
+     "counter question turns on"),
     ("MTL4RenderEncoder.Color(target, AttachmentContents.CARRIED, null)",
-     "the steps are no longer dependent: each one must load what the step before stored, which is the reading "
-     "that refuted the overlap explanation and must not be lost"),
+     "the steps are no longer dependent: each one must load what the step before stored, so a reordering of the "
+     "work cannot be what an inversion means"),
     ("long[] range = heap.resolveRange(0L, stamps.length);",
      "the range resolve is gone, so the per-entry road is no longer checked against the road the header says "
      "returns tightly packed entries"),
@@ -1589,6 +1606,12 @@ for needle, why in (
 ):
     if needle not in probe_source:
         raise SystemExit("cold-probe harness: " + why)
+
+# And the duplicated boundary must not come back: it is the one defect that made the smoke fail on arithmetic
+# that looked like a driver property for rounds.
+if "WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L)" in probe_source:
+    raise SystemExit("cold-probe harness: a marker is written to a fixed heap index again, which is how the "
+                     "middle boundary came to hold the end of everything and the curve came to look inverted")
 
 for needle, why in (
     ("gpu_time_failures=\"$(grep -c ' gpuTime=false ' \"$probe_log\" || true)\"",

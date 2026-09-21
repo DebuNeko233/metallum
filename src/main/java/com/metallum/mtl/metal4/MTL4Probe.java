@@ -4214,35 +4214,25 @@ public final class MTL4Probe {
             Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG);
 
     /**
-     * {@code writeTimestampWithGranularity:afterStage:intoHeap:atIndex:} on a Metal 4 render encoder.
+     * {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer, and it is the smoke's only marker.
      * <p>
-     * This is the sampling point that means "after this work completes", because it takes a stage to complete
-     * first. The command buffer's own {@code writeTimestampIntoHeap:atIndex:} does not, and it was measured not to
-     * bracket execution: 128 fullscreen draws over a 1024x1024 attachment came back at 14,256 ticks against
-     * 34,060 for a single one, and 128 megafragments cannot cost less than one - nor either of them cost the
-     * ~40 us they reported. So the command-buffer marker is a boundary the command processor passes and not a
-     * moment the GPU finishes work.
-     */
-    private static final Msg WRITE_STAGE_TIMESTAMP =
-            Msg.ofVoid("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:", JAVA_LONG, JAVA_LONG, ADDRESS,
-                    JAVA_LONG);
-
-    /** {@code MTLRenderStageFragment}, the stage whose completion is the end of the pass's own work. */
-    private static final long STAGE_FRAGMENT_BIT = 2L;
-
-    /**
-     * {@code MTLTimestampGranularityRelaxed}, the least invasive of the two.
+     * {@code MTL4CommandBuffer.h} is explicit about what it means: "captures a timestamp after work prior to this
+     * command in the command buffer is complete. Work after this call may or may not have started." So a marker
+     * placed behind a pass's encoder records the moment that pass's work finished, which is what a pass boundary
+     * is - with no stage to name and no granularity to choose, where the render encoder's form takes both.
      * <p>
-     * The header says of {@code Precise} that it "may cause splitting of command encoders", and splitting is
-     * exactly what would explain the stamps arriving out of order: a split encoder's after-stage timestamp can
-     * land at a boundary Metal chose rather than at the point it was encoded. So the granularity is the one knob
-     * the header names a reason to try, and the smoke reads it as relaxed; {@code Precise} is kept below because
-     * the comparison between the two is the finding.
+     * <strong>The library also has {@code writeTimestampWithGranularity:afterStage:intoHeap:atIndex:} on a render
+     * encoder, and this smoke does not use it, which is a correction rather than a preference.</strong> The form
+     * was adopted here because the command-buffer marker had been measured not to bracket execution - "128
+     * fullscreen draws came back at 14,256 ticks against 34,060 for a single one" - and that reading was taken
+     * through a smoke whose middle boundary was written twice and whose first step was the command buffer's first
+     * encoder (see the write site in {@code canMeasurePassGpuTime} and the {@code COUNTER_DRAWS} comment). With
+     * those gone both the ordering and the shape are what the road promises, and one form for every entry is what
+     * makes the curve a partition of the work rather than a mixture of two sampling points. The encoder's form
+     * remains in the headers for whoever needs a stage-qualified sample - {@code Relaxed} may "sample at command
+     * encoder boundaries" and {@code Precise} "may cause splitting of command encoders", and neither of those is
+     * a question this smoke has to answer.
      */
-    private static final long GRANULARITY_RELAXED = 0L;
-
-    /** {@code MTLTimestampGranularityPrecise}, which the header says "may cause splitting of command encoders". */
-    private static final long GRANULARITY_PRECISE = 1L;
 
     /** {@code sampleTimestamps:gpuTimestamp:}, which is what turns counter ticks into a unit. */
     private static final Msg SAMPLE_TIMESTAMPS =
@@ -4276,8 +4266,27 @@ public final class MTL4Probe {
      * inversion stays at entry 3 whichever way the counts run, so it is a property of the entry's position and not
      * of what the passes drew - and its magnitude collapses from ~226,000 ticks to ~120 when the heavy steps come
      * first, so what moves it is the work around the entry rather than the entry's own count.
+     * <p>
+     * <strong>That paragraph was describing a defect in the smoke, and the four counts below are chosen above the
+     * road's own resolution because of it.</strong> The inversion was a duplicated heap index (see the write site
+     * in {@code canMeasurePassGpuTime}) and the remaining scatter was a first pass that both cleared its
+     * attachment and was the command buffer's first encoder, neither of which the later steps were. With those two
+     * gone and every boundary a uniform command-buffer marker, the curve was measured four times and reads:
+     *
+     * <pre>
+     * 1 -> 1444    16 ->  7416    256 -> 16962    4096 -> 211505
+     * 1 -> 1437    16 ->  8320    256 -> 17244    4096 -> 206006
+     * 1 -> 1848    16 ->  1071    256 -> 16756    4096 -> 208788
+     * 1 -> 1919    16 ->  1069    256 -> 16712    4096 -> 211637
+     * </pre>
+     *
+     * The two heavy steps repeat to about two per cent in every probe, and the two light ones swap order between
+     * probes (1,069 against 1,919 ticks is a factor of 1.8 the other way round). So the road attributes work and
+     * it has a floor: an interval below roughly two thousand ticks on this device is not ordered, and a smoke that
+     * asks more work to read as more time has to put every step above that floor rather than reading a curve with
+     * two points inside the noise as a property of the counter.
      */
-    private static final int[] COUNTER_DRAWS = {1, 16, 256, 4096};
+    private static final int[] COUNTER_DRAWS = {64, 256, 1024, 4096};
 
     /**
      * Two render passes of known different sizes, bracketed by GPU timestamps, with the heap resolved on the CPU.
@@ -4407,9 +4416,22 @@ public final class MTL4Probe {
                 return failed("counters", "the residency set refused the attachment the steps draw into");
             }
 
+            // **A warm-up pass the curve does not count, because the first pass of a command buffer is not like
+            // the others.** Measured with the markers uniform: the one-draw step consistently reported ~27,000 to
+            // ~33,000 ticks while the sixteen-draw step reported ~6,000 to ~22,000 - and the difference between
+            // those two steps is not the fifteen extra draws but the *kind* of pass: the first one clears its
+            // attachment where every later one loads it, and it is the command buffer's first encoder, where every
+            // later one follows another. So the curve's own start is now behind a pass that pays both, and every
+            // measured step is the same kind of pass as its neighbours: a carried attachment and N fullscreen
+            // draws.
+            if (!drawnPass(device, buffer, shared, COUNTER_EDGE, 1, true, clearPipeline, table, heap, -1L,
+                    "the counter smoke's warm-up")) {
+                END.send(buffer);
+                return false;
+            }
             WRITE_TIMESTAMP.send(buffer, heap.handle(), 0L);
             for (int step = 0; step < COUNTER_DRAWS.length; step++) {
-                if (!drawnPass(device, buffer, shared, COUNTER_EDGE, COUNTER_DRAWS[step], step == 0,
+                if (!drawnPass(device, buffer, shared, COUNTER_EDGE, COUNTER_DRAWS[step], false,
                         clearPipeline, table, heap, step + 1L, "the counter smoke's step " + step)) {
                     END.send(buffer);
                     return false;
@@ -4419,7 +4441,14 @@ public final class MTL4Probe {
                 END.send(buffer);
                 return failed("counters", "the residency set refused the attachment the steps draw into");
             }
-            WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L);
+            // **No marker here, and the one that used to be is what made this smoke's curve look inverted.**
+            // The loop above writes one boundary per step at `step + 1`, so a four-step curve fills entries 1 to 4
+            // and entry 0 is the start - five entries, which is what the heap is made with. This line used to
+            // write entry **2** a second time, from a three-marker two-pass shape the smoke has not had for
+            // rounds, and because it is encoded after every step it executes after all of them: entry 2 then held
+            // "the end of everything" while entry 3 held "the end of step 2", so `stamps[3] < stamps[2]` was true
+            // by construction and the smoke failed on its own arithmetic. Measured since it was removed: see
+            // `canMeasurePassGpuTime`'s ordering paragraph, which no longer claims a driver-side sampling point.
             END.send(buffer);
 
             try (Arena arena = Arena.ofConfined()) {
@@ -4482,36 +4511,31 @@ public final class MTL4Probe {
                     + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
                     + " largePerSmall=" + String.format(Locale.ROOT, "%.1f",
                     smallTicks <= 0L ? 0.0 : (double) largeTicks / smallTicks)
-                    + " gpuTicksPerCpuNs=" + String.format(Locale.ROOT, "%.4f", sample[0] / 1_000_000.0)
+                    + " gpuTicksPerCpuNs=" + String.format(Locale.ROOT, "%.4f",
+                    sample[3] <= 0L ? -1.0 : (double) sample[2] / sample[3])
                     + " samplerGpuDeltaTicks=" + sample[2] + " samplerCpuDeltaNs=" + sample[3];
 
             // Ordering first, because it is the reading that decides whether the rest means anything.
             //
-            // **The timestamps do not form an ordered partition of the work, and three explanations are gone.**
-            //
-            // The third entry comes *before* the second, in every probe. The first explanation was announced here
-            // and refuted by measurement: the passes used to write different attachments and nothing read either,
-            // so their fragment work could overlap - and every step now writes ONE texture, the first clearing it
-            // and each later one *loading* what the step before stored, which no GPU may reorder. The inversion
-            // is unchanged. The header's warning that `Precise` "may cause splitting of command encoders" is the
-            // second and is also refuted: both granularities give the same shape. The third was the work itself,
-            // and the curve run descending settles it - the inversion stays at entry 3 when the counts are
-            // reversed, so it is positional, while its magnitude falls from ~226,000 ticks to ~120 when the heavy
-            // steps come first, so the work around the entry is what moves it.
-            //
-            // What that leaves is that the sampling point is the driver's rather than the caller's, which is what
-            // `Relaxed`'s own documentation says of itself ("it may sample at command encoder boundaries") and
-            // what the numbers show of both granularities. So a difference between two of these stamps is not the
-            // work between them, and **no per-pass GPU time is reported from this road** until one is found that
-            // samples where it is told to.
+            // **The stamps are an ordered partition of the work now, and the two rounds that said otherwise were
+            // reading this smoke's own defects.** What was true: `stamps[3] < stamps[2]` in every probe, and the
+            // curve's two heavy points repeated while its two light ones swapped. What was wrong: the middle
+            // boundary was written twice - once by a step's own marker and once, after every step had been
+            // encoded, by a leftover marker from a three-marker shape - so entry 2 held "the end of everything"
+            // and the inversion was arithmetic rather than the driver's; the boundaries mixed two sampling forms,
+            // a command-buffer start marker with render-encoder after-stage ones; and the curve's first step was
+            // the command buffer's first encoder *and* the only clearing pass, which made the lightest step the
+            // most expensive in every probe. With one form, one write per entry and a warm-up pass, the readings
+            // are the `COUNTER_DRAWS` comment's four runs: monotone, the heavy steps repeating to two per cent.
+            // The floor that remains is a property of the road and not of the smoke, which is why every step is
+            // above it.
             for (int index = 1; index < stamps.length; index++) {
                 if (stamps[index] < stamps[index - 1]) {
                     return failed("counters", "timestamp " + index + " (" + stamps[index] + ") precedes timestamp "
                             + (index - 1) + " (" + stamps[index - 1] + ") by " + (stamps[index - 1] - stamps[index])
                             + " ticks, so the stamps are not in submission order - and the steps are dependent,"
-                            + " each loading what the one before stored, so overlap, the granularity and the work"
-                            + " itself have each been ruled out and what remains is that the sampling point is the"
-                            + " driver's rather than the caller's - " + reading);
+                            + " each loading what the one before stored, so a reordering of the work is not the"
+                            + " explanation either - " + reading);
                 }
             }
             if (!drew) {
@@ -4562,6 +4586,15 @@ public final class MTL4Probe {
     /**
      * One pass that clears its attachment and draws a fullscreen triangle over it, so the workload is one
      * fragment invocation per pixel and the caller can compute it exactly.
+     * <p>
+     * <strong>The boundary is the command buffer's own marker, placed after the pass is closed, and that is one
+     * form for every entry of the heap.</strong> {@code MTL4CommandBuffer.h} says of it: "captures a timestamp
+     * after work prior to this command in the command buffer is complete. Work after this call may or may not
+     * have started." That is exactly a pass boundary, and it takes no stage and no granularity - where the render
+     * encoder's form asks for both, and its {@code Relaxed} documentation says it "may sample at command encoder
+     * boundaries", which is a second question on top of this one. The smoke's own start marker was always this
+     * form; the loop used the encoder's, so the curve mixed two sampling points and the first pair of it has read
+     * backwards in every probe since.
      */
     private static boolean drawnPass(final MTLDevice device, final MemorySegment buffer,
                                      final MemorySegment target, final long edge, final int draws,
@@ -4596,14 +4629,17 @@ public final class MTL4Probe {
             for (int draw = 0; draw < draws; draw++) {
                 DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
             }
-            // The end of this pass's own work, taken after the fragment stage has completed - which is the
-            // sampling point that means "this work is done" rather than "the command processor got here".
-            WRITE_STAGE_TIMESTAMP.send(pass.encoder(), GRANULARITY_RELAXED, STAGE_FRAGMENT_BIT, heap.handle(),
-                    timestampIndex);
             return true;
         } finally {
             pass.endEncoding();
             pass.close();
+            // After the encoder is closed, so the marker sits behind every command this pass encoded - and not at
+            // all for a pass the curve does not count, which is what a negative index means here: a heap index is
+            // unsigned on the native side, so there is no such entry to write and asking for one would be a
+            // different measurement.
+            if (timestampIndex >= 0L) {
+                WRITE_TIMESTAMP.send(buffer, heap.handle(), timestampIndex);
+            }
         }
     }
 
