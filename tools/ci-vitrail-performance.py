@@ -246,9 +246,15 @@ if "-Dmetallum.frameProbeBudget=$frames" not in launcher:
 # could not say what the machine did in between. The trace is what a later reader correlates against,
 # and it is worthless without knowing which of its samples fall inside the counted window.
 # ---------------------------------------------------------------------------
-if '> "$run_dir/load-trace.txt" 2>/dev/null &' not in launcher:
-    raise SystemExit("the harness keeps only the load at an arm's two ends, so a cost that moved inside "
-                     "one arm has no machine evidence to be read against")
+if '\t) > "$run_dir/load-trace.txt" 2>/dev/null &' in launcher:
+    raise SystemExit("the load tracer redirects its own file, and it shares that file with the arm's window "
+                     "markers: its descriptor carries its own offset, so its next sample lands on the marker "
+                     "the arm appended and overwrites it - measured, `window-opened` was in none of run/m4-rings' "
+                     "four traces")
+if '\t: > "$run_dir/load-trace.txt"' not in launcher or \
+        '\t) >> "$run_dir/load-trace.txt" 2>/dev/null &' not in launcher:
+    raise SystemExit("the load trace is not written by appending writers over a file emptied once, so either "
+                     "the trace is never truncated between arms or the writers can overwrite each other")
 if 'printf \'window-opened %s\\n\' "$(date +%s)" >> "$run_dir/load-trace.txt"' not in launcher:
     raise SystemExit("the load trace does not say when the window opened, so no sample of it can be "
                      "attributed to the frames the probe counted")

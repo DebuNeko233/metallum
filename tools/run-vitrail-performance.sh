@@ -474,12 +474,19 @@ for run in "${runs[@]}"; do
 	#
 	# Bounded rather than merely backgrounded: a harness that dies mid-arm (set -e, a timeout, a closed
 	# terminal) must not leave a loop writing to a directory nobody will read, so the loop counts its samples.
+	#
+	# Appended rather than redirected, and the file made empty here instead, because two writers share it: the
+	# loop and the marker this arm's window boundary is written through. Measured, in the first session that
+	# had both: the loop's own descriptor carried its own offset, so its next sample landed exactly where the
+	# foreground marker had just been appended and **overwrote it** - `window-opened` was in none of the four
+	# arms' traces, which is a boundary no reader could then slice the samples by.
+	: > "$run_dir/load-trace.txt"
 	(
 		for _ in $(seq 1 240); do
 			printf '%s %s\n' "$(date +%s)" "$(load_average)"
 			sleep 5
 		done
-	) > "$run_dir/load-trace.txt" 2>/dev/null &
+	) >> "$run_dir/load-trace.txt" 2>/dev/null &
 	load_tracer=$!
 
 	# The world starts from the staged copy again, unless the caller asked each run to carry on. That
