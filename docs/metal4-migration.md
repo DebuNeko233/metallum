@@ -5484,3 +5484,24 @@ residual this report already carries, unchanged and not a generation difference.
 
 So two of the AUTO gate's four unmet lines are met, by a road that was already in the engine and had been used
 for a different question. The remaining two are the intermittent capability probe and the performance line.
+
+### The alpha residual, localised to before the present
+
+The drawable-readback road reads two halves: the *picture*, which is the texture the present triangle sampled, and
+the *drawable*, which is what left the process. The two fixture sessions of the previous round therefore carry
+more than the fixtures' acceptance colours, and what they carry settles a residual this programme has been
+carrying since the first present comparison - "the Metal 4 frame is flat with alpha 0 where the Metal 3 frame is
+opaque".
+
+```text
+run/live-compute   m3 and m4, identical sample for sample:  ff008b00, 0000f400, ff00ff00, ...  centre ff00ff00
+run/live-history   m3 and m4, identical sample for sample:  ff8b8b00, 00dbdb00, 00f5f500, ...  centre 00ffff00
+```
+
+The zero alpha is **already in the picture** - the present has not run yet when it is read - and the two
+generations read the same pattern sample for sample. So it is decided before the present: by the pack's write into
+the game's target, by the target's format, or by whichever pass produced it, and not by anything Metal 4 does
+differently. That does not make the fixtures pass (a shader that writes alpha 1.0 does not read it back, on either
+generation), but it takes the residual off the list of generation differences and puts it on the list of things
+the *pack* and the *target* do - which is what section 53's gate asks and what the earlier phrasing, written
+before this road existed, could not say.

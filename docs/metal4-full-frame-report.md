@@ -1695,6 +1695,23 @@ grids are equal sample for sample** - the harness's picture comparison agrees (m
 fixture writes 1.0), which is the present/layer residual this report already carries and not a generation
 difference - both arms read the same.
 
+**And the alpha residual is localised, which changes what it is.** This report has carried "the Metal 4 frame is
+flat with alpha 0 where the Metal 3 frame is opaque" since the first present comparison, and the two fixture
+sessions above read both halves of the drawable-readback road on both arms - the *picture* (the texture the present
+triangle sampled) and the *drawable* (what left the process). Both halves already show the mixed alpha, and both
+arms read the same pattern:
+
+```text
+run/live-compute   m3 and m4, identical sample for sample:  ff008b00, 0000f400, ff00ff00, ...  centre ff00ff00
+run/live-history   m3 and m4, identical sample for sample:  ff8b8b00, 00dbdb00, 00f5f500, ...  centre 00ffff00
+```
+
+So the zero alpha is **already in the picture and equal on both generations**: it is decided before the present
+draw - by the pack's write into the game's target, by the target's own format, or by the pass that produced it -
+and it is **not** a Metal 4 execution difference. The residual therefore stays in the report as a *fixture
+acceptance* fact (a shader that writes alpha 1.0 does not read it back) and comes off the list of things this
+migration has to explain: the two generations agree about it to the byte, which is what section 53's gate asks.
+
 ## AUTO readiness
 
 The decision the plan allows three forms of, taken gate by gate and with the evidence each line rests on.
