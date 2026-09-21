@@ -26,6 +26,7 @@ repro_rounds=0
 variant="full"
 own_mode="one-encoder"
 mode="raw"
+probe_vmargs=()
 keep=false
 out_file=""
 
@@ -40,6 +41,10 @@ Usage: metal4-cold-probe.sh [options]
                     is measured; production is the capability record's path, which asks once more where
                     the first answer is no (default: raw, because the fault is what this harness exists to
                     keep measuring).
+  --vmargs "ARGS"   extra JVM arguments for every probe process, which is how a diagnostic switch is given
+                    to the probe: the retry that answers the first-attempt fault can only be priced by
+                    asking for that fault
+                    (-Dmetallum.probeInjectFirstFailure=true), and the switch is off without it.
   --probes-per-process K
                     how many probes each COLD process runs (default 1). One probe a process cannot tell a
                     process that is bad from a draw that went wrong: with K probes, a bad process fails
@@ -66,6 +71,7 @@ while [[ $# -gt 0 ]]; do
 		--warm-runs) warm_runs="$2"; shift 2 ;;
 		--probes-per-process) probes_per_process="$2"; shift 2 ;;
 		--mode) mode="$2"; shift 2 ;;
+		--vmargs) read -r -a probe_vmargs <<< "$2"; shift 2 ;;
 		--out) out_file="$2"; shift 2 ;;
 		--keep) keep=true; shift ;;
 		--repro) repro_rounds="$2"; shift 2 ;;
@@ -124,7 +130,7 @@ if (( repro_rounds > 0 )); then
 	echo "reproducing the copy-then-dispatch fault for $repro_rounds rounds, variant $variant" >&2
 	repro_out="$(mktemp -t m4-repro)"
 	set +e
-	java -cp "$classes:$classpath" CopyThenDispatchRepro "$repro_rounds" "$variant" "$own_mode" | tee "$repro_out"
+	java ${probe_vmargs[@]+"${probe_vmargs[@]}"} -cp "$classes:$classpath" CopyThenDispatchRepro "$repro_rounds" "$variant" "$own_mode" | tee "$repro_out"
 	set -e
 	if grep -q 'storageFailures=0 ' "$repro_out"; then
 		echo "the storage-image smoke passed every round, so the fault did not reproduce" >&2
@@ -138,7 +144,7 @@ fi
 
 run_one() {
 	local index="$1" attempts="$2"
-	java -cp "$classes:$classpath" Metal4ColdProbe "$index" "$attempts" "$mode" 2>/dev/null | grep '^M4_PROBE_RESULT' || true
+	java ${probe_vmargs[@]+"${probe_vmargs[@]}"} -cp "$classes:$classpath" Metal4ColdProbe "$index" "$attempts" "$mode" 2>/dev/null | grep '^M4_PROBE_RESULT' || true
 }
 
 echo "cold runs: $cold_runs processes, $probes_per_process probe(s) each, mode $mode" >&2

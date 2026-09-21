@@ -404,6 +404,41 @@ public final class MTL4Probe {
     /** Whether the last {@link #canBindAndDrawPersistently} call asked twice. */
     private static boolean retried;
 
+    /**
+     * Whether this process's *first* {@link #canBindAndDraw} is failed at stage {@code pixel} on purpose.
+     * <p>
+     * Diagnostic only, off by default, and not a production candidate: nothing in the engine reads it, which is
+     * section 60's rule keeping it that way. It exists because the retry above answers a fault that has not
+     * recurred - 240 probes passed with nothing changed against 21 of 200 in an earlier period - so the policy's
+     * *mechanics* are the only half of the capability gate that can be priced on demand: with this on, the first
+     * answer of the process fails on the same check the fault failed on, with the same stage name and a reason
+     * that says it was injected, and the second attempt runs unmodified. A run of it therefore shows what the
+     * census prints when a first attempt fails (`retried=true`, `success=true`) and what the log prints, which
+     * is what "the retry policy is honest" has to mean in practice.
+     * <p>
+     * The injection is spent by its first use, so the retry's own attempt is a real one, and the reason string
+     * marks the injected failure as injected so no reading can mistake it for the device.
+     */
+    private static final boolean INJECT_FIRST_FAILURE =
+            Boolean.getBoolean("metallum.probeInjectFirstFailure");
+
+    /** Whether the injection has been spent - it is a fact about one attempt of one process, not a mode. */
+    private static boolean injectionSpent;
+
+    /**
+     * Whether this call is the injected one: true at most once per process, and only where the switch asked.
+     * <p>
+     * Answering true spends the injection, so the second attempt of the same process is measured rather than
+     * injected - which is what makes the pair of attempts comparable to the pair the real fault produces.
+     */
+    private static boolean injectFirstFailure() {
+        if (!INJECT_FIRST_FAILURE || injectionSpent) {
+            return false;
+        }
+        injectionSpent = true;
+        return true;
+    }
+
     public static String lastFailure() {
         return failure;
     }
@@ -6825,10 +6860,20 @@ public final class MTL4Probe {
                 // table-bound uniform stopped reaching the draw was never contradicted, only reported as a
                 // vertex-buffer failure one pass later.
                 MTLTexture.bytes(target, pixel, 4L, 0L, 0L, 1L, 1L);
-                if (!matches(pixel, EXPECTED_UNIFORM_PIXEL)) {
-                    return failed("pixel", "the uniform pass drew " + describe(pixel) + " where "
-                            + describe(EXPECTED_UNIFORM_PIXEL) + " was asked for, so the address-bound uniform"
-                            + " did not reach the draw");
+                // The injection is asked for *here* rather than at the entry: the fault this probe's retry
+                // answers fails on this check, after the pass has been encoded, submitted and read back, so an
+                // injected failure taken before that work would price the retry's bookkeeping and not the path.
+                boolean injected = injectFirstFailure();
+                if (injected || !matches(pixel, EXPECTED_UNIFORM_PIXEL)) {
+                    return failed("pixel", injected
+                            ? "this first attempt of the process is failed on purpose"
+                                    + " (-Dmetallum.probeInjectFirstFailure), so the retry that answers a real"
+                                    + " first-attempt fault can be priced; the readback itself was "
+                                    + describe(pixel) + " where " + describe(EXPECTED_UNIFORM_PIXEL)
+                                    + " was asked for"
+                            : "the uniform pass drew " + describe(pixel) + " where "
+                                    + describe(EXPECTED_UNIFORM_PIXEL) + " was asked for, so the address-bound"
+                                    + " uniform did not reach the draw");
                 }
 
                 // Screen two: the vertex-buffer pass, whose target was cleared first, so the answers below are

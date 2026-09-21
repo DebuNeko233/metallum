@@ -64,7 +64,8 @@ if int(warm_default.group(1)) < 20:
         f"cold-probe harness: the default warm runs are {warm_default.group(1)}, and the plan asks for at "
         "least 20 repeated probes in one process"
     )
-if "java -cp" not in script or "runClient" in script or "gradlew runClient" in script:
+if ('"$classes:$classpath" Metal4ColdProbe' not in script
+        or "runClient" in script or "gradlew runClient" in script):
     raise SystemExit("cold-probe harness: the harness is not starting a bare JVM, so it is not measuring a "
                      "cold process - a client launch is the seventy seconds this exists to avoid")
 
@@ -1717,6 +1718,39 @@ for needle, why in (
      "the driver does not count the counter smoke's failures"),
     ("gpu_time_passes=\"$(grep -c ' gpuTime=true ' \"$probe_log\" || true)\"",
      "the driver does not count the counter smoke's successes"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
+# --- the retry, which no session had ever exercised ------------------------------------------------------
+# The capability gate rests on "the first attempt of a process can fail and the second does not", and the real
+# fault has not recurred in 240 probes with nothing changed - so the policy's mechanics are the half that can be
+# priced on demand, and `-Dmetallum.probeInjectFirstFailure=true` is how. It is a diagnostic and not a
+# production path: the switch has to be read as a property that is absent by default, it has to be spent by its
+# first use so the retry's own attempt is measured rather than injected, and the failure it produces has to say
+# in words that it was injected - a census line that could not tell an injected failure from a device fault
+# would make this the most dangerous switch in the tree.
+for needle, why in (
+    ('Boolean.getBoolean("metallum.probeInjectFirstFailure")',
+     "the switch that lets the retry be exercised is gone, so the capability gate's policy is unexercised again "
+     "and nothing can price it without waiting for a fault that has not recurred in 240 probes"),
+    ("private static boolean injectionSpent;",
+     "the injection is not one-shot, so every attempt of a process would fail rather than the first - which "
+     "measures a broken path and not the retry"),
+    ("boolean injected = injectFirstFailure();",
+     "the check the fault fails on no longer asks whether this attempt is the injected one"),
+    ("is failed on purpose",
+     "an injected failure is not marked as injected, so a census line cannot be told from a measurement of the "
+     "device"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+for needle, why in (
+    ("--vmargs) read -r -a probe_vmargs <<< \"$2\"; shift 2 ;;",
+     "the harness cannot give the probe process a JVM argument, so the switch above can never reach a run"),
+    ('java ${probe_vmargs[@]+"${probe_vmargs[@]}"} -cp "$classes:$classpath" Metal4ColdProbe',
+     "the probe JVM is started without the caller's arguments, so a run asked to inject the failure measures "
+     "the unmodified path"),
 ):
     if needle not in script:
         raise SystemExit("cold-probe harness: " + why)
