@@ -4019,6 +4019,32 @@ optimisation. A smoke that went green by keeping the two draw counts whose ends 
 reads 6.8x) would have reported a per-pass time that is not one; the curve is what showed it, and the curve
 stays.
 
+### The scaler's creation is the evidence a resize leaves
+
+Section 124 asks that a scaler be cached per configuration and that a resize rebuild rather than reuse, and section
+81 asks for the identity that separates two configurations. All three claims had a code path and no reading,
+because the Metal 4 path logged a refusal and never a creation - so in a session's log "the identity separated
+them" and "an old scaler was silently reused for a new size" were indistinguishable. One line per creation fixes
+that: a scaler is made on a cache miss, and a miss means the configuration changed.
+
+Measured on ComplementaryReimagined_r5.9.1 at renderscale=55 with a mid-session resize, this path:
+
+```text
+Metal 4 MetalFX spatial scaling: made a scaler for 1408x792 to 2560x1440 ..., 1 in the cache
+Metal 4 MetalFX spatial scaling: made a scaler for 1760x990 to 3200x1800 ..., 2 in the cache
+```
+
+The resize took the pack's scaled input from 1408x792 to 1760x990 and the output from 2560x1440 to 3200x1800, the
+cache went from one entry to two, and the presented extent followed it (2560x1440 for 1591 frames, 3200x1800 for
+2047). The MetalFX road was taken - Vitrail's own `The 55% render scale brings the picture back with MetalFX` - no
+scaler was refused, the chain drew, a dimension change to `world-1` ran in the same session, and the quit was
+clean: zero teardown warnings, `Stopping!`, `BUILD SUCCESSFUL`.
+
+The residue is small and named: no asymmetric fixture has been scaled through the frame path, so the scaler's
+orientation is proven on the device (40 of 40) and not in a live frame; and the design's "no fence" reading is
+that this path's ordering comes from the one command buffer's encode order, which the frame above is consistent
+with rather than proof of.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the

@@ -552,6 +552,10 @@ dimension:  PASS - and it is the one transition on the list that is a command ra
 resize:     PASS and measured in the frame path - `Window.setWindowed(1600, 900)` mid-session takes the
             presented extent from 2560x1440 to 3200x1800 and back to 2560x1440 over 2375/1061/2555 readbacks,
             with every render target, table and argument buffer that names one rebuilt across it and no fault.
+            **And with MetalFX live it rebuilds the scaler rather than reusing one**: at renderscale=55 the same
+            transition makes a scaler for 1408x792 to 2560x1440 and then a second for 1760x990 to 3200x1800, the
+            cache going from one entry to two - section 72's MetalFX clause and section 124's resize item, with a
+            reading
 fullscreen: PASS - `Window.toggleFullScreen()` mid-session, same session as the resize, no fault; the presented
             extent did not change on this display, so what is proven is that the transition is survived rather
             than that a different mode was rendered.
