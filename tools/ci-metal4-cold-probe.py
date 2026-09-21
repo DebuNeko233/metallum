@@ -1542,6 +1542,43 @@ for needle, why in (
         raise SystemExit("cold-probe harness: " + why)
 
 # ---------------------------------------------------------------------------
+# Section 58's depth-offset fixture: the bias is sent, and its effect is read
+#
+# The engine carried a pipeline's `depthBiasConstant` and `depthBiasScaleFactor` for rounds without ever sending
+# them to an encoder, so the fix is one call - and a call is not an effect. This smoke is the effect: the red
+# triangle at 0.25 writes its depth, the green one at 0.75 is drawn with a constant bias large enough to put it in
+# front, and the less-than compare rejects it when no bias is applied and accepts it when one is. Both halves run
+# in one command buffer into their own targets, so the reading is a comparison and not a single coloured pixel.
+#
+# Two things about it are pinned because both were got wrong on the way: the bias is sent **zero** before the first
+# draw and the requested value before the second (sending it once before both biased the control draw too, put
+# both triangles on the same clamped depth and read as "the call does not work"), and the constant is ten million,
+# which the header's own definition of the constant - multiplied by the depth format's minimum resolvable
+# difference, about 1.2e-7 for Depth32Float - makes worth more than one in normalised depth. A constant of -0.6
+# would move the depth by less than the format can hold.
+# ---------------------------------------------------------------------------
+cold_probe_driver = (ROOT / "tools" / "metal4-cold-probe" / "Metal4ColdProbe.java").read_text(
+    encoding="utf-8")
+
+for needle, why in (
+    ("public static boolean canApplyDepthBias(final MTLDevice device) {",
+     "the depth-offset smoke is gone, so whether the bias has an effect is unmeasured again"),
+    ("SET_DEPTH_BIAS_PROBE.send(pass.encoder(), 0.0f, 0.0f, 0.0f);\n        DRAW.send(pass.encoder(),"
+     " MTLPrimitiveType.Triangle.value, 0L, 3L);\n        SET_DEPTH_BIAS_PROBE.send(pass.encoder(), bias, 0.0f,"
+     " 0.0f);",
+     "the bias is no longer sent zero before the first draw and the requested value before the second, so the "
+     "control draw is biased too and the smoke reads the first triangle's colour however the call behaves"),
+    ("private static final float DEPTH_BIAS_CONSTANT = -1.0e7f;",
+     "the bias constant is small enough that the depth format cannot represent the offset, so the smoke would "
+     "read the control's colour whatever the API does"),
+    ("depthBias = makeAndSubmit && MTL4Probe.canApplyDepthBias(device);",
+     "the census no longer asks the depth-offset smoke, so a device that cannot apply a bias is not reported"),
+    ('+ " depthBias=" + depthBias', "the census line no longer carries the depth-offset answer"),
+):
+    if needle not in probe_source and needle not in cold_probe_driver:
+        raise SystemExit("cold-probe harness: " + why)
+
+# ---------------------------------------------------------------------------
 # Section 90's counter smoke: what the road is, measured with three instruments at once
 #
 # The smoke was red for rounds and the pins held the measurement rather than a verdict. The second verdict -

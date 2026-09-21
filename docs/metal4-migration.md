@@ -5429,3 +5429,31 @@ latency in the submission**, whose mixture decides the median and whose floor de
 
 That is the whole measured ladder - three rungs, one absent pack, one mechanism - and it is what the §69 table in
 the report now carries.
+
+### The depth-offset fixture, and the two traps in it
+
+Section 58 asked for two things: make the bias actually execute, and then prove the two generations choose the
+same visible surface. The first was a gap (the artifact carried `depthBiasConstant` and
+`depthBiasScaleFactor` and nothing sent them); the second needed a fixture that can fail.
+
+`MTL4Probe.canApplyDepthBias` is that fixture. One command buffer, two passes, each into its own colour and depth
+target. In each pass the red triangle is drawn at 0.25 and writes its depth, and the green one at 0.75 is drawn
+after it: with no bias the less-than compare rejects green and the overlap keeps red and 0.25, and with a bias
+large enough to put green in front the compare accepts it and the overlap becomes green with a depth well below
+0.25. Both halves run in one submission, so the reading is a comparison between a control and a test rather than a
+single coloured pixel - and the census now reports `depthBias=true` for it.
+
+**Two traps are in the smoke because both were hit while building it.** The bias is *encoder state* and applies to
+the draws that follow it, so it is sent **zero before the first draw and the requested value before the second**;
+the first version sent it once before both draws, which biased the control draw too, put both triangles on the
+same clamped depth, had the compare reject the second and read the first triangle's colour - a failure that looks
+exactly like the API doing nothing. And the constant has to be large *against the depth format's resolution*:
+Metal multiplies a constant bias by that resolution, which is about 1.2e-7 for `Depth32Float`, so the ten million
+the smoke uses is worth more than one in normalised depth where a `-0.6` would move the depth by less than the
+format can hold. Both properties are contract-pinned and mutation-proved, along with the smoke, the census's ask
+and the census's field.
+
+**What the fixture does not say.** No measured scene has a pipeline that asks for a bias - `depthBias=0` in every
+window of every session so far - so cross-generation parity on a *biased* frame is vacuous today: the reading that
+exists is that the call has an effect on this device, and the instrument is what stands ready if a pack asks for
+one.

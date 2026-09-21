@@ -219,6 +219,8 @@ public final class Metal4ColdProbe {
         String depthDrawReason = "-";
         boolean depthSample = false;
         String depthSampleReason = "-";
+        boolean depthBias = false;
+        String depthBiasReason = "-";
         boolean mipmaps = false;
         String mipmapsReason = "-";
         boolean metalFx = false;
@@ -291,6 +293,13 @@ public final class Metal4ColdProbe {
             depthSample = makeAndSubmit && MTL4Probe.canSampleDepth(device);
             if (!depthSample) {
                 depthSampleReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // Section 58's fixture: two coplanar draws, the second biased far enough to pass a less-than
+            // compare it must fail without the bias. The engine carried a pipeline's bias fields for rounds
+            // without sending them, so this is the reading that says the call has an effect and not just a site.
+            depthBias = makeAndSubmit && MTL4Probe.canApplyDepthBias(device);
+            if (!depthBias) {
+                depthBiasReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
             }
             // The blit list's last item: a mip chain generated from level 0 and read back at every level, which
             // is the one frame-resource operation the engine used to answer false to.
@@ -476,6 +485,8 @@ public final class Metal4ColdProbe {
                     + " multiTargetReason=" + multiTargetReason.replace(' ', '_')
                     + " depthDraw=" + depthDraw
                     + " depthDrawReason=" + depthDrawReason.replace(' ', '_')
+                    + " depthBias=" + depthBias
+                    + " depthBiasReason=" + depthBiasReason.replace(' ', '_')
                     + " depthSample=" + depthSample
                     + " depthSampleReason=" + depthSampleReason.replace(' ', '_')
                     + " mipmaps=" + mipmaps

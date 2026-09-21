@@ -1944,6 +1944,204 @@ public final class MTL4Probe {
         }
     }
 
+    /**
+     * The depth-offset smoke: two coplanar-ish triangles, one biased, and the winner read back.
+     * <p>
+     * <strong>Section 58's fixture.</strong> The engine carried a pipeline's {@code depthBiasConstant} and
+     * {@code depthBiasScaleFactor} for rounds without ever sending them to an encoder, so a biased pipeline drew
+     * unbiased here and biased on the reference. Sending them is one call and its *effect* is what this proves:
+     * the red triangle is drawn at 0.25 and writes its depth, then the green one at 0.75 is drawn with a bias
+     * large enough to put it in front of 0.25 - which the less-than compare rejects when no bias is applied and
+     * accepts when one is. Both halves run in one command buffer, each into its own target, so the reading is a
+     * comparison between a control and a test rather than a single coloured pixel.
+     * <p>
+     * <strong>The constant is chosen against the format's resolution and not against a feel.</strong> Metal's
+     * constant bias is multiplied by the depth format's minimum resolvable difference, which for
+     * {@code Depth32Float} is about 1.2e-7, so the ten million used here is worth about 1.2 in normalised depth
+     * - far past the 0.5 the compare has to cross, and far past any plausible format's resolution. A small
+     * constant like -0.6 would move the depth by less than the format can represent and the smoke would read the
+     * control's colour either way.
+     */
+    public static boolean canApplyDepthBias(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        reading = null;
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")) {
+            return failed("depthBias", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer or shared event would come from");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment control = MemorySegment.NULL;
+        MemorySegment biased = MemorySegment.NULL;
+        MemorySegment controlDepth = MemorySegment.NULL;
+        MemorySegment biasedDepth = MemorySegment.NULL;
+        MemorySegment pipeline = MemorySegment.NULL;
+        MemorySegment depthState = MemorySegment.NULL;
+        MTL4RenderEncoder pass = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("depthBias", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            control = newTarget(device);
+            biased = newTarget(device);
+            controlDepth = newDepthTarget(device);
+            biasedDepth = newDepthTarget(device);
+            if (ObjC.isNil(control) || ObjC.isNil(biased) || ObjC.isNil(controlDepth) || ObjC.isNil(biasedDepth)) {
+                return failed("depthBias", "one of the two colour targets or the two depth attachments came back"
+                        + " nil from newTextureWithDescriptor:");
+            }
+
+            // The depth smoke's own pipeline and shader: red at 0.25 from the first triangle, green at 0.75 from
+            // the second. Reusing them is the point - a second shader would be a second thing that could differ.
+            pipeline = MTLBuiltinPipelines.buildPipelineForProbe(DEPTH_MSL, "metallum_depth_probe_vs",
+                    "metallum_depth_probe_fs", new long[]{MTLPixelFormat.RGBA8Unorm.value},
+                    MTLPixelFormat.Depth32Float.value);
+            depthState = MTLBuiltinPipelines.depthStencilStateForProbe(MTLCompareFunction.Less, true);
+            if (ObjC.isNil(pipeline) || ObjC.isNil(depthState)) {
+                return failed("depthBias", "the depth smoke's pipeline or its less-than state came back nil, so"
+                        + " this smoke cannot draw the pair the bias is read from");
+            }
+
+            BEGIN.send(buffer, allocator);
+            // The control first: the same two draws with no bias, where the green one must be rejected.
+            if (!drawBiasPair(device, buffer, control, controlDepth, pipeline, depthState, 0.0f)) {
+                END.send(buffer);
+                return false;
+            }
+            // And the test: the same two draws with a bias large enough to put green in front of red.
+            if (!drawBiasPair(device, buffer, biased, biasedDepth, pipeline, depthState, DEPTH_BIAS_CONSTANT)) {
+                END.send(buffer);
+                return false;
+            }
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 2000L) == 0L) {
+                return failed("depthBias", "the shared event did not reach 1 within 2000 ms, so the submitted"
+                        + " passes never completed");
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+
+                // (8, 32) is inside both triangles in both passes, so it is the overlap in each.
+                MTLTexture.bytes(control, pixel, 4L, 8L, 32L, 1L, 1L);
+                boolean controlRed = matches(pixel, NEAR_PIXEL);
+                MTLTexture.bytes(biased, pixel, 4L, 8L, 32L, 1L, 1L);
+                boolean biasedGreen = matches(pixel, FAR_PIXEL);
+                String biasedColour = describe(pixel);
+
+                MTLTexture.bytes(controlDepth, pixel, 4L, 8L, 32L, 1L, 1L);
+                float controlDepthValue = pixel.get(JAVA_FLOAT, 0L);
+                MTLTexture.bytes(biasedDepth, pixel, 4L, 8L, 32L, 1L, 1L);
+                float biasedDepthValue = pixel.get(JAVA_FLOAT, 0L);
+                reading = "controlDepth=" + controlDepthValue + " biasedDepth=" + biasedDepthValue
+                        + " biasedColour=" + biasedColour + " biasConstant=" + DEPTH_BIAS_CONSTANT;
+
+                if (!controlRed) {
+                    return failed("depthBias", "the unbiased pair's overlap does not read the first triangle's"
+                            + " colour, so the control this smoke compares against did not draw what it says - "
+                            + reading);
+                }
+                if (!(Math.abs(controlDepthValue - NEAR_DEPTH) <= 0.0001f)) {
+                    return failed("depthBias", "the unbiased pair's overlap reads depth " + controlDepthValue
+                            + " where the first triangle wrote " + NEAR_DEPTH + " - " + reading);
+                }
+                if (!biasedGreen) {
+                    return failed("depthBias", "the biased pair's overlap still reads the first triangle's colour,"
+                            + " so setDepthBias:slopeScale:clamp: did not move the second triangle in front of"
+                            + " it - " + reading);
+                }
+                if (!(biasedDepthValue < NEAR_DEPTH - 0.05f)) {
+                    return failed("depthBias", "the biased pair's overlap reads depth " + biasedDepthValue
+                            + " where a bias of " + DEPTH_BIAS_CONSTANT + " should have put it well in front of "
+                            + NEAR_DEPTH + " - " + reading);
+                }
+            }
+
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("depthBias", "describing or reading back the depth-bias pair threw " + threw);
+        } finally {
+            if (pass != null) {
+                pass.close();
+            }
+            releaseIfPresent(pipeline);
+            // The depth-stencil state is cached by the engine and must not be released here: the depth smoke's
+            // own note records the warm-probe crash that taught this.
+            releaseIfPresent(biasedDepth);
+            releaseIfPresent(controlDepth);
+            releaseIfPresent(biased);
+            releaseIfPresent(control);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * The depth-bias constant the smoke sends, and why it is this large: Metal multiplies a constant bias by the
+     * depth format's minimum resolvable difference, which for Depth32Float is about 1.2e-7, so ten million is
+     * worth about 1.2 in normalised depth - past the 0.5 the compare has to cross and past any format's
+     * resolution. A constant of -0.6 would move the depth by less than the format can hold.
+     */
+    private static final float DEPTH_BIAS_CONSTANT = -1.0e7f;
+
+    /**
+     * One pass of the pair: the red triangle at {@link #NEAR_DEPTH}, then the green one at {@link #FAR_DEPTH}
+     * with {@code bias} sent to the encoder first.
+     */
+    private static boolean drawBiasPair(final MTLDevice device, final MemorySegment buffer,
+                                        final MemorySegment target, final MemorySegment depth,
+                                        final MemorySegment pipeline, final MemorySegment depthState,
+                                        final float bias) {
+        MTL4RenderEncoder pass = openPass(device, buffer,
+                new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target, depthClearColor())},
+                new MTL4RenderEncoder.Depth(depth, 1.0), "the depth-bias pair");
+        if (pass == null) {
+            return false;
+        }
+        SET_RENDER_PIPELINE_STATE.send(pass.encoder(), pipeline);
+        if (!pass.setDepthStencilState(depthState)) {
+            pass.endEncoding();
+            pass.close();
+            return failed("depthBias", "the pass's encoder did not answer setDepthStencilState:");
+        }
+        // The bias is encoder state and applies to the draws that follow it, so the first triangle is drawn
+        // with it explicitly zero and only the second carries the requested one. Measured, and it is the whole
+        // trap of this smoke: sending the bias before both draws biases the *control* draw too, both triangles
+        // land on the same clamped depth, the compare rejects the second and the smoke reads the first
+        // triangle's colour with the depth the bias produced - a failure that looks like the call not working.
+        SET_DEPTH_BIAS_PROBE.send(pass.encoder(), 0.0f, 0.0f, 0.0f);
+        DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+        SET_DEPTH_BIAS_PROBE.send(pass.encoder(), bias, 0.0f, 0.0f);
+        DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 3L, 3L);
+        pass.endEncoding();
+        pass.close();
+        return true;
+    }
+
+    /** {@code MTL4RenderCommandEncoder.setDepthBias:slopeScale:clamp:}, for the depth-offset smoke. */
+    private static final Msg SET_DEPTH_BIAS_PROBE =
+            Msg.ofVoid("setDepthBias:slopeScale:clamp:", JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT);
+
     /** What the depth-sampling smoke clears its depth attachment to, and what the triangle writes over it. */
     private static final double SAMPLE_DEPTH_CLEAR = 0.5;
     /** The depth value that survives the round trip, in the eight bits a colour target keeps it in. */

@@ -1730,10 +1730,19 @@ fixture channel that does not need one).
   difference on exactly the geometry the bias exists for. `MTL4RenderEncoder.setDepthBias:slopeScale:clamp:` is
   now bound with the header's three floats in the header's order and applied by the pass where the Metal 3 pass
   makes the same call (`setDepthBias(constant, slopeScale, 0.0f)`, right after the depth-stencil state), and a
-  window reports `depthBias=N` so a live session can say whether any real pipeline reaches it. **What is NOT
-  MEASURED is the offset itself**: no live frame has yet been shown to carry a non-zero bias, and the fixture
-  section 58 asks for - two coplanar surfaces where the biased one must win, read on both generations - is not
-  built. The fix and its four pins are a separate commit from any performance work, as section 58 requires.
+  window reports `depthBias=N` so a live session can say whether any real pipeline reaches it. **And the effect is
+  now measured on the device**: `MTL4Probe.canApplyDepthBias` is section 58's fixture - the red triangle at 0.25
+  writes its depth, the green one at 0.75 is drawn with a constant bias large enough to put it in front, and the
+  less-than compare rejects it with no bias and accepts it with one - and it reads `depthBias=true` on the cold
+  census, with a control pass asserting the unbiased pair keeps the first triangle's colour and its 0.25 depth.
+  Two traps are recorded in the smoke because both were hit: the bias is encoder state and must be sent **zero
+  before the first draw and the requested value before the second** (sending it once before both biased the control
+  draw too, put both triangles on the same clamped depth and read as "the call does not work"), and the constant
+  must be large against the depth format's resolution - Metal multiplies it by that resolution, about 1.2e-7 for
+  `Depth32Float`, so the ten million used is worth more than one in normalised depth where a `-0.6` would move the
+  depth by less than the format can hold. **What is still NOT MEASURED is the live-frame half**: no measured scene
+  has a pipeline that asks for a bias (`depthBias=0` in every window so far), so cross-generation parity of a
+  *biased* frame is vacuous today and the instrument is what stands ready if a pack ever asks for one.
 
 - **The content drift is decomposed and NOT LOCALISED, and the tick term is smaller than it first looked.**
   The decomposition of the traced windows, exactly: a frame is **7 passes** in the steady state, **13** on a
