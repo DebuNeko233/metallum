@@ -1048,7 +1048,18 @@ answered rather than only what is left.
    deduplicated (section 50's correctness-first order); and Vitrail's `wide-resources-contract` fixture, which
    drives thirty-three sampled images through one pipeline, has not been run on this path.
 
-13. **The two arms disagree about how bright a fixture's frame is, and neither reading comes from the pack.**
+13. ~~**The two arms disagree about how bright a fixture's frame is, and neither reading comes from the pack**~~ - **RESOLVED, and it was the same fault as blocker 17.** The disagreement was real and its explanation was written here as "an overlay multiplied in, or a write this path skips": it was a write this path skipped. The overlay is vanilla's own loading fade, drawn through the engine's staged vertex buffer, whose buffer copy declared neither of its resources resident and therefore moved nothing on Metal 4 - so the Metal 3 arm showed the fixture's green under a fading multiply and this arm showed the fixture's green alone. With the copy road's declarations in place, the same fixture, same pack, same world, one arm each, read from the presented picture's own readback:
+
+   ```text
+                                                green over the run                        blue
+   metal3 (before and after the fix)   61, 203, 206, 207, 207, 207, 207, 207, 207, 207   239 -> 0
+   metal4 before the fix               50, 255, 255, 255, ...  (flat, no fade)           -     -> 0
+   metal4 after the fix                61, 202, 206, 207, 207, 207, 207, 207, 207, 207   239 -> 0
+   ```
+
+   The two generations now read the same ramp, the same plateau (207) and the same starting point (61); the single intermediate sample that differs by one is the ramp's phase at the instant it was sampled. The original account of this blocker follows, because the readings it records are what made it a blocker and what shows the fix changed it.
+
+   **The two arms disagree about how bright a fixture's frame is, and neither reading comes from the pack.**
    `compute-storage-contract`'s `final.fsh` writes pure green `(0,1,0,1)` where it judges the compute chain's
    marker correct and pure magenta `(1,0,1,1)` where it does not - nothing else, at any brightness. Measured
    through the drawable and picture readbacks on both arms in one round, 40 s of settle after each chain drew:
