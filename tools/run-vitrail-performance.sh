@@ -457,12 +457,23 @@ pack_fingerprint="$(shasum -a 256 "$game_dir/vitrail/pack.txt" | cut -d' ' -f1)"
 # session ends, so a session cannot leave the instance asking for a fullscreen window - measured, that is how a
 # later manual launch of this instance came up fullscreen and moved the display's mode on startup, which is the
 # same fault the mode guard above exists for, one step earlier in the chain.
+# The copy is kept *beside the instance* as well as in the run directory, because a harness that is killed or
+# whose shell dies never runs its own trap: measured, one SIGKILLed session left `fullscreen:true` in the
+# instance, and the next session then saved that as "the owner's setting" and put it back after every run. The
+# marker file is what makes a killed session self-healing - the next start puts the instance back before it
+# writes anything - and it is removed when the restore succeeds.
+if [[ -f "$game_dir/options-before-measurement.txt" ]]; then
+	cp -f "$game_dir/options-before-measurement.txt" "$game_dir/options.txt" 2>/dev/null || true
+	echo "The last session left the instance in the measurement profile (it was killed before it could put the instance back); the owner's own options have been restored before this one writes its profile" >&2
+fi
 if [[ -f "$game_dir/options.txt" ]]; then
 	cp -f "$game_dir/options.txt" "$out_dir/options-before.txt"
+	cp -f "$game_dir/options.txt" "$game_dir/options-before-measurement.txt"
 fi
 restore_instance_options() {
 	[[ -f "$out_dir/options-before.txt" ]] || return 0
 	cp -f "$out_dir/options-before.txt" "$game_dir/options.txt" 2>/dev/null || true
+	rm -f "$game_dir/options-before-measurement.txt"
 }
 python3 - "$game_dir/options.txt" <<'OPTIONS'
 import os

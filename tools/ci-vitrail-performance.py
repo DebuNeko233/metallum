@@ -873,6 +873,14 @@ for needle, why in (
     ("restore_instance_options",
      "the instance's own options are not put back, so a session leaves the instance in the measurement profile "
      "and the owner's next manual launch is a fullscreen one"),
+    ('cp -f "$game_dir/options.txt" "$game_dir/options-before-measurement.txt"',
+     "the owner's options are not kept beside the instance, so a session killed before its trap runs leaves the "
+     "instance in the measurement profile and the next session adopts that as the owner's setting"),
+    ('if [[ -f "$game_dir/options-before-measurement.txt" ]]; then',
+     "a killed session's profile is not recovered at the next start, which is the only thing that makes the "
+     "marker worth writing"),
+    ('rm -f "$game_dir/options-before-measurement.txt"',
+     "the marker outlives a clean restore, so the next session would put back a stale file"),
     ('cp -f "$game_dir/options.txt" "$out_dir/options-before.txt"',
      "the instance's options are not kept before they are overwritten, so there is nothing to put back"),
     ('"exclusiveFullscreen": "true",',
