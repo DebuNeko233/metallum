@@ -4,6 +4,7 @@ import com.metallum.Metallum;
 import com.metallum.render.shared.AttachmentContents;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import com.metallum.render.shared.MetalShaderStages;
 import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.mtl.MTLFXSpatialScalerDescriptor;
@@ -351,6 +352,18 @@ public final class MTL4Probe {
 
     public static String lastFailure() {
         return failure;
+    }
+
+    /**
+     * What the last answer measured, where a smoke has a number to report and not only a verdict.
+     * <p>
+     * The counter smoke is the reason: "the GPU spent longer on the bigger pass" is a verdict, and the four
+     * timestamps behind it are the measurement. A boolean plus a failure string cannot carry them, so a smoke
+     * that succeeds can still say what it read - which is what turns the unit question (is a counter tick a
+     * nanosecond?) from something to guess at into something the census already printed.
+     */
+    public static String lastReading() {
+        return reading;
     }
 
     /**
@@ -4194,6 +4207,337 @@ public final class MTL4Probe {
      * @param device the device binding, as {@link #canBindAndDraw} takes it
      * @return whether a texture's mip chain is generated from its level 0 and readable at every level
      */
+    // ---------------------------------------------------------------- GPU counters
+
+    /** {@code writeTimestampIntoHeap:atIndex:} on a Metal 4 command buffer. */
+    private static final Msg WRITE_TIMESTAMP =
+            Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG);
+
+    /**
+     * {@code writeTimestampWithGranularity:afterStage:intoHeap:atIndex:} on a Metal 4 render encoder.
+     * <p>
+     * This is the sampling point that means "after this work completes", because it takes a stage to complete
+     * first. The command buffer's own {@code writeTimestampIntoHeap:atIndex:} does not, and it was measured not to
+     * bracket execution: 128 fullscreen draws over a 1024x1024 attachment came back at 14,256 ticks against
+     * 34,060 for a single one, and 128 megafragments cannot cost less than one - nor either of them cost the
+     * ~40 us they reported. So the command-buffer marker is a boundary the command processor passes and not a
+     * moment the GPU finishes work.
+     */
+    private static final Msg WRITE_STAGE_TIMESTAMP =
+            Msg.ofVoid("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:", JAVA_LONG, JAVA_LONG, ADDRESS,
+                    JAVA_LONG);
+
+    /** {@code MTLRenderStageFragment}, the stage whose completion is the end of the pass's own work. */
+    private static final long STAGE_FRAGMENT_BIT = 2L;
+
+    /** {@code MTLTimestampGranularityPrecise}, which the header says "may cause splitting of command encoders". */
+    private static final long GRANULARITY_PRECISE = 1L;
+
+    /** {@code sampleTimestamps:gpuTimestamp:}, which is what turns counter ticks into a unit. */
+    private static final Msg SAMPLE_TIMESTAMPS =
+            Msg.ofVoid("sampleTimestamps:gpuTimestamp:", ADDRESS, ADDRESS);
+
+    /**
+     * The two passes the counter smoke compares.
+     * <p>
+     * <strong>The knob is the draw count and not the attachment's size, and that is the second attempt.</strong>
+     * The first made the large pass a 4096x4096 clear and the small one a 512x512 clear - 64 times the store,
+     * and, once a draw was added, 64 times the fragments - and both passes reported about 31 us. Equal readings
+     * for a 64-fold difference in work is not a small effect being missed; it says the interval between two
+     * command-buffer timestamps is not the pass's execution time, and the reading that would settle it is one
+     * where the only variable is how much work is encoded between the markers. So both passes now clear and draw
+     * the same 1024x1024 attachment, and the difference between them is that one draws the fullscreen triangle
+     * once and the other a hundred and twenty-eight times.
+     */
+    private static final long COUNTER_EDGE = 1024L;
+    private static final int COUNTER_SMALL_DRAWS = 1;
+    private static final int COUNTER_LARGE_DRAWS = 128;
+
+    /**
+     * Two render passes of known different sizes, bracketed by GPU timestamps, with the heap resolved on the CPU.
+     * <p>
+     * Section 90 asks for the smallest counter smoke there is: one render pass with a known workload, a timestamp
+     * before and after it, and the property that more work reads as more GPU time. This asks it with two passes
+     * rather than one, because a single duration says nothing about whether the counter responds to the work at
+     * all - the reading that makes it a measurement is that the <em>larger</em> pass reports the longer time, and
+     * that is a comparison, so it needs two.
+     * <p>
+     * The workload is attachment traffic and not a shader: each pass loads its colour cleared and stores it, so
+     * the large one writes 64 MiB where the small one writes 1 MiB. That is a known and exactly computable
+     * workload, and it is the one this engine's frame path spends most of its measured inefficiency on, so the
+     * smoke measures the thing the next milestone will be argued about.
+     * <p>
+     * The timestamps are the command buffer's own and not a render encoder's: the encoder's form asks for a
+     * <em>stage</em> to complete first and takes a granularity whose documented behaviour ("relaxed ... may
+     * sample at command encoder boundaries", "precise ... may cause splitting of command encoders") is a second
+     * question on top of this one. The command-buffer form is the smallest candidate - three markers, no
+     * granularity, no stage - and it already attributes a duration to each pass because of where it is placed.
+     * <p>
+     * The header's synchronization rule is what makes the resolve legal and it is this engine's own: a shared
+     * event signalled after the work, waited for on the CPU.
+     *
+     * @param device the device binding
+     * @return whether the GPU counter heap reports a longer time for the larger pass
+     */
+    public static boolean canMeasurePassGpuTime(final MTLDevice device) {
+        failure = null;
+        failureStage = null;
+        reading = null;
+
+        if (!device.respondsTo("newCounterHeapWithDescriptor:error:")) {
+            return failed("counters", "this device does not answer newCounterHeapWithDescriptor:error:, so no GPU"
+                    + " timestamp can be read on it at all");
+        }
+        if (!device.respondsTo("newMTL4CommandQueue") || !device.respondsTo("newCommandAllocator")
+                || !device.respondsTo("newCommandBuffer") || !device.respondsTo("newSharedEvent")
+                || !device.respondsTo("sampleTimestamps:gpuTimestamp:")) {
+            return failed("counters", "the device does not answer one of the factories this sequence's queue,"
+                    + " allocator, command buffer, shared event or timestamp sampler would come from");
+        }
+
+        MTL4CounterHeap heap = MTL4CounterHeap.create(device, 3L);
+        if (heap == null) {
+            return failed("counters", "the device would not make a timestamp counter heap");
+        }
+
+        MemorySegment queue = MemorySegment.NULL;
+        MemorySegment allocator = MemorySegment.NULL;
+        MemorySegment buffer = MemorySegment.NULL;
+        MemorySegment event = MemorySegment.NULL;
+        MemorySegment small = MemorySegment.NULL;
+        MemorySegment large = MemorySegment.NULL;
+        MemorySegment clearPipeline = MemorySegment.NULL;
+        MTL4ResidencySet resident = null;
+        MTLBuffer uniform = null;
+        MTL4ArgumentTable table = null;
+        try {
+            queue = NEW_QUEUE.sendPtr(device.handle());
+            allocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            event = NEW_SHARED_EVENT.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+                return failed("counters", "a Metal 4 queue, allocator, command buffer or shared event came back"
+                        + " nil");
+            }
+
+            small = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
+            large = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
+            if (ObjC.isNil(small) || ObjC.isNil(large)) {
+                return failed("counters", "newTextureWithDescriptor: answered nil for one of the two attachments"
+                        + " the passes clear");
+            }
+
+            // A draw, and not only a clear. The first version of this smoke opened each pass with a cleared
+            // attachment and nothing in it, and the two durations came out 30 us and 16 us - backwards, and far
+            // too small for 64 MiB of store. So what a clear-only pass costs is not the attachment's size, and a
+            // workload that does not scale cannot answer "does the counter grow with the work". The builtin
+            // clear pipeline draws a fullscreen triangle, which is one fragment shader invocation per pixel: the
+            // large pass is 64 times the fragments of the small one.
+            clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(
+                    MTLPixelFormat.RGBA8Unorm.value, MTLPixelFormat.Invalid.value, true);
+            if (ObjC.isNil(clearPipeline)) {
+                return failed("counters", "the builtin clear pipeline the two passes draw with came back nil");
+            }
+            uniform = device.newBuffer(UNIFORM_LENGTH, STORAGE_SHARED);
+            if (uniform == null || uniform.gpuAddress() == 0L) {
+                return failed("counters", "the passes' colour uniform has no GPU address");
+            }
+            MemorySegment colour = uniform.contents().reinterpret(UNIFORM_LENGTH);
+            colour.set(JAVA_FLOAT, 0, 0.0f);
+            colour.set(JAVA_FLOAT, 32, 0.25f);
+            colour.set(JAVA_FLOAT, 36, 0.5f);
+            colour.set(JAVA_FLOAT, 40, 0.75f);
+            colour.set(JAVA_FLOAT, 44, 1.0f);
+            table = MTL4ArgumentTable.create(device, 2L, 0L, 0L);
+            if (table == null || !table.address(uniform.gpuAddress(), 1L)) {
+                return failed("counters", "the passes have no table to bind their colour through");
+            }
+
+            resident = MTL4ResidencySet.create(device, 2L, "the counter smoke");
+            if (resident == null || !resident.add(small) || !resident.add(large) || !resident.commit()
+                    || !resident.requestResidency() || !responds(queue, "addResidencySet:")) {
+                return failed("counters", "the smoke could not declare its two attachments resident");
+            }
+            ADD_RESIDENCY_SET.send(queue, resident.handle());
+
+            BEGIN.send(buffer, allocator);
+            // Three markers: before the small pass, between the two, and after the large one. The middle one is
+            // both the end of the first duration and the start of the second, which is what makes two passes cost
+            // three timestamps rather than four.
+            WRITE_TIMESTAMP.send(buffer, heap.handle(), 0L);
+            if (!drawnPass(device, buffer, small, COUNTER_EDGE, COUNTER_SMALL_DRAWS, clearPipeline, table, heap,
+                    1L, "the counter smoke's small pass")) {
+                END.send(buffer);
+                return false;
+            }
+            if (!drawnPass(device, buffer, large, COUNTER_EDGE, COUNTER_LARGE_DRAWS, clearPipeline, table, heap,
+                    2L, "the counter smoke's large pass")) {
+                END.send(buffer);
+                return false;
+            }
+            WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L);
+            END.send(buffer);
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                buffers.set(ADDRESS, 0L, buffer);
+                COMMIT.send(queue, buffers, 1L);
+            }
+            SIGNAL_EVENT.send(queue, event, 1L);
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 5000L) == 0L) {
+                return failed("counters", "the shared event did not reach 1 within 5000 ms, so the passes the"
+                        + " timestamps bracket never completed");
+            }
+
+            // The header's own rule satisfied, so the heap can be resolved on the CPU timeline.
+            long first = heap.resolve(0L);
+            long middle = heap.resolve(1L);
+            long last = heap.resolve(2L);
+            if (first < 0L || middle < 0L || last < 0L) {
+                return failed("counters", "the heap resolved " + first + ", " + middle + " and " + last + ", and"
+                        + " a zero or unreadable entry is not a timestamp - the header says an invalidated entry"
+                        + " resolves as zero");
+            }
+            if (!(first <= middle && middle <= last)) {
+                return failed("counters", "the three timestamps are not monotonic: " + first + ", " + middle
+                        + ", " + last + " - so what the heap holds is not a clock reading in submission order");
+            }
+
+            // Whether the draws are real: the large pass cleared to black and then drew the shader's colour,
+            // so a pixel of its attachment that holds (0.25, 0.5, 0.75) is one the pipeline wrote.
+            boolean drew = false;
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment pixel = arena.allocate(4);
+                MTLTexture.bytes(large, pixel, 4L, COUNTER_EDGE / 2L, COUNTER_EDGE / 2L, 1L, 1L);
+                drew = (pixel.get(JAVA_BYTE, 0L) & 0xFF) > 48
+                        && (pixel.get(JAVA_BYTE, 1L) & 0xFF) > 96
+                        && (pixel.get(JAVA_BYTE, 2L) & 0xFF) > 144;
+            }
+
+            long smallTicks = middle - first;
+            long largeTicks = last - middle;
+            // The unit, measured rather than assumed: a sample of the CPU and GPU clocks together, twice, around
+            // a known sleep. If a counter tick were a nanosecond the two deltas would agree; whatever the ratio
+            // is, it is a fact about this device that the numbers below are read through.
+            long[] sample = sampleClockRatio(device);
+            reading = "drawsLanded=" + drew + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
+                    + " largePerSmall=" + String.format(Locale.ROOT, "%.1f",
+                    smallTicks <= 0L ? 0.0 : (double) largeTicks / smallTicks)
+                    + " gpuTicksPerCpuNs=" + String.format(Locale.ROOT, "%.4f", sample[0] / 1_000_000.0)
+                    + " samplerGpuDeltaTicks=" + sample[2] + " samplerCpuDeltaNs=" + sample[3];
+
+            if (smallTicks == 0L) {
+                return failed("counters", "one draw's two timestamps are the same value (" + first + "), so the"
+                        + " counter did not respond to " + COUNTER_SMALL_DRAWS + " fullscreen draw(s) over a "
+                        + COUNTER_EDGE + "x" + COUNTER_EDGE + " attachment - " + reading);
+            }
+            if (!drew) {
+                return failed("counters", "the large pass cleared its attachment to black and then drew the"
+                        + " shader's colour " + COUNTER_LARGE_DRAWS + " times, and the pixel is still black - so"
+                        + " the workload this smoke varies is not there to measure - " + reading);
+            }
+            if (largeTicks <= smallTicks) {
+                return failed("counters", COUNTER_LARGE_DRAWS + " fullscreen draws over a " + COUNTER_EDGE + "x"
+                        + COUNTER_EDGE + " attachment report " + largeTicks + " ticks where "
+                        + COUNTER_SMALL_DRAWS + " report " + smallTicks + ", and the draws did land - so neither"
+                        + " the command-buffer marker nor the encoder's after-fragment timestamp attributes the"
+                        + " work between them - " + reading);
+            }
+            return true;
+        } catch (RuntimeException threw) {
+            return failed("counters", "measuring a pass's GPU time threw " + threw);
+        } finally {
+            if (resident != null) {
+                resident.close();
+            }
+            if (table != null) {
+                table.close();
+            }
+            if (uniform != null) {
+                releaseIfPresent(uniform.handle());
+            }
+            heap.close();
+            releaseIfPresent(large);
+            releaseIfPresent(small);
+            releaseIfPresent(event);
+            releaseIfPresent(buffer);
+            releaseIfPresent(allocator);
+            releaseIfPresent(queue);
+        }
+    }
+
+    /**
+     * One pass that clears its attachment and draws a fullscreen triangle over it, so the workload is one
+     * fragment invocation per pixel and the caller can compute it exactly.
+     */
+    private static boolean drawnPass(final MTLDevice device, final MemorySegment buffer,
+                                     final MemorySegment target, final long edge, final int draws,
+                                     final MemorySegment pipeline, final MTL4ArgumentTable table,
+                                     final MTL4CounterHeap heap, final long timestampIndex, final String which) {
+        MTL4RenderEncoder pass;
+        try {
+            // Cleared to BLACK and drawn with (0.25, 0.5, 0.75): the smoke reads a pixel afterwards, and a
+            // clear colour that differed from the shader's is what makes that reading say whether the draws
+            // happened at all. Measured because the timestamps refused to scale with the draw count, and the two
+            // explanations for that - the draws cost nothing, or the sampling point is not the end of the work -
+            // are separated by knowing whether the work is there.
+            pass = MTL4RenderEncoder.open(device, buffer, edge, edge,
+                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target,
+                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
+                    null, which);
+        } catch (MTL4RenderEncoder.Refused refused) {
+            failed("counters", "the counter smoke's pass could not be opened at stage " + refused.stage() + ": "
+                    + refused.getMessage());
+            return false;
+        }
+        try {
+            if (!pass.setArgumentTable(table, STAGE_VERTEX) || !pass.setRenderPipelineState(pipeline)) {
+                failed("counters", "the " + which + " would not take its table and the clear pipeline: "
+                        + pass.refusal());
+                return false;
+            }
+            for (int draw = 0; draw < draws; draw++) {
+                DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
+            }
+            // The end of this pass's own work, taken after the fragment stage has completed - which is the
+            // sampling point that means "this work is done" rather than "the command processor got here".
+            WRITE_STAGE_TIMESTAMP.send(pass.encoder(), GRANULARITY_PRECISE, STAGE_FRAGMENT_BIT, heap.handle(),
+                    timestampIndex);
+            return true;
+        } finally {
+            pass.endEncoding();
+            pass.close();
+        }
+    }
+
+    /**
+     * The GPU clock's relation to the CPU's, sampled twice around a 20 ms sleep.
+     * <p>
+     * Four numbers: the GPU ticks and CPU nanoseconds of the first sample, then the deltas of the second. A ratio
+     * near one means a counter tick is a nanosecond on this device, and anything else is a conversion factor. It
+     * is measured here rather than assumed because the header does not say the two clocks share a unit.
+     */
+    private static long[] sampleClockRatio(final MTLDevice device) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment cpu = arena.allocate(JAVA_LONG, 1);
+            MemorySegment gpu = arena.allocate(JAVA_LONG, 1);
+            SAMPLE_TIMESTAMPS.send(device.handle(), cpu, gpu);
+            long firstCpu = cpu.get(JAVA_LONG, 0L);
+            long firstGpu = gpu.get(JAVA_LONG, 0L);
+            try {
+                Thread.sleep(20L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            SAMPLE_TIMESTAMPS.send(device.handle(), cpu, gpu);
+            long secondCpu = cpu.get(JAVA_LONG, 0L);
+            long secondGpu = gpu.get(JAVA_LONG, 0L);
+            return new long[]{firstGpu, firstCpu, secondGpu - firstGpu, secondCpu - firstCpu};
+        } catch (RuntimeException threw) {
+            return new long[]{-1L, -1L, -1L, -1L};
+        }
+    }
+
     // ---------------------------------------------------------------- MetalFX spatial scaling
 
     /** The four quadrant colours the scaler smoke uploads, in the order top-left, top-right, bottom-left,
@@ -5526,6 +5870,7 @@ public final class MTL4Probe {
 
     private static String failure;
     private static String failureStage;
+    private static String reading;
 
     public static boolean canBindAndDraw(final MTLDevice device) {
         failure = null;

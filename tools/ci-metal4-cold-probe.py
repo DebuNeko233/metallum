@@ -1537,4 +1537,52 @@ for needle, why in (
     if needle not in probe_source:
         raise SystemExit("cold-probe harness: " + why)
 
+# ---------------------------------------------------------------------------
+# Section 90's counter smoke: what the road proves and what the sampling points do not
+#
+# The smoke is red on every probe and that is the honest state, so the pins hold the measurement rather than a
+# verdict. Three facts were bought and each is a way a later edit could quietly turn this into a green that
+# means nothing:
+#
+#   1. the heap road works - a heap is made, timestamps land in it, they resolve after the ring's shared-event
+#      wait, and they are monotonic. The unit is MEASURED rather than assumed: `sampleTimestamps:gpuTimestamp:`
+#      is sampled twice around a sleep, and the GPU delta and the CPU delta come out equal to the tick
+#      (21721000 against 21721000 ns in the first run), so a counter tick is a nanosecond on this device;
+#   2. neither sampling road attributes a pass's work. 128 fullscreen draws over a 1024x1024 attachment report
+#      LESS time than one (14644 ticks against 31320), and the same shape held when the knob was the
+#      attachment's size - 4096x4096 against 512x512, also about 31 us each. So the pin requires both roads to
+#      have been tried and both to be *reported*, because the finding is the comparison;
+#   3. the workload is proven present before the timing is judged. The large pass clears its attachment to black
+#      and draws the shader's colour, and a pixel of it is read back: without that, "the draws cost nothing" and
+#      "the timestamps are not execution points" are the same reading, and they are different faults.
+# ---------------------------------------------------------------------------
+for needle, why in (
+    ("WRITE_STAGE_TIMESTAMP", "the render encoder's stage timestamp is no longer tried, so the smoke would be "
+     "reporting on one sampling road where two were measured"),
+    ('Msg.ofVoid("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:", JAVA_LONG, JAVA_LONG, ADDRESS,\n'
+     '                    JAVA_LONG)', "the stage-timestamp selector is not the header's"),
+    ('Msg.ofVoid("writeTimestampIntoHeap:atIndex:", ADDRESS, JAVA_LONG)',
+     "the command-buffer marker is no longer written, so the smoke lost the road it first used"),
+    ("sampleTimestamps:gpuTimestamp:", "the CPU/GPU clock relationship is no longer measured, so the tick's unit "
+     "would be an assumption again"),
+    ("samplerGpuDeltaTicks=", "the clock-ratio reading is not reported, so a reader cannot check the unit"),
+    ("boolean drew = false;", "the smoke no longer proves its own workload is present"),
+    ("drawsLanded=", "the workload proof is not reported"),
+    ("COUNTER_LARGE_DRAWS = 128;", "the workload knob is gone, so the smoke compares nothing"),
+    ("clearPipeline = MTLBuiltinPipelines.ensureClearPipeline(",
+     "the passes no longer draw, so the workload is a clear again - which was measured not to scale (4096x4096 "
+     "and 512x512 both read about 31 us)"),
+):
+    if needle not in probe_source:
+        raise SystemExit("cold-probe harness: " + why)
+
+for needle, why in (
+    ("gpu_time_failures=\"$(grep -c ' gpuTime=false ' \"$probe_log\" || true)\"",
+     "the driver does not count the counter smoke's failures"),
+    ("gpu_time_passes=\"$(grep -c ' gpuTime=true ' \"$probe_log\" || true)\"",
+     "the driver does not count the counter smoke's successes"),
+):
+    if needle not in script:
+        raise SystemExit("cold-probe harness: " + why)
+
 print("Metal 4 cold-probe harness contract: PASS")

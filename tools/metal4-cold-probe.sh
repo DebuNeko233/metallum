@@ -191,6 +191,9 @@ mipmap_failures="$(grep -c ' mipmaps=false ' "$probe_log" || true)"
 # the four quadrant interiors read back - which is the orientation question a live frame cannot answer.
 metal_fx_passes="$(grep -c ' metalFx=true ' "$probe_log" || true)"
 metal_fx_failures="$(grep -c ' metalFx=false ' "$probe_log" || true)"
+# Section 90's counter smoke, counted on its own: two passes of known sizes bracketed by GPU timestamps.
+gpu_time_passes="$(grep -c ' gpuTime=true ' "$probe_log" || true)"
+gpu_time_failures="$(grep -c ' gpuTime=false ' "$probe_log" || true)"
 # And the dispatch, counted on its own: the copies a frame's encoder carries say nothing about a kernel.
 compute_passes="$(grep -c ' compute=true ' "$probe_log" || true)"
 compute_failures="$(grep -c ' compute=false ' "$probe_log" || true)"
@@ -257,6 +260,7 @@ echo "depth draws:     $depth_draw_passes passed   $depth_draw_failures failed"
 echo "depth samples:   $depth_sample_passes passed   $depth_sample_failures failed"
 echo "mip chains:      $mipmap_passes passed   $mipmap_failures failed"
 echo "MetalFX spatial: $metal_fx_passes passed   $metal_fx_failures failed"
+echo "GPU pass time:   $gpu_time_passes passed   $gpu_time_failures failed"
 echo "compute:         $compute_passes passed   $compute_failures failed"
 echo "storage images:  $storage_image_passes passed   $storage_image_failures failed"
 echo "bound layouts:   $layout_passes passed   $layout_failures failed"
@@ -328,6 +332,11 @@ fi
 
 if (( metal_fx_failures > 0 )); then
 	echo "the MetalFX spatial smoke failed in $metal_fx_failures probe(s)" >&2
+	exit 1
+fi
+
+if (( gpu_time_failures > 0 )); then
+	echo "the GPU pass-time smoke failed in $gpu_time_failures probe(s)" >&2
 	exit 1
 fi
 

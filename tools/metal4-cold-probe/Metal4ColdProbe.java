@@ -40,6 +40,7 @@ import java.util.Optional;
  *                 depthSample=&lt;bool&gt; depthSampleReason=&lt;text&gt;
  *                 mipmaps=&lt;bool&gt; mipmapsReason=&lt;text&gt;
  *                 metalFx=&lt;bool&gt; metalFxReason=&lt;text&gt;
+ *                 gpuTime=&lt;bool&gt; gpuTimeReading=&lt;text&gt;
  *                 compute=&lt;bool&gt; computeReason=&lt;text&gt;
  *                 storageImage=&lt;bool&gt; storageImageReason=&lt;text&gt;
  *                 computeSample=&lt;bool&gt; computeSampleReason=&lt;text&gt;
@@ -222,6 +223,8 @@ public final class Metal4ColdProbe {
         String mipmapsReason = "-";
         boolean metalFx = false;
         String metalFxReason = "-";
+        boolean gpuTime = false;
+        String gpuTimeReason = "-";
         boolean compute = false;
         String computeReason = "-";
         boolean storageImage = false;
@@ -301,6 +304,14 @@ public final class Metal4ColdProbe {
             metalFx = makeAndSubmit && MTL4Probe.canScaleWithMetalFx(device);
             if (!metalFx) {
                 metalFxReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            }
+            // Section 90's counter smoke: two passes of known and very different sizes, bracketed by GPU
+            // timestamps, with the heap resolved on the CPU after the ring's own shared-event wait.
+            gpuTime = makeAndSubmit && MTL4Probe.canMeasurePassGpuTime(device);
+            if (!gpuTime) {
+                gpuTimeReason = MTL4Probe.lastFailureStage() + "(" + MTL4Probe.lastFailure() + ")";
+            } else {
+                gpuTimeReason = MTL4Probe.lastReading();
             }
             // And the dispatch itself, which is the half of the shader-pack contract the copies do not reach: a
             // pipeline from the probe's own kernel, a table carrying two buffers by address, a grid, and an exact
@@ -471,6 +482,8 @@ public final class Metal4ColdProbe {
                     + " mipmapsReason=" + mipmapsReason.replace(' ', '_')
                     + " metalFx=" + metalFx
                     + " metalFxReason=" + metalFxReason.replace(' ', '_')
+                    + " gpuTime=" + gpuTime
+                    + " gpuTimeReading=" + gpuTimeReason.replace(' ', '_')
                     + " compute=" + compute
                     + " computeReason=" + computeReason.replace(' ', '_')
                     + " storageImage=" + storageImage

@@ -151,6 +151,25 @@ public record Msg(String name, MemorySegment sel, MethodHandle handle) {
         }
     }
 
+    /**
+     * Two integers, the pointer and one more integer - the shape a Metal 4 render encoder's timestamp takes.
+     * <p>
+     * {@code writeTimestampWithGranularity:afterStage:intoHeap:atIndex:} is
+     * {@code (MTL4TimestampGranularity)granularity, (MTLRenderStages)stage, (id<MTL4CounterHeap>)counterHeap,
+     * (NSUInteger)index} - a granularity, a stage bit, the heap and an entry - and this class had the shape with
+     * the pointer second (a draw's index buffer and arguments buffer) and not the one with it third. It is added
+     * rather than worked around because the alternative was to reorder the arguments at a call site, and an
+     * Objective-C selector's argument order is fixed: a call that sent them in another order would compile and
+     * then write a timestamp into whatever the driver read as a heap.
+     */
+    public void send(MemorySegment self, long a, long b, MemorySegment c, long d) {
+        try {
+            handle.invokeExact(self, sel, a, b, c, d);
+        } catch (Throwable throwable) {
+            throw fail(throwable);
+        }
+    }
+
     public void send(MemorySegment self, long a, MemorySegment b, long c) {
         try {
             handle.invokeExact(self, sel, a, b, c);
