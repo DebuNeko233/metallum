@@ -213,10 +213,63 @@ number stays out of the disk key - so the prediction is "0 built", and it is a p
 - **Complementary's descending warm arms are not attributed** (11, 9, 8 s).
 - **The near-duplicate case of F2 is unmeasured** by construction of the key.
 
+# F4 - the pipeline warm-up, and a correction to what it was worth
+
+## Question
+
+F4 asks what is left of the first-world path once the caches are warm, and the F1/F3 measurement named a
+candidate: a warm launch builds nothing but still "compiles 62 of 62 leftover pipelines ahead of their first
+draw", 262-312 ms on MakeUp and 1.08-1.64 s on Complementary. An on-disk Metal pipeline cache was recorded as
+**the largest measured startup item left, 0.26-1.6 s a launch**. This section is that claim checked, and it is
+**wrong as stated**.
+
+## What the load actually waits for
+
+`FamilyWarmup.awaitAll()` is called from **exactly one place** in the engine: `PackChain.close()`, the client's
+shutdown, where it is capped at two seconds. The pack load never joins it. The warm-up is three MIN_PRIORITY
+worker threads started when a chain is built, and their work proceeds beside the rest of the load.
+
+The logs say the same thing by their timestamps: the warm-up line lands **5-10 s** into the load and the pack's
+first full frame **2-6 s after it**.
+
+```
+arm                        load    warm-up line at   first full frame
+f1-makeup cold             11 s         8 s               11 s
+f1-makeup warm1             8 s         5 s                8 s
+f1-complementary cold      15 s        10 s               15 s
+f1-complementary warm3      8 s         6 s                8 s
+c2-makeup plain            11 s         8 s               11 s
+c46-complementary plain    15 s         9 s               15 s
+```
+
+So the 0.26-1.6 s is **the span of background work the load does not wait for**, not a saving the load would
+see. What an archive could buy is therefore two smaller things:
+
+1. **The CPU the warm-up takes from the load's own work** - three low-priority threads over that span, whose
+   effect on an 8 s load the load wall could show only as a fraction of a second, and does not resolve.
+2. **Any pipeline a first draw asked for before the warm-up reached it**, which is the hitch the warm-up exists
+   to prevent. **No counter can see this today**: `MetalFrameProbe.pipelineCompiled` is gated on the measurement
+   window, and the window opens after the pack's first full frame and a 25 s settle - so every compile that
+   happens during a load or in the world's first seconds is invisible by construction.
+
+## Decision
+
+**DEFERRED, and the candidate corrected.** The record at F1/F3 that an on-disk pipeline cache is worth
+"0.26-1.6 s a launch" is withdrawn: that figure is the span of background work the load overlaps, and neither of
+the two things an archive could actually buy is measured. A change that removes work nobody waits for, sized by a
+span nobody waits on, is not a candidate yet - it is a hypothesis with a number attached to the wrong quantity.
+
+**What would size it**: a counter for the *unarmed* window. The engine already has the two accumulators
+(`MetalFrameProbe.pipelineCompiled` and its window gate); what it needs is to count and report the compiles from
+the pack load to the first seconds of the world - how many, their total time, and the worst single one - and to
+say whether any of them was a *first draw* compiling on the render thread rather than a background worker
+finishing it. That is the same instrument F1 asks for as "max compile spike", and it is the next step here.
+
 ## Next
 
-1. **F4's real question, now sized**: the 0.3-1.6 s of per-launch pipeline state is the largest named startup
-   item; a Metal pipeline archive is the candidate and it needs its own phase report and rollback path.
-2. **The max compile spike**, if a load is ever seen to hitch: one clock around one compile, reported per load.
-3. Back to the GPU list: **C7's attachment-traffic corpus** and **C3's remaining three scales**, both of which
-   are structural and unaffected by the machine's frame-time spread.
+1. **F4's unarmed-window counter**, which sizes or dismisses the pipeline archive: compiles from the load to the
+   first seconds of the world, their total, and the worst one.
+2. **The max compile spike** generally, which the same addition gives - F1 asks for it and today's census has
+   totals per load and no maximum.
+3. Back to the GPU list: **C3's remaining three scales**, which is structural and unaffected by the machine's
+   frame-time spread.

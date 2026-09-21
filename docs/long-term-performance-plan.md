@@ -125,10 +125,15 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 ## What is left, in the order the plan asks for it
 
 ```
-1. F4's recorded candidate   an on-disk Metal pipeline cache, 0.26-1.6 s a launch by the pipeline
-                             warm-up spans, on every launch, with no disk cache of any kind behind
-                             it today (docs/startup-and-cache.md). The largest measured startup item
-                             left, and the one item of the plan with a sized prize and no change.
+1. F4's unarmed-window        the pipeline warm-up's span is NOT on the load's critical path - it is
+   counter                   joined only at client shutdown, with a 2 s cap, and its line lands 5-10 s
+                             into an 8-15 s load (docs/startup-and-cache.md, F4). So the recorded
+                             "0.26-1.6 s a launch" candidate is WITHDRAWN as stated: what an archive
+                             could buy is the CPU it takes from the load and any first draw that beat
+                             it, and neither is measured. `MetalFrameProbe.pipelineCompiled` is gated
+                             on the measurement window, so no load-time or first-frame compile is
+                             counted at all. That counter is the next step, and it sizes or dismisses
+                             the archive.
 2. C3's remaining three      the corpus's other scenes at a render scale, for C3's completeness.
    scales
 3. C4/C2's unresolved        the entity family's wall and the shadow interval on the second pack -
