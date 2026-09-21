@@ -497,10 +497,93 @@ at all.
 
 ## Next
 
-1. **C3's remaining three scales**, and the entity/interval re-measurement, both of which need a machine that
-   holds one state for a session.
-2. **The plan's phase 53 list is now measured end to end** on this corpus; what is left of Track C is the
-   completeness work above.
+1. **The entity/interval re-measurement**, which needs a machine that holds one state for a session.
+2. **Track C is otherwise complete**: C1 and C3 in the first section, C2 in the second, C4/C5/C6 in the third
+   and C7 in the fourth, all on the same corpus.
+
+---
+
+# C3 completed - the other three scales
+
+Starting Metallum SHA: `74ee07f`
+Ending Metallum SHA: `74ee07f` + this round's documents
+Starting Vitrail SHA: `bb5db273`
+Ending Vitrail SHA: `bb5db273`
+
+## Question
+
+C1 and C3 measured Complementary at 55 per cent and found exactly one pass a frame still at the window's own
+size, which is the interface's, with every world pass following the scale. The C3 section left the other three
+scenes as completeness work; this is it, three sessions at 55 per cent on a 1920x1200 window.
+
+## The pass tables
+
+Shadow map's own passes first, then the window's size, then the world's. Counts are per 600-frame window.
+
+```
+scene              scale   4080^2      2048^2   1920x1200        1056x660   528x330 or smaller
+no-pack             100        -           20     5400 (9 a frame)     -            -
+no-pack              55        -           21     5400 (9 a frame)     -            -
+MakeUp              100      900           81    10200 (17 a frame)    -            -
+MakeUp               55      900           65      600 (1 a frame)   9600 (16)       -
+Complementary       100        -          999    12000 (20 a frame)    -        960x600: 600
+Complementary        55        -          983      600 (1 a frame)  11400 (19)   528x330: 600
+Photon              100        -         1356    16200 (27 a frame)    -      960x600:1200, 480x300:600
+Photon               55        -         1300      600 (1 a frame)  15600 (26) 528x330:1200, 264x165:600, 192x108:600
+```
+
+## What it answers
+
+**Every world pass follows the scale on every pack that has one**, and the pass at the window's own size is
+**one a frame** in all three: 1920x1200 falls from 17, 20 and 27 passes a frame to **exactly 1** on MakeUp,
+Complementary and Photon, while 1056x660 (55 per cent of the window) appears at 16, 19 and 26. That one pass is
+the interface's - the GUI and the final blit are drawn at the window's size by design - so **C3's hypothesis of a
+heavy world pass left at native resolution is REJECTED on the whole corpus**, not only on the pack it was
+rejected on first.
+
+**The shadow map is not scaled and is not expected to be.** MakeUp's 4080x4080 stays at 900 passes (1.5 a frame)
+at both scales, and Photon's 2048x2048 stays at 1300 against 1356; a shadow map is sized by the pack's own shadow
+distance and multiplied by the player's shadow-map scale, both of which are separate settings to the render
+scale, and the plan lists this case itself.
+
+**Without a pack there is no scaled world at all.** `--no-pack --renderscale 55` draws the same table as
+`--no-pack --renderscale 100` - 5400 passes at 1920x1200 and no 1056x660 anywhere - so the render scale is a
+**shader-pack path**: with no pack the game's own frame is drawn at the window's size and the setting has nothing
+to scale. That is worth knowing for the product direction the plan ends on, where the scale is offered as a
+pack-side quality setting rather than a global one.
+
+**And one fixed-size target is visible on Photon**: 512x512 at 756 passes at 100 per cent and 700 at 55, against
+128x128 and 256x256 which follow the cascade. It is a pack-declared target at a size the pack named rather than
+one the engine scaled, which is the second half of what C3 set out to check - "whether any *pack-declared* target
+is pinned at a size by the pack's own declaration rather than by the engine's scale" - and the answer is yes, and
+by declaration rather than by accident.
+
+## Correctness and one trap
+
+- The three arms are 600-frame windows, Metal 3, the frozen `PerfWorld`, and two of them were **refused by the
+  harness's target guard** (`--expect-target 1920x1200`): at a render scale below 100 per cent **both** of the
+  engine's target lines report the *scaled* world - `The world renders at 1056x660` and `Drawing ... at
+  1056x660` - so the expectation for a 55 per cent arm is the scaled size and not the window's. The guard was
+  right and the expectation was wrong; the arms' counters are unaffected, and the rule is written into
+  `docs/performance-testing.md`.
+- Nothing was changed in either repository for this measurement.
+
+## Decision
+
+**REJECTED - C3's hypothesis, on the whole corpus.** No world pass is left at native resolution by the scale.
+The one pass at the window's size is the interface's, the shadow map is sized by the pack's own settings, and
+the only pack-declared fixed size found is Photon's 512x512, which the pack asked for by name.
+
+## Residual
+
+- **Solas**, the fifth scene the plan names for C3's family of questions, is still not staged on this machine.
+- **No-pack at a render scale is a no-op**, measured here - and whether that is the *intended* product behaviour
+  for the MetalFX path without a pack is a product question rather than a measurement one, and it is not asked.
+
+## Next
+
+1. **The entity/interval re-measurement**, which needs the machine to hold one state for a session.
+2. **E4, dynamic resolution**, last and only if 1 and the shadow interval's second pack are settled.
 
 ---
 

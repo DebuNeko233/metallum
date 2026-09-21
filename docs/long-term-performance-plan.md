@@ -125,13 +125,14 @@ Track G  measurement infrastructure   G1-G3 partly standing (the harness, the re
 ## What is left, in the order the plan asks for it
 
 ```
-1. C3's remaining three      the corpus's other scenes at a render scale, for C3's completeness. Four
-   scales                    sessions, no new instrument, and structural - the machine cannot spoil it.
-2. C2/C4's unresolved        the entity family's wall and the shadow interval on the second pack -
+1. C2/C4's unresolved        the entity family's wall and the shadow interval on the second pack -
    walls                     both need a machine that holds one state for a session, which this one
-                             does not (47 per cent between arms of one configuration).
-3. E4, dynamic resolution    only after 1 and 2, and only with hysteresis, cooldown, step limits and
-                             a stability window, as section 36 requires.
+                             does not. C3's completion is DONE: at 55 per cent every world pass follows
+                             the scale on all three packs (the window's own size falls to exactly one
+                             pass a frame, the interface's), the shadow map is sized by the pack's own
+                             settings, and without a pack there is no scaled world at all.
+2. E4, dynamic resolution    only after 1, and only with hysteresis, cooldown, step limits and a
+                             stability window, as section 36 requires.
 ```
 
 Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed

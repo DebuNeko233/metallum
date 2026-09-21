@@ -126,6 +126,14 @@ session a reload experiment: measured, MakeUp goes 11-12 s cold and 8 s warm, Co
 8-11 s warm (`docs/startup-and-cache.md`). `tools/vitrail-load-census.py` reads the load's own census lines out
 of a session's arms into one table.
 
+**At a render scale below 100 per cent the target to expect is the SCALED world, not the window.** Both of the
+engine's target lines report the scaled size - `The world renders at 1056x660` and `Drawing <pack> ... at
+1056x660, N full screen passes` - so a 55 per cent arm on a 1920x1200 window wants `--expect-target 1056x660`.
+Measured while completing C3: two of three `--renderScale 55` arms were refused by the guard for reporting
+1056x660 against an expectation of 1920x1200, which is the guard being right and the expectation being wrong. The
+window's own size is still the thing to pin when the question is which display mode a session ran on; it is the
+*world's* size that the guard reads.
+
 ### 4. Read the artifacts
 
 Every run writes `<out>/<name>/`:
