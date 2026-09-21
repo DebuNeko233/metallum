@@ -9,7 +9,9 @@ window armed before there was a world, a pack named in the script rather than ha
 committed to the repository instead of copied into an ignored dev instance - or about the one thing
 that keeps the numbers honest, which is that they are the probe's own and not a second opinion.
 """
+import struct
 import subprocess
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -812,6 +814,38 @@ for needle, why in (
     if needle not in harness:
         raise SystemExit("Vitrail performance harness contract: " + why)
 
+# --- a session nobody touches, and the two ways that ruins one ------------------------------------------
+# A session is eight to twelve minutes of an idle machine, which is the condition a screen locks and sleeps
+# under, and a client whose window the display server has occluded is throttled. Measured, one arm of the sky
+# session read `wallP50=100.00` with `windowTicks=598` over 300 frames - ten frames a second at exactly two
+# client ticks a frame, every counter self-consistent, 14 render passes a frame and 100 pipeline identities -
+# while its capture was the browser in front of the game and the client's own log said `Saving and pausing
+# game...` eight seconds before the window opened. Nothing in the numbers said so and the flat-capture guard
+# could not: a capture of a desktop is not one flat colour. So the session declares the user active for its own
+# length, records what was in front of the display per arm, and refuses an arm whose window closed after the
+# client paused rather than annotating it - a window that drew the pause screen is not the scene it claims.
+for needle, why in (
+    ("caffeinate -d -i -m -s -u -w $$ &",
+     "the harness no longer declares the user active for the session, so an idle screen can lock mid-session and "
+     "an occluded client is throttled to a cadence nobody can tell from a slow engine"),
+    ("trap cleanup_caffeinate EXIT",
+     "the activity declaration outlives the harness, so a session that ends leaves the machine unable to sleep"),
+    ('"${front_app:-unknown}" > "$run_dir/front-app.txt"',
+     "the arm no longer records what was in front of the display, so a capture of another application cannot be "
+     "told from a capture of the game after the fact"),
+    ("front '${front_app:-unknown}'",
+     "the PASS line does not name what was in front, so a passing arm's picture column has no witness"),
+    ('pause_line="$(grep -n "Saving and pausing game" "$run_dir/latest.log"',
+     "the client's own pause line is no longer read, so an arm that measured the pause screen passes as a window"),
+    ('"$pause_line" -lt "$report_line"',
+     "a pause anywhere in the log is no longer placed against the window it closed after, so either every arm "
+     "with a late pause is refused or none is"),
+    ("a paused client is not the scene",
+     "the refusal does not say what the pause means for the numbers it counted"),
+):
+    if needle not in harness:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
 # --- the window's tick sampling, which is what a content drift has to be read against --------------------
 # A window is a fixed frame count and this client's frame is not the same work every frame (measured on the
 # no-pack scene: four render passes in the steady state, six when the two particle passes have work, and six more
@@ -996,5 +1030,70 @@ PROBE_SOURCE = ROOT / "src/main/java/com/metallum/render/shared/MetalFrameProbe.
 if "windowTicks={} framesPerTick={}" not in PROBE_SOURCE.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the probe no longer reports the tick sampling the "
                      "comparer reads")
+
+# --- and a picture difference has to be attributable to a region -------------------------------------------
+# A global mean cannot tell a sky that is a level brighter from a terrain that is, and the audit's sky/cloud
+# residual is a claim about a region. `tools/vitrail-picture-regions.py` classifies every pixel by the
+# *reference* arm's colour and reads each arm class by class, and this writes a picture with a known sky, cloud
+# and terrain band and a known difference in two of them, so the classification and the per-class arithmetic are
+# checked rather than eyeballed. The PNG is written here rather than kept in the tree because a fixture that is
+# twelve pixels of three colours is a fixture whose reader is the test.
+REGIONS = ROOT / "tools/vitrail-picture-regions.py"
+regions_text = REGIONS.read_text(encoding="utf-8")
+for needle, why in (
+    ("def classify(pixel: tuple[int, int, int]) -> str:",
+     "the region reader no longer classifies a pixel, so a per-region difference cannot be read at all"),
+    ("if min(pixel) >= 170 and max(pixel) - min(pixel) <= 40:",
+     "the cloud test is gone, so a white cloud is counted as terrain or as sky"),
+    ("if blue >= green >= red and blue >= 120 and blue - red >= 25:",
+     "the sky test is gone, so the blue sky is counted as terrain"),
+    ("classes = [classify(pixel) for pixel in reference_pixels]",
+     "the classification is no longer taken from the reference arm, so a difference can move a pixel from one "
+     "class to another and report both as unchanged"),
+    ("bands top to bottom (mean |delta| per tenth)",
+     "the row-band profile is gone, so a difference cannot be localised to the top or the bottom of a frame "
+     "without depending on a colour threshold"),
+):
+    if needle not in regions_text:
+        raise SystemExit("Vitrail performance harness contract: " + why)
+
+
+def write_png(path, rows):
+    """A PNG of 8-bit RGB, filter 0 a row - enough to be read back by the reader under test."""
+    height, width = len(rows), len(rows[0])
+    raw = b"".join(b"\x00" + bytes(channel for pixel in row for channel in pixel) for row in rows)
+    def chunk(kind, body):
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+SKY = (100, 150, 220)
+CLOUD = (240, 240, 245)
+GROUND = (40, 80, 40)
+with tempfile.TemporaryDirectory() as scratch:
+    session_dir = Path(scratch)
+    (session_dir / "order.txt").write_text("m3\nm4\n", encoding="utf-8")
+    for name, bump in (("m3", 0), ("m4", 4)):
+        arm_dir = session_dir / name
+        arm_dir.mkdir()
+        rows = [[tuple(min(255, channel + bump) for channel in SKY) for _ in range(12)] for _ in range(2)]
+        rows.append([tuple(min(255, channel + bump) for channel in CLOUD) for _ in range(12)])
+        rows.append([GROUND for _ in range(12)])
+        write_png(arm_dir / "screen.png", rows)
+    read_regions = subprocess.run(["python3", str(REGIONS), scratch],
+                                  check=True, capture_output=True, text=True).stdout
+for needed, why in (
+    ("cloud          12 px", "the cloud band is not counted as cloud, so a white region is not separable"),
+    ("sky            24 px", "the sky band is not counted as sky"),
+    ("terrain        12 px", "the ground band is not counted as terrain, so the control region is not read"),
+    ("sky            24 px  mean |delta|  4.00", "the sky's own difference is not read as its four levels"),
+    ("cloud          12 px  mean |delta|  4.00", "the cloud's own difference is not read as its four levels"),
+    ("terrain        12 px  mean |delta|  0.00", "the control region's unchanged pixels are not read as zero"),
+):
+    if needed not in read_regions:
+        raise SystemExit("Vitrail performance harness contract: " + why)
 
 print("Vitrail performance harness contract: PASS")

@@ -214,6 +214,25 @@ fi
 if [[ ${#runs[@]} -eq 0 ]]; then
 	runs=("plain")
 fi
+
+# A session is eight to twelve minutes of nobody touching the machine, which is exactly the condition an idle
+# screen locks or sleeps under - and a client whose window the display server has occluded is throttled, so the
+# frames it counts are the display's cadence and not its own work. Measured: one arm of the sky session read
+# `wallP50=100.00` at exactly two client ticks a frame with every counter self-consistent, and its capture was
+# the browser in front of the game - a hundred milliseconds a frame, which is ten frames a second and no part of
+# it this engine. The declaration is made for the length of the session and withdrawn with it, and the arms are
+# checked against the client's own pause line as well (`stop_run` below), because a claim of activity is not the
+# same as an awake session: what the guard refuses is measured, what this prevents is not.
+caffeinate_pid=""
+if command -v caffeinate >/dev/null 2>&1; then
+	caffeinate -d -i -m -s -u -w $$ &
+	caffeinate_pid=$!
+	echo "Declared the user active for this session (caffeinate $caffeinate_pid): an idle screen locks, and an occluded window is throttled to ten frames a second" >&2
+fi
+cleanup_caffeinate() {
+	[[ -n "$caffeinate_pid" ]] && kill "$caffeinate_pid" 2>/dev/null || true
+}
+trap cleanup_caffeinate EXIT
 # A pack is a zip, and a fixture pack in this repository is a *directory* of shaders - so a directory is
 # staged into one here rather than refused. Measured: the MetalFX quadrant fixture is four lines of GLSL and is
 # worth keeping in the tree where a reader can check it against the picture it produced, and a harness that
@@ -714,6 +733,18 @@ for run in "${runs[@]}"; do
 	# server to be told which one, and the harness is already standing in front of it.
 	screencapture -x "$run_dir/screen.png" 2>/dev/null || \
 		echo "No screenshot for run '$name'; the display may be locked." >&2
+	# What was in front of the display at the moment it was photographed, kept with the picture: the capture is
+	# of the whole display, so an arm whose game is behind a browser leaves a picture of the browser and the
+	# counters of a window the display server throttled. Read here and not at the end of the arm because this is
+	# the moment the picture is about; recorded rather than refused because a notification can be in front
+	# without the client being occluded, and what refuses an arm is the client's own pause line below.
+	front_app=""
+	if command -v lsappinfo >/dev/null 2>&1; then
+		front_raw="$(lsappinfo info -only name "$(lsappinfo front 2>/dev/null)" 2>/dev/null | head -1 || true)"
+		front_app="$(printf '%s' "$front_raw" | cut -d'"' -f2 || true)"
+		[[ -z "$front_app" ]] && front_app="unknown(${front_raw:-no answer from lsappinfo})"
+	fi
+	printf '%s\n' "${front_app:-unknown}" > "$run_dir/front-app.txt" 2>/dev/null || true
 	printf 'end %s\n' "$(load_average)" >> "$run_dir/load.txt"
 
 	cp -f "$game_dir/logs/latest.log" "$run_dir/latest.log" 2>/dev/null || true
@@ -845,8 +876,22 @@ for run in "${runs[@]}"; do
 		fi
 
 		if [[ "${scene_bad:-0}" == 0 ]]; then
-			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs, loadedMiB $(grep -o 'loadedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), storedMiB $(grep -o 'storedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2))"
+			echo "Run '$name' performance window: PASS ($pack_name drawn, $((${render_passes:-0} / ${frame_count:-1})) render passes a frame, ${copies:-0} copy-backs, loadedMiB $(grep -o 'loadedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), storedMiB $(grep -o 'storedMiB=[0-9.]*' "$run_dir/probe.txt" | head -1 | cut -d= -f2), front '${front_app:-unknown}')"
 		fi
+	fi
+
+	# The client's own word for a session that stopped drawing the scene, and it outranks every counter: measured,
+	# the sky session's first arm paused at 20:01:43 and opened its window at 20:01:51, and the window then read
+	# `wallP50=100.00` with `windowTicks=598` over 300 frames - ten frames a second at exactly two client ticks a
+	# frame, every counter self-consistent, `pipelineIdentities=100` and 14 render passes a frame. That is the
+	# pause screen at the display server's occluded cadence, and nothing in the numbers or the flat-capture guard
+	# says so. A window that closed after the pause is refused, not annotated, because the scene it claims is not
+	# the scene it drew.
+	pause_line="$(grep -n "Saving and pausing game" "$run_dir/latest.log" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+	report_line="$(grep -n "frame-probe .*windowFrames=" "$run_dir/latest.log" 2>/dev/null | tail -1 | cut -d: -f1 || true)"
+	if [[ -n "$pause_line" && ( -z "$report_line" || "$pause_line" -lt "$report_line" ) ]]; then
+		echo "Run '$name' paused the game at log line $pause_line, before the window it reported closed at line ${report_line:-none}: a paused client is not the scene, and its window behind another application is throttled by the display server - measured, one such arm read 100.00 ms a frame at exactly two client ticks a frame while its capture was the browser in front of the game" >&2
+		scene_bad=1
 	fi
 
 	stop_run
