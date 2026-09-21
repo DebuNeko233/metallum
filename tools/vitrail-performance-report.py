@@ -134,6 +134,35 @@ def display_mode(session: Path) -> str:
     return before.read_text(encoding="utf-8").strip() if before.is_file() else ""
 
 
+def source_recorded(arm: Path) -> dict[str, str]:
+    """The revision the arm recorded, and whether the worktree was that revision.
+
+    Written by the harness beside `load.txt` and for the same reason: `--metallum` and `--vitrail` on this tool's
+    own command line are an assertion, and a session measured with a repository's sources put back to an earlier
+    commit - which is how the acceptance's own baseline was re-measured in the machine state the head was read in -
+    would carry the head's SHA and read as a session of the wrong code. Absent for every arm older than the file.
+    """
+    path = arm / "source-revision.txt"
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        label, _, rest = line.partition(" ")
+        rest = rest.strip()
+        if not label or not rest:
+            continue
+        if "-" in label:
+            # A group line: `<repo>-<source|tools> <paths that differ from it, or clean>`.
+            repository, _, group = label.partition("-")
+            values[repository + "_" + group.replace("-", "_")] = rest
+            continue
+        revision, _, branch = rest.partition(" ")
+        values[label] = revision
+        if branch.strip():
+            values[label + "_branch"] = branch.strip()
+    return values
+
+
 def arm_report(arm: Path) -> dict[str, object]:
     probe = " ".join((arm / "probe.txt").read_text(encoding="utf-8", errors="replace").split()) \
         if (arm / "probe.txt").is_file() else ""
@@ -175,6 +204,10 @@ def arm_report(arm: Path) -> dict[str, object]:
     if isinstance(pacing, dict) and pacing.get("wallP99"):
         pacing["wallTail"] = round(pacing["wallMax"] / pacing["wallP99"], 2)
 
+    recorded = source_recorded(arm)
+    if recorded:
+        report["source"] = recorded
+
     report["census"] = censuses(log)
     load = arm / "load.txt"
     if load.is_file():
@@ -189,11 +222,28 @@ def session_report(session: Path) -> dict[str, object]:
     if not arms:
         arms = [arm_report(arm) for arm in sorted(p for p in session.iterdir() if p.is_dir())]
 
+    # The distinct sources the arms recorded, with the arms that shared each. Normally one entry: a session whose
+    # arms recorded two is a session that measured two revisions of the code on purpose - a baseline's own sources
+    # put back and run beside the head, which is the only way a reading is comparable across machine states - and a
+    # reader has to see which arm was which before reading any difference between them.
+    sources: dict[tuple[str, str, str, str], list[str]] = {}
+    for one in arms:
+        source = one.get("source") if isinstance(one, dict) else None
+        if not isinstance(source, dict):
+            continue
+        key = (source.get("metallum", ""), source.get("metallum_source", ""),
+               source.get("vitrail", ""), source.get("vitrail_source", ""))
+        sources.setdefault(key, []).append(str(one.get("arm", "")))
+
+    recorded = [{"metallum": key[0], "metallum_source": key[1], "vitrail": key[2], "vitrail_source": key[3],
+                 "arms": names} for key, names in sources.items()]
+
     return {
         "session": session.name,
         "display_mode": display_mode(session),
         "order": order,
         "arms": arms,
+        "source_recorded": recorded,
     }
 
 

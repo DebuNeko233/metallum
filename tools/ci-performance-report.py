@@ -51,6 +51,17 @@ def fixture(root: Path) -> Path:
         (directory / "probe.txt").write_text(PROBE, encoding="utf-8")
         (directory / "latest.log").write_text(LOG, encoding="utf-8")
         (directory / "load.txt").write_text("cpus 15\nstart 2.02 3.08 3.70\nend 1.53 2.82 3.58\n", encoding="utf-8")
+        # The code the arm ran, as the harness records it. The second arm's sources are `dirty` - put back to an
+        # earlier commit, which is how the acceptance's own baseline was re-measured in the machine state the head
+        # was read in - and the recorded SHA is deliberately NOT the one this contract passes on the command line:
+        # the report must carry what the arm recorded, not what its caller asserted.
+        (directory / "source-revision.txt").write_text(
+            "metallum deadbee0000 perf/optimisation\nmetallum-source "
+            + ("clean\n" if arm == "i1"
+               else "M src/main/java/com/metallum/render/shared/MetalFrameProbe.java\n")
+            + "metallum-tools clean\n"
+            + "vitrail cafef00 perf/optimisation\nvitrail-source clean\nvitrail-tools clean\n",
+            encoding="utf-8")
     (session / "order.txt").write_text("i1\ni2\n", encoding="utf-8")
     (session / "display-mode-before.txt").write_text("66 1800 1169\n", encoding="utf-8")
     return session
@@ -123,6 +134,25 @@ def main() -> int:
         raise SystemExit(
             f"unified performance report: the window's tail against its own P99 is not reported - {arm['pacing']}"
         )
+    # The code each arm ran, recorded rather than asserted: the SHAs here are the arms' own and not the
+    # `--metallum deadbee` this contract passed in, which is the whole point of writing them down.
+    if arm["source"].get("metallum") != "deadbee0000" or arm["source"].get("metallum_branch") != "perf/optimisation":
+        raise SystemExit(f"unified performance report: the revision an arm recorded is not carried - {arm['source']}")
+    if arm["source"].get("metallum_source") != "clean":
+        raise SystemExit(f"unified performance report: an arm that ran the checkout is reported as modified - "
+                         f"{arm['source']}")
+    if arm["source"].get("metallum_tools") != "clean":
+        raise SystemExit(f"unified performance report: the state of the measuring tools is not carried, so a "
+                         f"session run with a changed harness reads as a clean one - {arm['source']}")
+    second = session["arms"][1]["source"]
+    if second.get("metallum_source") != "M src/main/java/com/metallum/render/shared/MetalFrameProbe.java":
+        raise SystemExit(f"unified performance report: an arm whose sources were put back to an earlier commit "
+                         f"reads as one that ran the checkout - {second}")
+    recorded = session["source_recorded"]
+    if len(recorded) != 2 or recorded[0]["arms"] != ["i1"] or recorded[1]["arms"] != ["i2"]:
+        raise SystemExit(f"unified performance report: a session that measured two revisions of the code does not "
+                         f"say which arm was which - {recorded}")
+
     if arm["waits"]["submitWindow"]["calls"] != 1200:
         raise SystemExit("unified performance report: the instrumented waits are not carried as their own group")
     if "p50" in arm.get("other", {}):

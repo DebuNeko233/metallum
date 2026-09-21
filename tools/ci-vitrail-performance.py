@@ -508,9 +508,12 @@ if launcher.count('kill "$load_tracer" 2>/dev/null || true') < 2:
 if 'seq 1 240' not in launcher:
     raise SystemExit("the load tracer has no sample bound, so a harness that dies before it can stop the "
                      "tracer leaves it running for the rest of the machine's uptime")
-if "{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt}" not in launcher:
+if "{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt," not in launcher:
     raise SystemExit("the harness does not say in its usage that an arm leaves a load trace, so a reader "
                      "of a session's directory does not know the evidence is there")
+if "source-revision.txt}," not in launcher:
+    raise SystemExit("the harness does not say in its usage which code an arm ran, so a session taken with a "
+                     "repository's sources put back to an earlier commit cannot be told from one that was not")
 
 # ---------------------------------------------------------------------------
 # And what the GPU itself was doing, because that is what a frame-time claim is about
@@ -767,6 +770,36 @@ for needle, why in (
     ("sysctl -n vm.loadavg", "the load average is not read from the kernel, so it is read from a shell "
                              "command's wording and not from a number"),
     ("load.txt", "nothing in the harness names the file the machine state is written to"),
+    # And the CODE the arm ran, which is the other input to a reading that is not the frame's. `--metallum` and
+    # `--vitrail` are arguments a person types into the report tool, so a session that put a repository's sources
+    # back to an earlier commit - which is how the acceptance's own baseline was re-measured in the machine state
+    # the head was read in - carried the head's SHA and read as a session of the wrong code. Measured: the no-pack
+    # scene read 1.793 ms a frame against a baseline of 1.678 taken four and a half hours earlier, and with the
+    # baseline's own sources back in the worktree it read 1.795 - so which code an arm ran is the whole difference
+    # between a finding and the environment, and it is recorded by the arm rather than asserted about it.
+    ("source_revision() {",
+     "nothing records the revision an arm ran, so a session cannot be audited once the worktree is put back"),
+    ('> "$run_dir/source-revision.txt"',
+     "the revision an arm ran is not written into the arm's own directory, where a later reader can find it"),
+    ('git -C "$root" status --porcelain',
+     "the recorded revision does not say whether the worktree WAS that revision, which is the only part that "
+     "catches sources put back to an earlier commit"),
+    ("repo_revision() {", "the revision line per repository is not written by a function that reads git"),
+    ('repo_revision "$repo_root" metallum',
+     "this repository's checkout is not named in the arm's own record"),
+    ('repo_revision "$vitrail_root" vitrail',
+     "Vitrail's checkout is not named in the arm's own record, so which jar an arm ran cannot be read"),
+    # Both groups, because they fail differently: sources put back to an earlier commit make a reading about
+    # another build, and a changed harness makes it a reading of another instrument - and this programme has a
+    # harness change on its own record, the readback that landed inside the window it was measuring.
+    ('"$repo_root" metallum tools tools',
+     "the state of the measuring tools is not recorded for this repository, so a session run with a changed "
+     "harness is indistinguishable from one run without"),
+    ('"$vitrail_root" vitrail source',
+     "the Vitrail sources the built artifact is made of are not recorded, so a jar built from another revision "
+     "reads as this checkout"),
+    ('"$vitrail_root" vitrail tools tests',
+     "the state of Vitrail's own contract tests is not recorded"),
     # And the derived shader caches, which a session must be able to start without. Measured while reading
     # the load census: every arm of every session so far read `Module cache: 574 units served, 0 built`,
     # because the caches live beside the pack and are keyed on the build - so the corpus has four warm

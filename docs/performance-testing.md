@@ -119,6 +119,19 @@ scene is read across a boundary only where that re-measurement was made. No-pack
 the only one running uncapped (558 frames a second against a 120 Hz display), so its tail is where anything else on
 the GPU arrives.
 
+**Which code an arm ran is recorded by the arm, not asserted about it.** Every arm writes
+`<arm>/source-revision.txt` as it starts: one line per repository naming the checkout it was at, then one line per
+group of paths that differs from it - the sources the built artifact is made of, and the measuring tools - or
+`clean`. It exists because `--metallum` and `--vitrail` are arguments a person types into the report tool, so an
+arm whose sources were put back to the baseline's own commits (the paragraph above) would otherwise carry the
+head's SHA in the record and read, to anyone who came to it later, as a session of the wrong code. The tools are
+recorded separately and not merged with the sources because they fail differently: sources put back make a reading
+about another build, and a changed harness makes it a reading of another instrument - and this programme has a
+harness change on its own record, the readback that landed inside the window it was measuring.
+`tools/vitrail-performance-report.py` reads the file into each arm's report and into a session-level list of the
+distinct sources with the arms that shared each, which is what says whether a session's two arms measured two
+revisions on purpose or by accident.
+
 **A removal arm is not a pair of arms that draw the same frame.** The comparison's scene-drift guard refuses
 every removal session, correctly, because the arms differ exactly where the switch says they should: one fewer
 shadow pass in 600 frames moves `depthAttachments` by 2.2 per cent in a session whose two references agree to

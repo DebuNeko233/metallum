@@ -167,7 +167,9 @@ the same scene then read **1.795 ms a frame with a 95th percentile of 2.64** and
 own code, in the acceptance's own machine state, reads what the head reads. The six per cent is the environment the
 two sessions were taken in, and the rule it produced is in `docs/performance-testing.md` - a baseline from another
 session is re-measured before it is compared against, and no-pack, the one uncapped scene (558 frames a second
-against a 120 Hz display), is where anything else on the GPU arrives first.
+against a 120 Hz display), is where anything else on the GPU arrives first. The re-measurement is auditable from
+the sessions themselves and not from this page: every arm now writes `source-revision.txt`, the checkout it ran and
+whether the worktree was that checkout, for both repositories and for the tools that measure them.
 
 `passSizes` is the one column that differs, and it differs by the same amount at every size at once (20 against
 22, 99 against 100, 156 against 142): that is the **load-time mip cascade**, a one-off chain whose tail lands

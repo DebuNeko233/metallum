@@ -173,9 +173,10 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          different scene: a comparison across runs that share a save measures the
                          sun rather than the switch.
 
-Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt},
-where load.txt is the kernel's load average at the arm's start and at its window's close, and
-load-trace.txt is the same reading taken every five seconds while the arm ran, with 'window-opened'
+Every run writes <out>/<name>/{latest.log,probe.txt,screen.png,gradle.log,load.txt,load-trace.txt,
+source-revision.txt}, where load.txt is the kernel's load average at the arm's start and at its window's
+close, source-revision.txt is the revision each repository was at and whether the worktree was that
+revision, and load-trace.txt is the same reading taken every five seconds while the arm ran, with 'window-opened'
 and 'window-closed' lines bounding the frames the probe counted. The pair in load.txt says whether a
 spread *between* two arms came with a busy machine; the trace says whether a spread *inside* one did,
 which the pair cannot: a burst shorter than the one-minute average barely moves it, so a session can
@@ -631,6 +632,25 @@ load_average() {
 	sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//' || uptime
 }
 
+# The revision an arm measured, and whether the worktree was that revision. Two parts: one line per repository
+# naming the checkout, then one line per group of paths that differs from it, or `clean`. The groups are the ones
+# a reading can be wrong because of: the sources the built artifact is made of, and the tools that measure it -
+# a harness whose own change moved what it reported is in this programme's record, and a session run with one
+# must be distinguishable from a session run without it. A repository that is not a git checkout says so rather
+# than guessing, because a guessed revision is worse than a missing one.
+repo_revision() {
+	printf '%s %s %s\n' "$2" \
+		"$(git -C "$1" rev-parse HEAD 2>/dev/null || echo unknown)" \
+		"$(git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+}
+
+source_revision() {
+	local root="$1" label="$2" group="$3" dirty
+	shift 3
+	dirty="$(git -C "$root" status --porcelain -- "$@" 2>/dev/null | tr '\n' ',' | sed -e 's/,$//')"
+	printf '%s-%s %s\n' "$label" "$group" "${dirty:-clean}"
+}
+
 wait_for_log() {
 	local pattern="$1" deadline="$2" launcher="$3"
 	while [[ "$(date +%s)" -lt "$deadline" ]]; do
@@ -706,6 +726,22 @@ for run in "${runs[@]}"; do
 	run_dir="$out_dir/$name"
 	rm -rf "$run_dir"
 	mkdir -p "$run_dir"
+	# What code this arm measured, RECORDED rather than asserted. The report tool takes `--metallum` and
+	# `--vitrail` as hand-typed arguments, and a session whose sources were put back to an earlier commit -
+	# which is how the acceptance's own baseline was re-measured, in the machine state the head was read in -
+	# would otherwise be labelled with the head the sources were checked out FROM, and read as a session of the
+	# wrong code by anyone who came to it later. HEAD is the checkout; the dirty list is what says the worktree
+	# was not the checkout, and which paths were not.
+	{
+		repo_revision "$repo_root" metallum
+		source_revision "$repo_root" metallum source \
+			src build.gradle settings.gradle gradle.properties
+		source_revision "$repo_root" metallum tools tools
+		repo_revision "$vitrail_root" vitrail
+		source_revision "$vitrail_root" vitrail source \
+			common fabric neoforge build.gradle settings.gradle gradle.properties
+		source_revision "$vitrail_root" vitrail tools tests
+	} > "$run_dir/source-revision.txt"
 	# What the machine was doing when this arm started, and what it was doing when the window closed. The
 	# pair is what makes a spread between two arms of one generation readable: a difference that arrives with
 	# a load is the machine's, and one that does not is the frame's.
