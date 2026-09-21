@@ -4271,7 +4271,11 @@ public final class MTL4Probe {
      * probes. Raising the large count to 4096 made the smoke pass at a ratio of 6.8 - but a smoke that goes green
      * when one configuration is replaced by another that happens to work is the false green this migration has
      * paid for twice, so the reading that settles it is the whole response rather than the two ends that agree.
-     * These four are the curve: one draw, sixteen, two hundred and fifty-six, four thousand and ninety-six.
+     * These four are the curve, ascending, which is the shape section 90 asks for: more work, more reported time.
+     * <strong>The same curve was run descending as a discriminator and the answer is in the report:</strong> the
+     * inversion stays at entry 3 whichever way the counts run, so it is a property of the entry's position and not
+     * of what the passes drew - and its magnitude collapses from ~226,000 ticks to ~120 when the heavy steps come
+     * first, so what moves it is the work around the entry rather than the entry's own count.
      */
     private static final int[] COUNTER_DRAWS = {1, 16, 256, 4096};
 
@@ -4387,33 +4391,33 @@ public final class MTL4Probe {
             // Three markers: before the small pass, between the two, and after the large one. The middle one is
             // both the end of the first duration and the start of the second, which is what makes two passes cost
             // three timestamps rather than four.
+            // **One attachment for every step, and that is the dependency.** The previous shape gave each pass
+            // its own attachment and nothing read any of them, which left the GPU free to order the passes as it
+            // liked - and the stamps said so: the third came out before the second in every probe. Here every
+            // step writes the same texture, the first clearing it and each later one *loading* what the step
+            // before stored, so pass N cannot begin until pass N-1 has stored. That is a real dependency between
+            // them, and it is the smallest one this API can express.
+            MemorySegment shared = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
+            if (ObjC.isNil(shared)) {
+                return failed("counters", "newTextureWithDescriptor: answered nil for the steps' attachment");
+            }
+            large = shared;
+            if (!resident.add(shared)) {
+                END.send(buffer);
+                return failed("counters", "the residency set refused the attachment the steps draw into");
+            }
+
             WRITE_TIMESTAMP.send(buffer, heap.handle(), 0L);
             for (int step = 0; step < COUNTER_DRAWS.length; step++) {
-                // Each step draws into its own attachment, and the last one is the one the pixel check reads:
-                // the shapes are identical, so the only thing that differs between the steps is the work.
-                MemorySegment target = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
-                if (ObjC.isNil(target)) {
-                    END.send(buffer);
-                    return failed("counters", "newTextureWithDescriptor: answered nil for step " + step);
-                }
-                if (step == COUNTER_DRAWS.length - 1) {
-                    large = target;
-                } else {
-                    steps.add(target);
-                }
-                if (!resident.add(target)) {
-                    END.send(buffer);
-                    return failed("counters", "the residency set refused the attachment of step " + step);
-                }
-                if (!drawnPass(device, buffer, target, COUNTER_EDGE, COUNTER_DRAWS[step], clearPipeline, table,
-                        heap, step + 1L, "the counter smoke's step " + step)) {
+                if (!drawnPass(device, buffer, shared, COUNTER_EDGE, COUNTER_DRAWS[step], step == 0,
+                        clearPipeline, table, heap, step + 1L, "the counter smoke's step " + step)) {
                     END.send(buffer);
                     return false;
                 }
             }
             if (!resident.commit()) {
                 END.send(buffer);
-                return failed("counters", "the residency set refused the attachments the steps draw into");
+                return failed("counters", "the residency set refused the attachment the steps draw into");
             }
             WRITE_TIMESTAMP.send(buffer, heap.handle(), 2L);
             END.send(buffer);
@@ -4483,20 +4487,31 @@ public final class MTL4Probe {
 
             // Ordering first, because it is the reading that decides whether the rest means anything.
             //
-            // **The timestamps are not in submission order, and it is measured rather than suspected.** Six of
-            // six probes put the third entry *before* the second, by about 229,000 ticks. The two passes write
-            // different attachments and nothing reads either, so their fragment work may overlap - and an
-            // `afterStage:` timestamp fire when *that encoder's* fragment stage drains, which for overlapping
-            // work is not an order. So a difference between two of these stamps is not the work between them,
-            // and a negative one is not a fault in the clock. What would serialize them is a real dependency
-            // between the passes, which is the next shape to try and is recorded in the report.
+            // **The timestamps do not form an ordered partition of the work, and three explanations are gone.**
+            //
+            // The third entry comes *before* the second, in every probe. The first explanation was announced here
+            // and refuted by measurement: the passes used to write different attachments and nothing read either,
+            // so their fragment work could overlap - and every step now writes ONE texture, the first clearing it
+            // and each later one *loading* what the step before stored, which no GPU may reorder. The inversion
+            // is unchanged. The header's warning that `Precise` "may cause splitting of command encoders" is the
+            // second and is also refuted: both granularities give the same shape. The third was the work itself,
+            // and the curve run descending settles it - the inversion stays at entry 3 when the counts are
+            // reversed, so it is positional, while its magnitude falls from ~226,000 ticks to ~120 when the heavy
+            // steps come first, so the work around the entry is what moves it.
+            //
+            // What that leaves is that the sampling point is the driver's rather than the caller's, which is what
+            // `Relaxed`'s own documentation says of itself ("it may sample at command encoder boundaries") and
+            // what the numbers show of both granularities. So a difference between two of these stamps is not the
+            // work between them, and **no per-pass GPU time is reported from this road** until one is found that
+            // samples where it is told to.
             for (int index = 1; index < stamps.length; index++) {
                 if (stamps[index] < stamps[index - 1]) {
                     return failed("counters", "timestamp " + index + " (" + stamps[index] + ") precedes timestamp "
                             + (index - 1) + " (" + stamps[index - 1] + ") by " + (stamps[index - 1] - stamps[index])
-                            + " ticks, so the stamps are not in submission order - the passes write different"
-                            + " attachments and nothing reads either, so their fragment work can overlap and an"
-                            + " after-stage stamp is not an order - " + reading);
+                            + " ticks, so the stamps are not in submission order - and the steps are dependent,"
+                            + " each loading what the one before stored, so overlap, the granularity and the work"
+                            + " itself have each been ruled out and what remains is that the sampling point is the"
+                            + " driver's rather than the caller's - " + reading);
                 }
             }
             if (!drew) {
@@ -4550,8 +4565,9 @@ public final class MTL4Probe {
      */
     private static boolean drawnPass(final MTLDevice device, final MemorySegment buffer,
                                      final MemorySegment target, final long edge, final int draws,
-                                     final MemorySegment pipeline, final MTL4ArgumentTable table,
-                                     final MTL4CounterHeap heap, final long timestampIndex, final String which) {
+                                     final boolean clearFirst, final MemorySegment pipeline,
+                                     final MTL4ArgumentTable table, final MTL4CounterHeap heap,
+                                     final long timestampIndex, final String which) {
         MTL4RenderEncoder pass;
         try {
             // Cleared to BLACK and drawn with (0.25, 0.5, 0.75): the smoke reads a pixel afterwards, and a
@@ -4559,10 +4575,13 @@ public final class MTL4Probe {
             // happened at all. Measured because the timestamps refused to scale with the draw count, and the two
             // explanations for that - the draws cost nothing, or the sampling point is not the end of the work -
             // are separated by knowing whether the work is there.
+            // The first step clears to black; every later one loads what the step before it stored, which is what
+            // makes the steps dependent rather than merely sequential.
+            MTL4RenderEncoder.Color attachment = clearFirst
+                    ? MTL4RenderEncoder.Color.cleared(target, new float[]{0.0f, 0.0f, 0.0f, 1.0f})
+                    : new MTL4RenderEncoder.Color(target, AttachmentContents.CARRIED, null);
             pass = MTL4RenderEncoder.open(device, buffer, edge, edge,
-                    new MTL4RenderEncoder.Color[]{MTL4RenderEncoder.Color.cleared(target,
-                            new float[]{0.0f, 0.0f, 0.0f, 1.0f})},
-                    null, which);
+                    new MTL4RenderEncoder.Color[]{attachment}, null, which);
         } catch (MTL4RenderEncoder.Refused refused) {
             failed("counters", "the counter smoke's pass could not be opened at stage " + refused.stage() + ": "
                     + refused.getMessage());

@@ -1577,6 +1577,9 @@ for needle, why in (
     ("GRANULARITY_RELAXED = 0L;", "the relaxed granularity is no longer tried, and the comparison between the "
      "two granularities is the finding that the header's warning about splitting is not this"),
     ("GRANULARITY_PRECISE = 1L;", "the precise granularity is no longer kept, so the comparison cannot be made"),
+    ("MTL4RenderEncoder.Color(target, AttachmentContents.CARRIED, null)",
+     "the steps are no longer dependent: each one must load what the step before stored, which is the reading "
+     "that refuted the overlap explanation and must not be lost"),
     ("long[] range = heap.resolveRange(0L, stamps.length);",
      "the range resolve is gone, so the per-entry road is no longer checked against the road the header says "
      "returns tightly packed entries"),
