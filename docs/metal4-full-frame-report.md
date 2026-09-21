@@ -1874,10 +1874,15 @@ both would arrive with a caller and be implemented then, per the rule.
   arm bound the biased pipeline - where the plain no-pack scene reads `depthBias=0`, the frame grows by exactly one
   pass a frame (kinds 5/7/11/13 against the plain scene's 4/6/10/12), and the sign's two text lines are legible in
   the picture on **both** arms, sample for sample (the crops of `m3a` and `m4a` at the sign are identical). The
-  Metal 3 pass carries the same counter as of this reading, so the parity is symmetric rather than one-sided. What
-  is *not* measured is the counterfactual - a live frame drawn with the call removed - so what is proven is that
-  the live workload reaches the call on both generations and that the two render the same biased surface; the
-  device smoke `canApplyDepthBias` remains the proof that the call changes which surface wins.
+  Metal 3 pass carries the same counter as of this reading, so the parity is symmetric rather than one-sided.
+  **And the counterfactual was measured too, and it is a null result on this scene**: with the Metal 4 pass's
+  `setDepthBias` call commented out - nothing else changed, and the census still reads `depthBias=600` because the
+  pipeline is still bound - `run/sign-counterfactual`'s sign renders the same text, sample for sample, at five
+  blocks. So what this scene supports is exactly "the live workload reaches the call on both generations, and the
+  two render the same biased surface"; the proof that the call *changes* anything remains the device smoke, whose
+  biased draw wins a compare the unbiased control fails. Why a live sign cannot price it is a **HYPOTHESIS** both
+  runs are consistent with: the compare the game asks for is `GREATER_THAN_OR_EQUAL`, under which a glyph at the
+  board's own depth passes without any bias, so only rounding would need the nudge at this distance and angle.
 
 - **The content drift is decomposed, counted and now NAMED.** The decomposition of the traced windows, exactly:
   a frame is one count in the steady state, six passes more on the frame that coincides with a 20 Hz client tick

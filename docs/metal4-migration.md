@@ -5825,3 +5825,14 @@ generations. `tools/ci-frame-probe.py` pins both the condition and the count, an
 side is removed. What is *not* measured is the counterfactual - a live frame drawn with the call removed - so the
 claim is exactly: the live workload reaches the call on both generations, and the two render the same biased
 surface.
+
+**And the counterfactual was run, which turns the claim into exactly what it is.** With the Metal 4 pass's
+`setDepthBias` call commented out and nothing else touched - the census still reads `depthBias=600`, because the
+pipeline is still bound, so the two runs differ in the call and in nothing else - `run/sign-counterfactual`'s
+sign renders the same two lines, pixel for pixel, at five blocks: the crops of the fixed and the patched arms
+are identical. So the live scene **cannot price the call**, and the record says so rather than implying that a
+reachable call is a necessary one. The reason is a **HYPOTHESIS** consistent with both runs: the pipeline the
+game asks for compares `GREATER_THAN_OR_EQUAL`, so a glyph drawn at the board's own depth passes the test
+without any offset, and only a rounding difference would need the nudge at this distance and angle. What proves
+the call *does* something remains the device smoke, whose biased draw wins a compare the unbiased control fails -
+and the reference sends the call in the same place, which is the parity the live measurement was for.
