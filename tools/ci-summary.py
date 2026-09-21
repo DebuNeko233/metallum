@@ -40,6 +40,10 @@ CLAIMS = (
     ("C7's traffic fall", "38.1 per cent", "38.1 per cent", "vitrail-gpu-performance.md"),
     ("G3's readback stall", "273 ms inside", "273", "performance-testing.md"),
     ("F3's in-session reload", "about a second, serves 147 module-cache units", "147", "startup-and-cache.md"),
+    # The acceptance table's BASELINE column is the corpus's own, so the two are checked against each other
+    # rather than against the summary's copy of itself.
+    ("the acceptance baseline's MakeUp traffic", "385.8", "385.8", "vitrail-gpu-performance.md"),
+    ("the acceptance baseline's no-pack traffic", "18.3", "18.3", "vitrail-gpu-performance.md"),
 )
 
 # The one line the page is for: the success criteria, and the one that is not met.

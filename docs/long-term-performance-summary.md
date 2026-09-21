@@ -132,6 +132,37 @@ saying which road was taken.
 
 **G4** is policy: a profiler that crashes the JVM or changes the frame is not used for a verdict.
 
+## Acceptance on the final head
+
+Criterion 1 - Metal 3 has no visible regression - is the one criterion that is about what the programme's own
+changes did, and it was checked rather than assumed: the four-scene corpus was re-run on the head carrying all of
+them (the labelled mipmap census, the unarmed and function compile counters, the client-screenshot probe, the
+mixins, the harness guards), against the C1 corpus that predates every one of them. One arm a scene, the same
+protocol, 600-frame windows.
+
+```
+scene            ms/f base   ms/f now    delta   loadedMiB/f base  now   storedMiB/f base  now
+no-pack              1.678      1.793    +6.9%          18.3       18.4         53.4       53.5
+MakeUp               6.734      6.723    -0.2%         385.8      385.8        461.4      461.4
+Complementary        8.289      8.282    -0.1%         321.8      321.8        460.0      460.1
+Photon              12.958     11.810    -8.9%         416.1      415.6        536.0      535.5
+```
+
+**MakeUp reproduces to the digit** - `loadedMiB`, `storedMiB`, `depthAttachments`, `blits`, `blittedMiB`,
+`renderPasses` and `pipelineIdentities` are identical to the baseline session - and the other three agree on
+every world pass count, every attachment counter and every copy counter to within a tenth of a per cent. The
+frame times are -0.2 and -0.1 per cent on the two packs whose baselines are strongest; Photon's -8.9 is inside
+the spread that scene has shown between its own arms (8.4 per cent) and no-pack's +6.9 is 0.1 ms on a 1.7 ms
+frame.
+
+`passSizes` is the one column that differs, and it differs by the same amount at every size at once (20 against
+22, 99 against 100, 156 against 142): that is the **load-time mip cascade**, a one-off chain whose tail lands
+inside or outside a 600-frame window depending on when the load's cascade runs relative to the marker. The world
+passes - 1920x1200, 960x600, 480x300, 1056x660 - are identical in all four scenes.
+
+And the picture column was taken by the client itself on every scene: `picture-source.txt` reads
+**"client readback"** in all four arms, including no-pack, with a 3.5-5.3 MB PNG beside it.
+
 ## The success criteria, audited
 
 ```
