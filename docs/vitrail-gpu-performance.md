@@ -541,10 +541,12 @@ the interface's - the GUI and the final blit are drawn at the window's size by d
 heavy world pass left at native resolution is REJECTED on the whole corpus**, not only on the pack it was
 rejected on first.
 
-**The shadow map is not scaled and is not expected to be.** MakeUp's 4080x4080 stays at 900 passes (1.5 a frame)
-at both scales, and Photon's 2048x2048 stays at 1300 against 1356; a shadow map is sized by the pack's own shadow
-distance and multiplied by the player's shadow-map scale, both of which are separate settings to the render
-scale, and the plan lists this case itself.
+**The shadow map is not scaled and is not expected to be.** MakeUp's 4080x4080 is 900 passes at both scales;
+Complementary's 2048x2048 is 999 against 983 and Photon's is 1356 against 1300, and in both rows the whole
+difference is the **load-time mip cascade** (99 against 83, 156 against 100) rather than the map: the map's own
+passes are 900 and 1200 at both scales, which is the opaque plus translucent pair of C2's decomposition. A shadow
+map is sized by the pack's own shadow distance and multiplied by the player's shadow-map scale, both separate
+settings from the render scale, and the plan lists this case itself.
 
 **Without a pack there is no scaled world at all.** `--no-pack --renderscale 55` draws the same table as
 `--no-pack --renderscale 100` - 5400 passes at 1920x1200 and no 1056x660 anywhere - so the render scale is a
