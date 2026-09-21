@@ -797,4 +797,24 @@ for needle, why in (
     if needle not in probe:
         raise SystemExit("frame probe: " + why)
 
+# --- the depth-bias census, which has to exist on both passes --------------------------------------------
+# `run/sign-nopack3` reads `depthBias=600` on both generations, and that symmetry is the whole reading: the
+# Metal 3 pass counts the same non-zero bias the Metal 4 pass does, so "the reference applied it too" is a
+# measurement rather than an assumption. The Metal 4 pass has counted since the call was bound; the Metal 3
+# pass counts now, in the same place and under the same condition, and a regression that dropped either side
+# would leave the parity claim resting on one arm.
+for needle, why in (
+    ("compiledPipeline.depthBiasConstant() != 0.0f", "the Metal 3 pass no longer asks whether the pipeline it "
+     "just bound carries a depth bias, so a live frame that asks for one is no longer counted on the reference"),
+    ("MetalFrameProbe.depthBiasApplied();", "the Metal 3 pass no longer reports the bias it applies, so "
+     "`depthBias=` in a window line is the Metal 4 path's count alone and the two generations cannot be "
+     "compared on a biased frame"),
+):
+    if needle not in render_pass:
+        raise SystemExit("frame probe: " + why)
+if render_pass.index("compiledPipeline.depthBiasConstant() != 0.0f") > render_pass.index(
+        "MetalFrameProbe.depthBiasApplied();"):
+    raise SystemExit("frame probe: the Metal 3 pass counts the bias before it has read the pipeline's values, so "
+                     "the count is not the pipelines that actually asked for one")
+
 print("Metal frame-probe instrumentation contract: PASS")

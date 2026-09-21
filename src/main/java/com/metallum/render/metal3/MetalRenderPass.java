@@ -679,6 +679,14 @@ final class MetalRenderPass implements RenderPassBackend, MetalPassUniformWriter
                     throw new IllegalStateException("Native depth state is unavailable");
                 }
                 enc.setDepthStencilState(depthState);
+                // The same census the Metal 4 pass keeps, so a frame that asks for a depth bias can be read on
+                // both generations and cross-generation parity of a *biased* frame becomes a measurement. The
+                // call below is unconditional here and always has been; what is counted is the pipelines whose
+                // values were non-zero, which is what `depthBias=` in the probe line means on this path.
+                if (compiledPipeline.depthBiasConstant() != 0.0f
+                        || compiledPipeline.depthBiasScaleFactor() != 0.0f) {
+                    MetalFrameProbe.depthBiasApplied();
+                }
                 enc.setDepthBias(compiledPipeline.depthBiasConstant(), compiledPipeline.depthBiasScaleFactor(), 0.0f);
             }
             enc.setFrontFacingWinding(MTLWinding.Clockwise);
