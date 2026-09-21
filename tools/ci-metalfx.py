@@ -262,6 +262,18 @@ require("the compiler factory is the header's and every failure is an answer", m
     'device.respondsTo("newCompilerWithDescriptor:error:")',
     "if (ObjC.isNil(made)) {",
 ))
+# A scaler is made on a cache miss and a miss is a rare event - the configuration changed - which makes one
+# line per configuration the only evidence a resize or a render-scale change leaves. Measured: a 55% session with
+# a mid-session resize logs `made a scaler for 1408x792 to 2560x1440 ... 1 in the cache` and then
+# `1760x990 to 3200x1800 ... 2 in the cache`, which is section 81's identity separating two configurations and
+# section 124's resize rebuild happening rather than an old scaler being reused. The pin holds the line, because
+# nothing else in the log can show it and an edit that dropped it would leave the claim unreadable.
+require("a scaler's creation is said once per configuration", metal4_fx, (
+    "Metal 4 MetalFX spatial scaling: made a scaler for {}x{} to {}x{} with colour",
+    "this.scalers.size());",
+    "configuration.inputWidth(), configuration.inputHeight(), configuration.outputWidth(),",
+))
+
 require("the frame path uses its own scaler and no fence", m4_encoder, (
     "this.metalFx = Metal4Fx.create(nativeDevice);",
     "return !this.closed && this.metalFx != null;",

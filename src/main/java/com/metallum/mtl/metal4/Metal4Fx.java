@@ -206,6 +206,16 @@ public final class Metal4Fx implements AutoCloseable {
                 return false;
             }
             this.scalers.put(configuration, scaler);
+            // Said once per configuration and not once a frame, because a scaler is made on a cache miss and a
+            // miss is a rare event: the configuration changed. That makes this line the evidence a resize or a
+            // render-scale change leaves - two lines with different sizes in one session say the identity
+            // separated them and a new scaler was built rather than an old one reused - which is what section 81
+            // and section 124 ask for and what nothing else in the log could show.
+            Metallum.LOGGER.info("Metal 4 MetalFX spatial scaling: made a scaler for {}x{} to {}x{} with colour"
+                            + " format {} and output format {}, {} in the cache",
+                    configuration.inputWidth(), configuration.inputHeight(), configuration.outputWidth(),
+                    configuration.outputHeight(), configuration.colorFormat(), configuration.outputFormat(),
+                    this.scalers.size());
         }
 
         scaler.encode(commandBuffer, color, output, contentWidth, contentHeight);
