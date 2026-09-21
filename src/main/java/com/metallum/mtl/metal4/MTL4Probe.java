@@ -369,6 +369,21 @@ public final class MTL4Probe {
     private static final int TEXEL_SECOND_BASE = 2;
 
     /**
+     * Where the second buffer's range begins, in bytes - non-zero, because the call takes an offset and an
+     * offset is a thing a binding path gets wrong. A view whose offset was read as an element index, dropped,
+     * or applied to the wrong end of the range reads other bytes, and the smoke says which: the second buffer
+     * also holds a {@link #TEXEL_DECOY_BASE} set at byte zero, so an offset that did not reach the view is not
+     * a reading of nothing - it is a reading of the decoy, and the failure names it.
+     * <p>
+     * Sixty-four, because the call refuses an offset that is not a multiple of the format's texture-buffer
+     * alignment and sixty-four is a multiple of every alignment this machine's formats have reported.
+     */
+    private static final long TEXEL_SECOND_OFFSET = 64L;
+
+    /** What the second buffer holds at byte zero, where the range would be if the offset were ignored. */
+    private static final int TEXEL_DECOY_BASE = 3;
+
+    /**
      * The pass that reads a buffer as a texel buffer - {@code texture_buffer<int>}, which is what MSL calls the
      * kind an {@code isamplerBuffer} crosses into - once per texel, and writes each texel's value as the red
      * channel of its own band of the target.
@@ -863,8 +878,10 @@ public final class MTL4Probe {
      * asked here in the shape the game declares rather than a shape chosen to be convenient.
      * <p>
      * The shape, taken from the game: {@code R8_SINT} - a byte a texel, so a range's texel count is its byte
-     * count - three texels a face, four faces. The buffer is filled from the CPU, the view is made over the
-     * range with the same call the pass makes, and a full-target draw reads one different texel per band of the
+     * count - three texels a face, four faces. The buffers are filled from the CPU, the views are made over
+     * their ranges with the same call the pass makes - the first at byte zero and the second at
+     * {@link #TEXEL_SECOND_OFFSET}, because an offset is a thing a binding path gets wrong and a fixture that
+     * only ever passes zero cannot see it - and a full-target draw reads one different texel per band of the
      * target and writes its value as that band's red channel.
      * <p>
      * <strong>Two passes and not one, because one reading cannot tell a binding from a pipeline.</strong> The
@@ -917,21 +934,26 @@ public final class MTL4Probe {
                 return failed("texelBuffer", "one of the two " + bufferLength + "-byte shared buffers the smoke"
                         + " fills answered with no GPU address");
             }
-            fillTexels(first, TEXEL_FIRST_BASE);
-            fillTexels(second, TEXEL_SECOND_BASE);
+            fillTexels(first, TEXEL_FIRST_BASE, 0L);
+            fillTexels(second, TEXEL_SECOND_BASE, TEXEL_SECOND_OFFSET);
+            // The decoy, at the byte the second range would begin at if its offset were dropped: it shares no
+            // value with either real set, so a view whose offset did not reach it reads a value this smoke
+            // recognises and names rather than one that merely fails to match.
+            fillTexels(second, TEXEL_DECOY_BASE, 0L);
 
             // The production call, argument for argument: the buffer, the layout's pixel format, the range's
             // offset, its texel count and its byte length. An R8_SINT texel is a byte, so the count is the
             // length - which is why the game's cloud buffer carries three bytes a face and no padding.
             firstView = MTLTexture.newBufferTextureView(first.handle(), MTLPixelFormat.R8Sint.value, 0L,
                     TEXEL_TEXELS, TEXEL_TEXELS);
-            secondView = MTLTexture.newBufferTextureView(second.handle(), MTLPixelFormat.R8Sint.value, 0L,
-                    TEXEL_TEXELS, TEXEL_TEXELS);
+            secondView = MTLTexture.newBufferTextureView(second.handle(), MTLPixelFormat.R8Sint.value,
+                    TEXEL_SECOND_OFFSET, TEXEL_TEXELS, TEXEL_TEXELS);
             if (ObjC.isNil(firstView) || ObjC.isNil(secondView)) {
                 return failed("texelBuffer", "newTextureWithDescriptor:offset:bytesPerRow: answered nil for a "
                         + TEXEL_TEXELS + "-texel " + MTLPixelFormat.R8Sint + " view over a "
                         + TEXEL_TEXELS + "-byte range - first=" + !ObjC.isNil(firstView) + " second="
-                        + !ObjC.isNil(secondView) + ", so no buffer of this kind can be bound as a texture");
+                        + !ObjC.isNil(secondView) + " (the second at offset " + TEXEL_SECOND_OFFSET + "), so no"
+                        + " buffer of this kind can be bound as a texture");
             }
 
             firstTarget = newTarget(device);
@@ -998,13 +1020,13 @@ public final class MTL4Probe {
                     MTLTexture.bytes(firstTarget, pixel, 4L, x, y, 1L, 1L);
                     if (!matches(pixel, new int[]{wantFirst, 0, 0, 255})) {
                         return failed("texelBuffer", texelFailure("the first pass", pixel, x, texel, wantFirst,
-                                TEXEL_FIRST_BASE, TEXEL_SECOND_BASE));
+                                TEXEL_FIRST_BASE, TEXEL_SECOND_BASE, TEXEL_DECOY_BASE));
                     }
 
                     MTLTexture.bytes(secondTarget, pixel, 4L, x, y, 1L, 1L);
                     if (!matches(pixel, new int[]{wantSecond, 0, 0, 255})) {
                         return failed("texelBuffer", texelFailure("the second pass", pixel, x, texel, wantSecond,
-                                TEXEL_SECOND_BASE, TEXEL_FIRST_BASE));
+                                TEXEL_SECOND_BASE, TEXEL_FIRST_BASE, TEXEL_DECOY_BASE));
                     }
                 }
             }
@@ -1036,9 +1058,11 @@ public final class MTL4Probe {
      * of a failure needs: which of the three faults it is.
      * <p>
      * A band reading the clear colour is a texel-buffer view that never reached a fragment - the fault this
-     * smoke exists for. A band reading one of the <em>other</em> buffer's twelve values is the stale binding the
-     * second pass is there to catch. And a band reading another band's value of its own buffer is a sample that
-     * reached the wrong texel, which is reported as that rather than as a colour nobody recognises.
+     * smoke exists for. A band reading the <em>decoy</em> set is a view whose offset did not reach it, which is
+     * the one fault a fixture with a single zero offset cannot see. A band reading one of the <em>other</em>
+     * buffer's twelve values is the stale binding the second pass is there to catch. And a band reading another
+     * band's value of its own buffer is a sample that reached the wrong texel, which is reported as that rather
+     * than as a colour nobody recognises.
      *
      * @param pass        which of the two passes was being read
      * @param pixel       what its target holds at that band
@@ -1047,16 +1071,23 @@ public final class MTL4Probe {
      * @param want        the value that texel should have carried
      * @param ownBase     the base of the buffer this pass was given
      * @param otherBase   the base of the buffer the other pass was given
+     * @param decoyBase   the base written at byte zero of the second buffer, where a dropped offset reads
      * @return the sentence {@link #failed} records
      */
     private static String texelFailure(final String pass, final MemorySegment pixel, final long x, final int texel,
-                                       final int want, final int ownBase, final int otherBase) {
+                                       final int want, final int ownBase, final int otherBase,
+                                       final int decoyBase) {
         String saw = describe(pixel);
         if (matches(pixel, CLEAR_PIXEL)) {
             return pass + " drew the clear colour " + saw + " at column " + x + ", so the table-bound"
                     + " texel-buffer view reached no fragment at all";
         }
         for (int other = 0; other < TEXEL_TEXELS; other++) {
+            if (matches(pixel, new int[]{decoyBase + TEXEL_STEP * other, 0, 0, 255})) {
+                return pass + " read the decoy set's texel " + other + " colour " + saw + " at column " + x
+                        + ", which is what byte zero holds where this pass's range begins at byte "
+                        + TEXEL_SECOND_OFFSET + " - so the view's offset was not honoured";
+            }
             if (matches(pixel, new int[]{otherBase + TEXEL_STEP * other, 0, 0, 255})) {
                 return pass + " read the other buffer's texel " + other + " colour " + saw + " at column " + x
                         + " where its own texel " + texel + "'s " + want + " was asked for, so the table's"
@@ -1072,11 +1103,17 @@ public final class MTL4Probe {
                 + " was asked for, which is neither buffer's value at any texel";
     }
 
-    /** Writes the smoke's twelve texels into a buffer's mapped range: {@code base + 10k}, as signed bytes. */
-    private static void fillTexels(final MTLBuffer buffer, final int base) {
-        MemorySegment contents = buffer.contents().reinterpret(TEXEL_TEXELS);
+    /**
+     * Writes the smoke's twelve texels into a buffer at a byte offset: {@code base + 10k}, as signed bytes.
+     * <p>
+     * The offset is a parameter and the mapped range is the whole buffer, because a mapped view of one range is
+     * not what a caller of this smoke needs: the point of the second buffer is that <em>two</em> sets sit in it,
+     * one where the range is and one where it would be if the offset were dropped.
+     */
+    private static void fillTexels(final MTLBuffer buffer, final int base, final long offset) {
+        MemorySegment contents = buffer.contents().reinterpret(offset + TEXEL_TEXELS);
         for (int texel = 0; texel < TEXEL_TEXELS; texel++) {
-            contents.set(JAVA_BYTE, texel, (byte) (base + TEXEL_STEP * texel));
+            contents.set(JAVA_BYTE, offset + texel, (byte) (base + TEXEL_STEP * texel));
         }
     }
 

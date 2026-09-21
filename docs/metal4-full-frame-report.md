@@ -766,8 +766,11 @@ paragraph is a post-fix parity reading with the mechanism as its explanation, no
 **And the root cause now has a deterministic test of its own**, because a frame and a screenshot are not one.
 `MTL4Probe.canSampleTexelBuffer` asks the cold probe for the capability in the shape the game's own cloud
 binding declares - the layout's `R8_SINT`, a byte a texel, three texels a face, a range inside a buffer rather
-than a whole one - makes the buffer-backed view with the *same call the pass makes*, binds it through a table as
-the texture slot it is, and reads one texel's value back per band of the target. It is asked twice for the same
+than a whole one - makes the buffer-backed views with the *same call the pass makes*, binds them through a table
+as the texture slot they are, and reads one texel's value back per band of the target. The first range begins at
+byte zero and the second at a **non-zero offset** (64), with a decoy set left at byte zero of that buffer, so the
+fixture can see the offset faults a single zero-offset range cannot: an offset read as an element index, dropped,
+or applied to the wrong end of the range. It is asked twice for the same
 reason a single reading is not one: the second pass re-points the same table at a second buffer whose twelve
 values share none with the first's, so a table whose snapshot was taken once, or an encoder that kept the first
 pass's view, is a failure. **Measured: 8 of 8 probes pass** (four cold processes and four warm in one, through
@@ -780,8 +783,18 @@ texelBuffer=false  the second pass read the other buffer's texel 0 colour (1, 0,
 ```
 
 and the harness's own exit code is non-zero on it, because a smoke whose failures are only printed is a smoke the
-next reader has to notice by eye. `tools/ci-metal4-cold-probe.py` pins the shape, the call, the second binding
-and both diagnostic sentences, and each pin was mutation-proved (five mutations, five caught).
+next reader has to notice by eye. **And the offset has a control of its own**: with the second view's offset put
+back to zero - which is what a binding path that dropped an offset would do - the smoke reads
+
+```text
+texelBuffer=false  the second pass read the decoy set's texel 0 colour (3, 0, 0, 255) at column 0, which is what
+                   byte zero holds where this pass's range begins at byte 64 - so the view's offset was not
+                   honoured
+```
+
+which is the fault a fixture with a single zero-offset range cannot see, and the reason the second buffer keeps a
+decoy set at byte zero. `tools/ci-metal4-cold-probe.py` pins the shape, the call, the non-zero offset, the second
+binding and both diagnostic sentences, and each pin was mutation-proved (eight mutations, eight caught).
 
 **And one thing is left: this path's overworld frame is lighter than the reference's.** On those same captures the
 sky and the clouds are both shifted toward white on Metal 4 - sky at one column reading `(125,155,225)` at the top
@@ -814,13 +827,16 @@ texel buffers:    PROVEN on the device AND implemented in the pass - a buffer-ba
                   `R8_SINT` range of twelve texels (three a face, four faces, which is the shape the game's
                   own cloud binding declares), bound as a **texture** slot because that is what MSL's
                   `texture_buffer` argument is, drawn with one texel's value per band of the target and read
-                  back band by band, twice: the second pass re-points the same table at a second buffer whose
-                  twelve values share none with the first's, so a table whose snapshot was taken once or a pass
-                  that kept the first encoder's view is a failure and not a pass. 8 of 8 probes (four cold
-                  processes and four warm in one), and the negative control was measured by mutation - with the
-                  second re-point removed the smoke reads `the second pass read the other buffer's texel 0
-                  colour (1, 0, 0, 255) at column 0 where its own texel 0's 2 was asked for` and the driver
-                  exits non-zero on it
+                  back band by band, twice: the second pass re-points the same table at a **second buffer whose
+                  range begins at a non-zero byte offset** (64) and whose twelve values share none with the
+                  first's, so a table whose snapshot was taken once, a pass that kept the first encoder's view,
+                  and a view whose offset was dropped, read as an element index or applied to the wrong end all
+                  fail rather than pass. The second buffer also holds a decoy set at byte zero, so a dropped
+                  offset reads a value the smoke names instead of one nobody recognises. 8 of 8 probes (four
+                  cold processes and four warm in one) with offset and decoy in place, and the negative control
+                  was measured by mutation - with the second re-point removed the smoke reads `the second pass
+                  read the other buffer's texel 0 colour (1, 0, 0, 255) at column 0 where its own texel 0's 2
+                  was asked for` and the driver exits non-zero on it
 argument tables:  PROVEN - two tables in one pass, one per stage, sized to what that stage binds, assigned with
                   setArgumentTable:atStages:, and the draw reads every slot
 wide resources:   PROVEN AND MEASURED IN A REAL PACK - a pipeline whose resources do not fit MSL's direct slots

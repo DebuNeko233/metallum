@@ -266,6 +266,14 @@ for needle, why in (
     ("MTLTexture.newBufferTextureView(first.handle(), MTLPixelFormat.R8Sint.value, 0L,",
      "the smoke does not make its view over the buffer with the call the frame path makes, so it measures a "
      "different capability from the one the frames need"),
+    ("TEXEL_SECOND_OFFSET, TEXEL_TEXELS, TEXEL_TEXELS);",
+     "the smoke's second view is no longer made at a non-zero offset, so a view whose offset was read as an "
+     "element index, dropped or applied to the wrong end of the range has nothing to fail against"),
+    ("private static final long TEXEL_SECOND_OFFSET = 64L;",
+     "the offset the smoke's second range begins at is gone, so the fixture is back to a single zero offset"),
+    ("so the view's offset was not honoured",
+     "a reading of the bytes at byte zero is not reported as an offset that did not reach the view, so the one "
+     "fault a zero-offset fixture cannot see would read as a colour nobody recognises"),
     ("if (!table.texture(secondView)) {",
      "the second pass is not given its own view through the same table, so a table whose snapshot was taken "
      "once would pass as a binding that followed the pass"),

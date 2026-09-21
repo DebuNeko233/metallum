@@ -1,5 +1,17 @@
-[16:15:30] [main/INFO]: Metal 4 MetalFX spatial scaling: available, the device supports it and made one
-[16:15:30] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
-[16:15:30] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
-[16:15:30] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
-[16:15:31] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)
+[16:19:26] [main/INFO]: Metal 4 MetalFX spatial scaling: available, the device supports it and made one
+[16:19:26] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
+[16:19:26] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
+[16:19:26] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
+[16:19:27] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
+[16:19:27] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
+[16:19:27] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 64x64 to 256x256 with colour format 70 and output format 70, 1 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 96x96 to 96x96 with colour format 70 and output format 70, 2 in the cache
+[16:19:27] [main/INFO]: Metal 4 MetalFX spatial scaling: made a scaler for 101x57 to 320x181 with colour format 70 and output format 70, 3 in the cache
+[16:19:27] [main/INFO]: Metal shader profile: msl3.2 selected (the cold probe compiles its own pipeline through the Metal 4 chain)
