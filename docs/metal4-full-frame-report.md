@@ -1808,8 +1808,15 @@ both would arrive with a caller and be implemented then, per the rule.
   stretch at 5 passes is worth -268 passes, six times the tick term's +180); `m4t2`: 572*7 + 28*13 = 4368
   against 4368; `m4t3`: 562*7 + 7*5 + 1*11 + 30*13 = 4370 against 4370. So **the tick term is real but worth
   about 4% of a window, and a ~340 ms stretch with two passes absent is worth about 6%** - which is the shape
-  the drift has, and a least-squares fit of the two coefficients over three arms with tick counts 27.9-30.7 is
-  ill-conditioned and returns nonsense, so it is NOT fitted and the mechanism stays NOT LOCALISED.
+  the drift has, and **the coefficients are counted rather than fitted**: `tools/metal4-pacing-analysis.py` names
+  each arm's frame kinds from the per-frame trace, and with the modal frame at 7 passes on all three arms the
+  three windows read `7*436 + 5*134 + 11*6 + 13*24 = 4100`, `7*572 + 13*28 = 4368` and
+  `7*562 + 5*7 + 11*1 + 13*30 = 4370` - each against its own measured total exactly. So the per-frame content is
+  the **same** on all three arms (7 passes) and the whole of the drift is the mix of two frame kinds: the tick
+  frames (+6 each, 24-30 a window) and the reduced stretches (-2 each, 134 frames in one arm and almost none in
+  another). A least-squares fit over the same three arms was ill-conditioned because their tick counts span only
+  10%; the trace removes the need for it. **What a reduced stretch *is* remains NOT LOCALISED**; that the drift is
+  those two kinds is measured.
 - **What the tick finding does establish is the cadence, not the size.** `run/drift-nopack` (same
   six-arm M3/M4 interleave, no pack, with the per-frame trace on) shows what the per-frame pass count of this
   path's no-pack frame actually is: **7 passes in the steady state, 13 on one frame every 49.6-50.0 ms** - the
