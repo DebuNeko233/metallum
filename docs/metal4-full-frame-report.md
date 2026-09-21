@@ -1653,17 +1653,21 @@ capability proven in a process with no window is not the same claim.
 
 ### The §93 ladder: what has been measured, rung by rung
 
-The table §69 asks for, with only valid sessions in it and each rung's own guards recorded. **Rung 2 is not in it
-because its artifact is not on this machine**: `MakeUp-UltraFast-9.5e` was staged for the correctness ladder
-earlier (330 pipeline identities on both arms, no fault of any kind) and a search of this machine now finds no
-copy of it - only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain. So its *performance* rung is
-**NOT MEASURED, artifact absent**, and the ladder continues with the rungs whose packs exist.
+The table §69 asks for, with only valid sessions in it and each rung's own guards recorded. **All four rungs are
+in it, and the second one's "artifact absent" verdict is REFUTED**: `MakeUp-UltraFast-9.5e` was recorded as gone
+from this machine after a search that looked everywhere except the place a harness keeps its staged packs - the
+dev instance's own `run/shaderpacks/MakeUp-UltraFast-9.5e.zip`, with the settings file Vitrail's screen wrote
+beside it (sha256 `8eae9f4b46c8c0fd98968d9ff58d9d25903cf11c79926d8d08c7ae0029d09f97`), left there by the
+correctness ladder that ran it on 19 September. It was copied out of the instance (the harness refuses a pack
+that is already inside it) and the performance rung was run: `run/rung2-makeup`, four arms interleaved
+M3/M4/M3/M4, the same world, camera, 3200x1800 target, 600-frame windows and 25 s of settle as every other
+rung.
 
 | workload | M3 mean | M4 mean | M3 P95 | M4 P95 | M4 P50, for the record | verdict |
 | -------- | ------- | ------- | ------ | ------ | ---------------------- | ------- |
 | no-pack (`run/ticks-nopack`) | 8.32 (8.32, 8.32, 8.32) | 12.48 (12.48, 12.48, 12.48) | 8.83-8.88 | 15.94-15.95 | 13.56, 14.81, 14.85 - 9.5% across arms | **MEASURED: this path 1.50x slower in the mean**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
 | no-pack, content-pinned (`run/protocol-nopack`) | 8.32 (8.32, 8.32, 8.32) | 12.47 (12.46, 12.47, 12.48) - **0.16% apart** | 8.57-8.66 | 15.68-15.73 | 10.80, 10.91, 12.92 - **20% across arms** | **MEASURED: this path 1.50x slower in the mean and 1.82x at P95**, on windows whose content counters are identical to the digit across arms; the picture column is not usable here (the fixture's particles are stochastic) |
-| MakeUp UltraFast | - | - | - | - | - | **NOT MEASURED: the pack archive is not on this machine** |
+| MakeUp UltraFast (`run/rung2-makeup`) | 8.32 (8.32, 8.32) | 12.47 (12.48, 12.47) - 0.08% apart | 8.73 | 15.73-15.75 | 12.85, 10.17 - **26% across arms** | **MEASURED: this path 1.50x slower in the mean and 1.80x at P95**, with the structural counters identical in all four arms (`blits 3600`, `blittedMiB 72509.8`, `pipelineIdentities 299`) and its own commit interval *lower* than the reference's (6.31 against 6.99-7.02) |
 | Complementary (`run/rung3-complementary`) | 20.88 (20.86, 20.89) | 18.95 (18.95, 18.94) | 27.19, 27.51 | 28.75, 28.93 | 16.74, 16.75 - 0.06% apart | **MEASURED: this path 9.2% faster in the mean and 5.4% slower at P95** - the earlier median reading of 19-21% faster was a P50 of the mixture, which this protocol no longer carries as a verdict |
 | Photon (`run/rung4-photon`) | 8.32 (8.32, 8.32) | 12.47 (12.47, 12.47) | 8.79, 8.75 | 15.92, 15.83 | 10.23, 12.52 - **22% across arms** | **MEASURED: this path 1.50x slower in the mean and 1.81x at P95** - the earlier median reading of 23-50% slower was the same mixture |
 
@@ -1688,7 +1692,21 @@ pacing mixture rather than the content. So the tick fraction does not move the w
 prices the windows 8.3 percentage points apart, which at the tick frame's own wall delta is about 0.37 ms on a
 12.47 ms mean and would *raise* this path's mean to about 12.84 and the ratio to 1.54x. That correction is a
 **HYPOTHESIS** - it assumes the tick frame's wall delta transfers between windows - and the three numbers it
-rests on are measured.
+rests on are measured. The same traced window read three ways puts every reading of the mixture inside one
+band: its window mean is 1.50x the reference's, its tick-matched mean 1.54-1.55x, and its *steady frames alone*
+- 13.42 and 13.76 ms where the tick frames read 9.62 and 8.70 - 1.61-1.65x. No way of reading the mixture turns
+the verdict around, which is why the table's column is the plain window mean.
+
+**And the second rung is measured at last, which closes the ladder.** `run/rung2-makeup` is MakeUp UltraFast in
+four arms, M3/M4/M3/M4, and the guard set is the same one every rung passes - the structural counters are
+**identical in all four arms** (`blits 3600`, `blittedMiB 72509.8`, `pipelineIdentities 299`), the target is the
+pinned 3200x1800 and the comparer exits 0 with no scene drift and no outlier. The reference repeats to the digit
+(8.32 ms a frame, twice, and 8.32 ms at the median), this path's mean repeats to **0.08%** (12.48 and 12.47) while
+its **P50 moves 26%** between the same two arms (12.85 and 10.17) - the mixture again, and the widest P50 spread
+of any rung - and its own commit interval is **lower** than the reference's (6.31 against 6.99-7.02). So the
+verdict is the same shape as no-pack's and Photon's: **1.50x slower in the mean, 1.80x at P95**, by the
+two-handover quantum. The picture column cannot read it either, and the comparer says so itself: the reference's
+own arms differ by 0.087% of pixels by more than 8 against the largest cross-generation difference of 0.085%.
 
 **How the Complementary rung reads, and why only four of its six arms are in the table.** Six arms were
 interleaved M3/M4/M3/M4/M3/M4 and **every arm passed its window guard** (the pack drawn, 21 render passes a
@@ -1788,7 +1806,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
 | cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault itself did not recur - and the retry policy that mitigates it is now exercised on demand (`-Dmetallum.probeInjectFirstFailure=true` reads `retried=true success=true` in 3 of 3 processes, below) |
-| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone), all four readings re-taken on the statistic the protocol allows - the **mean**, which repeats to 0.0-0.16% between the arms of one generation where the P50 moves 9.5-22% - and the no-pack rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier). What the gate then says is that this path is **1.50x slower in the mean on no-pack and on Photon (1.80-1.82x at P95)** and **9.2% faster in the mean on Complementary (5.4% slower at P95)** - i.e. slower on two of the three rungs, by exactly the two-handover quantum |
+| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | all four of section 93's rungs are measured under the protocol (no-pack, MakeUp, Complementary, Photon), all four readings re-taken on the statistic the protocol allows - the **mean**, which repeats to 0.0-0.16% between the arms of one generation where the P50 moves 9.5-22% - and the no-pack rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier). What the gate then says is that this path is **1.50x slower in the mean on no-pack and on Photon (1.80-1.82x at P95)** and **9.2% faster in the mean on Complementary (5.4% slower at P95)** - i.e. slower on two of the three rungs, by exactly the two-handover quantum |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
 
@@ -1821,7 +1839,7 @@ on purpose ...)`, and a contract pins the switch, its one-shot spend and its mar
 reads the second attempt. What stays NOT MET is the fault itself, which is still observed and unexplained.
 
 **And the performance gate has since been filled in, which does not change the decision.** Three of the four
-rungs are now measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is not on this machine):
+rungs are now measured under the protocol, all four of them (no-pack, MakeUp, Complementary, Photon):
 this path is 1.63-1.78x slower on the work-light scene, 19-21% faster at the median and 5% slower at P95 on
 Complementary, and 23-50% slower at the median and 81% slower at P95 on Photon - with its own commit interval
 lower than the reference's on the first two and equal on the third. So the performance line reads "not acceptable
@@ -3111,9 +3129,9 @@ This is that list with the state each item actually has, and where each reading 
                                                        and the live half too: run/sign-nopack3's sign draws the
                                                        game's own polygon-offset pipeline, depthBias=600 on both
                                                        generations, the text identical in both pictures
-[NOT MEASURED, artifact absent]  MakeUp's performance rung
-                                                       the pack is no longer on this machine; the other three
-                                                       rungs are measured and in the comparison table
+[MEASURED]   MakeUp's performance rung                run/rung2-makeup: the pack was on this machine all
+                                                       along, in the instance's own staging directory, and the
+                                                       rung reads 1.50x slower in the mean (1.80x at P95)
 ```
 
 **So the phrase is still not earned, and the two items that stop it are named**: the cold probe's intermittency

@@ -5375,7 +5375,10 @@ on this machine**: the correctness ladder ran it earlier (330 pipeline identitie
 kind), and a search of the disk now finds only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b`. Its
 performance rung is therefore **NOT MEASURED, artifact absent** - a statement about this machine and not about the
 path - and the ladder continues with the rungs whose packs exist. Recorded rather than skipped silently, because a
-ladder whose missing rung is invisible is a ladder that reads as complete.
+ladder whose missing rung is invisible is a ladder that reads as complete. **And the reading was wrong**: the
+artifact was in the instance's own staging directory all along, and the rung is measured in this document's last
+section - so the ladder its author was protecting from an invisible gap had a real one, and it was the absence
+claim itself.
 
 **The third rung is Complementary, six arms interleaved M3/M4/M3/M4/M3/M4, and every arm passed its window
 guard** - the pack drawn, 21 render passes a frame, 5400 copy-backs, `pipelineIdentities 333` in all six, no
@@ -5768,7 +5771,10 @@ structural caveat across generations: the slower generation covers more client t
 frame's submission interval is 4.215 against the steady frame's 4.272 ms - its *wall* is 8.70-9.62 against
 13.42-13.76 ms, which is the pacing mixture and not content. Priced at that delta the windows differ 8.3
 percentage points of tick frames, worth about 0.37 ms on a 12.47 ms mean, so a tick-matched reading would be
-about 1.54x - stated as a **HYPOTHESIS**, with the inputs measured.
+about 1.54x - stated as a **HYPOTHESIS**, with the inputs measured. Read three ways, that traced window puts the
+comparison in one band: **1.50x** as its window mean, **1.54-1.55x** tick-matched, and **1.61-1.65x** on its
+steady frames alone (13.42/13.76 ms where its tick frames read 9.62/8.70), so the mixture's handling cannot turn
+the verdict around - which is why the table's column is the plain window mean.
 
 ### The depth-bias call, reached by a live frame at last
 
@@ -5836,3 +5842,42 @@ game asks for compares `GREATER_THAN_OR_EQUAL`, so a glyph drawn at the board's 
 without any offset, and only a rounding difference would need the nudge at this distance and angle. What proves
 the call *does* something remains the device smoke, whose biased draw wins a compare the unbiased control fails -
 and the reference sends the call in the same place, which is the parity the live measurement was for.
+
+### Rung 2 is measured, and the "artifact absent" verdict was wrong
+
+The ladder's second rung was recorded as **NOT MEASURED, artifact absent** - "a search of this machine now finds
+no copy of `MakeUp-UltraFast-9.5e`, only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain" - and the
+ladder continued without it. The artifact was on the machine the whole time, **inside the dev instance the
+harness stages packs into**: `run/shaderpacks/MakeUp-UltraFast-9.5e.zip` (400 417 bytes, sha256
+`8eae9f4b46c8c0fd98968d9ff58d9d25903cf11c79926d8d08c7ae0029d09f97`), with the settings file Vitrail's own screen
+wrote beside it (`MakeUp-UltraFast-9.5e.zip.txt`: `SHADOW_QTY_SLIDER=3`, `SHADOW_DISTANCE_SLIDER=2`), left there by
+the correctness ladder that ran the pack on both arms on 19 September. The search that declared it absent looked
+for the pack by name outside the instance and never looked in the one directory that holds the copy the last run
+used. **So the reading was a search error and not a fact about the machine**, and it is corrected rather than
+carried: the file is copied out of the instance (the harness refuses a pack that is already inside it, which is
+what surfaced this) into `run/packsrc/`, and the rung is measured.
+
+`run/rung2-makeup`, four arms interleaved M3/M4/M3/M4, the same world, camera, 3200x1800 target, 600-frame windows
+and 25 s of settle as every other rung:
+
+```text
+arm   mean    wall P50   wall P95   own GPU P50   blits   blittedMiB   pipelineIdentities   loadedMiB   depthAtt.
+m3a    8.32     8.33       8.73       gpuP50 7.02   3600    72509.8           299            246027.8      1800
+m3b    8.32     8.34       8.73              6.99   3600    72509.8           299            246027.8      1800
+m4a   12.48    12.85      15.75       gpuM4P50 6.31 3600    72509.8           299            310045.2      5826
+m4b   12.47    10.17      15.73              6.31   3600    72509.8           299            325206.3      6102
+```
+
+**The guards pass**: the structural counters are identical in all four arms, the target is pinned, and
+`vitrail-performance-compare.py` exits 0 with no scene drift and no outlier. **And the verdict is the shape the
+other work-light rungs have**: this path's mean repeats to **0.08%** (12.48, 12.47) while its **P50 moves 26%**
+between the same two arms (12.85, 10.17 - the widest P50 spread of any rung), its own commit interval is *lower*
+than the reference's (6.31 against 6.99-7.02), and the comparison is **1.50x slower in the mean and 1.80x at
+P95**. The picture column cannot read it, and the comparer says so itself: the reference's own arms differ by
+0.087% of pixels by more than 8 against the largest cross-generation difference of 0.085%.
+
+**So section 93's ladder is complete**: rung 1 no-pack (1.50x, 1.62x and 1.50x in three sessions), rung 2 MakeUp
+(1.50x), rung 3 Complementary (0.91x - 9.2% faster - with a 5.4% wider P95) and rung 4 Photon (1.50x), every rung
+guarded, every verdict read on the mean. This path is slower by the two-handover quantum on the three work-light
+rungs and faster at the median on the one work-bound rung, which is what the AUTO decision's performance line
+says.
