@@ -550,11 +550,51 @@ particle, so which particles a frame holds depends on the tick the screenshot la
 particles needs an emission whose *appearance* does not age - one tick's particles photographed while frozen, or a
 static block-entity form - and neither is built.
 
-**One more thing that session shows and the harness does not yet guard.** `m4b` read **10.68 ms a frame against
-`m4a`'s 2.46** (its own commit feedback 4.23 against 1.11, its drawable wait 8.06 ms at the median): an arm-level
-outlier of 433%, which section 115 says to discard. The harness refused nothing, because a session with two
-generations in it skips the structural drift check by design - its own line says so - so an outlier of that size
-has to be noticed by reading the table. **An outlier guard for the two-generation case is owed.**
+**One more thing that session shows and the harness did not guard - and now does.** `m4b` read **10.68 ms a frame
+against `m4a`'s 2.46** (its own commit feedback 4.23 against 1.11, its drawable wait 8.06 ms at the median): an
+arm-level outlier of 433%, which section 115 says to discard, and nothing refused it because a session with two
+generations in it skips the structural drift check by design. The comparer now compares each arm against the
+fastest arm of **its own generation** and prints an `arm outlier:` line naming it: `run/vanilla-grid` exits 3 with
+`m4b ... 4.35x`, `run/vanilla-clouds` exits 0 with nothing said, and `run/m4-four`'s 27.50 ms arm is named at
+1.51x - the arm this report discarded by hand two rounds ago. The threshold is measured rather than chosen (this
+path's own arms legitimately spread to 15%), and six checks are pinned and mutation-proved.
+
+**The entity fixture was then built, and the path draws what it places - with the placement itself still not
+settled.** The staged world holds no entities of its own, which is a measurement and not an assumption: with
+`--keep-entities` the frame's passes a frame, its pipeline identities and its depth attachments come out the
+still-life scene's to the digit. `tools/fixtures/vanilla-mobs` therefore summons five entities of five render
+families - a pig, a cow, an armour stand, a dropped item and an experience orb - in front of the camera, each with
+`NoAI:1b` so its pose does not move, staged from the repository, and each summon preceded by a `say` that names it
+so the harness can refuse an arm whose scene never got them. `run/vanilla-mobs2`, clouds on, 300 frames:
+
+```text
+arm  gen  ms a frame  passes a frame  depth a frame  pipeline  identities
+m3a  M3     8.30        4.00             3.00          3807        99
+m4a  M4    12.45       11.75            15.25          9130        99
+m3b  M3     8.30        4.00             3.00          3996        99
+m4b  M4    12.45       11.73            15.23          9131        99
+
+pictures, by band of the 3600x2338 capture (mean channel difference / share of pixels over 8):
+band                m3a vs m3b       m3a vs m4a       m3a vs m4b
+sky   (top 12%)     0.05 (0.1%)      0.09 (0.1%)      0.08 (0.1%)
+middle (40-60%)     0.74 (1.3%)      1.90 (6.1%)      0.76 (1.6%)
+lower  (70-90%)     0.05 (0.1%)      0.29 (1.4%)      1.21 (5.1%)
+```
+
+What that says, and what it does not. **Both generations draw entities**: this path opens 11.7 passes a frame
+where its own still-life frame opened 4.3, and the still-life scene's numbers are the reference's here (4.0). **The
+sky is identical across all four arms** (0.05-0.09), so the clouds and the sky account for none of this. **The
+differences sit in the bands the entities are in, and not in the same band for the two Metal 4 arms**: m4a differs
+from the reference in the middle (1.90, 2.6x the reference's own 0.74) and m4b in the lower (1.21), each agreeing
+with the reference in the other. A renderer difference would sit in the same place in both arms, so this reads as
+the *fixture's placement* moving between launches - and the fixture's own proof says why: a live session logged
+"placed the pig" and "placed the cow" **every four to five seconds**, so a session's entity count is not the five
+it asks for and the arms hold different numbers of them. **An entity picture verdict is NOT MEASURED, for a fixture
+reason that is named and logged rather than suspected**, and a once-only placement is what the fixture owes next.
+
+**What is NOT MEASURED**, said plainly because the surface is now wide: a particle or rain scene whose picture can
+be compared across launches; an entity scene whose entities are placed once; and the pack-and-vanilla-features
+combination, since every session above is a no-pack one.
 
 ## Resource Binding
 

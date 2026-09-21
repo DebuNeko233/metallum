@@ -4584,6 +4584,57 @@ in it skips the structural drift check by design, and its own line says so, so t
 reading the table. **An outlier guard for the two-generation case is owed**, and it is the next harness change
 rather than a note.
 
+### What a mob draws, and a fixture that says whether it did
+
+The staged world holds no entities: with `--keep-entities` the frame's passes a frame, its pipeline identities and
+its depth attachments came out the still-life scene's to the digit, so the entity question had no scene to be asked
+in. `tools/fixtures/vanilla-mobs` builds one - a pig, a cow, an armour stand, a dropped item and an experience orb,
+summoned in front of the camera, each with `NoAI:1b` so its pose does not move between launches.
+
+**The fixture's proof is the part worth keeping.** Every summon is preceded by a `say` naming it and the harness
+refuses an arm whose log does not carry the line - because "staged, loaded and did nothing" is how this scene has
+already failed twice. Writing the proof found a third failure for free: the first version put the `say` *after* the
+summon, and both are guarded by `unless entity`, so the summon is what makes the guard false and the proof could
+never fire. That ordering is now pinned, with the mutation that reverses it refused.
+
+What the proof then showed in a live session is recorded rather than papered over: the pig and the cow lines repeat
+every four to five seconds, so a session holds more entities than the five it asks for and two arms of one
+configuration hold different numbers of them. The readings that follow have to be read with that in mind.
+
+`run/vanilla-mobs2`, clouds on, 300 frames, arms interleaved M3/M4/M3/M4:
+
+```text
+arm  gen  ms a frame  passes a frame  depth a frame  pipeline  identities
+m3a  M3     8.30        4.00             3.00          3807        99
+m4a  M4    12.45       11.75            15.25          9130        99
+m3b  M3     8.30        4.00             3.00          3996        99
+m4b  M4    12.45       11.73            15.23          9131        99
+
+pictures by band (mean channel difference / share of pixels over 8):
+band                m3a vs m3b       m3a vs m4a       m3a vs m4b
+sky   (top 12%)     0.05 (0.1%)      0.09 (0.1%)      0.08 (0.1%)
+middle (40-60%)     0.74 (1.3%)      1.90 (6.1%)      0.76 (1.6%)
+lower  (70-90%)     0.05 (0.1%)      0.29 (1.4%)      1.21 (5.1%)
+```
+
+Both generations draw entities - this path opens 11.7 passes a frame where its still-life frame opened 4.3 - and the
+sky is identical across all four arms, so the differences are in the entity bands. They are not in the *same* band
+for the two Metal 4 arms, though (m4a in the middle, m4b in the lower, each agreeing elsewhere), and a renderer
+difference would sit in one place: what moves is the fixture's placement, which its own proof then confirmed by
+logging the pig and the cow again every few seconds. **An entity picture verdict is therefore NOT MEASURED, for a
+fixture reason that is named and logged**, and placing the entities once is what the fixture owes next.
+
+### The harness names the arm the machine spoiled
+
+`run/vanilla-grid`'s fourth arm read 10.68 ms a frame against the second Metal 4 arm's 2.46 - 4.35x - while every
+structural counter agreed to a tenth of a per cent, and nothing refused it: a session with two generations in it
+skips the per-generation structural check by design. Section 115 says to discard an arm like that, and a reader can
+only discard what is named, so the comparer now compares each arm against the *fastest arm of its own generation*
+and prints an `arm outlier:` line naming it, refusing the session with the same code a scene drift does. The
+threshold is measured rather than chosen - this path's own arms legitimately spread to 15%, and `run/m4-four`'s
+27.50 ms arm is named at 1.51x, which is the arm this report had discarded by hand. Six checks are pinned and
+mutation-proved, and two of them survived a first draft: a check that records nothing, and one that compares no arm.
+
 ## Risks
 
 - **Sixteen sampler slots are the compiler's ceiling, not the table's, and the argument buffer is the
