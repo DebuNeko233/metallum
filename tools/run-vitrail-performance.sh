@@ -54,6 +54,7 @@ vanilla_mobs=false
 vanilla_blocks=false
 vanilla_sign=false
 fullscreen=false
+cold_cache=false
 expect_target=""
 expect_execution=""
 fullscreen_size=""
@@ -118,6 +119,14 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          baseline it was to be read against was Metal 3, with every structural counter so
                          close that nothing in the comparison could see it. The arm's own preference line
                          ("Vitrail Metal preference: ...") is quoted when the guard refuses.
+  --cold-cache           remove Vitrail's derived shader caches (run/vitrail/modules and
+                         run/vitrail/translations) before the session's first arm, so that the arm is a
+                         COLD load and the arms behind it are warm ones. Both are keyed on the shader
+                         text and the build and are rebuilt by the load itself; what is removed is
+                         printed with its size and file count, because a cache the owner paid seconds
+                         to fill is not this harness's to take quietly. Measured, one warm launch of
+                         the same pack compiles 0 of 574 units, so a session without this flag measures
+                         the warm path four times and never says what a cold one costs.
   --width W --height H   the window the scene is drawn at (default 1600x900).
   --timeout S            how long to wait for the world, the pack and the window (default 900).
   --settle S             how long to keep drawing between the frame that says the chain is up and the
@@ -193,6 +202,7 @@ while [[ $# -gt 0 ]]; do
 		--fullscreen) fullscreen=true; shift ;;
 		--expect-target) expect_target="$2"; shift 2 ;;
 		--expect-execution) expect_execution="$2"; shift 2 ;;
+		--cold-cache) cold_cache=true; shift ;;
 		--fullscreen-size) fullscreen_size="$2"; shift 2 ;;
 		--no-pack) no_pack=true; shift ;;
 		--fixture) fixture_pack=true; shift ;;
@@ -657,6 +667,23 @@ stop_run() {
 		stale_client=1
 	fi
 }
+
+# The derived shader caches, when the caller asked for a cold load. They live beside the pack in the
+# instance, keyed on the build and on the shader text, and the load that fills them again is this
+# session's first arm - so what a session measures without this flag is the warm path, four times over,
+# and the cold number never appears. Printed with its size before it goes, because it is derived data
+# that took a first load's seconds to write and a reader of the log should be able to say what was
+# removed and what had to be rebuilt.
+if [[ "$cold_cache" == true ]]; then
+	for cache in modules translations; do
+		dir="$game_dir/vitrail/$cache"
+		[[ -d "$dir" ]] || continue
+		before="$(du -sh "$dir" 2>/dev/null | cut -f1)"
+		files="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
+		rm -rf "$dir"
+		echo "--cold-cache removed $dir ($before, $files file(s)); the first arm of this session is a cold load" >&2
+	done
+fi
 
 : > "$out_dir/order.txt"
 : > "$out_dir/entity-counts.txt"

@@ -755,6 +755,21 @@ for needle, why in (
     ("sysctl -n vm.loadavg", "the load average is not read from the kernel, so it is read from a shell "
                              "command's wording and not from a number"),
     ("load.txt", "nothing in the harness names the file the machine state is written to"),
+    # And the derived shader caches, which a session must be able to start without. Measured while reading
+    # the load census: every arm of every session so far read `Module cache: 574 units served, 0 built`,
+    # because the caches live beside the pack and are keyed on the build - so the corpus has four warm
+    # readings of each pack and no cold one at all, and "what does a first load cost" was unanswerable.
+    ("--cold-cache) cold_cache=true; shift ;;",
+     "the harness cannot be asked for a cold load, so every session it runs measures the warm path"),
+    ('dir="$game_dir/vitrail/$cache"',
+     "the cache the cold arm removes is not named per cache root, so a build with a second derived cache "
+     "would leave it warm"),
+    ("du -sh \"$dir\"", "the size of the cache being removed is not read, so a reader cannot say what a cold "
+                        "load had to rebuild"),
+    ("the first arm of this session is a cold load",
+     "the removal does not say which arm it made cold, which is the one fact a reader of the session needs"),
+    ("rm -rf \"$dir\"", "nothing is actually removed when a cold load is asked for, so the flag would be a "
+                        "no-op that reads as a measurement"),
     # And the command generation that executed the frame, which is machine state this harness does not write.
     # Measured, and the reason the guard exists: a whole session of the shadow decomposition (run/c2-<pack>)
     # was collected on Metal 4 while the corpus it was to be read against is Metal 3 - the instance's own
