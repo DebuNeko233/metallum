@@ -261,13 +261,23 @@ for needle, why in (
     ("--keep-entities) keep_entities=true", "the harness always takes the world's entities out, so nothing a "
      "mob or a block entity draws can be measured"),
     ("--vanilla-particles) vanilla_particles=true", "the harness cannot stage the vanilla particle fixture"),
+    ("--vanilla-mobs) vanilla_mobs=true", "the harness cannot stage the entity fixture, and the staged world "
+     "holds no entities of its own, so nothing a mob draws can be in a frame"),
+    ("for fixture in showcase mobshow; do", "only one fixture is checked against the game having loaded it, so "
+     "the other can stage and emit nothing and read as a scene that has it"),
+    ('grep -q "showcase: placed the pig"', "an arm that staged the entity fixture is not checked against the game "
+     "having placed anything, which is how a fixture that loads and does nothing reads as a scene with entities - "
+     "measured, one arm of run/vanilla-mobs had the summons and the arm beside it did not"),
     ('cp -R "$repo_root/tools/fixtures/vanilla-showcase" "$saves_dir/$world_name/datapacks/showcase"',
      "the particle fixture is not copied from the repository, so the scene would live in an unversioned save"),
-    ('grep -q "Found new data pack file/showcase" "$run_dir/latest.log"',
-     "an arm that staged the particle fixture is not checked against the game having found it, so a scene with "
-     "no particles in it reads as a scene with particles"),
-    ('grep -q "Failed to load function showcase:tick" "$run_dir/latest.log"',
-     "an arm is not refused when the game refuses the fixture's function, which is how a fixture that stages and "
+    ('cp -R "$repo_root/tools/fixtures/vanilla-mobs" "$saves_dir/$world_name/datapacks/mobshow"',
+     "the entity fixture is not copied from the repository, so the scene it describes would live in an "
+     "unversioned save"),
+    ('grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"',
+     "an arm that staged a fixture is not checked against the game having found it, so a scene without it reads "
+     "as a scene with it"),
+    ('grep -q "Failed to load function" "$run_dir/latest.log"',
+     "an arm is not refused when the game refuses a fixture's function, which is how a fixture that stages and "
      "emits nothing passes for one that works"),
 ):
     if needle not in launcher:
@@ -282,6 +292,39 @@ for path, why in (
 ):
     if not path.is_file():
         raise SystemExit("vitrail performance harness: " + why)
+mobs = ROOT / "tools" / "fixtures" / "vanilla-mobs"
+mob_tick = (mobs / "data" / "mobshow" / "function" / "tick.mcfunction")
+for path, why in (
+    (mobs / "pack.mcmeta", "the entity fixture has no pack metadata, so the game will not load it"),
+    (mobs / "data" / "minecraft" / "tags" / "function" / "tick.json",
+     "the entity fixture has no tick tag, so its function never runs"),
+    (mob_tick, "the entity fixture has no tick function, so the switch stages an empty datapack"),
+):
+    if not path.is_file():
+        raise SystemExit("vitrail performance harness: " + why)
+mob_tick = mob_tick.read_text()
+if "NoAI:1b" not in mob_tick:
+    raise SystemExit("vitrail performance harness: the entity fixture summons entities that move, so two "
+                     "launches draw two poses and a picture comparison reads the animation")
+# The proof has to come *before* the summon it proves: both are guarded by `unless entity`, and the summon is
+# what makes that guard false, so a `say` behind it can never fire. Measured, the first version of this proof
+# printed nothing in any arm while the entities were placed.
+for kind in ("pig", "cow", "armor_stand", "item", "experience_orb"):
+    said = mob_tick.find(f"run say showcase: placed the {kind}")
+    placed = mob_tick.find(f"run summon minecraft:{kind}")
+    if said < 0 or placed < 0:
+        raise SystemExit(f"vitrail performance harness: the entity fixture does not both say and summon the "
+                         f"{kind}, so its proof of placement is not a proof")
+    if said > placed:
+        raise SystemExit(f"vitrail performance harness: the entity fixture says it placed the {kind} after the "
+                         f"command that places it, and the guard makes that say unreachable")
+if "run say showcase: placed the" not in mob_tick:
+    raise SystemExit("vitrail performance harness: the entity fixture does not say when it places an entity, so "
+                     "an arm whose summons never ran cannot be told from one whose did - which is the reading "
+                     "that cost run/vanilla-mobs an arm")
+if "unless entity" not in mob_tick:
+    raise SystemExit("vitrail performance harness: the entity fixture has no once-only guard, so it summons an "
+                     "entity every tick and the scene grows with the window")
 if "particle minecraft:flame" not in (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text():
     raise SystemExit("vitrail performance harness: the tick function emits no particle, so the fixture stages "
                      "nothing into the frame")

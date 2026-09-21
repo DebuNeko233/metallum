@@ -49,6 +49,7 @@ vanilla_clouds=off
 weather=clear
 keep_entities=false
 vanilla_particles=false
+vanilla_mobs=false
 fullscreen=false
 expect_target=""
 fullscreen_size=""
@@ -126,6 +127,10 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
   --vanilla-particles    stage tools/fixtures/vanilla-showcase - a tick function that emits the game's own
                          particle types around the camera - into the world. The particles are vanilla's, the
                          counts are the same in every arm, and nothing has to be typed into the game.
+  --vanilla-mobs         stage tools/fixtures/vanilla-mobs - a tick function that summons a pig, a cow, an
+                         armour stand, a dropped item and an experience orb in front of the camera, each with
+                         NoAI - into the world. The staged world holds no entities of its own, so this is how
+                         what a mob draws enters a frame at all, and stillness is what makes it comparable.
   --continue-world       let each run carry on from the world the last one saved instead of
                          starting from the staged copy again. Off by default, because the world's
                          clock runs while a session is loaded and a scene lit by a moved sun is a
@@ -176,6 +181,7 @@ while [[ $# -gt 0 ]]; do
 		--weather) weather="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
 		--keep-entities) keep_entities=true; shift ;;
 		--vanilla-particles) vanilla_particles=true; shift ;;
+		--vanilla-mobs) vanilla_mobs=true; shift ;;
 		--continue-world) fresh_world=false; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -562,6 +568,12 @@ for run in "${runs[@]}"; do
 		cp -R "$repo_root/tools/fixtures/vanilla-showcase" "$saves_dir/$world_name/datapacks/showcase"
 		echo "Staged the vanilla particle fixture into $world_name" >&2
 	fi
+	if [[ "$vanilla_mobs" == true ]]; then
+		rm -rf "$saves_dir/$world_name/datapacks/mobshow"
+		mkdir -p "$saves_dir/$world_name/datapacks"
+		cp -R "$repo_root/tools/fixtures/vanilla-mobs" "$saves_dir/$world_name/datapacks/mobshow"
+		echo "Staged the vanilla mob fixture into $world_name" >&2
+	fi
 	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator \
 		$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life") \
 		${aim_args[@]+"${aim_args[@]}"}
@@ -658,16 +670,25 @@ for run in "${runs[@]}"; do
 	# A fixture that stages and does not load is the false green this harness exists to refuse: the first
 	# version of the particle function wrote the older positional options and this version refused the whole
 	# function, so the scene carried no particles while every log line said the fixture had been copied in.
-	if [[ "$vanilla_particles" == true ]]; then
-		if ! grep -q "Found new data pack file/showcase" "$run_dir/latest.log"; then
-			echo "Run '$name' staged the particle fixture and the game never found it, so this arm's scene has no particles in it" >&2
+	for fixture in showcase mobshow; do
+		case "$fixture" in
+			showcase) staged="$vanilla_particles" ;;
+			mobshow) staged="$vanilla_mobs" ;;
+		esac
+		[[ "$staged" == true ]] || continue
+		if ! grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"; then
+			echo "Run '$name' staged the $fixture fixture and the game never found it, so this arm's scene does not have it" >&2
 			run_failed=1
 		fi
-		if grep -q "Failed to load function showcase:tick" "$run_dir/latest.log"; then
-			echo "Run '$name' staged the particle fixture and the game refused its tick function, so this arm's scene has no particles in it" >&2
+		if grep -q "Failed to load function" "$run_dir/latest.log"; then
+			echo "Run '$name' staged the $fixture fixture and the game refused a function in it, so this arm's scene does not have it" >&2
 			run_failed=1
 		fi
-	fi
+		if [[ "$fixture" == mobshow ]] && ! grep -q "showcase: placed the pig" "$run_dir/latest.log"; then
+			echo "Run '$name' staged the entity fixture, loaded it, and the game never said it placed an entity - so this arm's scene has none in it" >&2
+			run_failed=1
+		fi
+	done
 	grep -F "frame-probe" "$run_dir/latest.log" > "$run_dir/probe.txt" 2>/dev/null || true
 	grep -F "$arm_pattern" "$run_dir/latest.log" > "$run_dir/frame.txt" 2>/dev/null || true
 
