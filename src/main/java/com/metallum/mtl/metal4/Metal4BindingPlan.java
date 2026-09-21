@@ -1,5 +1,6 @@
 package com.metallum.mtl.metal4;
 
+import com.mojang.blaze3d.GpuFormat;
 import com.metallum.render.shared.MetalArgumentBufferLayout;
 import com.metallum.render.shared.MetalResourceBinding;
 import com.metallum.render.shared.MetalShaderStages;
@@ -45,9 +46,11 @@ public final class Metal4BindingPlan {
      * @param metalIndex        the buffer or texture slot the compiled MSL reads it from
      * @param samplerMetalIndex the slot its sampler is read from, or -1 where it has none
      * @param argumentBufferSet the argument buffer that carries it, or -1 where the table carries it directly
+     * @param texelBufferFormat the pixel format a texel buffer is read as, or null where this is not one
      */
     public record Slot(MetalResourceBinding.ResourceKind kind, String name, int logicalIndex, int stageMask,
-                       int metalIndex, int samplerMetalIndex, int argumentBufferSet) {
+                       int metalIndex, int samplerMetalIndex, int argumentBufferSet,
+                       @Nullable GpuFormat texelBufferFormat) {
 
         /** Whether this slot is filled with a buffer address rather than with a resource id. */
         public boolean buffer() {
@@ -58,6 +61,21 @@ public final class Metal4BindingPlan {
         /** Whether this slot is filled with a texture, which includes a texel buffer. */
         public boolean texture() {
             return !buffer();
+        }
+
+        /**
+         * Whether this slot is a buffer the shader reads <em>as a texture</em>.
+         * <p>
+         * The frame path hands it over as a {@code GpuBuffer} - that is what the game's own
+         * {@code setUniform(name, buffer)} means - and Metal reads it through a texture view over that
+         * buffer's memory, so this is the one kind whose value arrives as a buffer and lands in a texture
+         * slot. Asking for a buffer slot by name therefore misses it, and the binding is dropped: a shader
+         * that derives its geometry from such a buffer then reads a slot nothing filled. The name itself is
+         * the game's, so no pass here may name one - the guard is the one that refused this javadoc's first
+         * version - and what the frame path has to go on is this kind and nothing game-specific.
+         */
+        public boolean texelBuffer() {
+            return this.kind == MetalResourceBinding.ResourceKind.TEXEL_BUFFER;
         }
 
         /**
@@ -95,6 +113,14 @@ public final class Metal4BindingPlan {
      */
     private final Map<String, Slot> textureByName;
     private final Map<String, Slot> bufferByName;
+    /**
+     * The same bindings again, the texel buffers alone.
+     * <p>
+     * A lookup of its own rather than a filter at the call site, because the caller's question is not "is
+     * this a texture" - a sampled image is one too - but "may I hand this name a buffer", and the answer
+     * decides whether the frame path builds a texture view over the buffer or drops the binding.
+     */
+    private final Map<String, Slot> texelBufferByName;
     private final List<MetalArgumentBufferLayout> argumentBuffers;
     private final int firstVertexBufferSlot;
     private final int vertexBufferCount;
@@ -105,13 +131,18 @@ public final class Metal4BindingPlan {
         Map<String, Slot> named = new LinkedHashMap<>();
         Map<String, Slot> textures = new LinkedHashMap<>();
         Map<String, Slot> buffers = new LinkedHashMap<>();
+        Map<String, Slot> texels = new LinkedHashMap<>();
         for (Slot slot : this.slots) {
             named.put(slot.name(), slot);
             (slot.texture() ? textures : buffers).put(slot.name(), slot);
+            if (slot.texelBuffer()) {
+                texels.put(slot.name(), slot);
+            }
         }
         this.byName = Map.copyOf(named);
         this.textureByName = Map.copyOf(textures);
         this.bufferByName = Map.copyOf(buffers);
+        this.texelBufferByName = Map.copyOf(texels);
         this.argumentBuffers = List.copyOf(argumentBuffers);
         this.firstVertexBufferSlot = firstVertexBufferSlot;
         this.vertexBufferCount = vertexBufferCount;
@@ -143,7 +174,7 @@ public final class Metal4BindingPlan {
         List<Slot> slots = resources.stream()
                 .map(resource -> new Slot(resource.kind(), resource.name(), resource.bindingIndex(),
                         resource.stageMask(), resource.metalIndex(), resource.samplerMetalIndex(),
-                        resource.argumentBufferSet()))
+                        resource.argumentBufferSet(), resource.texelBufferFormat()))
                 .toList();
         return new Metal4BindingPlan(slots, argumentBuffers, firstVertexBufferSlot, vertexBufferCount);
     }
@@ -174,6 +205,17 @@ public final class Metal4BindingPlan {
      */
     public Slot slot(final String name, final boolean texture) {
         return (texture ? this.textureByName : this.bufferByName).get(name);
+    }
+
+    /**
+     * The texel buffer this name declares, or null where this pipeline has none.
+     * <p>
+     * The frame path's way of answering "the game just handed me a buffer under this name": where this
+     * returns a slot, that buffer is the texel buffer the shader reads and has to become a texture view; a
+     * sampled image under the same name is a different question with a different answer.
+     */
+    public @Nullable Slot texelBuffer(final String name) {
+        return this.texelBufferByName.get(name);
     }
 
     /** Whether this pipeline declares a binding by this name at all, whichever kind it is. */

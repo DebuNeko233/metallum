@@ -6,7 +6,9 @@ import com.metallum.mtl.MTLBuffer;
 import com.metallum.mtl.MTLHazardTrackingMode;
 import com.metallum.mtl.MTLIndexType;
 import com.metallum.mtl.MTLResourceOptions;
+import com.metallum.mtl.MTLPixelFormat;
 import com.metallum.mtl.MTLStorageMode;
+import com.metallum.mtl.MTLTexture;
 import com.metallum.mtl.metal4.MTL4ArgumentTable;
 import com.metallum.mtl.metal4.Metal4BindingPlan;
 import com.metallum.mtl.metal4.MTL4RenderEncoder;
@@ -576,11 +578,80 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
     public void setUniform(final @NonNull String name, final @NonNull GpuBufferSlice slice) {
         declare(slice.buffer());
         this.uniformBindings.put(name, slice);
-        Metal4BindingPlan.Slot slot = slotFor(name, false);
-        if (slot != null) {
-            fillAddress(name, slot, slice);
+        // A name this pipeline declares as a texel buffer is asked first, because it is the one case where a
+        // buffer is not a buffer slot: the shader reads it as a texture and the value has to become a view
+        // over it. Asking for the buffer slot alone dropped the binding in silence, and a program that
+        // derives its geometry from such a buffer then read a slot nothing had filled.
+        Metal4BindingPlan plan = this.plan;
+        Metal4BindingPlan.Slot texel = plan == null ? null : plan.texelBuffer(name);
+        if (texel != null) {
+            fillTexelBuffer(name, texel, slice);
+        } else {
+            Metal4BindingPlan.Slot slot = slotFor(name, false);
+            if (slot != null) {
+                fillAddress(name, slot, slice);
+            }
         }
         this.tablesAssigned = false;
+    }
+
+    /**
+     * Binds a texel buffer: a texture view over the buffer's own memory, at the slice's offset and length.
+     * <p>
+     * This is the shape the reference generation has always used ({@code createTexelBufferTexture}), and the
+     * shape Metal itself requires: a {@code texture_buffer} argument is a texture, so the buffer has to be
+     * presented as one - the bytes the shader reads are the buffer's, and the pixel format and texel count
+     * are what decide how they are read. Getting either wrong reads that buffer at the wrong stride, and a
+     * program that works its geometry out from such a buffer draws it in the wrong place rather than not at
+     * all, which is the shape a missing or mis-sized view has: every vertex collapses toward one point.
+     * <p>
+     * The view is released after the frame through the same queue the rest of this pass's transients use, and
+     * the offset is subject to Metal's own minimum buffer-texture alignment - which
+     * {@link MTLTexture#newBufferTextureView} answers with a null rather than a wrong image.
+     */
+    private void fillTexelBuffer(final String name, final Metal4BindingPlan.Slot slot,
+                                 final GpuBufferSlice slice) {
+        com.mojang.blaze3d.GpuFormat format = slot.texelBufferFormat();
+        if (format == null) {
+            throw new IllegalStateException("Texel buffer " + name + " is missing a format");
+        }
+        MetalGpuBuffer buffer = bufferOf(slice);
+        long pixelFormat = MTLPixelFormat.from(format).value;
+        int pixelSize = format.blockSize();
+        long byteLength = slice.length();
+        if (byteLength <= 0L || byteLength % pixelSize != 0L) {
+            throw new IllegalStateException("Texel buffer " + name + " length " + byteLength
+                    + " is not a valid " + format + " range");
+        }
+        long texelCount = byteLength / pixelSize;
+        MetalFrameProbe.texelViewCreated();
+        MemorySegment view = MTLTexture.newBufferTextureView(
+                buffer.nativeHandle(), pixelFormat, slice.offset(), texelCount, byteLength);
+        if (ObjC.isNil(view)) {
+            throw new IllegalStateException("Failed to create the Metal 4 texel-buffer view for " + name
+                    + " (" + texelCount + " x " + format + " at offset " + slice.offset() + ")");
+        }
+        this.owner.queueForDestroy(() -> ObjC.release(view));
+
+        if (slot.indirect()) {
+            forEachArgumentLayout(slot, layout -> {
+                MTLArgumentEncoder encoder = bindArgumentBuffer(layout);
+                MetalFrameProbe.argBufferTextureWrite();
+                encoder.setTexture(view, slot.metalIndex());
+            });
+            return;
+        }
+        for (int stage : new int[]{MetalShaderStages.VERTEX, MetalShaderStages.FRAGMENT}) {
+            MTL4ArgumentTable table = tableFor(stage);
+            if (table == null || !slot.readBy(stage)) {
+                continue;
+            }
+            if (!table.texture(view, slot.metalIndex())) {
+                throw new IllegalStateException("the Metal 4 table refused the texel buffer '" + name
+                        + "' at texture " + slot.metalIndex() + " on " + stageName(stage));
+            }
+        }
+        MetalFrameProbe.textureBound();
     }
 
     /**
@@ -825,6 +896,11 @@ final class Metal4RenderPass implements RenderPassBackend, MetalPassUniformWrite
             return;
         }
         this.uniformBindings.forEach((name, slice) -> {
+            Metal4BindingPlan.Slot texel = plan.texelBuffer(name);
+            if (texel != null) {
+                fillTexelBuffer(name, texel, slice);
+                return;
+            }
             Metal4BindingPlan.Slot slot = plan.slot(name);
             if (slot != null && !slot.texture()) {
                 fillAddress(name, slot, slice);

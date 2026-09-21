@@ -2043,4 +2043,47 @@ if "will not run the Metal 3" not in backend:
                      "that the Metal 3 reference path is skipped as well, so a forced Metal 4 session on a device "
                      "that cannot take it measures OpenGL with nothing in the log saying so")
 
+# --- a buffer the shader reads as a texture ---------------------------------------------------------------
+# The frame path can bind a `GpuBuffer` by name, and a shader may read it either as a buffer (a uniform or
+# storage buffer) or as a texture (a texel buffer, which Metal presents as a view over the buffer's memory).
+# Asking for a buffer slot alone dropped every texel buffer in silence, and the game's own cloud is drawn from
+# exactly that shape: its face data is a texel buffer bound through `setUniform`, so the vertex stage read a
+# slot nothing had filled and every face collapsed toward one point - clouds piled up over the camera. The plan
+# has to carry the format for it, the pass has to ask for the texel kind *before* the buffer kind, the view has
+# to be created over the buffer's memory, and it has to be released with the pass's other transients.
+BINDING_PLAN = (ROOT / "src" / "main" / "java" / "com" / "metallum" / "mtl" / "metal4"
+                / "Metal4BindingPlan.java").read_text(encoding="utf-8")
+
+for needle, why in (
+    ("public @Nullable Slot texelBuffer(final String name)",
+     "the binding plan cannot be asked for the texel buffer a name declares, so the frame path has only the "
+     "buffer-slot question and a texel buffer is dropped again"),
+    ("@Nullable GpuFormat texelBufferFormat) {",
+     "the plan's slot no longer carries the format a texel buffer is read as, and a view made without it would "
+     "read the buffer at the wrong stride"),
+    ("resource.argumentBufferSet(), resource.texelBufferFormat()))",
+     "the plan is built without the binding's texel format, so every texel buffer would be refused as missing "
+     "one"),
+):
+    if needle not in BINDING_PLAN:
+        raise SystemExit("metal 4 provider: " + why)
+
+for needle, why in (
+    ("Metal4BindingPlan.Slot texel = plan == null ? null : plan.texelBuffer(name);",
+     "the Metal 4 pass asks only for a buffer slot when a buffer is bound by name, which is how a texel "
+     "buffer - a buffer the shader reads as a texture - was dropped without a word"),
+    ("fillTexelBuffer(name, texel, slice);",
+     "nothing builds a texture view over the buffer a texel-buffer binding names"),
+    ("MTLTexture.newBufferTextureView(",
+     "the texel-buffer view is no longer a Metal texture created over the buffer's memory, which is the only "
+     "way a `texture_buffer` argument can be read"),
+    ("this.owner.queueForDestroy(() -> ObjC.release(view));",
+     "the texel-buffer view is never released, so every frame with a texel buffer leaks one"),
+    ("Metal4BindingPlan.Slot texel = plan.texelBuffer(name);",
+     "a texel buffer bound before its pipeline arrives is never re-applied, so the first frame of such a pass "
+     "reads an unbound slot"),
+):
+    if needle not in pass_source:
+        raise SystemExit("metal 4 provider: " + why)
+
 print("Metal 4 execution provider contract: PASS")
