@@ -117,11 +117,18 @@ public final class MTL4ArgumentTable implements AutoCloseable {
             SET_MAX_SAMPLER.send(descriptor, samplers);
             // Initialised to nil, and the reason is measured rather than reasoned: the header says this
             // property's default is false, so a slot the frame path never fills holds whatever the driver left
-            // there - and a shader that reads one dereferences that. This path skips a binding by design where
-            // the layout declares it as the other kind of resource (the engine's own cloud pass binds a uniform
-            // under a name its pipeline gives a texture), and the first world frame - the first frame that
-            // draws the clouds - was killing the GPU with an MMU fault. Nil reads as zero, which is what the
-            // Metal 3 pass does with a name its layout never encodes.
+            // there - and a shader that reads one dereferences that. The first world frame - the first frame that
+            // draws the clouds - was killing the GPU with an MMU fault on exactly that, so a slot this path does
+            // not fill must read as zero, which is what the Metal 3 pass does with a name its layout never
+            // encodes.
+            //
+            // This comment used to name the cloud pass as the example of a binding that is skipped by design -
+            // "the engine's own cloud pass binds a uniform under a name its pipeline gives a texture". That was
+            // the defect itself rather than a description of one: the name is a texel buffer, which Metal binds
+            // as a texture made over the buffer, and the pass was skipping the binding because it asked only the
+            // buffer-slot question. Both generations bind it now (MetalRenderPass.createTexelBufferTexture, and
+            // this generation's fillTexelBuffer), and the initialisation below is what a slot with genuinely no
+            // binding still needs.
             SET_INITIALIZE.send(descriptor, 1L);
             // The header asks for this before a vertex buffer is bound with a stride: it is what reserves
             // room for the strides in the table. Reserving it on a table with buffer slots costs a little
