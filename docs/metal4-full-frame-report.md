@@ -1836,6 +1836,20 @@ answered rather than only what is left.
    the one named above and still untried: the GPU-timeline resolve
    (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`).
 
+   **Three clocks, read separately and never forced to agree.** The driver's `GPUStartTime`/`GPUEndTime` is the
+   accelerator's own account of when a submission ran; the CPU's `waitUntilSignaledValue:` duration is the host's
+   wait for the queue's completion signal; and a marker interval is a timestamp the GPU wrote into a heap this
+   path reads. The two that *do* agree - 9.8-20.7 ms of driver window against 10.4-20.9 ms of CPU wait, within 3%
+   on every probe - are two different instruments, so their agreement is itself a reading: the queue adds no large
+   amount of time outside the submission. The marker road is then treated as its own clock rather than converted
+   into theirs, and that is the point of the correction: it reads a constant 2.19-2.34% of the driver's window
+   across a 2.7x range of that window, which is a *front-end* clock (about sixty nanoseconds a draw) and not a
+   scaled version of the work. Scaling it by forty-three would be the one move this evidence forbids - it would
+   attribute to a pass a time the front end never sees - so where a per-pass number is wanted, the whole-commit
+   driver window is the only road that has been shown to track the work, and it is whole-commit. The full set is
+   larger than the census above: **thirty-one probes across seven runs** (`run/m4-counters/probes.txt` and the six
+   runs before it), with `markerOverDriver` between **0.0219 and 0.0234** in every one of them.
+
 16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
    effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
    MEASURED.** *(Superseded twice, and kept because the chain that got there is the record. `run/m4-ab7` measured

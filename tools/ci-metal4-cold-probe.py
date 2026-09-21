@@ -1554,12 +1554,13 @@ for needle, why in (
 #   * the CPU's wait for the queue's completion value, which needs no API to be trusted;
 #   * a fixed-cost control: one trivial pass committed on its own, read with the same two instruments.
 #
-# Measured, seven probes: the marker span is 237-643 us while the driver reports 10.4-27.9 ms for the same
-# command buffer and the CPU waits 10.9-28.2 ms for its completion, against a fixed cost of 0.02-4.20 ms. The
-# ratio is 0.0226-0.0234 in every probe even as the driver's window moves by 2.7x, which is the shape of a front
+# Measured, thirty-one probes across seven runs: the marker span is 225-643 us while the driver reports 9.8-27.9
+# ms for the same command buffer and the CPU waits 10.4-28.2 ms for its completion, against a fixed cost of
+# 0.018-4.201 ms. The
+# ratio is 0.0219-0.0234 in every probe even as the driver's window moves by 2.7x, which is the shape of a front
 # end (about sixty nanoseconds a draw) and not of the render work behind it. Both marker forms agree to a per
-# cent (`heavyStepEncoderOverCb=1.00` in every probe), so this is not a granularity or a stage question, and the
-# area pair is not a pair at all: 256 draws on 4096x4096 read 17,586-337,062 ticks while 1024 draws on it read
+# cent (`heavyStepEncoderOverCb` 1.00-1.02 in every probe), so this is not a granularity or a stage question, and
+# the area pair is not a pair at all: 256 draws on 4096x4096 read 17,583-337,062 ticks while 1024 draws on it read
 # 49-173. So the smoke's requirement is the aggregate - the heaviest step reads longer than the lightest, which
 # held in every probe - and every single-step ordering is reported instead of asserted.
 #

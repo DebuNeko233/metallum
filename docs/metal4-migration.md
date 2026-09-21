@@ -4897,6 +4897,18 @@ what blocker 15 said before it was closed and says again now. The consequence fo
 earlier text already drew: optimisation candidates cannot be ranked by a per-pass GPU time, so they are judged
 by a whole-frame A/B and a CPU-side count.
 
+**Three clocks, read separately and never forced to agree.** The driver's `GPUStartTime`/`GPUEndTime` is the
+accelerator's own account of when a submission ran; the CPU's `waitUntilSignaledValue:` duration is the host's
+wait for the queue's completion signal; and a marker interval is a timestamp the GPU wrote into a heap this path
+reads. The two that agree - 9.8-20.7 ms of driver window against 10.4-20.9 ms of CPU wait, within 3% on every
+probe - are two different instruments, so their agreement is a reading in its own right: the queue adds no large
+amount of time outside the submission. The marker road is then treated as its own clock rather than converted
+into theirs, and that is what the correction turns on: it reads a constant 2.19-2.34% of the driver's window
+across a 2.7x range of that window, which is a *front-end* clock (about sixty nanoseconds a draw) and not a scaled
+version of the work. Scaling it by forty-three is the one move this evidence forbids - it would attribute to a
+pass a time the front end never sees. The set is larger than the eight-probe census above: **thirty-one probes
+across seven runs**, with `markerOverDriver` between **0.0219 and 0.0234** in every one.
+
 The one lead left is the road the earlier text named and this round did not try: the **GPU-timeline resolve**
 (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve in
 the command stream instead of on the CPU timeline and is the only remaining candidate that could change where
