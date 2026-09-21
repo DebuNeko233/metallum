@@ -16,6 +16,9 @@ import net.fabricmc.api.Environment;
  *       a fallback is what makes a new path shippable at all;</li>
  *   <li>{@code FORCE_METAL3} is refused only if Metal 3 itself is unavailable, since its whole purpose is to
  *       keep the old path measurable on hardware that could run either;</li>
+ *   <li>{@code PREFER_METAL4} - what the settings row writes - takes Metal 4 where the core contract is
+ *       satisfied and Metal 3, said out loud, where it is not: a player asking for an experimental path is not
+ *       demanding a failed launch;</li>
  *   <li>{@code FORCE_METAL4} that the device cannot satisfy is a <strong>startup failure</strong> and not a
  *       quiet fallback: a run whose numbers are believed must be a run of the path that was asked for.</li>
  * </ul>
@@ -96,6 +99,25 @@ public final class MetalExecutionSelector {
                 yield new Decision(MetalApiGeneration.METAL3, preference,
                         "Metal 3 was forced for this launch", capabilities);
             }
+            case PREFER_METAL4 -> {
+                if (usable) {
+                    yield new Decision(MetalApiGeneration.METAL4, preference,
+                            "Metal 4 was preferred by the player and this device satisfies its core contract"
+                                    + optionalScalerNote(capabilities), capabilities);
+                }
+                if (!capabilities.metal3MinimumContract()) {
+                    throw new UnsatisfiedPreferenceException(
+                            "Metal 4 was preferred and no generation can run here: this device satisfies neither"
+                                    + " the Metal 4 core contract nor the Metal 3 family ("
+                                    + capabilities.summary() + ")");
+                }
+                // The fallback the word names, said in the words a reader of the log needs: which was asked
+                // for, that it was not selected, why, and what runs instead.
+                yield new Decision(MetalApiGeneration.METAL3, preference,
+                        "Metal 4 was preferred by the user but was not selected: the device does not satisfy the"
+                                + " Metal 4 core contract" + whyNot(capabilities) + " - falling back to Metal 3",
+                        capabilities);
+            }
             case FORCE_METAL4 -> {
                 if (!usable) {
                     throw new UnsatisfiedPreferenceException(
@@ -112,10 +134,8 @@ public final class MetalExecutionSelector {
                             capabilities.metalFxParityForMetal4()
                                     ? "the device satisfies the Metal 4 minimum contract and keeps the scaler, so "
                                             + "the newer generation is preferred"
-                                    : "the device satisfies the Metal 4 minimum contract, so the newer "
-                                            + "generation is preferred; the Metal 4 scaler is missing while the "
-                                            + "Metal 3 one works, which costs the render-scale setting its "
-                                            + "accelerated road and nothing else", capabilities);
+                                    : "the device satisfies the Metal 4 minimum contract, so the newer generation"
+                                            + " is preferred" + optionalScalerNote(capabilities), capabilities);
                 }
                 if (!capabilities.metal3MinimumContract()) {
                     throw new UnsatisfiedPreferenceException(
@@ -127,6 +147,20 @@ public final class MetalExecutionSelector {
                                 + ", so Metal 3 is used", capabilities);
             }
         };
+    }
+
+    /**
+     * What a Metal 4 session loses where its scaler is missing, said as a note and not as a refusal.
+     * <p>
+     * The scaler is an optional capability: the render scale has its own road for a device without it, so a
+     * missing one costs the accelerated upscale and nothing else, and the line says so rather than leaving a
+     * reader to work out why a Metal 4 frame's render scale took the fallback road.
+     */
+    private static String optionalScalerNote(final MetalDeviceCapabilities capabilities) {
+        return capabilities.metalFxParityForMetal4()
+                ? ""
+                : "; the Metal 4 scaler is missing while the Metal 3 one works, which costs the render-scale"
+                        + " setting its accelerated road and nothing else";
     }
 
     /** Which clause of the contract failed, because "it did not qualify" is not a diagnosis. */

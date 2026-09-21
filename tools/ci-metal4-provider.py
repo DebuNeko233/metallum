@@ -1322,15 +1322,17 @@ for needle, why in (
 
 # --- what EXECUTES is a decision with a gate of its own ---------------------------------------------------
 # The selector answers which generation the session is for; this answers which one encodes today, and the two
-# are deliberately different facts. AUTO must not promote a frame path the migration has not finished (section
-# 74's readiness gate), and a forced Metal 3 session stays Metal 3 whatever was selected - so the only way Metal
-# 4 executes is a launch that asked for it by name.
+# are deliberately different facts. The two opt-in preferences execute what they selected - the player's
+# `prefer-metal4`, which falls back to Metal 3 where the device cannot run Metal 4, and the developer's
+# `metal4`, which the selector refuses to select as anything else - while AUTO and FORCE_METAL3 execute Metal 3
+# whatever was selected: AUTO must not promote a frame path the migration has not finished (section 74's
+# readiness gate), and a forced Metal 3 session stays Metal 3.
 DEVICE = ROOT / "src" / "main" / "java" / "com" / "metallum" / "render" / "MetalDevice.java"
 device = DEVICE.read_text(encoding="utf-8")
 for needle, why in (
-    ("decision.preference() == MetalExecutionPreference.FORCE_METAL4",
-     "the executing generation is not decided from the preference, so either AUTO could promote an unfinished "
-     "frame path or a forced Metal 4 launch would still execute Metal 3"),
+    ("case PREFER_METAL4, FORCE_METAL4 -> decision.selected();",
+     "the executing generation is not decided from the preference, so either the player's opt-in would not run "
+     "the path it asked for, or AUTO could promote an unfinished frame path"),
     ("MetalExecutionServices.of(decision.selected(), executesToday);",
      "the services are not built from both facts, so the selection and what executes could disagree again"),
     ("executing == MetalApiGeneration.METAL4" if False else "executesToday == MetalApiGeneration.METAL4",
@@ -1340,10 +1342,15 @@ for needle, why in (
 ):
     if needle not in device:
         raise SystemExit("metal 4 provider: " + why)
-# And the gate itself: AUTO must not be able to reach Metal 4 by the executing-generation line.
+# And the gate itself: AUTO must not be able to reach Metal 4 by the executing-generation line, and a player's
+# preference must not be able to execute Metal 4 by a road that does not also carry the developer's strict one.
 if "case AUTO -> MetalApiGeneration.METAL4" in device or "preference() == MetalExecutionPreference.AUTO" in device:
     raise SystemExit("metal 4 provider: AUTO can reach the executing Metal 4 path, which is the readiness gate "
                      "section 74 puts before it")
+if "case AUTO, FORCE_METAL3 -> MetalApiGeneration.METAL3;" not in device:
+    raise SystemExit("metal 4 provider: the executing-generation decision no longer names both generations that "
+                     "must stay on the reference path, so a preference could promote a frame path the migration "
+                     "has not finished")
 
 
 # --- and it is reached by the EXECUTING generation, not by a constant ------------------------------------

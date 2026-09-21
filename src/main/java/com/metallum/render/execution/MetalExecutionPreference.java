@@ -15,9 +15,14 @@ import java.util.Locale;
  * finished and a reference shell that encodes through Metal 3, which is not a thing to hand a player who
  * did not ask for it.
  * <p>
- * The two forced values exist so that a path can be exercised on hardware that could run either, and a
- * forced value that the device cannot satisfy is a startup failure rather than a silent fallback - a test
- * that quietly ran the other path is worse than no test, because its numbers would be believed.
+ * <strong>And the player's Metal 4 and the developer's are two different words.</strong> {@code PREFER_METAL4}
+ * is what the settings row writes: Metal 4 where the device satisfies its core contract, Metal 3 where it does
+ * not, said out loud, and a failure only where neither can run. A player who ticks "Metal 4 (Experimental)" is
+ * asking for a path, not demanding that the launch fail, and a device that cannot run it should leave them on
+ * the stable one rather than on nothing. {@code FORCE_METAL4} is the developer's word and keeps its strict
+ * meaning - exercise this path or fail - because a run whose numbers are believed has to be a run of the path
+ * that was asked for. So the two forced values exist so that a path can be exercised on hardware that could run
+ * either, and only those two fail at startup rather than falling back.
  */
 public enum MetalExecutionPreference {
 
@@ -26,6 +31,11 @@ public enum MetalExecutionPreference {
 
     /** Use Metal 3 whatever the device can do, which is how the old path stays measurable. */
     FORCE_METAL3("metal3"),
+
+    /**
+     * Use Metal 4 where the device can, Metal 3 where it cannot, which is what the player's setting asks for.
+     */
+    PREFER_METAL4("prefer-metal4"),
 
     /** Use Metal 4 or fail at startup, which is how the new path is exercised deliberately. */
     FORCE_METAL4("metal4");
@@ -72,8 +82,8 @@ public enum MetalExecutionPreference {
             }
         }
 
-        Metallum.LOGGER.warn("{} says \"{}\", which is not one of auto, metal3 or metal4, so {} is used",
-                PROPERTY, asked, DEFAULT.word);
+        Metallum.LOGGER.warn("{} says \"{}\", which is not one of auto, metal3, prefer-metal4 or metal4, so {}"
+                        + " is used", PROPERTY, asked, DEFAULT.word);
         return DEFAULT;
     }
 }

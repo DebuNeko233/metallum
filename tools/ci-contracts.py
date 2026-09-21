@@ -1559,13 +1559,34 @@ if "System.getProperty(PROPERTY, AUTO.word)" in _preference_source:
 if "return AUTO;" in _preference_source:
     raise SystemExit("architecture contract: the preference falls back to AUTO, which is a diagnostic mode and "
                      "not what a player who never chose a generation should run")
-require("the preference is one property with three words",
+require("the preference is one property with four words",
         "src/main/java/com/metallum/render/execution/MetalExecutionPreference.java", (
     'public static final String PROPERTY = "metallum.execution";',
     'AUTO("auto")',
     'FORCE_METAL3("metal3")',
+    'PREFER_METAL4("prefer-metal4")',
     'FORCE_METAL4("metal4")',
 ))
+# The player's word and the developer's are different words, and the difference is the whole of the safety:
+# a settings row that wrote `metal4` would turn an opt-in into a startup failure on a device that cannot run
+# the experimental path. The selector has to *fall back* for the preference and only for it.
+_selector_words = (ROOT / "src/main/java/com/metallum/render/execution/MetalExecutionSelector.java"
+                   ).read_text(encoding="utf-8")
+for needle, why in (
+    ("case PREFER_METAL4 -> {",
+     "the selector has no branch for the player's preference, so `prefer-metal4` would fall through to another "
+     "word's rules"),
+    ("Metal 4 was preferred by the user but was not selected:",
+     "the player's preference does not say that Metal 4 was not selected, so a session that fell back would "
+     "leave a reader to work out which generation ran"),
+    ("- falling back to Metal 3",
+     "the fallback a player's preference takes is not named as one"),
+    ('"Metal 4 was preferred and no generation can run here',
+     "the preference does not fail where neither generation can run, so a device with neither would be handed "
+     "a session that cannot draw"),
+):
+    if needle not in _selector_words:
+        raise SystemExit("architecture contract: " + why)
 require("the device records capabilities and selects once",
         "src/main/java/com/metallum/render/MetalDevice.java", (
     "MetalDeviceCapabilities capabilities =",

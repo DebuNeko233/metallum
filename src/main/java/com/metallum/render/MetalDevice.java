@@ -111,15 +111,22 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
         // chose Metal 4 and a forced Metal 3 launch would have looked identical to it.
         // What EXECUTES the frame is a separate fact from what was selected, and it is decided here rather than
         // by the selector: the selector answers which generation the session is for, and this answers which one
-        // encodes today. Metal 4 executes only where the launch asked for it by name - `AUTO` must not promote a
-        // frame path the migration has not finished, which is the readiness gate of section 74, and a forced
-        // Metal 3 session stays Metal 3 whatever was selected. A forced Metal 4 launch that the device cannot
-        // satisfy never reaches this line: the selector refuses it at startup, which is this project's public
-        // behaviour for a forced preference rather than a silent fallback.
-        MetalApiGeneration executesToday =
-                decision.preference() == MetalExecutionPreference.FORCE_METAL4
-                        ? MetalApiGeneration.METAL4
-                        : MetalApiGeneration.METAL3;
+        // encodes today.
+        //
+        // The two opt-in preferences are the player and the developer both asking for Metal 4, so where the
+        // device satisfied the contract the selection IS Metal 4 and Metal 4 executes. What the selection can be
+        // for these two and not Metal 4 is the player's fallback: `PREFER_METAL4` on a device that cannot run it
+        // is decided as Metal 3 by the selector, with the reason said out loud, and executing the selection is
+        // then exactly right. `FORCE_METAL4` can only ever be Metal 4 here - the selector throws rather than
+        // deciding anything else - so this line never softens the developer's strict meaning.
+        //
+        // `AUTO` and `FORCE_METAL3` execute Metal 3 whatever was selected. AUTO must not promote a frame path
+        // the migration has not finished, which is the readiness gate of section 74: its Metal 4 selection is a
+        // diagnostic answer about the device, and the frame it encodes is the reference shell's.
+        MetalApiGeneration executesToday = switch (decision.preference()) {
+            case PREFER_METAL4, FORCE_METAL4 -> decision.selected();
+            case AUTO, FORCE_METAL3 -> MetalApiGeneration.METAL3;
+        };
         this.services = MetalExecutionServices.of(decision.selected(), executesToday);
         if (executesToday == MetalApiGeneration.METAL4) {
             // Said once, and at warn: a session that runs the new path is a session whose numbers are about an
@@ -128,7 +135,7 @@ public final class MetalDevice implements GpuDeviceBackend, MetalDeviceFacts {
             com.metallum.Metallum.LOGGER.warn("Metal execution: Metal 4 EXECUTES this session because {}={} was"
                     + " asked for. The frame path is experimental: an operation it does not encode yet refuses by"
                     + " name, and AUTO will not select it until the migration's readiness gate is met",
-                    MetalExecutionPreference.PROPERTY, MetalExecutionPreference.FORCE_METAL4.word());
+                    MetalExecutionPreference.PROPERTY, decision.preference().word());
         }
         this.presentGate = this.services.startPresentPath(this.metalDevice);
         // Both facts, written where both are known. The selector decides which generation was selected and
