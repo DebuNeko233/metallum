@@ -4821,3 +4821,84 @@ report and section 123's performance line.
 - **Machine state.** A migration this wide cannot be judged scene by scene: it needs the deterministic
   fixture the companion repository's smoke scenes provide, and the same-configuration floor taken in the
   same session, or the picture verdicts will be the sun moving.
+
+### The counter road, read by three instruments at once, and the correction that follows
+
+Blocker 15 was closed a round ago on the finding that the three defects behind the timestamp smoke's inversions
+were all in the smoke: a duplicated heap index that made the middle boundary hold "the end of everything", two
+sampling forms mixed in one curve, and a first step that was both the command buffer's first encoder and its
+only clearing pass. With those gone the curve read `6105 18382 54246 171134` and the verdict written was "the
+road attributes a pass". **That verdict is now withdrawn, and the instrument that withdraws it is the one the
+smoke never had: a second and a third reading of the same submission.**
+
+The smoke already committed its command buffer; it now commits it through `commit:count:options:` with a
+feedback handler, so the driver's own account of the same command buffer is read beside the markers -
+`MTL4CommitFeedback.GPUStartTime/GPUEndTime`, the road the frame path already reads as `gpuM4P50`. And it times
+the CPU's wait for the queue's completion value, which needs no API to be trusted: the event cannot be signalled
+before the command buffer has finished. A third reading was needed before any of this meant anything - **the
+fixed cost of a commit**, measured by committing one trivial one-draw pass on its own, with the same two
+instruments, in the same call. All three are reported: `commitDriverMs`, `cpuWaitMs`, `fixedCommitMs`,
+`fixedWaitMs`, and `markerOverDriver`, the marker span as a fraction of the driver's window.
+
+Eight probes, one census, `run/m4-counters/probes.txt` (`--cold-runs 4 --warm-runs 4`), every one
+`gpuTime=true`:
+
+```text
+probe  marker span   driver window   CPU wait   fixed cost   marker/driver   encoder form   curve ordered
+1        452.3 us      20.666 ms     20.943 ms    0.053 ms       0.0219          0.93          yes
+2        436.1 us      18.685 ms     19.340 ms    0.078 ms       0.0233          0.96          yes
+3        431.8 us      18.528 ms     19.105 ms    0.074 ms       0.0233          0.96          yes
+4        433.7 us      18.564 ms     19.135 ms    0.075 ms       0.0234          0.96          yes
+5        442.3 us      18.953 ms     19.507 ms    0.081 ms       0.0233          0.91          NO
+6        426.4 us      18.570 ms     18.835 ms    0.074 ms       0.0230          0.90          NO
+7        224.7 us       9.807 ms     10.363 ms    0.018 ms       0.0229          0.82          yes
+8        230.9 us      10.016 ms     10.555 ms    0.019 ms       0.0230          0.82          yes
+```
+
+Every workload in every probe is the same: 5,440 fullscreen draws on a 1024x1024 attachment plus 1,281 on a
+4096x4096 one, in one command buffer. Three facts come out of that table and each of them is a refutation:
+
+1. **The markers account for about a forty-third of the submission.** `markerOverDriver` is 0.0219-0.0234 in
+   every probe while the driver's window moves by a factor of 2.7 (9.8 to 20.7 ms). A road whose intervals are
+   the work would read near one; a road reading the *front end* - command processing, about sixty nanoseconds a
+   draw - reads a constant fraction of it, which is what this is.
+2. **The fixed cost is not the explanation.** A one-draw submission reads 0.018-0.081 ms of driver window and
+   1.59-2.54 ms of CPU wait, so a per-commit cost of a few milliseconds at most cannot account for 18-21 ms of
+   window on the work submission.
+3. **The CPU's own wait agrees with the driver and not with the markers**: 18.8-20.9 ms against 0.43-0.45 ms of
+   markers on the same eight probes.
+
+Two further readings close the mechanisms that could have explained it away. **Both sampling forms behave
+identically**: the smoke now writes, at the same boundary as each command-buffer marker, the render encoder's
+`writeTimestampWithGranularity:afterStage:intoHeap:atIndex:` with `MTL4RenderStageFragment` and
+`MTL4TimestampGranularityPrecise` - the form section 90's first attempt used and the confirmation section 89
+asks for - and the ratio of the two is 0.82-0.96 for the whole span and **1.00-1.02 on the single heaviest
+pass**. So this is not a granularity, a stage, or an encoder-boundary question: both roads sample the same
+place, and it is not where the work ends. **And the area knob, put back, is not a knob at all**: 256 draws on a
+4096x4096 attachment read 17,583-309,235 ticks while 1024 draws on the *same* attachment read 49-67 - four
+times the work reading four thousand times less.
+
+The single-step orderings are now reported rather than asserted (`curveOrdered`, `lightPairOrdered`,
+`heavyPairOrdered`), because they invert: 64 draws read 40,667 ticks against 256 draws' 13,397 in one probe, and
+256 read 65,183 against 1024's 277 in another. What the smoke still *requires* is the aggregate the road does
+answer - the heaviest step reads longer than the lightest, true in all eight probes - and the census exits 0 on
+that. Seven new contract pins hold the new instruments and each is mutation-proved: removing the options commit,
+the fixed-cost control, the `markerOverDriver` field, the encoder's precise form, the area knob, the
+`curveOrdered` field, or the aggregate requirement each turns `ci-metal4-cold-probe.py` red, and the source is
+restored identically after each.
+
+**What this corrects, and it is more than one sentence.** The frame path's pass table - `378 us` of a `19.4 ms`
+window in `run/m4-passtimes`, and `421`/`436 us` in the runs beside it - is **withdrawn as the frame's own work**:
+it is a front end, and a submission whose driver window is 18-21 ms with a 0.45 ms marker span is not a frame
+that does no work. Section 92's three kinds of timing therefore stand differently than the report last wrote
+them: CPU encode timing is measured, whole-command-buffer driver timing is measured **and is the only road that
+has been shown to track the work**, and GPU counter timing at pass granularity is **NOT AVAILABLE**, which is
+what blocker 15 said before it was closed and says again now. The consequence for section 95 is the one the
+earlier text already drew: optimisation candidates cannot be ranked by a per-pass GPU time, so they are judged
+by a whole-frame A/B and a CPU-side count.
+
+The one lead left is the road the earlier text named and this round did not try: the **GPU-timeline resolve**
+(`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`), which puts the resolve in
+the command stream instead of on the CPU timeline and is the only remaining candidate that could change where
+the sample is taken. It is not a per-pass answer on its own, and it is now the *next* counter experiment rather
+than a completed milestone.

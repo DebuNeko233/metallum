@@ -221,16 +221,18 @@ process from a bad draw.
 Metal 4 development continues under it, which is what section 15 asks for.
 
 Two details a reader of that block should not misread. The harness **exits non-zero on this run**, and the only
-red line is `GPU pass time`, which was blocker 15 - and which is **green now**: that line was the counter smoke
-failing on its own arithmetic (a duplicated heap index, two sampling forms in one curve, and a first pass that was
-both the clearing pass and the command buffer's first encoder), not the capability probe, whose cold failures are
-and were zero. A fresh run of the same harness reads `GPU pass time: 3 passed 0 failed`, so the harness no longer
-exits non-zero on that line. And the first hypothesis recorded above, **lazy driver
-initialisation on first use**, is still un-run: the experiment is a first probe with a throwaway commit before
-the real sequence, or a first probe that runs only its first pass, and neither has been tried. With fifty
-probes passing, the next useful shape for it is a harness that runs the probe's first pass *alone* in a fresh
-process many times, because a fault that shows in one cold probe in twenty-five needs volume rather than a
-client.
+red line is `GPU pass time`, which was blocker 15 - and whose state has moved twice since: it went green when the
+counter smoke's own three defects (a duplicated heap index, two sampling forms in one curve, and a first pass that
+was both the clearing pass and the command buffer's first encoder) were fixed, and **it then went back to
+NOT AVAILABLE when the same submission was finally read with a second and a third instrument** - the driver's own
+window and the CPU's completion wait, against a fixed-cost control. The smoke itself still exits 0 on what the
+road does answer, so this line is not what a fresh harness run fails on; see blocker 15 for the census that
+withdrew the attribution claim. The capability probe's own cold failures are and were zero. And the first
+hypothesis recorded above, **lazy driver initialisation on first use**, is still un-run: the experiment is a first
+probe with a throwaway commit before the real sequence, or a first probe that runs only its first pass, and
+neither has been tried. With fifty probes passing, the next useful shape for it is a harness that runs the
+probe's first pass *alone* in a fresh process many times, because a fault that shows in one cold probe in
+twenty-five needs volume rather than a client.
 
 ## Native Smoke
 
@@ -1245,10 +1247,12 @@ from the same session's GPU trace: device utilization mean 100.0%, max 100%, in 
   arms are **15%** apart, so the honest form of the figure is a range and not a point - and even the cheap end of
   it is far outside section 5's "median regression <= ~3%". **Per section 97 this path therefore stays forced and
   experimental, AUTO is not enabled on it, and the next question is not "is it slower" (measured: yes) but "which
-  of the frame's work is bigger"**, which needs the per-pass GPU attribution that blocker 15 says the timestamp
-  road does not give. **That attribution has since arrived and this bullet is corrected by it**: see the per-pass
-  table below, which reads the frame's own pass work at 378 us of this bullet's 19.4 ms window - so what the
-  16-35% compares is the two *pacing waits*, and "more GPU time" is not the right description of it.
+  of the frame's work is bigger"**, which needs a per-pass GPU attribution that the timestamp road was supposed
+  to give. **The attribution was claimed in a later round and has now been withdrawn**: the per-pass table below
+  reads the frame's own pass work at 378 us of this bullet's 19.4 ms window, and a two-instrument census of the
+  same kind of submission (blocker 15) shows that number is a *front end* and not work - so this bullet's
+  "16-35% more GPU time" is **NOT MEASURED as work**, and it is equally unproven that the 16-35% is made of the
+  two pacing waits. What the driver's window is made of - wait or work - is the open experiment.
 - **And the two generations are paced by different resources, which is a standing caveat on every wall-clock
   comparison here.** Metal 3's frame *is* its submission-index wait (1200 waits a window, p95 ~21 ms, totalling
   the window, with 8-56 ms of drawable wait); this path's is its **drawable handover** (7191 and 7138 ms a window,
@@ -1273,10 +1277,12 @@ during its own windows, so the M3/M4 figures above are not a contention artefact
 production frame rate on a quiet machine: section 123 stays unmet for that reason as well as for the range, and
 the machine-state half of it is now named rather than suspected.
 
-**And then the third kind of timing arrived, and it overturns the paragraph above.** `-Dmetallum.metal4PassTimes=true`
+**And then the third kind of timing arrived, and it overturns the paragraph above - and then it too was
+overturned, one round later.** `-Dmetallum.metal4PassTimes=true`
 puts one command-buffer marker behind every pass this path opens and reads the intervals when the ring begins that
 slot again - the road section 90's smoke proved, with the unit and the floor it measured. On the same pack, forced
-Metal 4, 600 frames:
+Metal 4, 600 frames (**the table below is kept as the measurement it is, and every number in it is a marker
+interval, which blocker 15's census shows is a front end and not the frame's work**):
 
 ```text
 Metal 4 GPU pass time (GPU ticks between markers this path placed, never the CPU's encode time):
@@ -1286,29 +1292,39 @@ Metal 4 GPU pass time (GPU ticks between markers this path placed, never the CPU
        Vitrail chunk 9.230, Vitrail world-1/composite5 7.869] and 35 more
 ```
 
-Three readings, and the second one is a correction to this section:
+Three readings, and **the first two are both withdrawn below** - the round that added the cross-check read the same
+kind of submission with two more instruments and found the table's numbers are not work:
 
-- **The frame's own GPU work is 378 microseconds.** Every pass of the frame, marked and attributed:
+- ~~**The frame's own GPU work is 378 microseconds.**~~ Every pass of the frame, marked and attributed:
   `world-1/composite1` alone is **241.068 us, 64% of the attributed time**, and the next heaviest is 18.949 us.
-  That is the per-pass GPU attribution section 92 asked for, on a real frame, for the first time - and it says
-  where this path's GPU time actually goes rather than which pass had the most native calls.
-- **The commit window is not that work, and the header says why.** `MTL4CommandQueue`'s `waitForDrawable:`
-  "schedules a wait operation on the command queue to ensure the display is no longer using a specific Metal
-  drawable... before executing any subsequent commands" - a queue-level wait *inside* the commit, so
-  `MTL4CommitFeedback.GPUStartTime/GPUEndTime` measures the wait for the display plus the work. With 378 us of work
-  in a 19.4 ms window, **the paragraph above is wrong as a work claim**: "this path asks the GPU for 16-35% more
-  time a frame" compared two *pacing waits* (Metal 3's submission-index wait against this path's drawable wait) and
-  not two amounts of GPU work. The 100% device utilization it leaned on is not evidence about this frame either -
-  the same session's trace reads 85-87% busy between arms with no game running, so the accelerator is shared with
-  Edge, UURemoteServer and WindowServer. **What survives is narrower and still true**: on this machine in this
-  environment Metal 3 and Metal 4 deliver 49 and 42-46 frames a second, so the *presented rate* differs by
-  17-35% - and per section 92 the two timings that differ are the two waits, not the two renderers.
+  **Withdrawn as a work claim**: a submission whose driver window is 18-21 ms and whose marker span is 0.45 ms has
+  been measured directly - on the counter smoke, with a fixed-cost control - and the marker span is a constant
+  **2.19-2.34%** of the driver's window while both sampling forms agree with each other and the area knob is not a
+  knob (256 draws on 4096x4096 read 17,583-309,235 ticks; 1024 draws on the same attachment read 49-67). So this
+  table is a *front-end* reading, the `241.068 us` pass is the pass that issues the most draws, and **no per-pass
+  GPU attribution exists**. The eight-probe census is in blocker 15.
+- **The commit window is not that work *alone*, and the header says why the two cannot simply be subtracted.**
+  `MTL4CommandQueue`'s `waitForDrawable:` "schedules a wait operation on the command queue to ensure the display
+  is no longer using a specific Metal drawable... before executing any subsequent commands" - a queue-level wait
+  *inside* the commit, so `MTL4CommitFeedback.GPUStartTime/GPUEndTime` measures the wait for the display plus the
+  work. What has changed is that the window is now the *trusted* half of the pair: on a submission with no
+  drawable it reads a stable 18.5-20.7 ms across eight probes and agrees with the CPU's completion wait to within
+  3%, against a per-commit fixed cost of 0.02-0.08 ms. **So the paragraph above is still wrong as a work claim,
+  but for the opposite reason than this text said**: "this path asks the GPU for 16-35% more time a frame" cannot
+  be dismissed as "two pacing waits" either, because the instrument that was used to dismiss it does not measure
+  work at all, and the frame's window is not known to be dominated by a wait. The honest statement is that
+  Metal 3 and Metal 4 delivered 49 and 42-46 frames a second in that session and **which of the two waits or how
+  much work is inside Metal 4's window is NOT MEASURED** - it needs the wait separated from the work by an
+  experiment (a frame committed with and without `waitForDrawable:`, or the GPU-timeline resolve), not by a
+  subtraction.
 - **And the instrument changes the thing it measures, which is section 91's case exactly.** Four arms of one
   session - reader off, on, off, on - read **21.79 and 21.80 ms a frame with it off and 19.37 and 19.45 with it
   on**: the markers make the frame **11% faster**, twice over. So the table is a diagnostic reading and never a
   performance verdict, the switch stays off by default, and what a marker between two passes does to the driver's
   scheduling is a question of its own - the first candidate this migration has for a *speedup* rather than a cost,
-  and one that has to be measured as its own mechanism before it is believed.
+  and one that has to be measured as its own mechanism before it is believed. **This reading is unaffected by the
+  correction above** - it is a wall-clock A/B with the markers as the only variable - but its interpretation is
+  narrower now: the markers do not attribute the 11%, they only move it.
 
 ## Capability matrix
 
@@ -1342,7 +1358,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 | fence           | yes         | yes - a submission's value can be waited for on the ring's shared event, an uncommitted value polls false and is refused for a wait, and zero is complete; measured 50 of 50, and created by a forced client run from `MappableRingBuffer.rotate` | yes - the world frame makes fences and the ring's completion values answer them | yes |
 | presentation    | yes         | **implemented in the frame encoder**: take the drawable, `waitForDrawable:` before the commit, the present triangle in the frame's own command buffer, `signalDrawable:` + present after it. **Both halves of the presented frame are readable on both generations** behind `-Dmetallum.drawableReadback=true` (the layer's `framebufferOnly` off, the picture the triangle sampled *and* the drawable it wrote copied into a shared buffer, read when the slot completes, one formatter in the shared layer) | yes - 30 presents a window; **and the two arms compared on one scene, one fixture, one switch, at ten and at forty seconds of settle (1366/1372 and 4951/4953 readbacks): both present the fixture's acceptance colour (pure green, red and blue at zero), and on both arms the picture read is the drawable written, frame for frame - so the present pass is the identity on this fixture and the difference is frame content, not present treatment.** One difference is measured and persists forty seconds: the Metal 4 frame is flat green with **alpha 0** where the Metal 3 frame is flat opaque green - invisible on an opaque layer, mechanism not yet localised (the pack's write into the game's target, a later pass, or the sampling of it), and its experiment is a pass-boundary copy plus a fixture whose colour is asymmetric and whose alpha is not 1. The "gentle radial ramp (230..255)" registered in an earlier round is **withdrawn**: it was the Metal 3 arm's frame still cross-fading from the loading screen, and at forty seconds that arm reads flat opaque green. **Orientation is PROVEN on a second, diagnostic fixture** (four quadrant colours at alpha 0.5): both arms present the same arrangement sample for sample - the present draw swaps the two ends of the memory-vertical axis and nothing else - and the RGBA8/BGRA8 channel conversion is correct on both. **The alpha is not the pack's**: the shader's alpha moved 1.0 to 0.5 and the stored alpha did not move on either arm (255 on Metal 3, 0 on Metal 4), so the difference is in the frame's own clear rather than in the pack's write, and which writer owns that channel is not yet localised. **The full-frame path is the session's only Metal 4 submission structure**: the present-only sidecar is not started when Metal 4 executes (measured before and after the convergence change - its start line 1 time and one commit-feedback registration against 0, with the frame encoder presenting 1964 then 2182 frames), and it is still started for the reference shell, a Metal 3-executing session with the property on. **Blocker 17 narrows this row rather than leaving it**: the present is faithful - the picture the triangle samples is the texture the GUI's pass wrote and a forced clear through that pass appears on screen - so what is missing was never handed to it | yes |
 | MetalFX spatial | yes         | **a second path, not a parameter of the first** - this generation's own compiler (`newCompilerWithDescriptor:error:`), its own scaler made by the descriptor's Metal 4 spelling, its own configuration-keyed cache, and an encode into a `MTL4CommandBuffer` | **yes, in a live frame**: `metalFxAvailable()` answers the scaler path's own existence, and at renderscale=55 Vitrail logs `The 55% render scale brings the picture back with MetalFX` on this path with the reference arm's program set (333 identities, 712 compiles) and the pack's own scaled targets (704x396, 1408x792) on both. Output orientation for the scaler is NOT MEASURED | yes |
-| counters        | whole frame | **The heap road works and it now has a reading: `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device, measured by sampling the CPU and GPU clocks together twice (`gpuTicksPerCpuNs=1.0000`). **And an ordered partition of the work**: one command-buffer marker per pass boundary (`MTL4CommandBuffer.h`: it "captures a timestamp after work prior to this command in the command buffer is complete"), a warm-up pass outside the curve, and four steps above the road's own floor - 64, 256, 1024 and 4096 fullscreen draws read 6,075-6,843, 18,343-19,110, 54,178-54,304 and 166,420-173,445 ticks, monotone in every probe, the heavy steps repeating to two per cent. The floor is measured too: below roughly two thousand ticks an interval is not ordered (with the same fixes and counts of 1 and 16, 256 and 4096 repeated to two per cent while 1 and 16 swapped order). Section 90's smoke is GREEN, so section 92's third kind of data - **GPU counter timing at command-buffer granularity** - is available beside the CPU encode timing and the whole-commit driver timing. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; a whole frame and, for this path, the same as a whole command buffer, because the frame is one commit | yes |
+| counters        | whole frame | **the heap road works and the marker road does not measure the work - corrected this round, and the correction is a measurement and not a doubt.** The plumbing is proven: `MTL4CounterHeap` of type Timestamp, timestamps resolved on the CPU after the ring's shared-event wait (the header's own synchronization rule), per-entry and range resolves agreeing, and **a counter tick is a nanosecond** on this device (`gpuTicksPerCpuNs=1.0000`). What is withdrawn is the reading: with the submission's own driver window and the CPU's completion wait read beside the markers, and a fixed-cost control on a submission of its own, the marker span is **452/436/432/434/442/426/225/231 us** where the driver reports **20.7/18.7/18.5/18.6/19.0/18.6/9.8/10.0 ms** and the CPU waits **20.9/19.3/19.1/19.1/19.5/18.8/10.4/10.6 ms** for the same eight submissions - a constant `markerOverDriver` of **0.0219-0.0234** while the window moves by 2.7x, which is a *front end* (about sixty nanoseconds a draw) and not render work. Both sampling forms agree at the same boundary (`encoderOverCb` 0.82-0.96, and **1.00-1.02** on the heaviest pass), so it is not a granularity or a stage question, and the area pair is not a pair (256 draws on 4096x4096 read 17,583-309,235 ticks; 1024 draws on the same attachment read 49-67). **So GPU counter timing at pass granularity is NOT AVAILABLE**, section 92's third kind of data is the whole-commit driver timing alone, and section 95 cannot rank candidates by a per-pass GPU time. `run/m4-counters/probes.txt`, eight probes, all `gpuTime=true`; seven new contract pins, each mutation-proved. The one untried lead is the GPU-timeline resolve. Blocker 15 | yes - `MTL4CommitFeedback.GPUStartTime/GPUEndTime` per commit, reported as `gpuM4P50/P95/P99/Max`; **and this is now the only road shown to track the work**: on a submission with no drawable it reads a stable 18.5-20.7 ms across probes and agrees with the CPU's completion wait to within 3% | yes |
 
 **What the matrix is for here**: it is the list a reader checks before believing any claim about the migration,
 and its blanks are the work. A `yes` in `M4 real frame` means the harness collected it from a frame the client
@@ -1786,15 +1802,51 @@ answered rather than only what is left.
    brackets execution, no per-pass GPU time may be reported**, and the census stays red on this smoke so that an
    unproven instrument cannot look green.
 
+   **AND THE RESOLUTION ABOVE IS NOW WITHDRAWN, one round later, by an instrument it did not have.** The same
+   submission was committed through `commit:count:options:` so that the driver's own window could be read beside
+   the markers, the CPU's wait for the completion value was timed, and a one-draw submission was committed on its
+   own as a fixed-cost control. Eight probes, `run/m4-counters/probes.txt`, every one `gpuTime=true`:
+
+   ```text
+   probe  marker span   driver window   CPU wait   fixed cost   marker/driver   encoder form   curve ordered
+   1        452.3 us      20.666 ms     20.943 ms    0.053 ms       0.0219          0.93          yes
+   2        436.1 us      18.685 ms     19.340 ms    0.078 ms       0.0233          0.96          yes
+   3        431.8 us      18.528 ms     19.105 ms    0.074 ms       0.0233          0.96          yes
+   4        433.7 us      18.564 ms     19.135 ms    0.075 ms       0.0234          0.96          yes
+   5        442.3 us      18.953 ms     19.507 ms    0.081 ms       0.0233          0.91          NO
+   6        426.4 us      18.570 ms     18.835 ms    0.074 ms       0.0230          0.90          NO
+   7        224.7 us       9.807 ms     10.363 ms    0.018 ms       0.0229          0.82          yes
+   8        230.9 us      10.016 ms     10.555 ms    0.019 ms       0.0230          0.82          yes
+   ```
+
+   The marker span is **a forty-third of the submission in every probe** while the driver's window moves by 2.7x,
+   the fixed cost is three orders below the window it would have to explain, and the CPU - which cannot be
+   signalled early - waits the driver's number and not the markers'. Three mechanisms that could have excused it
+   are closed: the encoder's own `Precise` after-fragment form at the same boundary reads the same interval
+   (**1.00-1.02** on the heaviest pass, so it is not a granularity or a stage question); the area knob, put back,
+   is not a knob (256 draws on 4096x4096 read 17,583-309,235 ticks while 1024 draws on it read 49-67); and the
+   single-step orderings invert often enough to be reported rather than asserted (`curveOrdered` false in 2 of the
+   8). So the three defects this item found *were* real and *were* the smoke's - and fixing them moved the road
+   from "plainly wrong" to "consistently a front end", which is still not the work. **The verdict is the one this
+   item opened with**, now measured with instruments rather than inferred from a curve: a difference between two
+   of these stamps is not the work between them, no per-pass GPU time is reported from this road, and section 92's
+   third kind of data is the whole-commit driver window alone. The smoke's own requirement is the aggregate the
+   road does answer - the heaviest step reads longer than the lightest, true in all eight probes - and it exits 0
+   on that; seven new contract pins hold the new instruments and each is mutation-proved. The next candidate is
+   the one named above and still untried: the GPU-timeline resolve
+   (`MTL4CommandBuffer.resolveCounterHeap:withRange:intoBuffer:waitFence:updateFence:`).
+
 16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
    effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
    MEASURED.** *(Superseded twice, and kept because the chain that got there is the record. `run/m4-ab7` measured
    this path at 23.85 and 27.45 ms a frame against the reference's 20.31 and 20.70, arms interleaved M3/M4/M3/M4,
    with the GPU trace reading device utilization 100% in all four - and that was read as "16-35% more GPU time".
-   The per-pass counter that followed (the Performance section's `run/m4-passtimes`) reads the frame's own pass
-   work at **378 us of a 19.4 ms window**, because `MTL4CommandQueue`'s `waitForDrawable:` is a queue-level wait
-   inside the commit: what the 16-35% compares is therefore **the two generations' pacing waits and not their
-   renderer work**, and the performance question stays open with a far sharper instrument now pointed at it.)*
+   The per-pass counter that followed (the Performance section's `run/m4-passtimes`) read the frame's own pass
+   work at **378 us of a 19.4 ms window**, and that was read as "the 16-35% therefore compares the two
+   generations' pacing waits and not their renderer work". **That step is withdrawn** - the two-instrument census
+   in blocker 15 shows the 378 us figure is a front end and not the work, so the window cannot be dismissed as a
+   wait by subtracting it - and the performance question stays open with the driver's window as the one road
+   shown to track the work.)*
    Session `run/perf-ab4` (exit 0, `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25
    --expect-target 3200x1800`, Complementary on the staged nether `PerfWorld`) measured Metal 3 twice at
    `wallP50 21.17` and `21.29` - **0.6% apart**, the harness answering the same number - and Metal 4 twice at
@@ -1938,11 +1990,14 @@ answered rather than only what is left.
    - a pacing and machine-state question rather than an unexplained generation difference. **It has since been
    measured, and then re-measured with a better instrument, which changed what the number is** (the Performance
    section carries both readings): `run/m4-ab7` put this path at 23.85 and 27.45 ms a frame against the
-   reference's 20.31 and 20.70, and the per-pass counter that followed reads the frame's own pass work at **378 us
-   of a 19.4 ms window**, because `MTL4CommandQueue`'s `waitForDrawable:` is a queue-level wait inside the commit.
-   So the two generations differ by their **pacing waits**, "this path asks the GPU for more work" is **REFUTED as
-   a work claim**, and the gate stays unmet for a sharper reason than "unmeasured" - but not the one first written
-   here: the presented *rate* still differs by 17-35% and its cause is not yet localised. The content guard this round added is built
+   reference's 20.31 and 20.70, and the per-pass counter that followed read the frame's own pass work at **378 us
+   of a 19.4 ms window**. **The second re-measurement is the correction and it is the one to read**: the 378 us
+   figure is a marker-road *front end*, not the frame's work (blocker 15's two-instrument census), so
+   `waitForDrawable:` being inside the commit window does not license the subtraction that was made with it. What
+   stands is the *presented rate* difference of 17-35% in that session and the fact that **the two generations'
+   wall-clock numbers are paced by different resources**, which the waits table shows directly; **what is NOT
+   MEASURED is how much of this path's commit window is the drawable wait and how much is work**, which is an
+   experiment rather than a subtraction. The content guard this round added is built
    on the three counters that mean the same thing on both generations and grow with what the frame drew -
    `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
@@ -2198,7 +2253,10 @@ the smoke-pack staircase (the deferred, shadow and history packs beyond the thre
 read), blit inside a live frame, resize, pack reload, dimension change, shutdown, the lifecycle gate, MetalFX
 Spatial on this generation, GPU counters and Metal 4 performance - the latter two have now been run and are
 **measured to be unmeasurable as the instruments stand**: the counter road samples where the driver chooses and
-not where the caller does (blocker 15), and the four-arm performance session's Metal 4 arms disagree by more than
+not where the caller does (blocker 15 - **and this round measured that directly, with the driver's window, the
+CPU's completion wait and a fixed-cost control on the same submission: the markers account for a constant
+2.19-2.34% of it, so no per-pass attribution exists**), and the four-arm performance session's Metal 4 arms
+disagree by more than
 the effect it was asked to resolve (blocker 16). **The real-pack ladder passes on all three rungs**: `MakeUp-UltraFast-9.5e` runs on both arms with the same
 **330 pipeline identities**, the same gross picture and no fault of any kind in either log;
 `ComplementaryReimagined_r5.9.1` with **334 identities and 714 compiles on both arms**, its compute dispatching

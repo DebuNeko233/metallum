@@ -1542,25 +1542,26 @@ for needle, why in (
         raise SystemExit("cold-probe harness: " + why)
 
 # ---------------------------------------------------------------------------
-# Section 90's counter smoke: the road works, and what it took to see it
+# Section 90's counter smoke: what the road is, measured with three instruments at once
 #
-# The smoke was red for rounds and the pins held the measurement rather than a verdict. The verdict is now
-# in and it is the opposite one: the timestamps DO partition the work, and the three things that made them
-# look as if they did not were defects in the smoke itself. Each is pinned here, because each is a way a
-# later edit could put the smoke back to failing on its own arithmetic:
+# The smoke was red for rounds and the pins held the measurement rather than a verdict. The second verdict -
+# "the timestamps DO partition the work, and the three things that made them look as if they did not were
+# defects in the smoke itself" - is now CORRECTED by reading the same submission with two more instruments,
+# which is what this round added:
 #
-#   1. one marker per boundary, written once. The middle boundary used to be written twice - once by its own
-#      step and once, after every step, by a leftover marker from a three-marker shape - so entry 2 held
-#      "the end of everything" and `stamps[3] < stamps[2]` was true by construction;
-#   2. one sampling form for every entry. The start marker was the command buffer's and the boundaries were
-#      the render encoder's after-stage form, which is a mixture of two sampling points;
-#   3. a warm-up pass the curve does not count. The curve's first step was both the command buffer's first
-#      encoder and its only clearing pass, and it reported ~27,000-33,000 ticks against the sixteen-draw
-#      step's ~1,000-22,000 - the lightest step the most expensive one;
-#   4. every step above the road's own floor. Measured with the other three fixed: 256 and 4096 draws repeat
-#      to about two per cent while 1 and 16 swap order between probes (1,069 against 1,919 ticks the other
-#      way), so an interval below roughly two thousand ticks on this device is not ordered. The curve is
-#      `{64, 256, 1024, 4096}` and reads 6,086-6,843, 17,953-19,110, 54,178-54,260 and 170,490-173,445 ticks.
+#   * the commit's own feedback (`commit:count:options:` and `MTL4CommitFeedback.GPUStartTime/GPUEndTime`), the
+#     road the frame path already reads as gpuM4P50;
+#   * the CPU's wait for the queue's completion value, which needs no API to be trusted;
+#   * a fixed-cost control: one trivial pass committed on its own, read with the same two instruments.
+#
+# Measured, seven probes: the marker span is 237-643 us while the driver reports 10.4-27.9 ms for the same
+# command buffer and the CPU waits 10.9-28.2 ms for its completion, against a fixed cost of 0.02-4.20 ms. The
+# ratio is 0.0226-0.0234 in every probe even as the driver's window moves by 2.7x, which is the shape of a front
+# end (about sixty nanoseconds a draw) and not of the render work behind it. Both marker forms agree to a per
+# cent (`heavyStepEncoderOverCb=1.00` in every probe), so this is not a granularity or a stage question, and the
+# area pair is not a pair at all: 256 draws on 4096x4096 read 17,586-337,062 ticks while 1024 draws on it read
+# 49-173. So the smoke's requirement is the aggregate - the heaviest step reads longer than the lightest, which
+# held in every probe - and every single-step ordering is reported instead of asserted.
 #
 # The unit is MEASURED rather than assumed and the field that reports it is the ratio of the two deltas:
 # `sampleTimestamps:gpuTimestamp:` twice around a sleep gives gpuDelta/1 cpuDelta = 1.0000, so a tick is a
@@ -1572,8 +1573,27 @@ for needle, why in (
     ("Work after this call may or may not have started", "the header's own statement of what a "
      "command-buffer marker means is gone, so nothing says why a marker behind a pass is a pass boundary"),
     ("writeTimestampWithGranularity:afterStage:intoHeap:atIndex:",
-     "the render encoder's stage-and-granularity form is no longer named anywhere, so the form that was tried "
-     "and dropped is not recorded and a later edit could reintroduce a second sampling point without noticing"),
+     "the render encoder's stage-and-granularity form is no longer named anywhere, so the form the smoke now "
+     "writes at the same boundary as the command buffer's is gone and the two cannot be read against each other"),
+    ("WRITE_TIMESTAMP_AFTER_STAGE.send(pass.encoder(), TIMESTAMP_PRECISE, STAGE_FRAGMENT",
+     "the encoder's precise after-fragment marker is no longer written inside the pass, so the second sampling "
+     "form is not measured at the same boundary and 'the two forms agree' cannot be read"),
+    ("commit:count:options:", "the commit no longer carries a feedback handler, so the smoke cannot read the "
+     "driver's own window for the submission its markers describe"),
+    ("fixedCommitMs=", "the fixed cost of a commit is no longer measured on a submission of its own, so a "
+     "driver window can no longer be separated into work and per-commit cost"),
+    ("cpuWaitMs=", "the CPU's completion wait is no longer reported, which is the one instrument that needs no "
+     "API to be trusted"),
+    ("markerOverDriver=", "the marker span is no longer reported against the driver's window, which is the "
+     "number the correction turns on"),
+    ("heavyStepEncoderOverCb=", "the two sampling forms are no longer compared on one pass"),
+    ("curveOrdered=", "the single-step inversions are no longer reported, so a census cannot count them"),
+    ("lightPairOrdered=", "the light pair's ordering - the pair that inverts most often - is no longer reported"),
+    ("the heaviest step does not read longer than the lightest",
+     "the smoke no longer requires even the aggregate the road does answer"),
+    ("private static final long COUNTER_AREA_EDGE = 4096L;",
+     "the area knob is gone again, and a draw-count curve alone cannot separate 'the road does not read the "
+     "store' from 'the store is not what it responds to'"),
     ("heap.writeTimestamp(buffer, timestampIndex);",
      "the boundary markers are not written from one site, so a second form can come back one call at a time"),
     ("if (timestampIndex >= 0L) {", "the warm-up pass is not excluded from the curve, so the first measured "

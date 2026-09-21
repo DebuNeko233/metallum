@@ -33,6 +33,7 @@ import com.metallum.mtl.MTLCompareFunction;
 import com.metallum.objc.AutoreleasePool;
 import com.metallum.objc.Msg;
 import com.metallum.objc.ObjC;
+import com.metallum.objc.ObjCBlock;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
@@ -122,6 +123,31 @@ public final class MTL4Probe {
     private static final long STORE_STORE = 1L;
     private static final Msg NEW_SHARED_EVENT = Msg.of("newSharedEvent", ADDRESS);
     private static final Msg COMMIT = Msg.ofVoid("commit:count:", ADDRESS, JAVA_LONG);
+
+    /**
+     * {@code MTL4CommandQueue.commit:count:options:}, the form that carries a feedback handler - and therefore
+     * the only form on this command model that says when the GPU ran a submission. The counter smoke commits
+     * through it so that one submission can be read by two instruments at once.
+     */
+    private static final Msg COMMIT_WITH_OPTIONS = Msg.ofVoid("commit:count:options:", ADDRESS, JAVA_LONG, ADDRESS);
+
+    /**
+     * {@code MTL4RenderCommandEncoder.writeTimestampWithGranularity:afterStage:intoHeap:atIndex:}, the second
+     * form of the same marker - read off this machine's SDK header ({@code MTL4RenderCommandEncoder.h:645}):
+     * "Writes a GPU timestamp into the given MTL4CounterHeap at index after stage completes", where the render
+     * stage's {@code Fragment} constant is documented as "All rendering work has completed"
+     * ({@code MTLRenderCommandEncoder.h:116}).
+     * <p>
+     * The two forms are the whole of the counter question and the smoke now writes both at the same boundary, so
+     * the road can be read against itself: the command-buffer form is written after the encoder is closed, the
+     * encoder's form inside it, and the interval between two markers is the same pass either way.
+     */
+    private static final Msg WRITE_TIMESTAMP_AFTER_STAGE = Msg.ofVoid(
+            "writeTimestampWithGranularity:afterStage:intoHeap:atIndex:", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
+
+    /** {@code MTL4TimestampGranularityPrecise}: "a timestamp as precise as possible" (MTL4Counters.h:49). */
+    private static final long TIMESTAMP_PRECISE = 1L;
+
     private static final Msg SIGNAL_EVENT = Msg.ofVoid("signalEvent:value:", ADDRESS, JAVA_LONG);
     private static final Msg WAIT_UNTIL_SIGNALED =
             Msg.of("waitUntilSignaledValue:timeoutMS:", JAVA_LONG, JAVA_LONG, JAVA_LONG);
@@ -4287,6 +4313,49 @@ public final class MTL4Probe {
     private static final int[] COUNTER_DRAWS = {64, 256, 1024, 4096};
 
     /**
+     * The area knob, which is the other half of "does this road measure the work" and is the half the smoke
+     * stopped asking.
+     * <p>
+     * <strong>The first version of this smoke varied the attachment's size and read equal durations, and the
+     * conclusion drawn was that the size is not the knob.</strong> 4096x4096 against 512x512 - sixty-four times
+     * the store - read "about 31 us" for both, and the response was to hold the attachment at 1024x1024 and vary
+     * the draw count instead, which does read as a curve. But a road that reports the same time for sixty-four
+     * times the store is not a road saying "the size is not what it responds to": it is a road that is not
+     * reading the store at all, and a draw-count curve cannot tell those two apart, because the draw count moves
+     * the *front end* of a pass - command processing and vertex work - where the area moves the fragments and the
+     * attachment traffic. So both knobs are asked now, on the same command buffer, and the pair that differs in
+     * one variable only is the reading: {@link #COUNTER_AREA_DRAWS} draws on this edge against the same counts on
+     * {@link #COUNTER_EDGE}, which is a factor of sixteen in fragments and in bytes with nothing else changed.
+     * <p>
+     * A road that is insensitive to that pair is not measuring a frame's work, which is the claim the frame
+     * path's own pass table is built on.
+     */
+    private static final long COUNTER_AREA_EDGE = 4096L;
+
+    /** The two draw counts the area pair repeats, each of them also in {@link #COUNTER_DRAWS}. */
+    private static final int[] COUNTER_AREA_DRAWS = {256, 1024};
+
+    /** One start marker for the curve, its steps, one start marker for the area pair, and its steps. */
+    private static final long COUNTER_ENTRIES =
+            1L + COUNTER_DRAWS.length + 1L + COUNTER_AREA_DRAWS.length;
+
+    /**
+     * And the same boundaries again, written by the render encoder's own form with
+     * {@code MTLRenderStageFragment} and {@code MTL4TimestampGranularityPrecise} - one entry at the end of every
+     * measured pass, so the command buffer's form and the encoder's form can be read for the same interval.
+     * <p>
+     * This is the entry count the smoke's heap is made with, and the encoder half starts here.
+     */
+    private static final long COUNTER_ENCODER_ENTRIES = COUNTER_DRAWS.length + COUNTER_AREA_DRAWS.length;
+
+    private static final long COUNTER_HEAP_ENTRIES = COUNTER_ENTRIES + COUNTER_ENCODER_ENTRIES;
+
+    private static final int COUNTER_ENCODER_START = (int) COUNTER_ENTRIES;
+
+    /** Which entry the area pair's start marker is written at: behind its own warm-up pass. */
+    private static final long COUNTER_AREA_START = 1L + COUNTER_DRAWS.length;
+
+    /**
      * Two render passes of known different sizes, bracketed by GPU timestamps, with the heap resolved on the CPU.
      * <p>
      * Section 90 asks for the smallest counter smoke there is: one render pass with a known workload, a timestamp
@@ -4328,7 +4397,7 @@ public final class MTL4Probe {
                     + " allocator, command buffer, shared event or timestamp sampler would come from");
         }
 
-        MTL4CounterHeap heap = MTL4CounterHeap.create(device, COUNTER_DRAWS.length + 1L);
+        MTL4CounterHeap heap = MTL4CounterHeap.create(device, COUNTER_HEAP_ENTRIES);
         if (heap == null) {
             return failed("counters", "the device would not make a timestamp counter heap");
         }
@@ -4339,23 +4408,29 @@ public final class MTL4Probe {
         MemorySegment event = MemorySegment.NULL;
         MemorySegment small = MemorySegment.NULL;
         MemorySegment large = MemorySegment.NULL;
+        MemorySegment fixedAllocator = MemorySegment.NULL;
+        MemorySegment fixedBuffer = MemorySegment.NULL;
         MemorySegment clearPipeline = MemorySegment.NULL;
         List<MemorySegment> steps = new ArrayList<>();
         MTL4ResidencySet resident = null;
         MTLBuffer uniform = null;
         MTL4ArgumentTable table = null;
+        MTL4CommitOptions options = null;
         try {
             queue = NEW_QUEUE.sendPtr(device.handle());
             allocator = NEW_ALLOCATOR.sendPtr(device.handle());
             buffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
             event = NEW_SHARED_EVENT.sendPtr(device.handle());
-            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)) {
+            fixedAllocator = NEW_ALLOCATOR.sendPtr(device.handle());
+            fixedBuffer = NEW_COMMAND_BUFFER.sendPtr(device.handle());
+            if (ObjC.isNil(queue) || ObjC.isNil(allocator) || ObjC.isNil(buffer) || ObjC.isNil(event)
+                    || ObjC.isNil(fixedAllocator) || ObjC.isNil(fixedBuffer)) {
                 return failed("counters", "a Metal 4 queue, allocator, command buffer or shared event came back"
                         + " nil");
             }
 
             small = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
-            large = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
+            large = newSizedTarget(device, COUNTER_AREA_EDGE, COUNTER_AREA_EDGE, USAGE_RENDER_TARGET);
             if (ObjC.isNil(small) || ObjC.isNil(large)) {
                 return failed("counters", "newTextureWithDescriptor: answered nil for one of the two attachments"
                         + " the passes clear");
@@ -4394,6 +4469,56 @@ public final class MTL4Probe {
             }
             ADD_RESIDENCY_SET.send(queue, resident.handle());
 
+            MemorySegment shared = small;
+
+            // **First, the fixed cost of a commit, on its own submission.** A driver's per-commit window is not
+            // only the work: this measures the same instrument - the commit's own feedback and the CPU's wait for
+            // the queue's signal - on one trivial pass on the small attachment, so the number the big submission
+            // reports can be read as work-plus-fixed or as fixed alone. Without it, "the driver says 19 ms and the
+            // markers say 0.5 ms" has two explanations and this smoke cannot separate them.
+            MTL4CommitOptions fixedOptions =
+                    responds(queue, "commit:count:options:") ? MTL4CommitOptions.create() : null;
+            MemorySegment fixedBlock = MemorySegment.NULL;
+            double fixedCommitMs = -1.0;
+            double fixedWaitMs = -1.0;
+            if (fixedOptions != null) {
+                fixedBlock = ObjCBlock.withConsumer(
+                        feedback -> lastCommitGpuMillis = MTL4CommitOptions.gpuMillis(feedback));
+                BEGIN.send(fixedBuffer, fixedAllocator);
+                if (!drawnPass(device, fixedBuffer, shared, COUNTER_EDGE, 1, true, clearPipeline, table, heap,
+                        -1L, -1L, "the counter smoke's fixed-cost pass")) {
+                    END.send(fixedBuffer);
+                    fixedOptions.close();
+                    return false;
+                }
+                END.send(fixedBuffer);
+                lastCommitGpuMillis = 0.0;
+                fixedOptions.feedbackHandler(fixedBlock);
+                try (Arena arena = Arena.ofConfined()) {
+                    MemorySegment buffers = arena.allocate(ADDRESS, 1);
+                    buffers.set(ADDRESS, 0L, fixedBuffer);
+                    COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, fixedOptions.handle());
+                }
+                SIGNAL_EVENT.send(queue, event, 1L);
+                long fixedBegan = System.nanoTime();
+                if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 5000L) == 0L) {
+                    fixedOptions.close();
+                    return failed("counters", "the fixed-cost submission's completion value did not arrive within"
+                            + " 5000 ms");
+                }
+                fixedWaitMs = (System.nanoTime() - fixedBegan) / 1.0e6;
+                for (int waited = 0; waited < 200 && lastCommitGpuMillis <= 0.0; waited += 2) {
+                    try {
+                        Thread.sleep(2L);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                fixedCommitMs = lastCommitGpuMillis;
+                fixedOptions.close();
+            }
+
             BEGIN.send(buffer, allocator);
             // Three markers: before the small pass, between the two, and after the large one. The middle one is
             // both the end of the first duration and the start of the second, which is what makes two passes cost
@@ -4404,15 +4529,6 @@ public final class MTL4Probe {
             // step writes the same texture, the first clearing it and each later one *loading* what the step
             // before stored, so pass N cannot begin until pass N-1 has stored. That is a real dependency between
             // them, and it is the smallest one this API can express.
-            MemorySegment shared = newSizedTarget(device, COUNTER_EDGE, COUNTER_EDGE, USAGE_RENDER_TARGET);
-            if (ObjC.isNil(shared)) {
-                return failed("counters", "newTextureWithDescriptor: answered nil for the steps' attachment");
-            }
-            large = shared;
-            if (!resident.add(shared)) {
-                END.send(buffer);
-                return failed("counters", "the residency set refused the attachment the steps draw into");
-            }
 
             // **A warm-up pass the curve does not count, because the first pass of a command buffer is not like
             // the others.** Measured with the markers uniform: the one-draw step consistently reported ~27,000 to
@@ -4422,7 +4538,7 @@ public final class MTL4Probe {
             // later one follows another. So the curve's own start is now behind a pass that pays both, and every
             // measured step is the same kind of pass as its neighbours: a carried attachment and N fullscreen
             // draws.
-            if (!drawnPass(device, buffer, shared, COUNTER_EDGE, 1, true, clearPipeline, table, heap, -1L,
+            if (!drawnPass(device, buffer, shared, COUNTER_EDGE, 1, true, clearPipeline, table, heap, -1L, -1L,
                     "the counter smoke's warm-up")) {
                 END.send(buffer);
                 return false;
@@ -4430,11 +4546,33 @@ public final class MTL4Probe {
             heap.writeTimestamp(buffer, 0L);
             for (int step = 0; step < COUNTER_DRAWS.length; step++) {
                 if (!drawnPass(device, buffer, shared, COUNTER_EDGE, COUNTER_DRAWS[step], false,
-                        clearPipeline, table, heap, step + 1L, "the counter smoke's step " + step)) {
+                        clearPipeline, table, heap, step + 1L,
+                        COUNTER_ENCODER_START + step, "the counter smoke's step " + step)) {
                     END.send(buffer);
                     return false;
                 }
             }
+
+            // The area half, on the same command buffer and the same pipeline, with its own warm-up so that its
+            // first measured step is the same *kind* of pass as the curve's steps are. The pair that reads is
+            // `area step N` against `step N` - the same draw count, sixteen times the fragments - and a road that
+            // reports those as equal is a road reading the front end of a pass and not the work behind it.
+            if (!drawnPass(device, buffer, large, COUNTER_AREA_EDGE, 1, true, clearPipeline, table, heap, -1L, -1L,
+                    "the counter smoke's area warm-up")) {
+                END.send(buffer);
+                return false;
+            }
+            heap.writeTimestamp(buffer, COUNTER_AREA_START);
+            for (int step = 0; step < COUNTER_AREA_DRAWS.length; step++) {
+                if (!drawnPass(device, buffer, large, COUNTER_AREA_EDGE, COUNTER_AREA_DRAWS[step], false,
+                        clearPipeline, table, heap, COUNTER_AREA_START + 1L + step,
+                        COUNTER_ENCODER_START + COUNTER_DRAWS.length + step,
+                        "the counter smoke's area step " + step)) {
+                    END.send(buffer);
+                    return false;
+                }
+            }
+
             if (!resident.commit()) {
                 END.send(buffer);
                 return failed("counters", "the residency set refused the attachment the steps draw into");
@@ -4449,24 +4587,70 @@ public final class MTL4Probe {
             // `canMeasurePassGpuTime`'s ordering paragraph, which no longer claims a driver-side sampling point.
             END.send(buffer);
 
+            // **The same submission, read by the second instrument.** The markers are one account of this command
+            // buffer's GPU time; the commit's own feedback is another, and a submission that is not paced by a
+            // drawable - this one has no layer and no present - is the one place the two can be read against each
+            // other without a wait sitting inside the driver's window. A marker road that reads a thousandth of
+            // the driver's own number for the same command buffer is not measuring the frame's work, and no curve
+            // of its own could say so.
+            lastCommitGpuMillis = 0.0;
+            options = responds(queue, "commit:count:options:") ? MTL4CommitOptions.create() : null;
+            MemorySegment feedbackBlock = MemorySegment.NULL;
+            if (options != null) {
+                feedbackBlock = ObjCBlock.withConsumer(
+                        feedback -> lastCommitGpuMillis = MTL4CommitOptions.gpuMillis(feedback));
+                if (!options.feedbackHandler(feedbackBlock)) {
+                    options.close();
+                    options = null;
+                }
+            }
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment buffers = arena.allocate(ADDRESS, 1);
                 buffers.set(ADDRESS, 0L, buffer);
-                COMMIT.send(queue, buffers, 1L);
+                if (options != null) {
+                    COMMIT_WITH_OPTIONS.send(queue, buffers, 1L, options.handle());
+                } else {
+                    COMMIT.send(queue, buffers, 1L);
+                }
             }
-            SIGNAL_EVENT.send(queue, event, 1L);
-            if (WAIT_UNTIL_SIGNALED.sendLong(event, 1L, 5000L) == 0L) {
-                return failed("counters", "the shared event did not reach 1 within 5000 ms, so the passes the"
+            SIGNAL_EVENT.send(queue, event, 2L);
+            // The third instrument: how long the CPU waited for the queue's own completion signal. It is a lower
+            // bound on the GPU work and it needs no API to trust - the event cannot be signalled before the
+            // command buffer has finished.
+            long waitBegan = System.nanoTime();
+            if (WAIT_UNTIL_SIGNALED.sendLong(event, 2L, 5000L) == 0L) {
+                return failed("counters", "the shared event did not reach 2 within 5000 ms, so the passes the"
                         + " timestamps bracket never completed");
             }
+            double cpuWaitMs = (System.nanoTime() - waitBegan) / 1.0e6;
+            // The feedback handler runs on Metal's own queue, so the read is waited for rather than assumed: a
+            // zero is "not reported yet" and is reported as such, and never as "the GPU took no time".
+            for (int waited = 0; waited < 200 && lastCommitGpuMillis <= 0.0; waited += 2) {
+                try {
+                    Thread.sleep(2L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            double commitMs = lastCommitGpuMillis;
 
             // The header's own rule satisfied, so the heap can be resolved on the CPU timeline.
             long[] stamps = heap.resolveAll();
-            for (int index = 0; index < stamps.length; index++) {
+            for (int index = 0; index < COUNTER_ENCODER_START; index++) {
                 if (stamps[index] < 0L) {
                     return failed("counters", "entry " + index + " of the heap did not resolve to a timestamp ("
                             + stamps[index] + "), and a zero or unreadable entry is not one - the header says an"
                             + " invalidated entry resolves as zero");
+                }
+            }
+            // The encoder's half is *read* rather than required: a form the driver does not honour on this device
+            // is an answer - and the important one, since it is the form a pack's per-pass attribution would have
+            // to be built on - so it is reported and not folded into the smoke's verdict.
+            int encoderRead = 0;
+            for (int index = COUNTER_ENCODER_START; index < stamps.length; index++) {
+                if (stamps[index] >= 0L) {
+                    encoderRead++;
                 }
             }
 
@@ -4501,6 +4685,31 @@ public final class MTL4Probe {
             }
             long smallTicks = deltas[0];
             long largeTicks = deltas[deltas.length - 1];
+            // The area pair: the same draw count on an attachment sixteen times the area, so the only variable
+            // between each pair is the fragments and the bytes.
+            long[] areaTicks = new long[COUNTER_AREA_DRAWS.length];
+            StringBuilder area = new StringBuilder();
+            for (int step = 0; step < COUNTER_AREA_DRAWS.length; step++) {
+                areaTicks[step] = stamps[(int) COUNTER_AREA_START + 1 + step] - stamps[(int) COUNTER_AREA_START + step];
+                if (step > 0) {
+                    area.append(' ');
+                }
+                area.append(COUNTER_AREA_DRAWS[step]).append("->").append(areaTicks[step]);
+            }
+            // The whole command buffer's own span, which is what the driver's number beside it covers: the curve's
+            // start marker is behind the first warm-up pass and the last area step's marker is the last command.
+            int lastCommandMarker = (int) (COUNTER_AREA_START + COUNTER_AREA_DRAWS.length);
+            long cbSpanTicks = stamps[lastCommandMarker] - stamps[0];
+            // The encoder's own form over the same two boundaries: its last entry is written inside the same last
+            // pass, so the two spans describe the same work and differ only in which call recorded them.
+            long encoderSpanTicks = stamps[stamps.length - 1] - stamps[0];
+            // And the same single pass both ways: the 4096-draw step, where the command buffer's marker follows the
+            // encoder and the encoder's own marker is the last thing inside it.
+            long cbHeavyTicks = deltas[deltas.length - 1];
+            long encoderHeavyTicks = COUNTER_ENCODER_START + COUNTER_DRAWS.length - 1 < stamps.length
+                    ? stamps[COUNTER_ENCODER_START + COUNTER_DRAWS.length - 1]
+                    - stamps[COUNTER_ENCODER_START + COUNTER_DRAWS.length - 2]
+                    : -1L;
             // The unit, measured rather than assumed: a sample of the CPU and GPU clocks together, twice, around
             // a known sleep. If a counter tick were a nanosecond the two deltas would agree; whatever the ratio
             // is, it is a fact about this device that the numbers below are read through.
@@ -4509,6 +4718,32 @@ public final class MTL4Probe {
                     + " smallTicks=" + smallTicks + " largeTicks=" + largeTicks
                     + " largePerSmall=" + String.format(Locale.ROOT, "%.1f",
                     smallTicks <= 0L ? 0.0 : (double) largeTicks / smallTicks)
+                    + " area=[" + area + "]"
+                    + " areaRatio=" + String.format(Locale.ROOT, "%.2f",
+                    areaTicks[0] <= 0L ? 0.0 : (double) areaTicks[areaTicks.length - 1] / areaTicks[0])
+                    + " areaOverCurve=" + String.format(Locale.ROOT, "%.2f,%.2f",
+                    deltas[1] <= 0L ? 0.0 : (double) areaTicks[0] / deltas[1],
+                    deltas[2] <= 0L ? 0.0 : (double) areaTicks[1] / deltas[2])
+                    + " cbSpanUs=" + String.format(Locale.ROOT, "%.1f", cbSpanTicks / 1000.0)
+                    + " lightPairOrdered=" + (deltas[1] > deltas[0])
+                    + " curveOrdered=" + curveOrdered(deltas)
+                    + " heavyPairOrdered=" + (deltas[deltas.length - 1] > deltas[deltas.length - 2])
+                    // The road against the driver, in one number: what fraction of the submission's own reported
+                    // window the markers account for. A road whose intervals are the work reads near one; this one
+                    // reads near a fiftieth, which is why the frame table is a diagnostic and not an attribution.
+                    + " markerOverDriver=" + String.format(Locale.ROOT, "%.4f",
+                    commitMs <= 0.0 ? -1.0 : (cbSpanTicks / 1000.0 / 1000.0) / commitMs)
+                    + " encoderRead=" + encoderRead + "/" + COUNTER_ENCODER_ENTRIES
+                    + " encoderSpanUs=" + String.format(Locale.ROOT, "%.1f", encoderSpanTicks / 1000.0)
+                    + " encoderOverCb=" + String.format(Locale.ROOT, "%.2f",
+                    cbSpanTicks <= 0L ? 0.0 : (double) encoderSpanTicks / cbSpanTicks)
+                    + " heavyStepCbTicks=" + cbHeavyTicks + " heavyStepEncoderTicks=" + encoderHeavyTicks
+                    + " heavyStepEncoderOverCb=" + String.format(Locale.ROOT, "%.2f",
+                    cbHeavyTicks <= 0L ? 0.0 : (double) encoderHeavyTicks / cbHeavyTicks)
+                    + " commitDriverMs=" + String.format(Locale.ROOT, "%.3f", commitMs)
+                    + " cpuWaitMs=" + String.format(Locale.ROOT, "%.3f", cpuWaitMs)
+                    + " fixedCommitMs=" + String.format(Locale.ROOT, "%.3f", fixedCommitMs)
+                    + " fixedWaitMs=" + String.format(Locale.ROOT, "%.3f", fixedWaitMs)
                     + " gpuTicksPerCpuNs=" + String.format(Locale.ROOT, "%.4f",
                     sample[3] <= 0L ? -1.0 : (double) sample[2] / sample[3])
                     + " samplerGpuDeltaTicks=" + sample[2] + " samplerCpuDeltaNs=" + sample[3];
@@ -4527,7 +4762,9 @@ public final class MTL4Probe {
             // are the `COUNTER_DRAWS` comment's four runs: monotone, the heavy steps repeating to two per cent.
             // The floor that remains is a property of the road and not of the smoke, which is why every step is
             // above it.
-            for (int index = 1; index < stamps.length; index++) {
+            // The check is over the command buffer's own entries, because those are the ones in submission order;
+            // the encoder's half is written *inside* the passes, so it is deliberately not ordered against them.
+            for (int index = 1; index <= lastCommandMarker; index++) {
                 if (stamps[index] < stamps[index - 1]) {
                     return failed("counters", "timestamp " + index + " (" + stamps[index] + ") precedes timestamp "
                             + (index - 1) + " (" + stamps[index - 1] + ") by " + (stamps[index - 1] - stamps[index])
@@ -4546,14 +4783,27 @@ public final class MTL4Probe {
                         + " not respond to " + COUNTER_DRAWS[0] + " fullscreen draw(s) over a " + COUNTER_EDGE + "x"
                         + COUNTER_EDGE + " attachment - " + reading);
             }
-            for (int step = 1; step < deltas.length; step++) {
-                if (deltas[step] <= deltas[step - 1]) {
-                    return failed("counters", "the counter's response is not monotonic in the work: "
-                            + COUNTER_DRAWS[step - 1] + " draws report " + deltas[step - 1] + " ticks and "
-                            + COUNTER_DRAWS[step] + " report " + deltas[step] + ", and the draws did land - so"
-                            + " the interval between two timestamps is not the work between them at every point"
-                            + " of the curve - " + reading);
-                }
+            // **The curve's requirement is the aggregate, and every step of it is a reading, because that is what
+            // the road was measured to be.** Sessions of this smoke with the driver's own window and the CPU's
+            // completion wait read beside the markers for the first time say the intervals are not the work: one
+            // submission of 5,440 + 1,281 fullscreen draws reads a marker span of 237-643 us while the driver
+            // reports 10.4-27.9 ms for the same commit and the CPU waits 10.9-28.2 ms for its completion value,
+            // against a fixed cost of 0.02-3.93 ms measured on a one-draw submission of its own in the same call.
+            // The marker span stays at **2.26-2.34% of the driver's window** while that window moves by a factor
+            // of 2.7, which is the shape of a road that measures the *front end* - draws issued per unit time,
+            // about sixty nanoseconds each - and not the render work behind them: the encoder's own form agrees
+            // with the command buffer's to a per cent, the area pair is not a pair (256 draws on 4096x4096 read
+            // 17,586-337,062 ticks while 1024 draws on it read 49-173), and an individual step inverts often
+            // enough to be recorded rather than asserted (256 draws read 65,183 while 1024 read 277 in one probe,
+            // and the light pair 40,667 against 13,397 in another). So what the smoke still requires is the
+            // aggregate the road does answer - the heaviest step reads longer than the lightest, which held in
+            // every one of the seven probes - and what it reports is the rest.
+            if (deltas[deltas.length - 1] <= deltas[0]) {
+                return failed("counters", "the heaviest step does not read longer than the lightest: "
+                        + COUNTER_DRAWS[0] + " draws report " + deltas[0] + " ticks and "
+                        + COUNTER_DRAWS[deltas.length - 1] + " report " + deltas[deltas.length - 1]
+                        + ", and the draws did land - so the road does not respond to the front-end work at all"
+                        + " - " + reading);
             }
             return true;
         } catch (RuntimeException threw) {
@@ -4568,10 +4818,15 @@ public final class MTL4Probe {
             if (table != null) {
                 table.close();
             }
+            if (options != null) {
+                options.close();
+            }
             if (uniform != null) {
                 releaseIfPresent(uniform.handle());
             }
             heap.close();
+            releaseIfPresent(fixedBuffer);
+            releaseIfPresent(fixedAllocator);
             releaseIfPresent(large);
             releaseIfPresent(small);
             releaseIfPresent(event);
@@ -4598,7 +4853,8 @@ public final class MTL4Probe {
                                      final MemorySegment target, final long edge, final int draws,
                                      final boolean clearFirst, final MemorySegment pipeline,
                                      final MTL4ArgumentTable table, final MTL4CounterHeap heap,
-                                     final long timestampIndex, final String which) {
+                                     final long timestampIndex, final long encoderTimestampIndex,
+                                     final String which) {
         MTL4RenderEncoder pass;
         try {
             // Cleared to BLACK and drawn with (0.25, 0.5, 0.75): the smoke reads a pixel afterwards, and a
@@ -4627,6 +4883,13 @@ public final class MTL4Probe {
             for (int draw = 0; draw < draws; draw++) {
                 DRAW.send(pass.encoder(), MTLPrimitiveType.Triangle.value, 0L, 3L);
             }
+            // The same boundary from inside the encoder, with the stage named and the granularity asked for: the
+            // command buffer's own marker is written after this encoder is closed, so the two entries describe the
+            // same moment of the same pass and the difference between them is the sampling point and nothing else.
+            if (encoderTimestampIndex >= 0L) {
+                WRITE_TIMESTAMP_AFTER_STAGE.send(pass.encoder(), TIMESTAMP_PRECISE, STAGE_FRAGMENT,
+                        heap.handle(), encoderTimestampIndex);
+            }
             return true;
         } finally {
             pass.endEncoding();
@@ -4639,6 +4902,19 @@ public final class MTL4Probe {
                 heap.writeTimestamp(buffer, timestampIndex);
             }
         }
+    }
+
+    /**
+     * Whether the curve's intervals ascend at every step. Reported and not required: the single-step inversions
+     * are what the road does, and a census that counts them is worth more than a smoke that hides them.
+     */
+    private static boolean curveOrdered(final long[] deltas) {
+        for (int step = 1; step < deltas.length; step++) {
+            if (deltas[step] <= deltas[step - 1]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -6002,6 +6278,19 @@ public final class MTL4Probe {
     private static String failure;
     private static String failureStage;
     private static String reading;
+
+    /**
+     * The counter smoke's commit as the driver reported it, in milliseconds.
+     * <p>
+     * Section 92 keeps three timings apart, and the counter smoke used to have only one of them: the markers it
+     * places. A marker road can be self-consistent - "more work reads as more time" - and still not be the work,
+     * which is the one thing a curve cannot say about itself. So the smoke's submission now carries a feedback
+     * handler beside its markers and reads the driver's own account of the same command buffer, which is the
+     * second instrument - and the shared-event wait, which is the third, is timed beside it.
+     * <p>
+     * It is written from Metal's own dispatch queue inside the feedback block, hence volatile.
+     */
+    private static volatile double lastCommitGpuMillis;
 
     public static boolean canBindAndDraw(final MTLDevice device) {
         failure = null;
