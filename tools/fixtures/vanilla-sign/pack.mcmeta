@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "pack_format": 48,
+    "supported_formats": {"min_inclusive": 1, "max_inclusive": 9999},
+    "description": "vanilla-sign: a sign with text, whose glyphs the game draws with a polygon offset"
+  }
+}

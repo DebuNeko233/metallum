@@ -51,6 +51,7 @@ keep_entities=false
 vanilla_particles=false
 vanilla_mobs=false
 vanilla_blocks=false
+vanilla_sign=false
 fullscreen=false
 expect_target=""
 fullscreen_size=""
@@ -187,6 +188,7 @@ while [[ $# -gt 0 ]]; do
 		--vanilla-particles) vanilla_particles=true; shift ;;
 		--vanilla-mobs) vanilla_mobs=true; shift ;;
 		--vanilla-blocks) vanilla_blocks=true; shift ;;
+		--vanilla-sign) vanilla_sign=true; shift ;;
 		--continue-world) fresh_world=false; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -606,6 +608,12 @@ for run in "${runs[@]}"; do
 		cp -R "$repo_root/tools/fixtures/vanilla-blocks" "$saves_dir/$world_name/datapacks/blockshow"
 		echo "Staged the vanilla block-entity fixture into $world_name" >&2
 	fi
+	if [[ "$vanilla_sign" == true ]]; then
+		rm -rf "$saves_dir/$world_name/datapacks/signshow"
+		mkdir -p "$saves_dir/$world_name/datapacks"
+		cp -R "$repo_root/tools/fixtures/vanilla-sign" "$saves_dir/$world_name/datapacks/signshow"
+		echo "Staged the vanilla depth-biased sign fixture into $world_name" >&2
+	fi
 	python3 "$repo_root/tools/freeze-world.py" "$saves_dir/$world_name" --weather "$weather" --spectator \
 		$([[ "$keep_entities" == true ]] && echo "" || echo "--still-life") \
 		${aim_args[@]+"${aim_args[@]}"}
@@ -702,11 +710,12 @@ for run in "${runs[@]}"; do
 	# A fixture that stages and does not load is the false green this harness exists to refuse: the first
 	# version of the particle function wrote the older positional options and this version refused the whole
 	# function, so the scene carried no particles while every log line said the fixture had been copied in.
-	for fixture in showcase mobshow blockshow; do
+	for fixture in showcase mobshow blockshow signshow; do
 		case "$fixture" in
 			showcase) staged="$vanilla_particles" ;;
 			mobshow) staged="$vanilla_mobs" ;;
 			blockshow) staged="$vanilla_blocks" ;;
+			signshow) staged="$vanilla_sign" ;;
 		esac
 		[[ "$staged" == true ]] || continue
 		if ! grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"; then
@@ -723,6 +732,7 @@ for run in "${runs[@]}"; do
 		case "$fixture" in
 			mobshow) names="pig cow armor_stand item experience_orb" ;;
 			blockshow) names="chest bell banner shulker_box enchanting_table" ;;
+			signshow) names="sign" ;;
 		esac
 		if [[ -n "$names" ]]; then
 			for entity in $names; do
@@ -837,7 +847,7 @@ wait "$gpu_tracer" 2>/dev/null || true
 # The entity fixture's arms have to have placed the same entities. Measured: each type is placed twice in every
 # arm - a number the fixture does not control - so the check is equality between the arms and not a constant,
 # and an arm that placed a different number of the same entity is not the scene the others are.
-if [[ "$vanilla_mobs" == true || "$vanilla_blocks" == true ]]; then
+if [[ "$vanilla_mobs" == true || "$vanilla_blocks" == true || "$vanilla_sign" == true ]]; then
 	if ! python3 - "$out_dir/entity-counts.txt" <<'COUNTS'
 import sys
 

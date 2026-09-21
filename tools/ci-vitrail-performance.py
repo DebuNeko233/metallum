@@ -265,10 +265,14 @@ for needle, why in (
      "holds no entities of its own, so nothing a mob draws can be in a frame"),
     ("--vanilla-blocks) vanilla_blocks=true", "the harness cannot stage the block-entity fixture, and what a "
      "block's own renderer draws is neither terrain nor an entity, so no scene before it contained one"),
-    ("for fixture in showcase mobshow blockshow; do", "a fixture is checked against the game having loaded it "
+    ("--vanilla-sign) vanilla_sign=true", "the harness cannot stage the sign fixture, and a sign's glyphs are "
+                                           "the only live workload on this machine that asks for a depth bias"),
+    ("for fixture in showcase mobshow blockshow signshow; do", "a fixture is checked against the game having loaded it "
      "for only some of them, so another can stage and emit nothing and read as a scene that has it"),
     ('blockshow) names="chest bell banner shulker_box enchanting_table"', "the block-entity fixture's names are "
      "not counted, so an arm whose scene has none of them reads as the scene the other arms have"),
+    ('signshow) names="sign"', "the sign fixture's placement is not counted, so a window with no sign in it - "
+     "and therefore no depth-biased pipeline - reads as the scene the other arms have"),
     ('grep -c "showcase: placed the $entity" "$run_dir/latest.log"',
      "an arm that staged the entity fixture is not counted for what it placed, so a scene with no entities - or "
      "with a number of them that grows with the window - reads as the scene the other arms have. Measured, one "
@@ -291,6 +295,9 @@ for needle, why in (
     ('cp -R "$repo_root/tools/fixtures/vanilla-blocks" "$saves_dir/$world_name/datapacks/blockshow"',
      "the block-entity fixture is not copied from the repository, so the scene it describes would live in an "
      "unversioned save"),
+    ('cp -R "$repo_root/tools/fixtures/vanilla-sign" "$saves_dir/$world_name/datapacks/signshow"',
+     "the sign fixture - the only scene that makes a live frame ask for a depth bias - is not copied from the "
+     "repository"),
     ('grep -q "Found new data pack file/$fixture" "$run_dir/latest.log"',
      "an arm that staged a fixture is not checked against the game having found it, so a scene without it reads "
      "as a scene with it"),
@@ -309,6 +316,27 @@ for path, why in (
      "the fixture has no tick function, so the switch stages an empty datapack"),
 ):
     if not path.is_file():
+        raise SystemExit("vitrail performance harness: " + why)
+sign = ROOT / "tools" / "fixtures" / "vanilla-sign"
+sign_tick = (sign / "data" / "signshow" / "function" / "tick.mcfunction")
+for path, why in (
+    (sign / "pack.mcmeta", "the sign fixture has no pack metadata, so the game will not load it"),
+    (sign / "data" / "minecraft" / "tags" / "function" / "tick.json",
+     "the sign fixture has no tick tag, so its function never runs"),
+    (sign_tick, "the sign fixture has no tick function, so the switch stages an empty datapack"),
+):
+    if not path.is_file():
+        raise SystemExit("vitrail performance harness: " + why)
+# The fixture *is* the trigger: the depth-bias call is only reached by a sign whose text the game draws, so a
+# fixture that placed a blank sign would leave every window reading `depthBias=0` again and nothing would fail.
+sign_tick = sign_tick.read_text()
+for needle, why in (
+    ("minecraft:oak_sign", "the sign fixture no longer places a sign, so no live frame reaches the depth-biased "
+                           "text pipeline it exists for"),
+    ("front_text", "the sign fixture places a sign with no front text, so the pipeline's glyphs are never drawn"),
+    ("messages", "the sign fixture's sign carries no text component, so there is nothing to draw"),
+):
+    if needle not in sign_tick:
         raise SystemExit("vitrail performance harness: " + why)
 mobs = ROOT / "tools" / "fixtures" / "vanilla-mobs"
 mob_tick = (mobs / "data" / "mobshow" / "function" / "tick.mcfunction")
