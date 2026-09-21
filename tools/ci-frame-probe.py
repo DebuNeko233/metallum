@@ -39,6 +39,7 @@ def order(text: str, first: str, second: str, why: str) -> None:
 
 probe = read(PROBE_PATH)
 encoder = read("src/main/java/com/metallum/render/metal3/MetalCommandEncoder.java")
+metal4_encoder = read("src/main/java/com/metallum/render/metal4/Metal4FrameEncoder.java")
 command_buffer = read("src/main/java/com/metallum/mtl/metal3/MTLCommandBuffer.java")
 render_pass = read("src/main/java/com/metallum/render/metal3/MetalRenderPass.java")
 device = read("src/main/java/com/metallum/render/MetalDevice.java")
@@ -304,6 +305,40 @@ require("the encoder split", probe, (
     "metal4Frames={} metal4Us={}",
 ))
 
+# Phase F's upload census: the three roads CPU bytes take into a Metal 4 frame, each counted and timed where
+# the road is, and reported together. The counter is what decides whether the staging-and-copy shape this
+# generation uses for every CPU-written buffer is worth replacing with the reference generation's direct write -
+# a question with a number in it only if the calls, the bytes and the CPU time are readable. The entry points
+# live in the shared probe, but the roads that reach them are this generation's own encoder: Metal 3 writes its
+# buffers directly and has none of these three call sites, so pinning the roads against the Metal 3 encoder
+# would be pinning an absence.
+require("upload census", probe, (
+    "public static void uploadedToBuffer(final long bytes, final long nanos) {",
+    "public static void uploadedCopyingBuffer(final long bytes, final long nanos) {",
+    "public static void uploadedToTexture(final long bytes, final long nanos) {",
+    # Each road's whole accounting is pinned as one block rather than as loose lines, because the loose lines
+    # appear three times over and a census that stopped adding one road's time up would still show the other
+    # two - which is exactly the defect that reads as a cheap road: measured, a road's own accumulator was
+    # deleted and every loose-line pin still passed.
+    "        uploadsToBuffer++;\n        uploadedToBufferBytes += bytes;\n        uploadCalls++;\n"
+    "        uploadBytes += bytes;\n        uploadNanos += nanos;",
+    "        uploadCopiesToBuffer++;\n        uploadedCopyBytes += bytes;\n        uploadCalls++;\n"
+    "        uploadBytes += bytes;\n        uploadNanos += nanos;",
+    "        uploadsToTexture++;\n        uploadedToTextureBytes += bytes;\n        uploadCalls++;\n"
+    "        uploadBytes += bytes;\n        uploadNanos += nanos;",
+    "if (uploadCalls > 0) {",
+    "uploadNanos / 1_000_000.0",
+    "uploadCalls = 0;",
+    "uploadNanos = 0L;",
+    "frame-probe uploads uploadCalls={} uploadMiB={} uploadCpuMs={} uploadsToBuffer={}",
+    "toBufferMiB={} uploadsCopyingBuffer={} copyMiB={} uploadsToTexture={}",
+    "textureMiB={}",
+))
+require("upload census is reached from the upload roads", metal4_encoder, (
+    "MetalFrameProbe.uploadedToBuffer(length, System.nanoTime() - began);",
+    "MetalFrameProbe.uploadedCopyingBuffer(source.length(), System.nanoTime() - began);",
+    "MetalFrameProbe.uploadedToTexture(bytesPerImage, System.nanoTime() - began);",
+))
 require("blit counter", probe, (
     "blits={} blittedMiB={}",
     "public static void blit(final int width, final int height, final int pixelSize) {",
@@ -436,7 +471,7 @@ for index, line in enumerate(lines):
         )
     guarded.append(declaration)
 
-if len(guarded) != 38:
+if len(guarded) != 41:
     raise SystemExit(
         "frame probe: expected 38 guarded entry points (encoder, encoder opener, frame, gpu frame, Metal 4 "
         "gpu frame, Metal 4 frame, Metal 4 present, colour attachment, depth attachment, blit, six binding "
@@ -449,7 +484,9 @@ if len(guarded) != 38:
         "the reuse taken and one for the recreation with its causes - one for section 58's depth bias, which is "
         "the only counter that says whether a real pipeline reaches the road the artifact had carried and nothing "
         "ever sent, and one for the client tick, and two for the clear-folding census - one for a clear the "
-        "frame deferred and one for a deferred clear a pass carried as its own load action), found "
+        "frame deferred and one for a deferred clear a pass carried as its own load action - and three for "
+        "Phase F's upload census, one per road CPU bytes take into a frame: a staged buffer write, a buffer "
+        "copy and a staged texture write), found "
         f"{len(guarded)}: " + "; ".join(guarded)
     )
 if probe.count("MTLTexture.width(texture) * MTLTexture.height(texture) * pixelSize") != 2:

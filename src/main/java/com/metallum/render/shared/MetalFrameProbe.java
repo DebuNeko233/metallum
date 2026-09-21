@@ -237,6 +237,16 @@ public final class MetalFrameProbe {
     /** Clears the frame deferred and the next pass carried as a load action, and those it had to encode. */
     private static int clearDeferred;
     private static int clearFolded;
+    /** Phase F's upload census: by road, and the whole cost. */
+    private static long uploadCalls;
+    private static long uploadBytes;
+    private static long uploadNanos;
+    private static long uploadsToBuffer;
+    private static long uploadedToBufferBytes;
+    private static long uploadCopiesToBuffer;
+    private static long uploadedCopyBytes;
+    private static long uploadsToTexture;
+    private static long uploadedToTextureBytes;
 
     /** Frames carried through the Metal 4 command structure, and what that path cost on the CPU. */
     private static int metal4Frames;
@@ -745,6 +755,57 @@ public final class MetalFrameProbe {
         }
     }
 
+    /**
+     * One upload the frame's copy encoder carried, classified by the road it came in on.
+     * <p>
+     * Phase F's census, and the counter that decides whether the road is worth anything: this generation moves
+     * every CPU-written byte through a staging buffer and a copy - `writeToBuffer`, `copyToBuffer` and
+     * `writeToTexture` - where the reference generation writes a mapped buffer's contents directly, and the two
+     * are only comparable if the calls, the bytes and the CPU time they take are readable. The time is the
+     * caller's own span, because that is what a frame's gap between encoders is made of.
+     * <p>
+     * The classification is by road rather than by caller: a dynamic uniform, a chunk mesh and a GUI vertex
+     * buffer all arrive through the same three calls, and who is calling is not a fact this layer is allowed to
+     * know.
+     */
+    public static void uploadedToBuffer(final long bytes, final long nanos) {
+        if (!armed()) {
+            return;
+        }
+
+        uploadsToBuffer++;
+        uploadedToBufferBytes += bytes;
+        uploadCalls++;
+        uploadBytes += bytes;
+        uploadNanos += nanos;
+    }
+
+    /** And the same for the game's staged vertex move, which is a copy between two engine buffers. */
+    public static void uploadedCopyingBuffer(final long bytes, final long nanos) {
+        if (!armed()) {
+            return;
+        }
+
+        uploadCopiesToBuffer++;
+        uploadedCopyBytes += bytes;
+        uploadCalls++;
+        uploadBytes += bytes;
+        uploadNanos += nanos;
+    }
+
+    /** And for a staged texture write, which is the third road CPU bytes take into this frame. */
+    public static void uploadedToTexture(final long bytes, final long nanos) {
+        if (!armed()) {
+            return;
+        }
+
+        uploadsToTexture++;
+        uploadedToTextureBytes += bytes;
+        uploadCalls++;
+        uploadBytes += bytes;
+        uploadNanos += nanos;
+    }
+
     public static void blit(final int width, final int height, final int pixelSize) {
         if (!armed()) {
             return;
@@ -1053,6 +1114,28 @@ public final class MetalFrameProbe {
                     passDescriptors
             );
         }
+        if (uploadCalls > 0) {
+            // Said when the frame uploaded anything at all: a scene that does not is not asked the question, and
+            // one that does gets the three roads apart - which is the census Phase F is written on.
+            //
+            // Every field is named for what it counts rather than for its unit, because the comparison reads this
+            // line with the same `name=number` scan it reads the window line with, and a field called `MiB` or
+            // `cpuMs` would be a number nothing could attribute to a road.
+            Metallum.LOGGER.info(
+                    "frame-probe uploads uploadCalls={} uploadMiB={} uploadCpuMs={} uploadsToBuffer={}"
+                            + " toBufferMiB={} uploadsCopyingBuffer={} copyMiB={} uploadsToTexture={}"
+                            + " textureMiB={}",
+                    uploadCalls,
+                    String.format(Locale.ROOT, "%.3f", uploadBytes / (1024.0 * 1024.0)),
+                    String.format(Locale.ROOT, "%.2f", uploadNanos / 1_000_000.0),
+                    uploadsToBuffer,
+                    String.format(Locale.ROOT, "%.3f", uploadedToBufferBytes / (1024.0 * 1024.0)),
+                    uploadCopiesToBuffer,
+                    String.format(Locale.ROOT, "%.3f", uploadedCopyBytes / (1024.0 * 1024.0)),
+                    uploadsToTexture,
+                    String.format(Locale.ROOT, "%.3f", uploadedToTextureBytes / (1024.0 * 1024.0))
+            );
+        }
         if (encReuseAttempts > 0) {
             Metallum.LOGGER.info(
                     "frame-probe encoderreuse attempts={} reused={} recreated={} reusePercent={} "
@@ -1163,6 +1246,15 @@ public final class MetalFrameProbe {
         clearOpeners = 0;
         clearDeferred = 0;
         clearFolded = 0;
+        uploadCalls = 0;
+        uploadBytes = 0L;
+        uploadNanos = 0L;
+        uploadsToBuffer = 0;
+        uploadedToBufferBytes = 0L;
+        uploadCopiesToBuffer = 0;
+        uploadedCopyBytes = 0L;
+        uploadsToTexture = 0;
+        uploadedToTextureBytes = 0L;
         metal4Frames = 0;
         metal4Nanos = 0L;
         metal4Draws = 0;

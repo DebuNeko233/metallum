@@ -75,6 +75,18 @@ COUNTERS = (
     "compileMs",
     "pipelineIdentities",
     "pipelineKeys",
+    # Phase F's upload census, read from the probe's own `frame-probe uploads` line by the same scan the window
+    # line is read with: how many times a frame wrote CPU data into a buffer or a texture through this
+    # generation's roads, how many bytes that was, and what the CPU spent on it. Reported for every session
+    # because the staged-write shape is a property of the generation rather than of one experiment, and a scene
+    # that uploads nothing prints no line at all - an absent counter reads as `-` rather than as a zero, so a
+    # scene that genuinely makes no uploads and an instrument that stopped counting cannot be confused.
+    "uploadCalls",
+    "uploadMiB",
+    "uploadCpuMs",
+    "uploadsToBuffer",
+    "uploadsCopyingBuffer",
+    "uploadsToTexture",
 )
 
 FIELD = re.compile(r"(\w+)=([0-9.]+)")

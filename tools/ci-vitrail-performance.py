@@ -830,6 +830,22 @@ for needle, why in (
 ):
     if needle not in comparer:
         raise SystemExit("Vitrail performance harness contract: " + why)
+
+# --- and Phase F's upload census, which is the road and not the scene -------------------------------------
+# The census answers whether this generation's staged-write shape is worth replacing, and the question is asked of
+# every session rather than of one experiment: the comparer reads the probe's own line, so the counter appears in
+# every comparison this harness prints. Pinned here because the census is worth little if it is only ever read by
+# hand from a log - the reading that decides it has to appear beside the times it is supposed to explain.
+for needle, why in (
+    ('    "uploadCalls",', "the comparison does not carry the upload census, so the road CPU bytes take into a "
+                           "frame is not read in the session that measures the frame"),
+    ('    "uploadCpuMs",', "the comparison carries the upload call count but not what the calls cost, which is the "
+                           "only half of the census a frame time can be divided by"),
+    ('    "uploadsToTexture",', "the comparison drops the census's third road, so a texture upload would be counted "
+                               "in the whole and invisible in the part"),
+):
+    if needle not in comparer:
+        raise SystemExit("Vitrail performance harness contract: " + why)
 PACING = ROOT / "tools/metal4-pacing-analysis.py"
 if "pass-count decomposition:" not in PACING.read_text(encoding="utf-8"):
     raise SystemExit("Vitrail performance harness contract: the pacing analyser no longer names each arm's frame "

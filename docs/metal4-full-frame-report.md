@@ -1426,6 +1426,121 @@ Metal 4 trace: end pass 'Vitrail upscale' pass=129993830 depth=false draws=1 ...
 copy-ending road and its call sites, the reopened attachments keeping their store answer with no clear and no
 assumed overwrite, and the tables assigned to the new encoder - and eleven mutations of those pins are caught.
 
+## Phase F1 - the roads CPU bytes take into a frame, counted and priced
+
+**SHAs.** Metallum `23bcc06` at the start, with this phase's instrumentation uncommitted on top of it (the
+census's entry points, its three call sites and the two contract pins); Vitrail `712d6452`, untouched. The
+phase's own commit carries the section, and the measurements below name the tree they were taken on rather than
+pretending the instrument was already in history.
+
+**Question.** Phase C left a wall that is bimodal - one population inside a handover quantum and one a quantum
+and a half to two out - and the audit's second performance question is what is in the gap. The first candidate
+is this generation's **upload shape**: Metal 4 writes every CPU-written buffer through the frame's transient
+arena and a copy encoder (`writeToBuffer`, `copyToBuffer`, `writeToTexture`), where the reference generation
+writes a dynamic buffer's contents **directly** into its own CPU-visible backing (`orphanWrite` in
+`MetalCommandEncoder`, which stages and copies only a non-dynamic buffer). Same scene, same bytes, two shapes -
+so the shape is worth a number, and the number has to be calls, bytes *and* CPU time, because a road that is
+cheap per byte and called a thousand times a frame is not the same finding as one that is expensive and called
+twice.
+
+**Instrument.** `MetalFrameProbe.uploadedToBuffer` / `uploadedCopyingBuffer` / `uploadedToTexture`, each called
+from the encoder at its own road with the caller's own span (`System.nanoTime()` around the staging write, the
+copy and the texture write), accumulated per window and printed as one line:
+
+```
+frame-probe uploads uploadCalls={} uploadMiB={} uploadCpuMs={} uploadsToBuffer={} toBufferMiB={}
+                    uploadsCopyingBuffer={} copyMiB={} uploadsToTexture={} textureMiB={}
+```
+
+The fields are named for the road rather than for the unit because `tools/vitrail-performance-compare.py` reads
+this line with the same `name=number` scan it reads the window line with, and the six counters are now in its
+`COUNTERS` table - so the census is printed **beside the times it is supposed to explain, in every session**,
+rather than being a line somebody has to go looking for in a log. A scene that uploads nothing prints no line
+at all and its counters read `-`, which is not the same reading as a zero.
+
+**Measured** - forced Metal 4, fullscreen at 1920x1200, 600-frame windows, machine load recorded by the harness:
+
+```
+scene                                        windowMs  ms/frame  uploadCalls  calls/frame  uploadMiB  MiB/frame  uploadCpuMs  ms/frame  share
+MakeUp-UltraFast-9.5e   run/f1-census/s3       3433.82    5.72         1800         3.0        0.124     0.00021      48.35      0.081     1.4 %
+no pack, particles+mobs+block entities         1386.71    2.31         3005         5.0      137.598     0.2293       35.63      0.059     2.6 %
+                        run/f1-census-vanilla/m4
+```
+
+The roads apart, at the raw lines:
+
+```
+MakeUp    calls=1800  MiB=0.124   cpuMs=48.35  writeToBuffer=1200 writeMiB=0.069  copyToBuffer=600 copyMiB=0.055  writeToTexture=0 textureMiB=0.000
+vanilla   calls=3005  MiB=137.598 cpuMs=35.63  writeToBuffer=1205 writeMiB=0.225  copyToBuffer=1800 copyMiB=137.373 writeToTexture=0 textureMiB=0.000
+```
+
+**The two scenes differ by a thousand in bytes and by nothing in cost.** The vanilla showcase moves 137.6 MiB
+through the staging road per window where MakeUp moves 0.12 MiB - three orders of magnitude - and the CPU time
+is 35.6 ms against 48.4 ms: **the second scene uploaded 1100 times the data for less CPU**, because what is
+timed is the staging write and the encode, and 137.6 MiB in 35.63 ms is 3.8 GiB/s. `copyToBuffer` - the game's
+own staged vertex move, the road the GUI's, the particles' and the entities' vertices arrive on - carries
+1800 of those calls and 137.4 of the 137.6 MiB in the vanilla scene, and 600 calls and 0.06 MiB in MakeUp's,
+where the world is Sodium's and only the interface is the game's.
+
+**So the upload road does not explain the gap, and no threshold is needed to see it**: 0.081 ms a frame is 1.4
+per cent of a 5.72 ms frame and 0.059 ms is 2.6 per cent of a 2.31 ms one, and the slow population Phase C
+found sits a handover quantum above the modal one - in the clean trace below, a 4-6 ms mode against an 8-10 ms
+second bucket. A road that costs 0.08 ms a frame cannot build that bucket even if every byte of it landed in
+the slow frames, and the slow frames are one in ten of that trace: the window's whole 48.35 ms of upload CPU,
+moved entirely into the 60 slow frames, is 0.81 ms a frame against the 4-5 ms that separates the two buckets.
+**Decision: replacing the staged-write shape with the reference generation's direct write is REJECTED as a
+performance change** - on the two scenes measured it is worth at most a few per cent of a frame, and the asset
+the direct write would buy is *not* upload CPU. (What it might buy is elsewhere and is not claimed here: the
+mapping itself, which is the P2 item, and `persistentMapping` already measured as generation-specific.)
+
+**Read against the audit's own bars** - under one per cent is noise, two per cent is worth continuing to look -
+MakeUp's road is at the floor (1.4 per cent, and half of it is one scene's interface) and the vanilla scene's
+2.6 per cent does clear the bar to keep looking, which is why this section rejects the *replacement* and leaves
+the road's per-call cost open rather than declaring the shape free. The bar that matters here is the one the
+section above applies: the thing the replacement was a candidate explanation *for* is four to five milliseconds
+a frame, and the road is a tenth of one.
+
+**Where the gap is instead is the existing reading, not a new claim.** The one clean per-frame trace of this
+scene (`-Dmetallum.metal4FrameTrace=true`, `run/c-makeup-trace/t3`, 600 frames) is bimodal exactly as Phase C
+described and its two buckets are not a work split:
+
+```
+wall ms      P50 4.53  P95 9.90  mean 4.97        wall histogram: 0-2:59 2-4:105 4-6:315 6-8:61 8-10:56 10-12:3 22-24:1
+drawable wait mean 0.94 ms   encoder mean 2.28 ms   driver interval mean 4.93 ms (P50 5.32, P95 5.42)
+```
+
+The frame's own wall mean (4.97 ms) is its driver interval (4.93 ms), the encoder is 2.28 ms of it, and the
+second bucket sits a quantum above the first. That is the pacing resource, which is Phase C3's subject and is
+**NOT MEASURED per frame against the submission it paced** - the census at least removes the CPU-upload
+explanation from the list rather than leaving it standing.
+
+**Instrumentation evidence.** `tools/ci-frame-probe.py` pins the three entry points, the whole accounting block
+of each road, the report line's field names, the emit condition and the reset; `tools/ci-vitrail-performance.py`
+pins that the comparison carries `uploadCalls`, `uploadCpuMs` and `uploadsToTexture`. Two mutations prove the
+pins bite: deleting the `uploadedToBuffer` call site from `Metal4FrameEncoder` fails with *upload census is
+reached from the upload roads: missing …*, and deleting one road's `uploadNanos += nanos;` fails with the block
+named - the second mutation is why the pin is a contiguous block per road: as loose lines each appeared three
+times over and the mutant passed the contract, which is precisely the defect that reads as a cheap road. The
+census's own reach is **verified end to end** through the harness rather than only compiled: `run/f1-trace/s3` is the first
+session in which the renamed fields were parsed from the collected probe by the comparison, which printed
+`uploadCalls 3006 / uploadMiB 14.6 / uploadCpuMs 119.7 / uploadsToBuffer 1802 / uploadsCopyingBuffer 1200 /
+uploadsToTexture 4`.
+
+**That last arm is contaminated and its times are quoted nowhere.** `run/f1-trace/s3` drew its 600-frame window
+in 42.71 s against the clean MakeUp arm's 3.43 s - `wallP50=98.80`, `windowTicks=836` against 69,
+`loadedMiB=755310.7` against 236468.2 - with the arm's own `load.txt` starting at 6.07 against the clean arm's
+3.18, and a browser helper reading 74 per cent of a core in the `ps` sample taken after that arm on this shared
+machine. The client's tick kept 20 Hz in both windows, so the extra ticks are a consequence of the slow frames,
+not their cause, and the content grew with them: the session is reported as what it is - the instrumentation's
+end-to-end proof - and its census, its wall and its content are not used as a measurement of anything else.
+
+**What Phase F1 deliberately does not conclude.** The census is two scenes on this machine's one display mode -
+a pack's frame and the game's own renderer with particles, mobs and block entities - and both are frames that
+mostly are *not* uploads; a scene whose frame is uploads (a GUI-bound benchmark, a block-entity grid, a
+video-upload path), and the road's per-call overhead at 3-5 calls a frame against 3000, are not measured. The
+shape's other cost, the mapped-buffer allocation and the `persistentMapping` difference between the
+generations, is a separate P2 item and is not priced here.
+
 ## Performance
 
 **The two generations have now been run against each other, in one session, on the same world at the same size:**

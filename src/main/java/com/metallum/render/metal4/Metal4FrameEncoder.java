@@ -764,6 +764,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
      */
     @Override
     public void writeToBuffer(final @NonNull GpuBufferSlice destination, final @NonNull ByteBuffer data) {
+        long began = System.nanoTime();
         MetalGpuBuffer target = bufferOf(destination.buffer());
         useResource(target.metalBuffer().handle());
         int length = data.remaining();
@@ -773,6 +774,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
                 staging.offset(), target.nativeHandle(), destination.offset(), length)) {
             throw new IllegalStateException("the Metal 4 copy pass refused a " + length + "-byte buffer write");
         }
+        MetalFrameProbe.uploadedToBuffer(length, System.nanoTime() - began);
     }
 
     /** Copies bytes between two slices of GPU memory. */
@@ -786,6 +788,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
         // entities' vertices arrived as zeros, every triangle of them collapsed to a point, and the draws were
         // encoded, correctly bound, correctly stated and invisible. The world still rendered because Sodium fills
         // its own buffers and the engine's other upload roads always declared theirs.
+        long began = System.nanoTime();
         useResource(bufferOf(source.buffer()).metalBuffer().handle());
         useResource(bufferOf(target.buffer()).metalBuffer().handle());
         if (!copyEncoder().copyBufferToBuffer(bufferOf(source.buffer()).nativeHandle(), source.offset(),
@@ -793,6 +796,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             throw new IllegalStateException("the Metal 4 copy pass refused a " + source.length() + "-byte buffer"
                     + " copy");
         }
+        MetalFrameProbe.uploadedCopyingBuffer(source.length(), System.nanoTime() - began);
     }
 
     /**
@@ -806,6 +810,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
     public void writeToTexture(final @NonNull GpuTexture destination, final @NonNull ByteBuffer data,
                                final int mipLevel, final int depthOrLayer, final int x, final int y,
                                final int width, final int height) {
+        long began = System.nanoTime();
         MetalGpuTexture texture = textureOf(destination);
         int pixelSize = texture.pixelSize();
         int rowBytes = width * pixelSize;
@@ -819,6 +824,7 @@ final class Metal4FrameEncoder implements MetalFrameEncoder, MetalFramePresentat
             throw new IllegalStateException("the Metal 4 copy pass refused a texture write of " + width + "x"
                     + height + " at (" + x + ", " + y + ")");
         }
+        MetalFrameProbe.uploadedToTexture(bytesPerImage, System.nanoTime() - began);
     }
 
     /** Copies a region of a buffer into a texture, which is the engine's other upload shape. */
