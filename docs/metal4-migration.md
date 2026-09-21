@@ -4201,11 +4201,48 @@ pipeline carries (`setDepthBias:slopeScale:clamp:`) where this one stores the bi
 it: that is a real gap in this generation's state, it belongs to shadow and depth-offset geometry rather than to
 the GUI, and it should be fixed and measured on its own rather than folded into this question.
 
-The residue is named rather than guessed: the GUI is encoded, its target is the presented one, its pass's writes
-reach the screen when a clear is forced through them, and its fragments are never produced. The experiments that
-would separate the remaining candidates are recorded in the report's blocker 17. **The work that was next in the
-programme's order - the compute pipeline neutralisation - is paused behind this**, because a frame path that
-cannot draw Minecraft's own GUI is not a base to add features to.
+**Then it was found, and it is one line of missing residency.** The reading that turned the hunt was a probe that
+read back what the vertex buffer the GUI's draws bind actually *holds*: `unreadable:IllegalStateException` - the
+buffer is not CPU-visible, so the game cannot be filling it directly. The vanilla source says what it does
+instead: `net.minecraft.client.renderer.StagedVertexBuffer` maps a CPU-visible **staging** buffer, writes the
+frame's vertices into it, and moves them into the real vertex buffer with a single
+`commandEncoder.copyToBuffer(staging.slice(...), vertexBuffer.slice(...))` - and then draws each range with a
+**base vertex** into the moved block, which is why every draw in that pass carries a non-zero base vertex and the
+one that does not is the first block.
+
+`Metal4FrameEncoder.copyToBuffer` was the only copy road in the class that declared **neither** of its resources
+with `useResource`, where `writeToBuffer`, `writeToTexture`, `copyBufferToTexture`, `copyTextureToTexture` and
+`copyTextureToBuffer` all declare both. The Metal 4 header asks a copy's resources to be marked in an
+`MTLResidencySet`, and an undeclared resource makes a copy do nothing here - silently. So the GUI's, the particles'
+and the entities' vertices arrived as zeros, every triangle of every one of those draws collapsed to a point, and
+the draws were encoded, correctly bound, correctly stated and invisible. The world rendered through all of it
+because Sodium fills its own buffers and because every other upload road declared what it moved.
+
+Declaring both ends is the whole fix, and the reading is the presented picture's own readback on a forced Metal 4
+title screen, one session each:
+
+```text
+                                   mean BGRA       the GUI's own samples in the 5x5 grid
+before   metal4                     (19, 17, 11)    none - the panorama only
+after    metal4                     (40, 39, 33)    ff3f3f3f, ff9ea2ad, ff000000
+         metal3 (the reference)     (40, 39, 33)    ff3f3f3f, ff9ea2ad, ff000000
+```
+
+The two generations read **identically** on that screen, sample for sample: `ff3f3f3f` is the button sprite's grey,
+`ff9ea2ad` the logo's, `ff000000` the glyph outlines and the dim overlay around them, and only the animated
+panorama's phase differs in the background. An in-world session with the same fix renders with no fault, no refusal
+and no restart. What is **NOT MEASURED** is an in-world text reading taken on its own - the staged world's player
+is in spectator mode, which hides the HUD, and this machine refuses to press keys - so the in-world HUD is covered
+by construction (the same `GuiRenderer` through the same `StagedVertexBuffer` road) and by the title screen's own
+glyphs, which do read back equal to Metal 3's.
+
+**Two things this cost, both recorded as lessons rather than as prose.** The five probes that bounded the fault
+above the fragment stage - winding, cull, blend, the alpha-0 discard, and a forced fragment colour - are what made
+"the draws are invisible" a measurement instead of an opinion, and the forced-colour probe is kept and pinned for
+the same reason on every later staircase rung. And a suspicion that looked strong was tested and dropped: every
+non-zero base vertex in the frame belonged to the GUI, so the base vertex was the obvious candidate - emulating it
+as a shift of the vertex buffer's address left the frame byte-identical, which says the base vertex was being
+applied, and that probe was reverted rather than kept.
 
 ## Risks
 

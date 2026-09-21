@@ -771,7 +771,7 @@ same run was on this machine's Apple Silicon rather than in CI, which is where e
 
 | Capability      | M3          | M4 smoke                          | M4 real frame | Real-device |
 | --------------- | ----------- | --------------------------------- | ------------- | ----------- |
-| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - a forced Metal 4 launch loads a world, presents 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's fullscreen passes run through it; **and the picture is measured now, which is how blocker 10 was found and fixed**: the no-pack frame on this path is a world again (mean BGRA `(68, 91, 77, 221)` against Metal 3's `(67, 86, 71, 254)`, terrain cells identical cell for cell), with the sky strip at the top of the frame still to be accounted for. **And blocker 17 is the half of this row that is FAIL: the game's own GUI, HUD and text are not drawn** - the GUI's pass is encoded into the presented target and its fragments are never produced, so a frame of this path is the world without Minecraft's interface | yes |
+| render          | yes         | yes - `canMakeAndSubmit` encodes and submits a render pass on a 64x64 target | yes - a forced Metal 4 launch loads a world, presents 9,000+ frames with no fault and no refusal at Metal 3's display-paced frame time, and a Vitrail fixture pack's fullscreen passes run through it; **and the picture is measured now, which is how blocker 10 was found and fixed**: the no-pack frame on this path is a world again (mean BGRA `(68, 91, 77, 221)` against Metal 3's `(67, 86, 71, 254)`, terrain cells identical cell for cell), with the sky strip at the top of the frame still to be accounted for. **And the half of this row that was FAIL is now fixed (blocker 17): the game's own GUI reads back identically to Metal 3's on the title screen** - mean BGRA `(40, 39, 33)` on both, with the button, logo and glyph samples equal to the byte - where the same reading was `(19, 17, 11)` with no GUI in it before the copy road's missing residency declaration was fixed. The cause was one buffer copy that declared neither resource, which made every vanilla staged vertex buffer move zeros | yes |
 | MRT             | yes         | **both halves** - four colour attachments in one pass, cleared per slot and read back slot by slot, plus one pipeline with four `[[color(n)]]` outputs drawing into all four and every slot read back at both corners (50 of 50); a slot the caller left unfilled is carried at its own index | **executes, correctness NOT MEASURED** - Vitrail's MRT fixture runs on this path (134 pipeline identities against Metal 3's 134, 19 logical passes a frame against 15, 30 presents, no fault), and **the fixture's four quadrants are now read**, on both arms: 25 s of settle after its chain can draw, 3168 and 3163 readbacks, and the presented frame is the slot table the fixture was written as - colour target 0 red, 1 green, 2 blue, 3 white, each in its own quadrant, not permuted, with the Metal 4 arm reproducing the Metal 3 arm's arrangement sample for sample (3008 flat frames against 3168 wobbling by the loading fade). The only difference between the arms' frames remains the alpha channel registered in the presentation row | yes |
 | clear           | yes         | yes - colour, colour+depth and depth-only clears each encoded as a pass of their own (a load action needs a pass on this API, where Metal 3 folds the clear into the next pass) | yes - 150 clear encoders a window and 150 of its 480 depth attachments are the clear passes' own; a clear is never a load, which the counter now shows (`depthLoadedMiB` did not move when those 150 were counted) | yes |
 | depth           | yes         | **all three halves** - a `Depth32Float` attachment cleared and read back, plus two triangles at known depths with a less-than state and writing enabled where the overlap reads the winner's colour *and* its depth, and a pixel outside the near triangle reads the far one's (50 of 50) | **M3 PASS / M4 PASS, measured in the picture**: two diagnostic fixtures read on both arms, one world and one anchor. `depthtex0-contract` paints green where the sampled depth *varies* between neighbours, cyan where it is valid but flat, magenta where it is outside 0..1 - the Metal 3 frame is 100152 green samples against 21380 cyan (the world's geometry is in the depth buffer) and the Metal 4 frame is **cyan at every one of its 119625 samples**. `depth-value-contract` paints which value instead, red for the clear, blue for zero and green for a real depth: Metal 3 reads 100152 green and 21380 red, Metal 4 reads **red for 121500 of 123575 samples**, the clear and nothing else. So the pack's `depthtex0` binding is right (a real depth texture, not an empty or unbound one) and the depth texture is cleared correctly, but **no geometry writes it on this path** - re-run after blocker 10's fix, which is what that reading was waiting for: the Metal 4 arm now reads 90719 green against 28831 cyan and no magenta - the same reading of the same fixture Metal 3 gives on its own run (100152 green, 21380 cyan, no magenta) | yes |
@@ -1210,57 +1210,71 @@ answered rather than only what is left.
    reporting its first pair would be the mistake this blocker exists to prevent. The record is in the Performance
    section above and in `docs/metal4-migration.md`.
 
-17. **Minecraft's own GUI, HUD and text are not drawn by this path at all, and the fault is above the fragment
-   stage.** Reported from play and confirmed here: on a forced Metal 4 session the world renders and **no** GUI
-   text is visible - not the title screen's buttons and logo, not the in-world HUD. This is `FAIL` for the
-   `render` and `presentation` rows below and it is the first blocker of this programme that stops the migration
-   rather than being recorded beside it: **the compute pipeline neutralisation that is next in the order is
-   paused behind this**, because a frame path that cannot draw Minecraft's own interface is not a base to add
-   features to.
+17. ~~**Minecraft's own GUI, HUD and text are not drawn by this path at all**~~ - **FIXED, and the mechanism is
+   named.** The whole interface was missing on Metal 4 while the world rendered, reported from play and confirmed
+   here. It was not the fragment stage, not blending, not depth, not culling, not the attachments and not a lost
+   attachment: it was **one buffer copy that declared neither of its resources resident**, and on this API an
+   undeclared resource makes a copy do nothing - silently, with no error and no fault.
 
-   What is **proven**, all of it measured in pack-free forced-Metal-4 sessions with the frame probe's counters,
-   the per-pass trace and the render-target readback:
+   **The evidence that bounded it**, all measured in pack-free forced-Metal-4 sessions with the per-pass trace, the
+   frame probe's counters and the render-target readback:
 
-   - **the GUI is encoded.** On the title screen the `GUI before blur` pass carries 7 indexed draws through
-     `gui_textured`, `gui_text` and `mojang_logo`, into colour texture `0x7ab6ba3700` with
-     `depth=true load=load store=store`, encoded before the present. In a world frame the same pipelines appear
-     in `GUI before blur` (with `vignette` and the vanilla `blur/0..5` post passes) and in `GUI after blur`;
-   - **the target is the presented one.** The present's own trace names the picture it samples, and it is the
-     texture the GUI's pass wrote (`presenting picture 0x7ab6ba3700 1708x960 into a drawable 0x...`), so this is
-     not a mis-picked attachment;
-   - **the pass's writes reach the screen.** Forcing that pass's colour attachment to be *cleared* to magenta
-     (a temporary diagnostic, since reverted) makes the whole window magenta, which proves the load action, the
-     store action, the encoder order and the present all work;
-   - **the GUI's fragments are never produced.** Five probes, one session each, changed not a single sampled
-     pixel: setting the front-facing winding to Clockwise, forcing every draw's cull mode to `None`, building
-     every pipeline with blending disabled, removing the alpha-0 `discard_fragment()` from every fragment
-     shader, and **forcing the GUI pipelines' fragment colour to magenta**. The last is decisive: magenta glyphs
-     and buttons would appear if the fragments existed at all, and the picture's mean and grid are byte-identical
-     without them;
-   - **the vertex stage's state is right on paper.** `pipeline/gui_textured`'s plan is
-     `buffers(v=18,f=2) textures(v=0,f=3) samplers(v=2,f=3) vertexLayouts=16 from slot 2
-     names=Projection=b0,DynamicTransforms=b1,Sampler0=t2`; the vertex buffer is filled at table slot 2 with
-     `address 0x10002e78000 stride 24 slice offset 0 length 262144`; the MSL declares
-     `Position [[attribute(0)]] UV0 [[attribute(1)]] Color [[attribute(2)]]` with `Projection [[buffer(0)]]` and
-     `DynamicTransforms [[buffer(1)]]`; and the uniform *contents* read back correct - the GUI's orthographic
-     projection and an identity with `z=-11000` at byte offset 256 of the dynamic-uniform ring, against the
-     panorama's rotation at offset 0.
+   - **the GUI is encoded.** The title screen's `GUI before blur` pass carries 7 indexed draws through
+     `gui_textured`, `gui_text`, `gui` and `mojang_logo` into colour texture `0x7ab6ba3700` with
+     `depth=true load=load store=store`, encoded before the present, and a world frame has the same pipelines in
+     `GUI before blur` and `GUI after blur`;
+   - **the target is the presented one** - the present's own trace names the picture it samples and it is that
+     texture;
+   - **the pass's writes reach the screen** - forcing that pass's colour attachment to be *cleared* to magenta made
+     the whole window magenta, which proves the load action, the store action, the encoder order and the present;
+   - **the GUI's fragments were never produced.** Five probes, one session each, changed not a single sampled
+     pixel: the front-facing winding set to Clockwise, every draw's cull mode forced to `None`, every pipeline
+     built with blending disabled, the alpha-0 `discard_fragment()` removed from every fragment shader, and **the
+     GUI pipelines' fragment colour forced to magenta**. The last is decisive: magenta buttons and glyphs would
+     appear if the fragments existed at all;
+   - **the vertex stage's state was right on paper** - the plan, the vertex fill (table slot 2, `stride 24`,
+     `slice offset 0`), the MSL's attribute and buffer indices, and the uniform *contents* read back correct (the
+     GUI's orthographic projection and an identity with `z=-11000` at byte offset 256 of the dynamic-uniform ring);
+   - **and the vertex offset was not it**: emulating the draw's base vertex as a shift of the vertex buffer's
+     address - which selects the same vertices if the base vertex is honoured - left the frame byte-identical, so
+     the base vertex was being applied. That probe was reverted.
 
-   What is **NOT LOCALISED** is why the same shape rasterizes for `pipeline/panorama` and not for the GUI's
-   pipelines. The trace narrows it: of the five pipelines a title-screen frame binds a vertex buffer through,
-   only `panorama` rasterizes, and the GUI's formats differ from it in having a second and third vertex element
-   (`POSITION_COLOR`, `POSITION_TEX_COLOR` against `POSITION`) and a 16- or 24-byte stride against 12. The next
-   experiments, in the order the evidence suggests:
+   **What the vertex buffer being unreadable from the CPU said.** Reading back what the bound buffer holds is what
+   a draw's correctness finally rests on, and that reading came back `unreadable:IllegalStateException`: the GUI's
+   vertex buffer is **not CPU-visible**, so the game cannot be filling it directly and must be filling it through
+   this backend's copy road. The vanilla source says exactly that -
+   `net.minecraft.client.renderer.StagedVertexBuffer` maps a CPU-visible **staging** buffer, writes the frame's
+   vertices into it, and moves them into the real vertex buffer with
+   `commandEncoder.copyToBuffer(staging.slice(...), vertexBuffer.slice(...))`, then draws each range with a
+   **base vertex** into the moved block. That is one call.
+
+   **The fault.** `Metal4FrameEncoder.copyToBuffer` was the one copy road in the class that called
+   `useResource` on neither end, where `writeToBuffer`, `writeToTexture`, `copyBufferToTexture`,
+   `copyTextureToTexture` and `copyTextureToBuffer` all declare both. The Metal 4 header asks a copy's resources to
+   be marked in an `MTLResidencySet`; an undeclared one makes the copy do nothing. So the GUI's, the particles' and
+   the entities' vertices arrived as **zeros**, every triangle of them collapsed to a point, and the draws were
+   encoded, bound, stated - and invisible. The world rendered because Sodium fills its own buffers and because
+   every other upload road declared what it moved. **The lesson is the header's own sentence** - every road that
+   moves bytes declares both of its ends - and it is now a contract rather than a memory.
+
+   **The fix, and the reading that proves it.** `copyToBuffer` declares both ends. Forced Metal 4, title screen,
+   one session each, the presented picture's own readback:
 
    ```text
-   1  diff the MTLVertexDescriptor the two generations build for pipeline/gui_textured and pipeline/panorama -
-      the one object of the state list this round did not compare, dumped from the descriptor builder
-   2  a layered fixture through the engine's own RenderPipeline objects: a solid POSITION_COLOR quad, the same
-      blended, a POSITION_TEX_COLOR quad, then glyphs - reading fixed pixels before the present, so "GUI never
-      wrote" and "wrote and the present lost it" cannot be the same reading
-   3  residency: whether the GUI's vertex buffer - a vanilla ring buffer, named for the first time in the frame
-      that draws it - is declared before the frame's residency set is committed
+                                       mean BGRA       the GUI's own samples in the 5x5 grid
+   before   metal4                     (19, 17, 11)    none - the panorama only
+   after    metal4                     (40, 39, 33)    ff3f3f3f, ff9ea2ad, ff000000
+            metal3 (the reference)     (40, 39, 33)    ff3f3f3f, ff9ea2ad, ff000000
    ```
+
+   The two generations now read **identically** on that screen, sample for sample, with only the animated
+   panorama's phase differing in the background - and `ff3f3f3f` is the button sprite's grey, `ff9ea2ad` the logo's
+   light grey and `ff000000` the glyph outlines and the dim overlay around them. An in-world session with the same
+   fix renders its world with no fault, no refusal and no restart. **What is still NOT MEASURED**: an in-world
+   *text* reading taken on its own (the staged world's player is in spectator mode, which hides the HUD, and this
+   machine refuses to press keys) - the in-world HUD and its text are drawn by the same `GuiRenderer` through the
+   same `StagedVertexBuffer` road this blocker was about, and the title screen's own glyphs are read back
+   identical to Metal 3's, but the in-world frame has not been read for them separately.
 
 ## Metal 4 full-frame implementation complete?
 
@@ -1292,17 +1306,18 @@ the measurement. The state of this path is therefore read as its parts rather th
 
 ```text
 Metal4 no-pack world geometry:      PASS
-Metal4 loading-screen GUI subset:   observed working previously; not re-measured in this round
-Metal4 in-world GUI/HUD:            FAIL   (blocker 17)
-Metal4 text/glyph rendering:        FAIL   (the same blocker: text is drawn through the same GUI pass)
-Metal4 full-frame correctness:      NOT READY
+Metal4 title-screen GUI + text:     PASS   (blocker 17 fixed; reads back identical to Metal 3)
+Metal4 in-world GUI/HUD:            PASS by construction (same GuiRenderer, same StagedVertexBuffer road);
+                                    an in-world text reading of its own is NOT MEASURED
+Metal4 text/glyph rendering:        PASS on the title screen; the same NOT MEASURED in a world
+Metal4 full-frame correctness:      NOT READY - the GUI was one of its blockers, not the last
 ```
 
-**The next item in the programme's own order - the compute pipeline neutralisation - is paused behind blocker 17.**
-That is a decision and not a preference: compute, MetalFX and the rest are additions to a frame path, and a frame
-path that cannot draw Minecraft's own interface is not a base to add them to. The GUI correctness milestone is
-narrow - prove where the GUI's fragments stop - and the moment it is closed the programme resumes where it
-stopped.
+**The pause on the compute pipeline neutralisation is lifted.** It was paused because blocker 17 was a correctness
+failure that made every later comparison meaningless; with the road fixed and the reading equal to the reference
+generation's, the programme resumes where it stopped. **What blocker 17 leaves behind is a lesson that is now a
+contract**: every road that moves bytes declares both of its ends resident, because on this API an undeclared
+resource is a copy that does nothing and says nothing.
 
 What has been done, in the plan's order: the Metal 3 bookkeeping, the cold-probe harness, the Metal 4 provider
 (queue, state, encoder, clears, copies, fence, indexed and indexed-indirect draws, residency, presentation in the
