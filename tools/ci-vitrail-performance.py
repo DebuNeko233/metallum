@@ -285,7 +285,16 @@ for path, why in (
 if "particle minecraft:flame" not in (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text():
     raise SystemExit("vitrail performance harness: the tick function emits no particle, so the fixture stages "
                      "nothing into the frame")
-if "execute at @a" not in (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text():
+tick = (fixture / "data" / "showcase" / "function" / "tick.mcfunction").read_text()
+if " 0 0 0 0 1" not in tick:
+    raise SystemExit("vitrail performance harness: the fixture emits its particles with a spread or a speed, so "
+                     "the field moves between two launches and a picture comparison of the scene reads the "
+                     "animation rather than the renderer - measured, two arms of the reference differed in 68% of "
+                     "pixels with a moving field")
+if "^0 ^3" not in tick:
+    raise SystemExit("vitrail performance harness: the fixture's particles are not placed in front of the "
+                     "camera, so the grid lands wherever the world's spawn is and not in the frame")
+if "execute at @a" not in tick:
     raise SystemExit("vitrail performance harness: the particles are not emitted at the camera, so they would "
                      "land wherever the world's spawn is and not in the frame")
 
