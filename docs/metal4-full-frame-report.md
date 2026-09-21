@@ -37,13 +37,18 @@ cost a probe:     about 220-270 ms of probing in a ~305 ms process in this round
                   about 9 ms for the second and later probe in one process
                   against the client's ~70 s per arm, which is what made this measurable
 
-cold runs:        629 processes, 2546 probes (378 processes and 1619 probes through the compute round, then the
-                  dependency round's two censuses and a six-process hunt, then this round's census and its
-                  four-process hunt); capability failures: 4, every one of them at ATTEMPT 1 of its process
-warm probes:      1450 in thirty-eight processes  field failures: 18 all-time, all in one process of the
+cold runs:        789 processes, 2786 probes (378 processes and 1619 probes through the compute round, then the
+                  dependency round's two censuses and a six-process hunt, then a census and its four-process hunt,
+                  then the later rounds' runs); capability failures: 4 all-time, every one of them at ATTEMPT 1 of
+                  its process
+                  **and this round's four runs added 160 processes and 240 probes with no capability failure at
+                  all**: 30 + 50 + 20 processes (the last with five probes each) + 60, of which **160 probes were
+                  first-in-process probes, every one correct** - which is section 14's Path B, not a resolution
+warm probes:      1510 in forty-one processes  field failures: 18 all-time, all in one process of the
                   dependency round and all of them the storage-image smoke - whose shape was the fault: **317
-                  probes this round are green**, after the smoke was moved to a table per dispatch and then to an
-                  encoder per dispatch
+                  probes in the round that closed that shape are green**, after the smoke was moved to a table per
+                  dispatch and then to an encoder per dispatch. This round's three warm runs added 60 repeats and
+                  no failure
 this round:       **write-after-read, the last of section 61's three directions**: a pass samples a texture
                   through a table and a later dispatch writes that same texture, read back as two facts - what the
                   reader saw before the write, and that the write landed - with the ordering failure named as
