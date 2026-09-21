@@ -353,7 +353,7 @@ echo "Preparing the dev instance at $game_dir"
 # `quickPlaySingleplayer` in its own command line, and `pgrep -f` matches any command line. So the process name
 # is checked as well, and `pkill` below uses the same list rather than a pattern that could name a shell.
 client_pids() {
-	local world="$1" pid
+	local world="${1:-}" pid
 	for pid in $(pgrep -f "quickPlaySingleplayer${world:+ $world}" 2>/dev/null || true); do
 		case "$(ps -o comm= -p "$pid" 2>/dev/null || true)" in
 			*java*) echo "$pid" ;;
