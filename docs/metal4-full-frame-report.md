@@ -2795,8 +2795,12 @@ and the compute/storage fixture (both acceptance colours in the presented frame 
 equal). **And the alpha is localised**: both halves of the readback already show the mixed alpha and both arms
 read the same pattern, so it is decided *before* the present draw - by the pack's write into the game's target, by
 that target's own format, or by the pass that produced it - and is not a Metal 4 execution difference. What
-remains open is narrower than it was: the sky strip at the top of the no-pack frame is still unaccounted for, and
-no pack's *biased* geometry has been exercised (`depthBias=0` in every window measured). The counters, the client's own
+remains open is narrow, and neither item is a generation difference: the sky strip is **closed** by
+`run/sky-strip` (a no-pack session with the readback on both arms, 300-frame windows, 3200x1800) - the top rows of
+the drawable and of the picture are byte-identical between the generations, `000c0101 ff110303 ff1a0706 ...` on
+both, with mean BGRA (33, 2, 2, 100) for the drawable and (2, 2, 33, 100) for the picture, so the band is the same
+dark partly-transparent sky and the two halves differ only in the formatter's channel order - and what is left is
+that no pack's *biased* geometry has been exercised (`depthBias=0` in every window measured). The counters, the client's own
 chain lines, the readbacks and the absence of a fault are what the frame is known by.
 
 **And the question "does it look right" now has a first answer, from a session in which the game's own interface
@@ -2866,8 +2870,10 @@ pipeline rather than a flag. **And the pictures that have been read agree, now t
 10 is fixed**: the fixtures whose output the *pack* writes are right on both arms (the acceptance colour, the four
 MRT attachments, the orientation), the frames the *game* draws are right too - the no-pack Metal 4 frame is a world
 whose sampled terrain cells are the Metal 3 arm's own, and the depth fixture reads green at the geometry's edges on
-both arms instead of cyan everywhere - and what is left is registered rather than claimed: the sky strip at the top
-of the frame and the alpha channel, both waiting on a copy of the target at a pass boundary. The Definition of
+both arms instead of cyan everywhere - and what was left is now measured rather than registered: **the sky strip
+and the alpha channel are both byte-identical between the generations** (the strip in `run/sky-strip`'s two
+readback halves, the alpha in the history and compute/storage fixtures' presented frames), so neither is a
+generation difference and both are recorded as things the pack and the target do. The Definition of
 Done's "no-pack frame passes" item is therefore measured rather than failing, and the smoke-pack staircase - which
 section 67 stopped at the first M3 PASS / M4 FAIL - can resume from where it stopped. The remaining blockers above
 are the list; AUTO stays off this path on the intermittent capability probe, and the migration's own success
