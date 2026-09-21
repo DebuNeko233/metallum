@@ -5284,3 +5284,30 @@ next measurement task, and it is a change to the harness and the probe rather th
 **And one genuine scene difference survives it.** In the same session one arm's window drew 157 draws a frame
 where the other two drew 326, and its draws fell from 223 to 109 across the window - a world-content difference
 that normalisation does not remove and that keeps the rung's scene guard necessary after the window is fixed.
+
+### The obvious normalisation, tried and refuted
+
+The content drift's mechanism - a window of a fixed *frame* count against a client that does six extra passes on
+every 20 Hz tick - suggests an obvious remedy: compare the content counters **per second of window** instead of
+per window. It was implemented in the comparer and it is wrong.
+
+`run/drift-nopack`, the same session that showed the tick:
+
+```text
+generation  arm   windowMs   loadedMiB total   loadedMiB a second
+metal3      m3a    1112.11       26836.1            24131
+metal3      m3b    1225.79       26900.0            21945   (-9.1% against m3a)
+metal3      m3c    1254.51       26900.0            21443   (-11.1% against m3a)
+```
+
+The reference's three arms agree to 0.24% in their totals - which is the correct answer, because they drew the
+same 600-frame window of the same scene - and the rate comparison makes them "drift" by 9-11%, because Metal 3's
+own frame rate moved 13% between them (1112.1, 1225.8 and 1254.5 ms windows). The client's content is therefore
+**neither per window nor per second**: it is per *frame* plus per *game tick*, and a 600-frame window of a
+different frame rate contains a different number of ticks. Only a window pinned by ticks - or a reported tick
+count to normalise by - makes the arms comparable, which means the probe must learn to say how many game ticks
+its window covered, or the harness must close it on a tick boundary.
+
+The change was reverted rather than shipped: a guard that flags the reference is worse than one that flags the
+path, and section 63 forbids writing "probably better" over a measurement that says otherwise. The next step is
+the tick count, and it is a harness and probe change rather than a Metal4 one.

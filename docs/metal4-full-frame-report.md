@@ -1648,6 +1648,16 @@ fixture channel that does not need one).
   frame. **The remedy is a window definition and not a Metal4 change**: pin the window by game ticks or by wall
   time, or report the content counters per second and per tick beside the per-frame ones, before the rung is
   re-run.
+- **And the remedy was tried and REFUTED, which narrows the next step.** Comparing the content counters as
+  *rates per second of window* instead of per window was the obvious normalisation, and it is wrong: on
+  `run/drift-nopack` it makes **the reference itself drift** - Metal 3's arms read `loadedMiB` 24131, 21945 and
+  21443 MiB a second (-9.1% and -11.1%) where their window totals are 26836.1, 26900.0 and 26900.0 - because
+  Metal 3's own frame rate moved 13% between those arms (1112.1, 1225.8 and 1254.5 ms windows) while its per
+  *frame* work stayed the same. So the client's content is neither per window nor per second: it is **per frame
+  plus per game tick**, and only a window pinned by *ticks* (or a reported tick count to normalise by) makes the
+  arms comparable. That is a harness and probe change - measure the window's game ticks, or close it on a tick
+  boundary - and it is the next measurement task; the rate comparison was reverted rather than shipped, because a
+  guard that flags the reference is worse than one that flags the path.
 - **And a genuine scene difference sits beside it.** In the same session one M4 arm's window drew 157 draws a
   frame where the other two drew 326, falling from 223 to 109 across the window - a world-content difference that
   no normalisation removes, and the reason the rung still needs a scene guard after the window is fixed.
