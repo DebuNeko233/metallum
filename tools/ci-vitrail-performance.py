@@ -252,7 +252,10 @@ if 'if [[ "$compare_status" == 4 || "${picture_void:-0}" == 1 ]]; then' not in l
 # ---------------------------------------------------------------------------
 for needle, why in (
     ("--vanilla-clouds) vanilla_clouds=", "the harness cannot put the game's own clouds in a frame, so a "
-     "measurement of vanilla's rendering has to edit the instance by hand"),
+     "measurement of them needs a keyboard"),
+    ('VITRAIL_PROFILE_CLOUD_MODE', "the harness's cloud mode never reaches the options writer, so `fast` "
+     "would be written as the boolean `true` and the run would measure the fancy cloud while saying it "
+     "measured the flat one"),
     ('"renderClouds": f', "the profile still writes one fixed answer for renderClouds, so the "
      "clouds switch cannot reach the game's options"),
     ('VITRAIL_PROFILE_CLOUDS', "the clouds switch never reaches the profile writer"),

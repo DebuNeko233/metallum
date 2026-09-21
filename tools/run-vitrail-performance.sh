@@ -119,7 +119,10 @@ Usage: run-vitrail-performance.sh --pack ZIP --world SAVE_DIR [options]
                          a run whose result is not a claim.
   --out DIR              where the collected logs and pictures go.
   --keep                 leave the collected dev instance in place instead of clearing the marker.
-  --vanilla-clouds on|off  the game's own clouds in the frame (default off, because a pack draws its own).
+  --vanilla-clouds on|fast|off
+                         the game's own clouds in the frame (default off, because a pack draws its own).
+                         `on` is the fancy cloud and `fast` is the flat one; both are the game's own
+                         setting, written as the word it parses (`options.renderClouds`).
                          A measurement of vanilla's rendering needs them on; a pack comparison does not.
   --weather clear|rain|thunder
                          what the world is left holding, with the weather cycle off either way. Rain is a
@@ -243,15 +246,20 @@ fi
 game_dir="$repo_root/run"
 marker_dir="$game_dir/metallum"
 marker="$marker_dir/probe-frames"
-if [[ "$vanilla_clouds" != on && "$vanilla_clouds" != off ]]; then
-	echo "--vanilla-clouds wants on or off" >&2
+if [[ "$vanilla_clouds" != on && "$vanilla_clouds" != off && "$vanilla_clouds" != fast ]]; then
+	echo "--vanilla-clouds wants on, fast or off" >&2
 	exit 2
 fi
 if [[ "$weather" != clear && "$weather" != rain && "$weather" != thunder ]]; then
 	echo "--weather wants clear, rain or thunder" >&2
 	exit 2
 fi
-export VITRAIL_PROFILE_CLOUDS="$([[ "$vanilla_clouds" == on ]] && echo true || echo false)"
+# The game's own cloud setting is a three-way choice even though its key is a boolean: `options.renderClouds`
+# takes the option's own names (`off`, `fast`, `fancy`) and falls back to a boolean, so `true` is FANCY and the
+# fast mode is the word itself. Written as the word, because "fast" parsed as an unknown boolean would have
+# come up FANCY and read as a mode that had been measured when it had not.
+export VITRAIL_PROFILE_CLOUDS="$([[ "$vanilla_clouds" == off ]] && echo false || echo true)"
+export VITRAIL_PROFILE_CLOUD_MODE="$([[ "$vanilla_clouds" == on ]] && echo true || echo "$vanilla_clouds")"
 export VITRAIL_PROFILE_FULLSCREEN="$fullscreen"
 export VITRAIL_PROFILE_FULLSCREEN_SIZE="$fullscreen_size"
 saves_dir="$game_dir/saves"
@@ -405,7 +413,9 @@ if "x" in size:
     override_width, override_height = width.strip(), height.strip()
 else:
     override_width, override_height = "0", "0"
-clouds = "true" if os.environ.get("VITRAIL_PROFILE_CLOUDS") == "true" else "false"
+clouds = os.environ.get("VITRAIL_PROFILE_CLOUD_MODE", "false")
+if os.environ.get("VITRAIL_PROFILE_CLOUDS") != "true":
+    clouds = "false"
 profile = {"maxFps": "260", "enableVsync": "false", "fullscreen": fullscreen,
            "renderClouds": f'"{clouds}"', "preferredGraphicsBackend": '"default"',
            "startedCleanly": "true",
