@@ -1458,7 +1458,12 @@ answered rather than only what is left.
 
 16. **The Metal 4 frame's own cost varies between two arms of one session by 47.7%, which is wider than any
    effect the comparison is meant to resolve, so section 93's "Metal 4 is not slower than Metal 3" is NOT
-   MEASURED.** Session `run/perf-ab4` (exit 0, `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25
+   MEASURED.** *(Superseded in part, and kept because the chain that got there is the record: `run/m4-ab7` - a
+   session whose GPU trace reads device utilization 100% in all four arms, and whose arms are interleaved
+   M3/M4/M3/M4 - measured this path at 23.85 and 27.45 ms a frame against the reference's 20.31 and 20.70, so the
+   comparison has now been made and its answer is that this path is **16-35% slower**, with the spread below
+   narrowed from 47.7% to 15%. See the Performance section and blocker 16's own last paragraphs.)*
+   Session `run/perf-ab4` (exit 0, `m3a, m4a, m3b, m4b`, `--frames 600 --settle 25
    --expect-target 3200x1800`, Complementary on the staged nether `PerfWorld`) measured Metal 3 twice at
    `wallP50 21.17` and `21.29` - **0.6% apart**, the harness answering the same number - and Metal 4 twice at
    `wallP50 16.93` and `25.01` - **47.7% apart**. The harness's own summary therefore reads `m4a -8.1%`,
@@ -1596,9 +1601,14 @@ answered rather than only what is left.
 
    That is what the section 123 gate has to be built on, and it is why the gate is not met yet: a P50 taken on
    this path on this machine is a reading of the machine as much as of the path, so the number §93 wants needs
-   either a quiet machine or a pacing site of its own. **NOT MEASURED** remains the honest verdict for the
-   Metal 3 against Metal 4 performance comparison, and the blocker is now narrowed to that - a pacing and
-   machine-state question rather than an unexplained generation difference. The content guard this round added is built
+   either a quiet machine or a pacing site of its own. At the time this paragraph was written **NOT MEASURED** was
+   the honest verdict for the Metal 3 against Metal 4 performance comparison, and the blocker was narrowed to that
+   - a pacing and machine-state question rather than an unexplained generation difference. **It has since been
+   measured, and by the reading rather than by argument** (the Performance section's interleaved M3/M4/M3/M4
+   session, `run/m4-ab7`, with the GPU at device utilization 100% in all four arms): this path asks the GPU for
+   **16-35% more time a frame** - 23.85 and 27.45 ms against 20.31 and 20.70 - which is outside section 5's
+   `<= ~3%` acceptance, so section 97 keeps this path forced and experimental and the gate stays unmet for a
+   second, sharper reason: not "unmeasured" but **measured and beyond the threshold**. The content guard this round added is built
    on the three counters that mean the same thing on both generations and grow with what the frame drew -
    `loadedMiB`, `storedMiB`, `depthAttachments` - and `run/perf-ab6` passes it (commit `6804310`). Metal 3's wall time did not move for its own 2% content drift because
    its frames are paced by its **submission index**, not by its work (its `submitWindow` wait is called twice a
