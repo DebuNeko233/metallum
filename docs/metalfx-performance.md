@@ -144,14 +144,29 @@ So the write lands **between the harness's write and the next client's read** - 
 while the first cell's client is dying and the second is starting - and the second client never learns the scale
 it was given. A separate run with nothing else on the machine wrote 75, drew at 75 per cent and left the file
 alone for the forty-five seconds after its client exited, which is why this is a race and not a rule.
-**The writer is still NOT IDENTIFIED**, and the two candidates are both in the engine: the Sodium video-settings
-binding applying the option's default (`ConfigEntry.renderScale` builds the option with an empty storage handler,
-so its value is the default 100 until a player moves the slider - and the binding is the only writer of that key
-in the tree), and the dying client's world-leave road. Pinning it needs one instrument: a line in
-`PackChoice.renderScale(Path, int)` naming its caller, which is the next step below. It is worth pinning because
-the same road can move a **player's** stored scale, and the only reason this round caught it is that the harness
-fingerprints the file. That the guard worked is the instrument's credit; that the write happened at all is a
-defect left open, and it is recorded as **BLOCKED - writer not identified**, not as a MetalFX result.
+**And the writer is named, then fixed.** A caller line in `PackChoice.renderScale(Path, int)` - the only writer
+of that key in the tree - caught it in the next pair that reproduced:
+
+```
+Vitrail render scale written: 100% (was 67%), asked by
+  dev.vitrail.sodium.ConfigEntry.lambda$renderScale$1:252
+```
+
+which is the Sodium slider's own binding, applied with the option's **file-format** default before the world
+loaded. `setStorageHandler(() -> {})` leaves the option holding its default, Sodium applies that through the
+setter, and the setter writes the player's `pack.txt`. For a measurement arm it is a spoiled cell; **for a player
+it is their stored setting moving on its own**, which is what made this worth a fix rather than a note.
+
+The three file-backed options now take their default from what the engine already holds
+(`PackChoice.renderScale()`, `PackChoice.shadowMapScale()`, and for the shadow distance the live value its own
+getter reads), so applying a default writes back what was already there. Vitrail's
+`tests/test_metal_selection_and_scale.py` pins the three and refuses the old ones, with a mutation that puts one
+back failing it. The reproducing pair (75 then 67 per cent on MakeUp) now keeps both scales -
+`The world renders at 1440x900 ... render scale 75%` and `... 1286x804 ... render scale 67%` - where before the
+second cell was refused and drew native. **The binding did not fire in that after-pair**, so the pair verifies
+that the ladder no longer breaks rather than re-triggering the write; the mechanism proof is the caller line
+above, taken before the fix. That the guard worked is the harness's credit; that the write happened at all was
+the defect, and it is **KEPT - fixed**.
 
 ## Decision
 
@@ -170,9 +185,11 @@ one has a writer moving the file under it.
 
 ## Residual and what is NOT MEASURED
 
-- **The other writer of the pack selection is not identified** (above). Until it is, a scale ladder taken
-  back-to-back can lose a cell, and the harness's refusal is the only reason this round did not publish a native
-  frame as a 0.79x "regression".
+- **The pack-selection writer is identified and fixed** (above): the Sodium binding applied the option's
+  file-format default over the player's stored scale. The fix is pinned by a contract check with a mutation, and
+  the reproducing pair no longer loses its second cell. What is *not* re-measured is how often the binding fires
+  - the after-pair did not trigger it - so the fix's completeness rests on the mechanism (a default that equals
+  the stored value cannot overwrite it) rather than on a repeated reproduction.
 - **The fidelity numbers are a difference from native, not a quality verdict**, and two MakeUp cells are not a
   reading at all. A real quality fixture wants the pack's history held still and, ideally, a reference-quality
   metric (a per-pixel error against a supersampled native frame) rather than a comparison between two temporal
@@ -186,11 +203,11 @@ one has a writer moving the file under it.
 
 ## Next
 
-1. **Pin the pack-selection writer** - one log line in `PackChoice.renderScale(Path, int)` naming its caller, run
-   over a back-to-back pair - because a scale that moves itself is a correctness problem for the player and a
-   measurement problem for this track. The timing above says the write lands in the two seconds between one
-   client's exit and the next client's read, which is exactly the window a caller-naming line would close.
+1. **Re-run the two lost ladder cells** (67 per cent on MakeUp and Photon) with the fix in place, so the curve
+   has all seven points a pack - the cells are two sessions' work and the curve above is complete without them
+   only because the standalone retries were taken.
 2. **E2's second half**: the same ladder with the shadow map scale at 50 per cent and 100 per cent on
-   Complementary (the pack with shadows), since the two scales move different halves of the frame.
+   Complementary (the pack with shadows), since the two scales move different halves of the frame - and now that
+   the shadow map scale's default is fixed too, a cell that sets it will keep it.
 3. **C1's structural census** next, which the plan puts after the scale ladder, so the GPU work the ladder
    removes can be attributed to passes rather than to a total.
