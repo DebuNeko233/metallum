@@ -5741,3 +5741,31 @@ So section 93's first rung now has two measured sessions: the still-life scene i
 at P95). They differ in which statistic they rest on and not in their direction, and section 30's rule - that a
 Metal 4 comparison may not rest on the P50 of a display-paced session - is what the second session was staged to
 honour.
+
+### The comparison table, re-read on the statistic the protocol allows
+
+Section 30's rule - that a Metal 4 comparison may not rest on the P50 of a display-paced session - was written
+before there was a session to test it on, and the rungs now test it: **this path's mean repeats to 0.0-0.16%
+between the arms of one generation while its P50 moves 9.5-22% between the same arms.** The still-life no-pack
+rung is the cleanest case: three arms read 12.48 ms a frame in the mean, identical to the second decimal, while
+their medians read 13.56, 14.81 and 14.85. So the ladder's verdicts are re-taken on the mean (which the comparer
+already printed as "N ms a frame, +X% against m3a") and the P95 tail, with the P50 kept as the record:
+
+```text
+rung                        M3 mean   M4 mean   verdict on the mean         M4 P95    verdict at P95
+no-pack (ticks-nopack)        8.32     12.48    1.500x slower               15.94    1.800x slower
+no-pack pinned (protocol)     8.32     12.47    1.499x slower               15.71    1.822x slower
+Complementary                 20.88    18.95    0.908x, 9.2% faster         28.84    1.054x slower
+Photon                        8.32     12.47    1.499x slower               15.88    1.810x slower
+```
+
+**What changes and what does not.** The direction does not: this path is still slower on two of the three
+rungs. What changes is the size and the shape of the claim - on the work-light scenes the cost is **exactly the
+two-handover quantum (1.50x)**, not the 1.63-1.78x a median reading gave, and on the work-bound Complementary
+scene it is **9.2% faster in the mean (not 19-21%)** with a 5.4% wider P95. And a fixed-frame window carries one
+structural caveat across generations: the slower generation covers more client ticks in the same 600 frames
+(149-150 against 99-100 on the pinned rung), and while the six passes a tick adds are measured cheap - the tick
+frame's submission interval is 4.215 against the steady frame's 4.272 ms - its *wall* is 8.70-9.62 against
+13.42-13.76 ms, which is the pacing mixture and not content. Priced at that delta the windows differ 8.3
+percentage points of tick frames, worth about 0.37 ms on a 12.47 ms mean, so a tick-matched reading would be
+about 1.54x - stated as a **HYPOTHESIS**, with the inputs measured.

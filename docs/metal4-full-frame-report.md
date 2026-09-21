@@ -1659,13 +1659,36 @@ earlier (330 pipeline identities on both arms, no fault of any kind) and a searc
 copy of it - only `ComplementaryReimagined_r5.9.1` and `photon_v1.3b` remain. So its *performance* rung is
 **NOT MEASURED, artifact absent**, and the ladder continues with the rungs whose packs exist.
 
-| workload | M3 wall P50 | M3 P95 | M4 wall P50 | M4 P95 | M4 distribution | verdict |
-| -------- | ----------- | ------ | ----------- | ------ | --------------- | ------- |
-| no-pack (`run/ticks-nopack`) | 8.33 (8.33, 8.33) | 8.83-8.88 | 13.56-14.85 | 15.94-15.95 | upper mode stable to 0.06%, P50 moves with the mixture | **MEASURED: this path 1.63-1.78x slower**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
-| no-pack, content-pinned (`run/protocol-nopack`) | 8.33 (8.33, 8.33, 8.33) | 8.57-8.66 | 10.80-12.92 | 15.68-15.73 | mean repeats to 0.16% and the upper mode to 0.3%; **P50 moves 20%** between the same three arms | **MEASURED: this path 1.50x slower in the mean and 1.82x at P95**, on a window whose content counters are identical to the digit across arms (its own commit interval is *lower*: 4.28-4.33 against 7.62-7.65); the picture column is not usable here (the fixture's particles are stochastic) |
+| workload | M3 mean | M4 mean | M3 P95 | M4 P95 | M4 P50, for the record | verdict |
+| -------- | ------- | ------- | ------ | ------ | ---------------------- | ------- |
+| no-pack (`run/ticks-nopack`) | 8.32 (8.32, 8.32, 8.32) | 12.48 (12.48, 12.48, 12.48) | 8.83-8.88 | 15.94-15.95 | 13.56, 14.81, 14.85 - 9.5% across arms | **MEASURED: this path 1.50x slower in the mean**, mechanism the handover quantum (its own commit interval is *lower*: 2.67-2.69 against 7.60-7.61) |
+| no-pack, content-pinned (`run/protocol-nopack`) | 8.32 (8.32, 8.32, 8.32) | 12.47 (12.46, 12.47, 12.48) - **0.16% apart** | 8.57-8.66 | 15.68-15.73 | 10.80, 10.91, 12.92 - **20% across arms** | **MEASURED: this path 1.50x slower in the mean and 1.82x at P95**, on windows whose content counters are identical to the digit across arms; the picture column is not usable here (the fixture's particles are stochastic) |
 | MakeUp UltraFast | - | - | - | - | - | **NOT MEASURED: the pack archive is not on this machine** |
-| Complementary (`run/rung3-complementary`) | 20.65, 21.12 | 27.19, 27.51 | 16.74, 16.75 | 28.75, 28.93 | P50 repeats to 0.06%, P95 is 5% wider than the reference's | **MEASURED: this path 19-21% faster at the median and 5% slower at P95** |
-| Photon (`run/rung4-photon`) | 8.33, 8.34 | 8.79, 8.75 | 10.23, 12.52 | 15.92, 15.83 | P95 repeats to 0.6% and the commit interval to 0.6%; P50 moves 22% with the mixture | **MEASURED: this path 23-50% slower at the median and 81% slower at P95**, with its own commit interval *equal* to the reference's (6.98-7.02 against 7.02-7.03) |
+| Complementary (`run/rung3-complementary`) | 20.88 (20.86, 20.89) | 18.95 (18.95, 18.94) | 27.19, 27.51 | 28.75, 28.93 | 16.74, 16.75 - 0.06% apart | **MEASURED: this path 9.2% faster in the mean and 5.4% slower at P95** - the earlier median reading of 19-21% faster was a P50 of the mixture, which this protocol no longer carries as a verdict |
+| Photon (`run/rung4-photon`) | 8.32 (8.32, 8.32) | 12.47 (12.47, 12.47) | 8.79, 8.75 | 15.92, 15.83 | 10.23, 12.52 - **22% across arms** | **MEASURED: this path 1.50x slower in the mean and 1.81x at P95** - the earlier median reading of 23-50% slower was the same mixture |
+
+
+**Why the mean is the column the verdict rests on, and the P50 is kept only as a record.** The protocol's own
+rule (sections 30-32) says a Metal 4 comparison may not rest on the P50 of a display-paced session, and these
+sessions measure why: this path's **mean repeats to 0.0-0.16% between the arms of one generation** (12.48 three
+times on the still-life rung, 12.46/12.47/12.48 on the content-pinned one) while its **P50 moves 9.5% and 20%
+between the same arms** - and the Complementary and Photon rungs split the same way. So the verdict column now
+reads the mean the comparer already prints ("12.46 ms a frame, +49.8% against m3a") together with the P95 tail,
+and the P50 column is kept as the record of what a medians-only reading said: the same sessions read as
+"1.63-1.78x slower", "19-21% faster" and "23-50% slower" before the statistic was fixed, and those readings
+were the mixture's, not the path's. The narrative paragraphs below and the migration record keep those
+original median readings as the chronology they are; **the table's verdict column is the corrected one.**
+
+**One structural caveat the fixed-frame window carries.** A slower generation covers more client ticks inside a
+600-frame window, so the two generations' windows do not hold the same mix: on the content-pinned rung this
+path's window covers 149-150 ticks against the reference's 99-100. The six passes a tick adds are measured
+*cheap* - the tick frame's own submission interval is 4.215 against the steady frame's 4.272 ms, so +6 passes and
++45 draws are worth -0.06 ms - while its *wall* is 8.70-9.62 against 13.42-13.76 ms, and that difference is the
+pacing mixture rather than the content. So the tick fraction does not move the work comparison; its wall term
+prices the windows 8.3 percentage points apart, which at the tick frame's own wall delta is about 0.37 ms on a
+12.47 ms mean and would *raise* this path's mean to about 12.84 and the ratio to 1.54x. That correction is a
+**HYPOTHESIS** - it assumes the tick frame's wall delta transfers between windows - and the three numbers it
+rests on are measured.
 
 **How the Complementary rung reads, and why only four of its six arms are in the table.** Six arms were
 interleaved M3/M4/M3/M4/M3/M4 and **every arm passed its window guard** (the pack drawn, 21 render passes a
@@ -1765,7 +1788,7 @@ The decision the plan allows three forms of, taken gate by gate and with the evi
 | shutdown clean | PASS | the close action runs the teardown and the ring reports every submission retired |
 | no known GPU restart | PASS | no `GPURestart` in any collected arm, including this round's four sessions |
 | cold capability probe deterministic | **NOT MET, and 50 more probes clean** | 240 probes passed in one period and 21 of 200 failed in an earlier one with nothing changed; a further 30 raw cold probes and 50 production-mode probes (30 cold + 20 warm) all passed with `retried=0`, so the fault itself did not recur - and the retry policy that mitigates it is now exercised on demand (`-Dmetallum.probeInjectFirstFailure=true` reads `retried=true success=true` in 3 of 3 processes, below) |
-| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone) and the first rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier), where this path is **1.50x slower in the mean and 1.82x at P95** with the mean repeating to 0.16% and its P50 moving 20% between the same three arms; the other two rungs read 19-21% faster at the median (Complementary) and 23-50% slower (Photon), so the gate's answer is "slower on two of the three" |
+| performance stable enough to compare | **MET, and the verdict it produced is unfavourable** | three of section 93's four rungs are measured under the protocol (no-pack, Complementary, Photon; MakeUp's pack is gone), all four readings re-taken on the statistic the protocol allows - the **mean**, which repeats to 0.0-0.16% between the arms of one generation where the P50 moves 9.5-22% - and the no-pack rung has since been re-run with its content **pinned rather than explained** (`run/protocol-nopack`: every arm's counters identical to the digit, no scene drift, no outlier). What the gate then says is that this path is **1.50x slower in the mean on no-pack and on Photon (1.80-1.82x at P95)** and **9.2% faster in the mean on Complementary (5.4% slower at P95)** - i.e. slower on two of the three rungs, by exactly the two-handover quantum |
 | forced Metal 3 fallback | PASS | `-Dmetallum.execution=metal3` runs the reference path unchanged, verified in every session's arms |
 | instrumentation | PASS | wall, the whole-submit driver window, both waits, the per-frame trace and the structural counters are all measured; per-pass GPU time is NOT AVAILABLE and section 56 says AUTO does not require it |
 
