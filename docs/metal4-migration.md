@@ -5533,3 +5533,23 @@ workload this path fails to run today, and the audit confirms the refusals are a
 The two a future pack could plausibly reach are `writeTimestamp` (a pack asking for its own GPU timing - which the
 counter work has already shown is not attributable per pass on this API) and `drawIndirect` (a renderer batching
 its draws). Both arrive with a caller and are implemented then, which is the rule and not an omission.
+
+### The sky strip, closed the same way the alpha was
+
+The report has carried "the sky strip at the top of the frame still to be accounted for" since the first no-pack
+picture session, and the drawable readback road settles it in one session. `run/sky-strip`: no pack, both arms,
+300-frame windows, 3200x1800, `-Dmetallum.drawableReadback=true`, and the top rows of both halves are
+**byte-identical between the generations**:
+
+```text
+m3 and m4, drawable top row:  000c0101 ff110303 ff1a0706 ff0e0202 ff070201 ...   meanBGRA (33, 2, 2, 100)
+m3 and m4, picture  top row:  0001010c ff020213 ff02031c 00010119 ff01010c ...   meanBGRA (2, 2, 33, 100)
+```
+
+So the band is the same dark, partly-transparent sky on both generations, sample for sample, and the two halves
+differ only in the formatter's channel order - which is the reader's documented behaviour and is equal on both
+arms too. The strip therefore comes off the list of things this migration has to explain, on the same evidence
+that took the alpha off it: **the generations agree about it to the byte**, which is what section 53's gate asks.
+
+What is left in the correctness residuals is one item that is not a generation difference either: no pack's
+*biased* geometry has been exercised, because `depthBias=0` in every window measured.
