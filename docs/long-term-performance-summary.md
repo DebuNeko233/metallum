@@ -249,4 +249,7 @@ the plan's own rules ask for a measurement nothing has needed yet, and neither i
 `docs/performance-testing.md` (the harness and the rules), `docs/metal3-performance-report.md` (the first round,
 still the reference for its own conclusions) and `docs/metal4-full-frame-report.md` (Metal 4, frozen). Every
 session is under `run/`, named for the phase that took it, with `probe.txt`, `latest.log`, `client.png` and
-`picture-source.txt`.
+`picture-source.txt`. [docs/README.md](README.md) is the router for the whole set: which page owns what, the frozen
+Metal 4 record beside this one, and the first round the programme supersedes. The work landed on `master` here and
+on `dev` in the companion, so a commit cited above is the record of what was measured rather than the tip of a
+branch.
