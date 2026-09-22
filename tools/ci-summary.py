@@ -50,6 +50,10 @@ CLAIMS = (
     ("the baseline's code re-measured in the acceptance's machine state", "1.795 ms a frame", "1.795",
      "performance-testing.md"),
     ("the acceptance no-pack arm's tail", "2.63 ms", "2.63 ms", "performance-testing.md"),
+    # The declined candidate's own number, kept pinned for the reason this file exists: the summary now says the
+    # owner decided against the shadow map's default, and the per cent that made it worth asking has to stay in the
+    # track document that measured it or the two would part company.
+    ("the shadow default that was declined", "5.7 per cent on MakeUp", "5.7", "vitrail-gpu-performance.md"),
 )
 
 # The one line the page is for: the success criteria, and the one that is not met.
@@ -88,11 +92,17 @@ def main() -> int:
     if met != 10:
         raise SystemExit(f"the summary's criteria audit marks {met} criteria MET, and section 61 has eleven of "
                          f"which exactly one is not")
-    if "E4, dynamic resolution, is not started" not in summary:
-        raise SystemExit("the summary no longer states that E4 has not been started, which is what an owner "
-                         "reading it needs to know")
-    if "the shadow map's default" not in summary:
-        raise SystemExit("the summary no longer names the open decision about the shadow map's default")
+    # The three answers the owner gave, each pinned as the DECISION and not as the topic: a page that says E4
+    # "is not started" leaves a reader waiting for it, and one that names the shadow map's default without saying
+    # what was decided leaves the next person to re-open a settled question.
+    for decided in ("The shadow map's default stays at one kept frame",
+                    "E4, dynamic resolution, is declined and will not be built",
+                    "Solas is not coming, so the corpus stays at four scenes"):
+        if decided not in summary:
+            raise SystemExit(f"the summary no longer records the owner's decision: {decided!r}")
+    if "Solas" in summary.split("## The owner's answers", 1)[-1].split("## Where the evidence is")[0] \
+            and "not coming" not in summary:
+        raise SystemExit("the summary mentions Solas as outstanding after the owner declined to supply it")
 
     print(f"long-term summary contract: PASS ({len(CLAIMS)} figures traced both ways, {met} criteria marked MET)")
     return 0

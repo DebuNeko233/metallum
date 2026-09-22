@@ -276,12 +276,13 @@ carry), and the interval arms give `interval 0 - interval 1 = 0.657 ms` for `ras
 put one drawn 4080x4080 raster at **1.5 to 2.0 ms** and one kept map at **0.1 to 0.7 ms**, and the interval-2
 prediction `(raster + keep) / 3 = 0.29 to 0.45 ms` lands around the **0.385 ms measured**.
 
-**The interval-2 candidate is KEPT as a measurement, measured on both packs, and left as the owner's
-decision.** It is worth 5.7 per cent on MakeUp and 3.0 on Complementary (above), which satisfies the "two real
-packs" half of the plan's high-risk gate and leaves two things: one of the two packs is under the five per cent
-the gate asks for, and the map is three frames old instead of two for the ground, which no screenshot of a still
-camera can show. Nothing is broken by leaving it: the selector already offers nought, one and two, so a player
-who wants the longer arm can choose it today; only the **default** is in question.
+**The interval-2 candidate is KEPT as a measurement, measured on both packs, and the owner has declined it.**
+It is worth 5.7 per cent on MakeUp and 3.0 on Complementary (above), which satisfies the "two real packs" half of
+the plan's high-risk gate and leaves two things against it: one of the two packs is under the five per cent the
+gate asks for, and the map is three frames old instead of two for the ground, which no screenshot of a still
+camera can show. **The default stays at one kept frame.** Nothing is broken by the answer: the selector already
+offers nought, one and two, so a player who wants the longer arm can choose it today, and what was declined was
+the default and not the measurement - the numbers above stand as taken.
 
 ## The family the corpus cannot show: the things that move
 
@@ -343,8 +344,10 @@ engine's reuse applies, and the shipped reuse is worth **9.8 per cent** on MakeU
 worth another **5.7 per cent** there and is unresolved on Complementary. No code changed for either: the arms are
 default-off probes and the one addition is the interval override that makes the comparison possible.
 
-**DEFERRED - raising the default interval from one to two.** Above the gate on one pack, unresolved on the
-second, and the setting is already exposed to the player.
+**DECLINED BY THE OWNER - raising the default interval from one to two.** Above the gate on one pack,
+unresolved on the second, and the setting is already exposed to the player; the owner has decided that the
+default stays at one kept frame, so this is a closed decision and not a deferral - the measurement stays in this
+document and the ground's lag stays as it is.
 
 **REJECTED - a shadow-specific mip probe.** The existing `-Dvitrail.probeNoMipChains` removes every chain at
 once, so the map's own chain cannot be separated from the pack's; the previous programme priced all of them at

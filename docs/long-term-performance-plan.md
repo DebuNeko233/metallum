@@ -137,7 +137,7 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
   what section 61's eleventh criterion asks for and what a shared-code change has to be re-checked against.
 ```
 
-## What is left, in the order the plan asks for it
+## What was left, and what the owner answered
 
 ```
 1. THE OWNER'S DECISION      the shadow map's default, and the one product question this programme
@@ -148,12 +148,21 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
                              5.7 per cent on MakeUp and 3.0 on Complementary, structure exact in the
                              same arms (the shadow map's own passes fall from 900 to 800 a window on
                              MakeUp and from 1000 to 897 on Complementary, and the engine's own line
-                             reads 300 draws in 600 frames against 200). What is missing is an eye:
+                             reads 300 draws in 600 frames against 200). What was missing was an eye:
                              the value 1 is inherited from a judgement about a map kept WHOLE, which
-                             the movers being drawn back in retired, and nobody has looked at the
+                             the movers being drawn back in retired, and nobody had looked at the
                              ground's three-frame lag since.
+      ANSWERED: keep 1.      The owner has decided against changing the default. The measurement
+                             stands as a declined candidate and not as an open question, and its
+                             numbers are not in doubt - what was declined is the picture change.
 2. E4, dynamic resolution    only after 1, and only with hysteresis, cooldown, step limits and a
                              stability window, as section 36 requires.
+      ANSWERED: declined.    The owner has declined dynamic resolution. No line of it was written;
+                             the fixed ladder in `docs/metalfx-performance.md` is the shipped answer
+                             to the resolution question.
+3. A fifth corpus pack       Solas, which only the owner can supply.
+      ANSWERED: not coming.  The corpus stays at the four scenes section 3.1 defines, which is what
+                             the whole programme was measured against; nothing is waiting on it.
 ```
 
 Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed

@@ -1,8 +1,11 @@
-# The long-term performance plan: what it proved, rejected, and left open
+# The long-term performance plan: what it proved, rejected, and settled
 
 This is the result of the plan whose policy of record is `docs/long-term-performance-plan.md`: one page for
 whoever comes next, with each track's decision and the number that decided it. The track documents own the
-evidence; this one owns the summary, and every figure in it is quoted from one of them.
+evidence; this one owns the summary, and every figure in it is quoted from one of them. Every track is closed and
+the programme's three open questions - the shadow map's default, dynamic resolution, and a fifth corpus pack -
+were put to the owner and answered, so this page has no "to be decided" left in it: what a reader finds below is
+what was measured, what was declined, and why.
 
 ## The corpus and the protocol
 
@@ -92,7 +95,7 @@ are closed by the same census: there is nothing per-frame left to resolve.
 upscale blit, pinned in Vitrail's tests and `ci-metalfx.py`. **E2's ladder** (`docs/metalfx-performance.md`): the
 two GPU-heavy packs gain **1.3-1.8x** by 55-67 per cent, MakeUp **1.19x even at 55**, with the driver's own GPU
 time falling in step; the pack-selection writer that spoiled 2 of 21 cells was a **player-visible defect** and is
-fixed. E4 (dynamic resolution) is not started - see below.
+fixed. E4 (dynamic resolution) is declined by the owner - see below.
 
 ## Track F - startup, shader and pipeline caches
 
@@ -204,21 +207,29 @@ And the picture column was taken by the client itself on every scene: `picture-s
 11. Metal 4 stays compilable and runnable      MET - all four Metal 4 contracts pass on this head
 ```
 
-## What is open
+## The owner's answers, and why they are recorded here
 
-**One decision, and it is the owner's: the shadow map's default.** `ShadowAmortisation.DEFAULT_FRAMES` is 1 kept
-frame and the selector already offers 2. Raising the default to the selector's maximum is worth **5.7 per cent on
-MakeUp and 3.0 on Complementary** - two real packs, structure exact in the same arms, rollback one constant - and
-it costs one more frame of age on the ground in the map (three frames instead of two, about 7 ms at 148 fps; what
-moves is redrawn every frame, so it is ground that changed - a block placed or broken - that keeps its old shadow
-that much longer). The value 1 is inherited from a judgement about a map kept *whole*, which drawing the movers
-back in retired, and no eye has looked at the ground's lag since. It is a change to what every player gets without
-asking, so it is not made here.
+The programme ran every track to a decision and finished with three questions the plan refuses to settle alone:
+two of them changes to what every player gets by default, and one corpus pack only the owner can supply. All three
+came back **no**. They are written down because a declined candidate is a result like any other, and because the
+next reader must find a decision here rather than an oversight - the measurements behind them are not withdrawn.
 
-**E4, dynamic resolution, is not started.** The fixed ladder is stable and it is the only item of the plan that
-remains, but it changes public semantics again (the world's resolution adjusting itself) and the plan classes it
-as high-risk with its own stop rule for target reallocation and history invalidation. It needs the owner's
-direction before a line of it is written.
+**The shadow map's default stays at one kept frame.** `ShadowAmortisation.DEFAULT_FRAMES` is 1 and the selector
+still offers 2. Raising the default to the selector's maximum is worth **5.7 per cent on MakeUp and 3.0 on
+Complementary** - two real packs, structure exact in the same arms, rollback one constant - and it costs one more
+frame of age on the ground in the map (three frames instead of two, about 7 ms at 148 fps; what moves is redrawn
+every frame, so it is ground that changed - a block placed or broken - that keeps its old shadow that much longer).
+The owner has decided against it. What was declined is the picture change and not the number: the interval-2
+measurement and its structural evidence stand in `docs/vitrail-gpu-performance.md` exactly as measured.
+
+**E4, dynamic resolution, is declined and will not be built.** The fixed ladder is stable and this was the last
+item of the plan, but it changes public semantics again (the world's resolution adjusting itself) and the plan
+classes it as high-risk with its own stop rule for target reallocation and history invalidation. No line of it was
+written; the ladder in `docs/metalfx-performance.md` is the shipped answer to the resolution question.
+
+**Solas is not coming, so the corpus stays at four scenes.** The fifth pack would only have extended the corpus -
+section 3.1's four scenes are the baseline every number in this programme was taken against - and the owner will
+not supply one. Nothing here is waiting on it.
 
 **F3's in-session reload is measured, and it cannot be a window measurement.** The lifecycle probe drives F3+T's
 own path from inside the client, and a reload costs **about a second, serves 147 module-cache units and compiles
@@ -228,8 +239,8 @@ by the pause guard, correctly, and the reload's cost is read off its own lines.
 
 **Named and unmeasured, and staying that way until something asks for them:** the voxel-writing half of the
 shadow stage (inside the same fragment program as the raster, no switch can take it out without changing what the
-pack's shader does); the near-duplicate case of F2 (two inputs differing in one define); and **Solas**, the fifth
-corpus pack, which has never been staged on this machine and is the owner's to supply.
+pack's shader does) and the near-duplicate case of F2 (two inputs differing in one define). Both are cases where
+the plan's own rules ask for a measurement nothing has needed yet, and neither is a gap in a decision.
 
 ## Where the evidence is
 
