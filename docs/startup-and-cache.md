@@ -375,5 +375,6 @@ window has to take them in that order, in two arms.
 
 Track F is complete: F1 (the census, with the compile count, ms and worst spike), F2 (the reuse count), F3 (the
 cold and warm load, and now the in-session reload) and F4 (the warm-up, and the archive rejected on its measured
-size). What is left of the plan is in `docs/long-term-performance-plan.md` - the owner's decision on the shadow
-map's default, and E4.
+size). Nothing of the plan is left open: the shadow map's default stays at one kept frame and E4 (dynamic
+resolution) is declined, both recorded with the other tracks on
+[the summary page](long-term-performance-summary.md#the-owners-answers-and-why-they-are-recorded-here).

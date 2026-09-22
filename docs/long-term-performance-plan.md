@@ -131,7 +131,7 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
 - An arm states the command generation it ran in (`--expect-execution`), because the generation is the game's own
   stored setting and a whole C2 session was collected on Metal 4 against a Metal 3 corpus without one counter
   showing it.
-- **Metal 4 stays verifiable while it is frozen.** All twelve of this repository's contracts pass on the head
+- **Metal 4 stays verifiable while it is frozen.** All fifteen of this repository's contracts pass on the head
   that carries everything above - `ci-architecture`, `ci-metal4-provider`, `ci-metal4-report`,
   `ci-metal4-cold-probe` and `ci-metalfx` among them - and Vitrail's 267 tests pass on its own head, which is
   what section 61's eleventh criterion asks for and what a shared-code change has to be re-checked against.
@@ -168,7 +168,7 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
 Everything else in the plan's track list is measured and carries a decision: A1-A3, B1 with B2-B6 closed
 by the CPU round's exit condition, C1-C7 with both of C2's wall questions settled by repetition (the entity
 family at 0.13 per cent and Complementary's interval at 3.0, eight arms each), D1 with D2/D3 closed by it,
-E1/E2, and F1-F4. All twelve of this repository's contracts and Vitrail's 267 tests pass on this head.
+E1/E2, and F1-F4. All fifteen of this repository's contracts and Vitrail's 267 tests pass on this head.
 
 **Track F is complete**, and its last item closed the plan's largest recorded candidate. An on-disk Metal
 pipeline cache was recorded at F1/F3 as "0.26-1.6 s a launch, the largest measured startup item left"; F4
