@@ -52,6 +52,88 @@ public final class MetallumShaderModules {
     public interface Hook {
 
         /**
+         * Handed the compiler's own module type, once, before the first stage compiles.
+         * <p>
+         * <strong>This is for an integration that keeps a module on disk.</strong> Reading a module
+         * back out of a store means rebuilding one, and the fields that make one up are package
+         * private types an integration may not name. It cannot obtain the module's class either: a
+         * store hit is asked for before any module of the session exists. So the one side that has
+         * the type hands it over, and everything else can be read off it - the type's own record
+         * components say which list holds what, and each list's generic type says what it holds.
+         * <p>
+         * An integration that keeps nothing ignores this. Called once per session at most.
+         */
+        default void moduleType(final Class<?> moduleType) {
+        }
+
+        /**
+         * Whether the compiler should write debug information into the stages it builds.
+         * <p>
+         * Asked once, while the compiler is constructed, because the option it drives can only be
+         * turned on and never off: it is a property of the compiler instance rather than of a
+         * compile, and the instance is the one every stage of the session goes through. A hook that
+         * answers false makes every module of the session cheaper to build and every stack or dump
+         * that names a shader variable poorer; true is what the compiler does on its own.
+         */
+        default boolean wantsShaderDebugInfo() {
+            return true;
+        }
+
+        /**
+         * A stage compile is starting, on this thread.
+         * <p>
+         * Paired with {@link #endCompile}, and not guaranteed to arrive: a compile that throws ends
+         * without one. An integration that brackets state for the length of a compile therefore has
+         * to make this call reset whatever it sets, rather than assume the pair.
+         */
+        default void beginCompile(final String label) {
+        }
+
+        /**
+         * The key this unit's compiled module may be kept under, or null to keep none.
+         * <p>
+         * The unit is identified by its debug name, the source text it was built from and the stage
+         * it is; an integration that keys on more than that hashes whatever else it needs into the
+         * answer. <strong>Null means the store is off for this unit</strong>, which is also the
+         * answer for everything the integration does not own - the game's own shaders and another
+         * mod's go through this same compiler, and keeping them would be keeping another project's
+         * work under this one's key.
+         */
+        default String moduleKey(final String label, final String source, final String stage) {
+            return null;
+        }
+
+        /**
+         * The module this integration already has for that key, or null to build one.
+         * <p>
+         * A non-null answer is used as the compile's result: nothing is compiled, nothing is patched
+         * and nothing is narrowed, so what comes back has to be a module built the same way this
+         * road would have built it. Null sends the compile on its way, and the integration is then
+         * expected to have counted a module as being built.
+         */
+        default Object cachedModule(final String key, final String label) {
+            return null;
+        }
+
+        /**
+         * A module this road has just built, offered to the integration to keep.
+         * <p>
+         * Called only for a unit whose {@link #moduleKey} was not null, and only on the road that
+         * really built one, so it is never offered a module that came out of a store.
+         *
+         * @param module what was built, opaque to this side and to be handed back verbatim from
+         *               {@link #cachedModule}
+         */
+        default void keepModule(final String key, final String label, final Object module) {
+        }
+
+        /**
+         * The stage compile that began at {@link #beginCompile} is over, on this thread.
+         */
+        default void endCompile(final String label) {
+        }
+
+        /**
          * Rewrites the SPIR-V a stage has just compiled to, before it is reflected or converted.
          * <p>
          * Called on the thread doing the compile, once per stage, with the buffer the compiler

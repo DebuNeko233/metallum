@@ -1,12 +1,16 @@
 package com.metallum.mixin.render;
 
 import com.metallum.api.MetallumShaderModules;
+import com.mojang.blaze3d.shaders.ShaderType;
 import com.mojang.blaze3d.vulkan.glsl.IntermediaryShaderModule;
 import com.mojang.blaze3d.vulkan.glsl.ShaderCompileException;
+import org.lwjgl.util.shaderc.Shaderc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -51,6 +55,92 @@ public abstract class ShaderModuleHookMixin {
     /** {@code SpvSampler.name()}, on a package-private record. */
     @Unique
     private static final Method SAMPLER_NAME = entryName();
+
+    /**
+     * The key the compile in flight on this thread is being kept under, or null when it is not.
+     * <p>
+     * On the thread rather than a field, because compiles run on the render thread and on a worker
+     * pool at the same time and each is keeping its own unit. Removed at every road out of the
+     * method, so a compile that dies between the two injections cannot leave a key for the next one
+     * to keep a module under.
+     */
+    @Unique
+    private static final ThreadLocal<String> CACHE_KEY = new ThreadLocal<>();
+
+    /**
+     * Whether the compiler should write debug information, asked once while it is constructed.
+     * <p>
+     * A redirect rather than a wrap: the option is a call with no result, and the whole of the
+     * decision is whether to make it. The hook is consulted per compiler, which is once per compile
+     * on this road - {@code Metal3CompilationContext} builds one per stage - so an integration that
+     * answers from a file read does it once per stage rather than once per session. Said here
+     * because a hook implementation should know what it is being asked and how often.
+     */
+    @Redirect(method = "<init>", require = 1,
+            at = @At(value = "INVOKE",
+                    target = "Lorg/lwjgl/util/shaderc/Shaderc;"
+                            + "shaderc_compile_options_set_generate_debug_info(J)V"))
+    private void metallum$debugInfo(final long options) {
+        if (MetallumShaderModules.hook().wantsShaderDebugInfo()) {
+            Shaderc.shaderc_compile_options_set_generate_debug_info(options);
+        }
+    }
+
+    /**
+     * Offers the unit to the integration before the compiler is asked for it.
+     * <p>
+     * The module type is handed over first, because an integration that keeps modules on disk cannot
+     * name it and cannot obtain it before one exists - and this is the last moment before it is
+     * needed. Then the compile is bracketed and the unit's key asked for; a key means this compile
+     * is worth keeping, and a store that already has it cancels the whole road here.
+     */
+    @Inject(method = "createIntermediary", require = 1, at = @At("HEAD"), cancellable = true)
+    private void metallum$cached(final String filename, final String source, final ShaderType type,
+                                 final CallbackInfoReturnable<IntermediaryShaderModule> cir) {
+        MetallumShaderModules.Hook hook = MetallumShaderModules.hook();
+        hook.moduleType(IntermediaryShaderModule.class);
+        hook.beginCompile(filename);
+
+        String key = hook.moduleKey(filename, source, type.name());
+        if (key == null) {
+            CACHE_KEY.remove();
+
+            return;
+        }
+
+        Object cached = hook.cachedModule(key, filename);
+        if (cached instanceof IntermediaryShaderModule module) {
+            CACHE_KEY.remove();
+            hook.endCompile(filename);
+            cir.setReturnValue(module);
+
+            return;
+        }
+
+        CACHE_KEY.set(key);
+    }
+
+    /**
+     * Offers what the compile produced back to the integration, and closes the bracket.
+     * <p>
+     * Every return of the method reaches this, and a compile that threw reaches neither: the bracket
+     * is then closed by the next {@code beginCompile} on that thread, which is why the interface
+     * describes the pair as best-effort rather than as guaranteed.
+     */
+    @Inject(method = "createIntermediary", require = 1, at = @At("RETURN"))
+    private void metallum$keep(final String filename, final String source, final ShaderType type,
+                               final CallbackInfoReturnable<IntermediaryShaderModule> cir) {
+        String key = CACHE_KEY.get();
+        CACHE_KEY.remove();
+
+        MetallumShaderModules.Hook hook = MetallumShaderModules.hook();
+        IntermediaryShaderModule built = cir.getReturnValue();
+        if (key != null && built != null) {
+            hook.keepModule(key, filename, built);
+        }
+
+        hook.endCompile(filename);
+    }
 
     /**
      * Replaces the one reflection call with the integration's two halves around it.
