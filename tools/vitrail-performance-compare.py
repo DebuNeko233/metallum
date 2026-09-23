@@ -50,7 +50,7 @@ COUNTERS = (
     # The window's client ticks and its frames a tick: a window is a fixed *frame* count, and this client's frame
     # is not the same work every frame, so two arms whose frame rates differ cover a different number of ticks and
     # their content totals differ without their scene differing. Reported here so a drift line can say which of
-    # the two it is looking at; see `tools/ci-frame-probe.py` for the mixin that counts them.
+    # the two it is looking at; see `tools/ci-metal3.py` for the mixin that counts them.
     "windowTicks",
     "framesPerTick",
     "gpuFrames",

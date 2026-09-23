@@ -61,7 +61,7 @@ Vitrail resolved `com.metallum.render.AttachmentContents`, a path that does not 
 with `AttachmentContents` constructed inside metallum, one entry per slot, defaulting per slot to the interface's
 own `CARRIED`; Vitrail passes only the two facts it has decided. `setNextPassReadsStorageImage(Object, boolean)`
 is unchanged. The value-typed overload is gone rather than kept beside it, so no name has to be resolved at
-runtime for the two facts to arrive, and `tools/ci-metalfx.py` refuses the value-typed signature - proved by
+runtime for the two facts to arrive, and `tools/ci-metal3.py` refuses the value-typed signature - proved by
 mutation (re-adding it fails with its own message; removing it passes). The Vitrail half is pinned in
 `test_pack_pass_writes_every_pixel`, with the same two-way mutation proof.
 
@@ -128,7 +128,7 @@ recorded in both ledgers rather than hidden.
 
 ### Verification, per batch
 
-metallum: `./gradlew build`, `tools/ci-contracts.py`, `tools/ci-architecture.py`, `git diff --check`, all exit 0,
+metallum: `./gradlew build`, `tools/ci-metal3.py`, `tools/ci-metal4.py`, `tools/ci-harness.py`, `tools/ci-repo.py`, `git diff --check`, all exit 0,
 and every `tools/ci-*.py`. Vitrail: `./gradlew build` plus the contract tests. Then one Photon run
 (55 %, 600 frames, camera pinned, settle 25) reading `wallP50`, `gpuM3Ms`, `encoders`, `passChanged`, `blits`,
 `depthAttachments`, `pipelineIdentities`, `pipelineKeys`, `compiles`, `compileMs`, `metal4Presents` from that

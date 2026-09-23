@@ -730,7 +730,7 @@ existed and its frames were never the ones losing meshes - and a device-level an
 workaround change the other generation's staging strategy. That is the cross-generation leak this audit's first
 phase exists to close. The value is now derived from what executes:
 `persistentMappingFor(this.services.executing())` answers true where the Metal 3 path encodes the frame and false
-where Metal 4 does, `tools/ci-contracts.py` pins both halves of that rule and refuses the old literal by name,
+where Metal 4 does, `tools/ci-metal3.py` pins both halves of that rule and refuses the old literal by name,
 and three mutations of the rule are caught.
 
 **The A/B, on one generation, one session, one scene** (`run/pm-ab`; no-pack, spectator, fullscreen at
@@ -802,7 +802,7 @@ Metal execution: Metal 4 capability not probed for this session - metallum.execu
 Metal execution: device created in 33.4 ms (Metal 4 probe: skipped)
 ```
 
-`tools/ci-contracts.py` pins both halves - the scope behind `if (probeMetal4)`, the sentence, the
+`tools/ci-metal4.py` pins both halves - the scope behind `if (probeMetal4)`, the sentence, the
 `metal4=not-probed` word, the contract's refusal to be claimed by an unprobed session, and the parity answer -
 and five mutations of them are caught. The timing line is permanent rather than a probe: the claim this task
 makes is about a cost, and a cost that cannot be read in a session's own log is a claim nobody can check.

@@ -70,23 +70,11 @@ jobs:
           grep -F 'PHASE 17 requires exactly one fresh F2 screenshot' tools/run-vitrail-phase17-pack.sh
           grep -F -- '--pack "$staged"' tools/run-vitrail-phase17-pack.sh
           grep -F 'COPYFILE_DISABLE=1 tar -czf' tools/run-vitrail-phase17-pack.sh
-          python3 tools/ci-contracts.py
-          python3 tools/ci-metal4-cold-probe.py
-          python3 tools/ci-metal4-provider.py
-          python3 tools/ci-metal4-report.py
-          python3 tools/ci-argument-buffer-samplers.py
-          python3 tools/ci-compute-storage.py
-          python3 tools/ci-frame-probe.py
-          python3 tools/ci-graphics-storage-images.py
-          python3 tools/ci-shader-diagnostics.py
-          python3 tools/ci-vitrail-performance.py
-          python3 tools/ci-metalfx.py
-          python3 tools/ci-performance-report.py
-          python3 tools/ci-summary.py
-          python3 tools/ci-docs.py --self-test
-          python3 tools/ci-docs.py
-          python3 tools/ci-architecture.py --self-test
-          python3 tools/ci-architecture.py
+          python3 tools/ci-metal3.py
+          python3 tools/ci-metal4.py
+          python3 tools/ci-harness.py
+          python3 tools/ci-repo.py --self-test
+          python3 tools/ci-repo.py
 
       - name: build
         run: ./gradlew build

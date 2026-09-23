@@ -166,7 +166,7 @@ check must pass. Run `./gradlew build` and the `tools/ci-*.py` contracts before 
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+`tools/ci-repo.py` is the home for those static contracts, and `.github/workflows/ci.yml` is the only workflow that runs on a pull request. It now also refuses a workflow that could author a commit anywhere in this repository: a self-pushing one-shot helper existed here and is deleted, and the shape is refused rather than the single file, so the next one cannot be added unnoticed.
 
 ## Credits
 

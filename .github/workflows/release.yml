@@ -31,7 +31,11 @@ jobs:
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
       - name: validate consolidated contracts
-        run: python3 tools/ci-contracts.py
+        run: |
+          python3 tools/ci-metal3.py
+          python3 tools/ci-metal4.py
+          python3 tools/ci-harness.py
+          python3 tools/ci-repo.py
       - name: build
         run: ./gradlew build
       - name: capture build artifacts
