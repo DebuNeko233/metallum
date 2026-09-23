@@ -20,7 +20,7 @@ question, no scaler and no upscale blit. It is pinned in two places and both are
   probe, no encode, no fallback") and the engine's own line
   `The render scale is 100%, so the world is drawn at the window's own size and MetalFX is off`, said once per
   setting.
-- Companion Metallum's `tools/ci-metalfx.py` pins the capability split and the transitions.
+- Companion Metallum's `tools/ci-metal3.py` pins the capability split and the transitions.
 
 And the ladder below is the evidence rather than the assertion: the 100 per cent cell of every pack draws at the
 window's own 1920x1200, prints that line and no `The N% render scale brings the picture back` line, and its

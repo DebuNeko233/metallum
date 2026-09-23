@@ -82,7 +82,7 @@ fixed-size targets are the candidates).
 ## Decisions
 
 **KEPT: the pass-size census**, on the window line, with the entry point and the road that reaches it pinned in
-`tools/ci-frame-probe.py` and a mutation that deletes the road failing the contract.
+`tools/ci-metal3.py` and a mutation that deletes the road failing the contract.
 
 **REJECTED: C3's premise for Complementary** - one native pass, the interface's, and the shadow map; no heavy
 world pass is left full-resolution. Two more scenes at a scale would extend the claim, and they are sessions'

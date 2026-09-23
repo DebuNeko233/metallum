@@ -102,7 +102,7 @@ had been proven 0 ms earlier was reported as a timeout that never arrived. It wa
 stall, and no row above was violated - the destroys ran after a wait that had genuinely succeeded - but the wait
 proved nothing, which is the thing this ledger exists to prevent. `MetalDevice.close()` no longer clears the
 pipeline cache itself: `executionState.close()` clears the same caches at the end of the same method, after the
-same wait. The order is pinned and mutation-proved in `ci-metal4-provider.py`, together with the ring's
+same wait. The order is pinned and mutation-proved in `ci-metal4.py`, together with the ring's
 `describe()`, because a wait whose outcome is only printed on failure cannot say which of two waits on one ring
 timed out.
 

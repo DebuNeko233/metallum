@@ -1,4 +1,302 @@
 #!/usr/bin/env python3
+"""Contracts for the repository's own invariants.
+
+This file is the merge of the contract scripts that used to guard this subject separately, so that
+the pull-request surface is one script a subject rather than one a rule. Every check below is the
+check it was, at the point it was: the merge moved code between files, it did not reword any of it.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ci_common import ROOT, check_launcher, forbid, read, require, source_tree  # noqa: E402
+
+# Each merged member that used to end in `if __name__ == "__main__": raise SystemExit(main())`
+# appends its own status here instead, because a `raise` after the first one would skip the
+# rest of the file - and the file is several contracts now.
+
+# Each merged member that used to end in `if __name__ == "__main__": raise SystemExit(main())`
+# appends its own status here instead, because a `raise` after the first one would skip the
+# rest of the file - and the file is several contracts now.
+_MAIN_STATUS: list[int] = []
+
+
+# ==================== was tools/ci-contracts.py ====================
+# ---------------------------------------------------------------------------
+# Repository-write guard
+#
+# CI runs with a token that can write to this repository, and a workflow that commits becomes an
+# author on a branch. `.github/workflows/apply-graphics-storage-image-fix.yml` did exactly that: it
+# rewrote two source files, committed them and pushed the result back to the branch that triggered
+# it, so every later push re-ran it against sources it had already patched. It is deleted, and this
+# refuses the shape rather than the file, because the next one would be written the same way.
+#
+# The guard reads each workflow instead of matching one spelling of the incident. `contents: write`
+# is not the only way to hold repository write -- `permissions: write-all` grants it without naming
+# contents, and a quoted value or a trailing comment defeats an anchored literal -- and a commit
+# does not have to be written `git commit`: `git -c user.email=... commit`, a run of spaces or a `\`
+# continuation runs the same command. A guard that knew only the literal spellings would report PASS
+# on the very file it exists to refuse.
+#
+# `release.yml` is the only workflow allowed repository content write, since creating a GitHub
+# release needs it; it is pinned to `v*` tags and authors no commit. Every workflow must also state
+# its `permissions:` explicitly, so none can inherit a repository default that happens to allow
+# writes. The pull-request surface stays exactly `ci.yml`, as `.github/CI_CONSOLIDATION.md` says, so
+# acceptance coverage cannot quietly multiply into another check.
+# ---------------------------------------------------------------------------
+workflow_dir = ROOT / ".github/workflows"
+workflows = {path.name: path.read_text(encoding="utf-8") for path in sorted(workflow_dir.glob("*.y*ml"))}
+if not workflows:
+    raise SystemExit("repository-write guard: no workflow files found under .github/workflows")
+
+# The git options that take a separate value, so that `git -c user.name=x commit` still reaches and
+# reports `commit` rather than stopping at the option's value.
+GIT_OPTIONS_WITH_VALUES = ("-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path")
+COMMITTING_SUBCOMMANDS = ("commit", "push")
+# Any published action that commits, pushes or opens a request on the workflow's own behalf, under
+# any owner. Naming two actions would have missed the third.
+COMMITTING_ACTION = re.compile(r"(?i)\buses:\s*[^\s#]*(commit|push|create-pull-request|add-and-commit|git-auto)")
+
+
+def unquote(value: str) -> str:
+    """Drop a trailing comment and the quoting a YAML scalar is allowed to carry."""
+    return re.split(r"\s+#", value, maxsplit=1)[0].strip().strip("'\"")
+
+
+def without_comments(text: str) -> str:
+    """The live lines of a workflow, with continuations joined.
+
+    Workflow prose explains commands it does not run: `prefix.yml` documents the hazard it detects
+    as `git push origin origin/dev:main` in a comment, which is documentation of the gesture rather
+    than the gesture. A `\\` continuation splits one command across two lines, so it is joined here
+    as well; a line-by-line scan would otherwise see neither half as a command.
+    """
+    joined = text.replace("\\\n", " ")
+    return "\n".join(line for line in joined.splitlines() if not line.lstrip().startswith("#"))
+
+
+def git_subcommands(line: str) -> list[str]:
+    """The git subcommand each `git` invocation on this line actually runs."""
+    found = []
+    for match in re.finditer(r"\bgit\b", line):
+        tokens = line[match.end():].split()
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token in GIT_OPTIONS_WITH_VALUES:
+                index += 2
+                continue
+            if token.startswith("-"):
+                index += 1
+                continue
+            found.append(token.strip("'\";|&()"))
+            break
+    return found
+
+
+def declared_permissions(text: str) -> dict[str, str] | None:
+    """The workflow-level `permissions:` mapping, or None when a workflow declares none."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r"^permissions:", line) is None:
+            continue
+        inline = unquote(line.split(":", 1)[1])
+        if inline:
+            if inline in ("{}", "read-all"):
+                return {}
+            if inline == "write-all":
+                # Every scope, contents included, without ever naming `contents`.
+                return {"contents": "write"}
+            raise SystemExit(f"repository-write guard: unrecognised `permissions: {inline}`")
+        granted = {}
+        for follower in lines[index + 1:]:
+            if follower.strip() and follower[:1] not in (" ", "\t"):
+                break
+            key, separator, value = follower.strip().partition(":")
+            if separator and key.strip():
+                granted[key.strip()] = unquote(value)
+        return granted
+    return None
+
+
+live = {name: without_comments(text) for name, text in workflows.items()}
+permissions = {name: declared_permissions(text) for name, text in workflows.items()}
+
+missing_permissions = sorted(name for name, granted in permissions.items() if granted is None)
+if missing_permissions:
+    raise SystemExit(
+        "repository-write guard: every workflow must declare `permissions:` explicitly so it cannot "
+        "inherit a repository default that permits writes; missing in: " + ", ".join(missing_permissions)
+    )
+
+for name, body in live.items():
+    for line in body.splitlines():
+        committed = [subcommand for subcommand in git_subcommands(line) if subcommand in COMMITTING_SUBCOMMANDS]
+        if committed:
+            raise SystemExit(
+                f"{name}: CI must not author commits, found `git {'` and `git '.join(committed)}` in "
+                f"`{line.strip()}`. Delete the workflow instead of letting Actions write to a branch."
+            )
+    action = COMMITTING_ACTION.search(body)
+    if action is not None:
+        raise SystemExit(
+            f"{name}: CI must not author commits, found `{action.group().strip()}`, which commits or "
+            "opens a request on this workflow's behalf. Delete it instead."
+        )
+
+writers = sorted(name for name, granted in permissions.items() if granted.get("contents") == "write")
+if writers != ["release.yml"]:
+    raise SystemExit(
+        "repository-write guard: repository content write is reserved for release.yml, found: "
+        + (", ".join(writers) if writers else "none")
+    )
+
+pull_request_surface = sorted(name for name, text in workflows.items() if re.search(r"^\s+pull_request:", text, re.MULTILINE))
+if pull_request_surface != ["ci.yml"]:
+    raise SystemExit(
+        "repository-write guard: `.github/CI_CONSOLIDATION.md` keeps the pull-request surface to ci.yml, found: "
+        + (", ".join(pull_request_surface) if pull_request_surface else "none")
+    )
+
+print(f"Repository-write guard: PASS ({len(workflows)} workflows, pull-request surface ci.yml, no CI-authored commits)")
+
+# ---------------------------------------------------------------------------
+# Contract-runner guard
+#
+# A contract script that no workflow names is not a contract. `tools/ci-metal3.py`
+# was reached only by a one-shot workflow, so deleting that workflow left the script in the tree
+# asserting nothing -- still reviewed, still green when run by hand, and enforcing nothing. Every
+# `tools/ci-*.py` must be named by the workflow that runs the pull-request contracts.
+# ---------------------------------------------------------------------------
+ci_workflow = read(".github/workflows/ci.yml")
+contract_scripts = sorted(path.name for path in sorted((ROOT / "tools").glob("ci-*.py")))
+unnamed_contracts = [name for name in contract_scripts if f"tools/{name}" not in ci_workflow]
+if unnamed_contracts:
+    raise SystemExit(
+        "contract-runner guard: these contract scripts are named by no workflow, so they assert "
+        "nothing: " + ", ".join(unnamed_contracts) + ". Name each in ci.yml or delete it."
+    )
+
+print(f"Contract-runner guard: PASS ({len(contract_scripts)} contract scripts, all named by ci.yml)")
+
+
+# ==================== was tools/ci-docs.py ====================
+"""The contract for the documentation's own index.
+
+`docs/README.md` is the router: it says which page owns what, so a reader arriving at the repository can find the
+result of the long-term programme instead of `ls`-ing fourteen files. Its value is that it is complete and its risk
+is that nothing notices when it stops being - a page added and not listed is a page nobody reads, and a page
+renamed out from under a link is a reader who lands on a 404 in the one place they went for directions.
+
+So the index is checked BOTH ways, the same way `ci-harness.py` checks the summary's figures: every document in
+`docs/` is named in it, and nothing in it is named that is not there. Every relative link in every document is
+resolved as well, because a broken link is the same failure one step further out and nothing else looks for one.
+
+A contract script that no workflow names asserts nothing, which is why `ci.yml` runs this one; `--self-test` proves
+the checks can fail rather than trusting that they would, which is what `ci-repo.py --self-test` is for.
+"""
+
+DOCS = ROOT / "docs"
+INDEX = DOCS / "README.md"
+
+# `](path.md)` and `](path.md#anchor)`: an absolute URL carries a scheme and is none of this contract's business.
+LINK = re.compile(r"\]\(([^)\s]+?)(?:#[^)\s]*)?\)")
+
+
+def relative_links(text: str) -> list[str]:
+    """Every link in a document that points at a file in this repository."""
+    found = []
+    for target in LINK.findall(text):
+        if "://" in target or target.startswith(("#", "mailto:")):
+            continue
+        found.append(target)
+    return found
+
+
+def resolves(source: Path, target: str) -> bool:
+    """A link is relative to the document that carries it, or to the repository root when it starts with one."""
+    for base in (source.parent, ROOT):
+        if (base / target).exists():
+            return True
+    return False
+
+
+def check(docs: Path, index: Path) -> list[str]:
+    """Every problem with the index, as lines a failure can print."""
+    problems: list[str] = []
+    if not index.is_file():
+        return [f"the documentation index is missing: {index} - the pages have no router"]
+
+    index_text = index.read_text(encoding="utf-8")
+    pages = sorted(path for path in docs.glob("*.md") if path != index)
+
+    # Both directions, which is what makes it a check rather than a word count.
+    for page in pages:
+        if f"({page.name})" not in index_text and f"/{page.name})" not in index_text:
+            problems.append(f"{page.name} is in docs/ and is named nowhere in the index, so nothing routes to it")
+
+    for source, text in [(index, index_text)] + [(p, p.read_text(encoding="utf-8")) for p in pages]:
+        for target in relative_links(text):
+            if not resolves(source, target):
+                problems.append(f"{source.name} links to {target}, which does not exist")
+    return problems
+
+
+def docs_self_test() -> int:
+    """Prove the two checks fail on a tree that is wrong in exactly those two ways."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        docs = root / "docs"
+        docs.mkdir()
+        (docs / "listed.md").write_text("# Listed\n", encoding="utf-8")
+        (docs / "unlisted.md").write_text("# Unlisted\n", encoding="utf-8")
+        index = docs / "README.md"
+        index.write_text("# Index\n\n[listed](listed.md)\n[gone](vanished.md)\n", encoding="utf-8")
+
+        problems = check(docs, index)
+        # `vanished.md` is a page the index names and does not have; `listed.md` is in the index, so `unlisted.md`
+        # is the one that must be reported as unrouted. Anything else means the check is answering another question.
+        if len(problems) != 2 or not any("unlisted.md" in one for one in problems) \
+                or not any("vanished.md" in one for one in problems):
+            for one in problems:
+                print(f"  {one}", file=sys.stderr)
+            raise SystemExit(f"documentation self-test: the checks found {len(problems)} problems in a tree with "
+                             f"exactly two, so one of them is measuring something else")
+
+        # And the good case passes, or a check that fails everything would pass this test too.
+        (docs / "unlisted.md").unlink()
+        index.write_text("# Index\n\n[listed](listed.md)\n", encoding="utf-8")
+        if check(docs, index):
+            raise SystemExit(f"documentation self-test: a complete index with a resolving link was refused: "
+                             f"{check(docs, index)}")
+
+    print("documentation index self-test: PASS")
+    return 0
+
+
+def docs_main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return docs_self_test()
+
+    problems = check(DOCS, INDEX)
+    if problems:
+        raise SystemExit("documentation index: " + "; ".join(problems))
+    pages = len([p for p in DOCS.glob("*.md") if p != INDEX])
+    print(f"documentation index: PASS ({pages} pages routed, every link in docs/ resolves)")
+    return 0
+
+
+
+_MAIN_STATUS.append(docs_main())
+
+# ==================== was tools/ci-architecture.py ====================
 """The architecture guard for the Metal 3 / Metal 4 split.
 
 Metallum is being split into a version-neutral core and two execution generations, and the split is only
@@ -32,11 +330,7 @@ and the point of a comment is to explain. So every scan reads the file with comm
 removed, which is also what keeps a reflection string like `"metalApiGeneration"` from looking like a type.
 """
 
-from __future__ import annotations
 
-import re
-import sys
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOT = ROOT / "src/main/java"
@@ -307,7 +601,7 @@ def frame_path_debt(root: Path) -> dict[str, tuple[str, ...]]:
     return debt
 
 
-def self_test() -> None:
+def architecture_self_test() -> None:
     """Prove every rule fires, because a guard that cannot fail is a guard that is not there.
 
     Each case below is a synthetic source written into a temporary tree and scanned by the same code the
@@ -454,9 +748,9 @@ def self_test() -> None:
     )
 
 
-def main() -> int:
+def architecture_main() -> int:
     if "--self-test" in sys.argv:
-        self_test()
+        architecture_self_test()
         return 0
 
     found = violations(SOURCE_ROOT)
@@ -549,5 +843,7 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+
+_MAIN_STATUS.append(architecture_main())
+
+raise SystemExit(max(_MAIN_STATUS) if _MAIN_STATUS else 0)
