@@ -387,7 +387,10 @@ require("upload census", probe, (
     "uploadNanos = 0L;",
     "windowTicks={} framesPerTick={} frameCpuMs={} allocKiB={}",
     "com.sun.management.ThreadMXBean",
-    "getThreadAllocatedBytes(Thread.currentThread().getId())",
+    # The id the bytes are asked of is named by `threadId()`, the same number as `getId()` and the only one of
+    # the two this module may keep: it compiles at `options.release = 25`, where `getId()` is deprecated for
+    # removal, so the pin follows the spelling the source has to use rather than the one it used to.
+    "getThreadAllocatedBytes(Thread.currentThread().threadId())",
     "windowCpuStart = currentThreadCpuNanos();",
     "getCurrentThreadCpuTime();",
     "frame-probe uploads uploadCalls={} uploadMiB={} uploadCpuMs={} uploadsToBuffer={}",
