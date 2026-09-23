@@ -15,6 +15,17 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
     private static final String VIDEO_SETTINGS_SCREEN_MIXIN =
             "com.metallum.mixin.render.VideoSettingsScreenMixin";
     /**
+     * The seam a shader-pack integration applies its own meaning to a stage through.
+     * <p>
+     * Named here for the reason above and one of its own: this mixin is the only place the
+     * integration is ever called from, and a build where it silently does not apply looks exactly
+     * like a build with no integration installed - every pack compiles, every picture is drawn, and
+     * the one difference is a stage this engine rewrote and this road did not. That is a wrong
+     * picture with nothing in the log, which is the failure mode the list exists to prevent.
+     */
+    private static final String SHADER_MODULE_HOOK_MIXIN =
+            "com.metallum.mixin.render.ShaderModuleHookMixin";
+    /**
      * The lifecycle driver, which section 71's gate needs and this machine's input cannot drive.
      * <p>
      * It is named here because this plugin is a gate and not a formality: a mixin listed in the config but not
@@ -70,6 +81,7 @@ public final class MetallumMixinConfigPlugin implements IMixinConfigPlugin {
         }
         return PREFERRED_GRAPHICS_API_MIXIN.equals(mixinClassName)
                 || VIDEO_SETTINGS_SCREEN_MIXIN.equals(mixinClassName)
+                || SHADER_MODULE_HOOK_MIXIN.equals(mixinClassName)
                 || LIFECYCLE_PROBE_MIXIN.equals(mixinClassName)
                 || CLIENT_TICK_PROBE_MIXIN.equals(mixinClassName)
                 || SCREENSHOT_PROBE_MIXIN.equals(mixinClassName);
