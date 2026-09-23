@@ -269,7 +269,7 @@ to its target.
 attempt's stage and reason either way - a retry that swallowed the first answer would take a registered
 intermittent off the record, which is the one thing this issue may not do. `Metal4.available` reads the
 persistent answer, so what `MetalDeviceCapabilities.argumentTable`/`render` report is the device's answer
-rather than the first command buffer's. Both halves are pinned by `tools/ci-metal4-cold-probe.py` and
+rather than the first command buffer's. Both halves are pinned by `tools/ci-metal4.py` and
 mutation-proven: a harness that stops taking the persistent path, and a capability record that stops asking
 persistently, each fail the contract for their own reason.
 
@@ -606,7 +606,7 @@ from Metal 3 objects with `referenceShell` true, exactly as section 19 requires.
 the device constructor passes `METAL3` - so nothing about which road a frame takes has changed; what changed is
 which object would own it, which is one line in that constructor when the Metal 4 frame encoder exists.
 
-`tools/ci-metal4-provider.py` pins the neutral interface, the real queue factory and its nil check, both
+`tools/ci-metal4.py` pins the neutral interface, the real queue factory and its nil check, both
 refusals by name, the stage the refusal carries, that no Metal 3 package is imported by a Metal 4
 implementation, that the services choose by `executing`, and that the harness asks the provider on a real
 device - six mutations, each failing for its own reason.
@@ -655,14 +655,14 @@ sequence passing in every one of them and nothing to attribute. The check is not
 readback transposed (a one-character mutation of the read region) the same harness reports
 `sampledDraw=false` with `the sampled pass read the pattern's bottom-left colour (0, 255, 64, 255) at (40, 8)
 where its top-right (255, 0, 64, 255) was asked for, so the sample reached the wrong place in the source`, and
-the driver exits 1. `tools/ci-metal4-cold-probe.py` pins the whole chain - the sequence's presence, the
+the driver exits 1. `tools/ci-metal4.py` pins the whole chain - the sequence's presence, the
 expected pattern, the source's `ShaderRead` usage, the barrier and the selector check before it, the table at
 the fragment stage, both readbacks and the wrong-quadrant report, plus the harness's two printed fields and the
 driver's count. Sixteen mutations were run against those pins: the first pass caught ten and exposed two pins
 that documentation text alone could satisfy (the printed field name also appears in the class's javadoc, and the
 count variable is named more than once), so those two were strengthened against the print expressions and the
 counting line themselves and then caught the same mutations - sixteen of sixteen. Two more were run against
-`tools/ci-contracts.py`'s updated table pin, and both were caught.
+`tools/ci-metal4.py`'s updated table pin, and both were caught.
 
 **What it does not prove.** Nothing here binds linear filtering, anisotropy, a mip level or an address mode, so
 the smoke says nothing about them. And the barrier's necessity is not measured: the readback is correct with it
@@ -675,7 +675,7 @@ comparable; the smoke joins the record when a Metal 4 frame path exists to need 
 
 Two smaller corrections came with it. The argument table's texture binding moved from a hard-coded slot zero to
 the slot the layout names (`texture(handle, index)`), because the smoke binds a slot the shader's own
-`[[texture(n)]]` attribute names and one table will have to hold more than one image - `tools/ci-contracts.py`'s
+`[[texture(n)]]` attribute names and one table will have to hold more than one image - `tools/ci-metal4.py`'s
 pin on that call was updated to follow the call rather than deleted. And the harness's per-process line had a
 sed bug of its own: with a tenth capture group it had to be written `\10`, which sed reads as `\1` followed by
 a literal `0`, so probe times printed as `10 ms` for every process. The provider line is now printed once and
@@ -717,7 +717,7 @@ descriptor, the attachment loop, the load and store mapping, the clears and the 
 `MTL4RenderEncoder`, measured in 50 of 50 probes across 30 cold processes and 20 warm repeats. What that leaves
 unproven is the pass object's own wiring, which the first no-pack frame is what will exercise.
 
-`tools/ci-metal4-provider.py` was extended for it: the pass implements the game's contract and only that
+`tools/ci-metal4.py` was extended for it: the pass implements the game's contract and only that
 contract, opens through the measured layer, reads the clear values and the render area, refuses an area outside
 its attachments, encodes the barrier, keeps the debug group a no-op, and refuses each of the fifteen operations
 by name; and the frame encoder begins its frame at the first pass, runs that slot's releases, remembers the open
@@ -761,7 +761,7 @@ lifetime model and the one the contract actually describes.
 **One shared-layer move came with it**: `GlslCommentStripper` moved from `render.metal3` to
 `render.shared`, because both generations prepare GLSL the same way (strip comments first - the pack toggle-block
 lexical trap the Metal 3 path paid for - then inject defines) and neither may reach into the other's package.
-The Metal 3 context uses the shared class now; its behaviour is unchanged. `tools/ci-shader-diagnostics.py`
+The Metal 3 context uses the shared class now; its behaviour is unchanged. `tools/ci-metal3.py`
 follows the file and the package its contract harness compiles it into.
 
 **And it has now run on the device.** The cold-probe harness builds a pipeline description and a GLSL shader
@@ -786,7 +786,7 @@ The two failures the first attempts hit are recorded because they are the shape 
 builder refuses a location with a namespace in it (`metallum:m4_probe` is read as a path under `minecraft:`), and
 it refuses a pipeline with no primitive topology. Both are the game's own contracts rather than Metal's.
 
-`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the chain and its proof: the state owns a
+`tools/ci-metal4.py` pins the chain and its proof: the state owns a
 compilation context and compiles through this generation's compiler, the module, function and artifact keys all
 name the MSL profile, a replaced artifact is retired rather than closed and released where the contract says GPU
 completion has been established, the translator is asked for direct bindings and refuses to accept argument
@@ -872,7 +872,7 @@ refused by name, so the encoder's commands had a device proof and the pass's use
 subsections are that milestone: the plan and the pass's use of it. This paragraph is the state of the migration
 when the client first walked past its upload, not the state now.)
 
-`tools/ci-metal4-cold-probe.py` pins the encoder's commands, the address form of the indexed draw, the tables'
+`tools/ci-metal4.py` pins the encoder's commands, the address form of the indexed draw, the tables'
 shapes, the stride, the stage each table is assigned to, the scissor and its two readings, and the harness's
 field, count and exit code - seventeen mutations run, sixteen caught by the pins themselves and one after a pin
 was strengthened (a table-size pin satisfied by another smoke's identical call).
@@ -925,7 +925,7 @@ section 34 says not to build what the current slice does not use.
 **The evidence, stated exactly.** The plan has a device proof (through the layout smoke, 50 of 50 probes), the
 encoder's commands have one, and the compilation chain has one. The pass object's own wiring has none: it is
 built from the engine's device and from real texture views, so what stands behind it is the structural contract
-plus the two measured layers it composes. `tools/ci-metal4-provider.py` pins that wiring - the compile path,
+plus the two measured layers it composes. `tools/ci-metal4.py` pins that wiring - the compile path,
 the plan-built tables, the lookups and their refusals, the pipeline's own stride, the index address arithmetic,
 the scissor clearing, the table release on a pipeline change, the assign-only-when-changed rule, the draw
 sequences and the operations still refused - and twenty-one mutations were run against those pins: eighteen
@@ -1020,7 +1020,7 @@ of the whole-texture copy declared three where the header has two, and the handl
 wrong arity. That surfaced as `objc_msgSend failed: copyFromTexture:toTexture:` - which reads as a device or
 selector problem and is a declaration problem. The contract now refuses that shape by name.
 
-`tools/ci-metal4-cold-probe.py` pins the encoder factory, all four copy selectors, the region's three structs
+`tools/ci-metal4.py` pins the encoder factory, all four copy selectors, the region's three structs
 *together* (each helper also builds another copy's struct, so a bare pin would be satisfied there), the retain,
 the barrier, and the smoke's own two readings plus its whole-quadrant comparison - seventeen mutations run, all
 caught after three pins were strengthened for exactly that reason.
@@ -1085,7 +1085,7 @@ pipeline in every one of them - and 5 of 5 again after the comparison below was 
 is `Depth32Float`, cleared to 0.25 and read back through `MTLTexture.bytes` at a chosen pixel - a clear that
 silently did nothing reads as the depth target's own contents and fails the comparison.
 
-`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the clear encoder, each clear's own
+`tools/ci-metal4.py` pins the clear encoder, each clear's own
 attachment, colour and depth value, each one's pass extent taken from the attachment rather than a literal, the
 barrier, the two copy-ordering sites, the depth smoke's format/value/readback, the harness's field and count,
 and the driver's failure exit - **30 mutations run against them this round, 30 caught**, four of them only
@@ -1172,7 +1172,7 @@ first, the layout that turns them into slots arrives with the pipeline - and it 
 defect in this one: the pass's plan exists to answer *where* a name goes, so a binding that arrives before the
 plan is a binding that has to be remembered and applied when the pipeline arrives.
 
-`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin the fence and the ring wait under it: the
+`tools/ci-metal4.py` pins the fence and the ring wait under it: the
 class and the interface it implements, the timeout conversion, the closed answer, the three-answer table, the
 event the wait goes through, the submission the frame encoder promises, the smoke's five assertions (with the
 refusal caught as `IllegalStateException` and not as any runtime fault, which would let a real defect read as
@@ -1281,7 +1281,7 @@ That is the whole encode path running - passes, clears, copies, fences, named bi
 next milestone is the one the plan puts at section 38: the drawable and the present, owned by the same frame
 encoder.
 
-`tools/ci-metal4-provider.py` and `tools/ci-metal4-cold-probe.py` pin all of it: the three recordings, the
+`tools/ci-metal4.py` pins all of it: the three recordings, the
 resolved-when-arrived answer, the fault for a name the set pipeline does not declare, the skip for a remembered
 name a new pipeline does not read, the eight-argument selector and the send that carries all eight, the two
 draws' own refusal sentences (counted, because both methods say the same thing on purpose), the smoke's two
@@ -1800,7 +1800,7 @@ probe's own precision by wiring the road (the `before` column above is this roun
 session's flags) - which is evidence that the road is inert until it is used, and *not* evidence that a stated
 `DontCare` reaches the descriptor on a device. That evidence is the smoke-pack staircase (plan section 66) and
 the MRT fixture, where a pack's `stillRead`/`writesEveryPixel` answers arrive; the structural half is pinned in
-`tools/ci-metal4-provider.py` and mutation-proved (18 mutations of the wiring, the per-slot default, the
+`tools/ci-metal4.py` and mutation-proved (18 mutations of the wiring, the per-slot default, the
 take-and-clear order, the clear/present coverage and the two scaler answers, every one of them caught).
 
 ### A pack reaches Metal 4, and the capability dispatch decides which facts arrive
@@ -2235,7 +2235,7 @@ The frame path implements the contract now: the chain is generated on the frame'
 declared resident first, and a render pass the game still has open ends before it, because only one encoder may
 be open on a command buffer. It still answers false, by name, where there is nothing to generate - a texture of
 one level, a closed one, one that is not this engine's, or a format the native command cannot filter. That format
-list is the Metal 3 encoder's own, and `tools/ci-metal4-provider.py` **compares the two lists** rather than
+list is the Metal 3 encoder's own, and `tools/ci-metal4.py` **compares the two lists** rather than
 trusting memory: one generation generating a chain for a format the other refuses would only ever show up as a
 blurry texture. The comparison caught its own author within the round - a mutation restore had left
 `RG11B10_FLOAT` out of the Metal 4 list.
@@ -3085,7 +3085,7 @@ responsibility is protecting against, and it is why the ring waits rather than t
 *not* measured is which of the reset, the re-begin or the commit loses the work; the observation is the lost
 frame and the hypothesis is not written as a cause.
 
-`tools/ci-metal4-cold-probe.py` pins the ring: the existence of the object, the wait and reset and begin calls
+`tools/ci-metal4.py` pins the ring: the existence of the object, the wait and reset and begin calls
 *in that order* (a reset before the wait, or a reset after the begin, both fail the contract), the recorded
 completion value, the signal, the wait for everything, the release, the header the rule comes from, the
 absence of static native state, and the harness's field, count and exit code - eighteen mutations run against
@@ -3130,7 +3130,7 @@ nil check: the first message to it was a segfault inside `objc_msgSend`, with th
 same thing `MTLCommandBuffer.makeRenderCommandEncoder` has always done - and it is now a pinned line in the
 contract, because the failure mode is a crash rather than a wrong pixel.
 
-`tools/ci-metal4-cold-probe.py` pins the mapping's two answers, the attachment loop, the retain, the pass's
+`tools/ci-metal4.py` pins the mapping's two answers, the attachment loop, the retain, the pass's
 end, the header the classes come from, and the smoke's own shape - every slot described from its own texture, an
 attachment loaded and not only cleared, the discard answers sent, the barrier between the passes, and the
 re-clear compared - plus the harness's field, count and exit code. Eighteen mutations were run against those
@@ -3200,7 +3200,7 @@ NullPointerException that reads as a device fault. So the encoder's evidence is 
 a structural contract, and **no frame has been submitted through it** - nothing encodes into one yet. That is
 recorded as the gap it is rather than implied away.
 
-`tools/ci-metal4-provider.py` was updated rather than replaced, because the concept moved and did not change:
+`tools/ci-metal4.py` was updated rather than replaced, because the concept moved and did not change:
 what used to be pinned as "the provider refuses the two halves it does not have" is now "the provider returns
 this generation's objects, and each refuses, by name, exactly the operations it does not have". It pins the
 state's three answers and its one refusal, the encoder's neutrality, the ring it makes, the queue coming from
@@ -3245,7 +3245,7 @@ Each slice is measured before the next one starts, with the harness and the reci
 
 ### The isolation that is left is counted, not estimated
 
-`tools/ci-architecture.py` grew a second kind of rule beside the layer rules: a ledger of every file outside
+`tools/ci-repo.py` grew a second kind of rule beside the layer rules: a ledger of every file outside
 the generation packages that still names the frame path's concrete generation, checked in **both**
 directions. A file that starts naming `MTLCommandBuffer`, `MetalCommandEncoder`, `MetalRenderPass` or their
 kind is a regression and fails the guard; a file that stops doing so must have its line deleted in the same
@@ -3717,7 +3717,7 @@ class: the record became `Minecraft$Action`, which `Minecraft` does not carry in
 every access threw `IncompatibleClassChangeError` and the schedule line printed as
 `[!!!net.minecraft.client.Minecraft$Action$75e25708...=>java.lang.IncompatibleClassChangeError...]`.
 
-Both rules are in `ci-contracts.py` now, with three mutations: every source file in the mixin package must be a
+Both rules are in `tools/ci-metal3.py` now, with three mutations: every source file in the mixin package must be a
 mixin the config names, every mixin the config names must be admitted by the plugin - by name, or as the package
 group the sodium diagnostics are admitted as - and the schedule type lives in `render.shared`, which is where a
 type that is only *used* belongs.
@@ -4135,7 +4135,7 @@ only from the probe's `The world renders at WxH`, where this Vitrail build state
 `set -o pipefail`, where a `grep` that matches nothing fails its pipeline, so the fallback to the second wording
 never ran and the guard aborted the session instead of reporting. The reader now tries both wordings and both
 lookups tolerate finding nothing, so an absent line is a reported condition. All three properties are pinned in
-`tools/ci-vitrail-performance.py` and each was mutation-proved.
+`tools/ci-harness.py` and each was mutation-proved.
 
 ### The GUI is drawn and does not appear, and it is not the fragment stage
 
@@ -4895,7 +4895,7 @@ The single-step orderings are now reported rather than asserted (`curveOrdered`,
 answer - the heaviest step reads longer than the lightest, true in all eight probes - and the census exits 0 on
 that. Seven new contract pins hold the new instruments and each is mutation-proved: removing the options commit,
 the fixed-cost control, the `markerOverDriver` field, the encoder's precise form, the area knob, the
-`curveOrdered` field, or the aggregate requirement each turns `ci-metal4-cold-probe.py` red, and the source is
+`curveOrdered` field, or the aggregate requirement each turns `ci-metal4.py` red, and the source is
 restored identically after each.
 
 **What this corrects, and it is more than one sentence.** The frame path's pass table - `378 us` of a `19.4 ms`
@@ -4982,7 +4982,7 @@ frame-time distribution and the intermittent capability probe.
 Fifteen contract pins now hold the whole counter apparatus across its two rounds - the two marker forms, the
 options commit that carries the driver's window, the completion wait, the fixed-cost control, the two workloads'
 own readbacks, the area knob, the timeline selector and its ABI words, the entry size, and the three timeline
-fields - and each is mutation-proved: removing any one of them turns `ci-metal4-cold-probe.py` red.
+fields - and each is mutation-proved: removing any one of them turns `ci-metal4.py` red.
 
 ### The encoded drawable wait, priced by leaving it out
 
@@ -4992,7 +4992,7 @@ and the header says why it cannot be render work while the drawable wait is unse
 drawable... before executing any subsequent commands". So the one call that encodes that wait is now behind a
 diagnostic switch - `-Dmetallum.metal4NoDrawableWait=true`, off by default, **not a production candidate**, read
 in exactly one place, and reported once in the log of any session that sets it, because an arm has to be able to
-prove which submission it measured. `ci-metal4-provider.py` holds all four of those properties as pins, each
+prove which submission it measured. `ci-metal4.py` holds all four of those properties as pins, each
 mutation-proved.
 
 `run/m4-drawwait` is the A/B: Complementary on the staged world, 3200x1800, 600 frames a window, 25 s of settle,
@@ -5153,7 +5153,7 @@ the Metal 4 path making a scaler for **1408x792 to 2560x1440** and, in the same 
 built instead of an old-size one being reused, and no third configuration was ever made, because a cache *hit*
 makes no scaler and logs nothing. That is why the line reports the cache size: it is the field that turns "no
 line" into "a hit". The lookup is by the whole configuration record and creation is behind the miss, and both
-are pinned in `ci-metalfx.py` along with the fixture's own asymmetry - four distinct colours, four distinct
+are pinned in `ci-metal3.py` along with the fixture's own asymmetry - four distinct colours, four distinct
 alphas, both axes split - so a later edit that made the pattern symmetric turns the contract red instead of
 quietly measuring nothing.
 
@@ -5336,7 +5336,7 @@ frame that coincides with a 20 Hz tick), so a window's content is `a*frames + b*
 rates differ cover different numbers of ticks. So the probe counts ticks: a mixin on the client's own
 `Minecraft.tick()` hands each tick to `MetalFrameProbe.gameTick()`, the value at the window's first frame is kept,
 and the window line reports `windowTicks` and `framesPerTick`. The mixin is registered in `metallum.mixins.json`
-**and admitted by `MetallumMixinConfigPlugin`**, which `ci-contracts.py` refuses to let disagree - a mixin in the
+**and admitted by `MetallumMixinConfigPlugin`**, which `tools/ci-metal3.py` refuses to let disagree - a mixin in the
 config and not in the plugin's list is configured and never applied, silently, and that gate caught this one
 before it could measure nothing.
 
@@ -5568,7 +5568,7 @@ and marked, and the capability answer is the second attempt's. **What this does 
 the injection is a fact about this path and not about the device, and the gate stays NOT MET until the real
 intermittency is either reproduced with its distribution or replaced by a deterministic probe. The harness gained
 `--vmargs` for it, which is also how any future diagnostic reaches a probe process, and
-`tools/ci-metal4-cold-probe.py` pins the switch's name, its one-shot spend, its marking and the harness's ability
+`tools/ci-metal4.py` pins the switch's name, its one-shot spend, its marking and the harness's ability
 to pass it.
 
 ### Section 60's audit: six refusals, no callers, no workload left behind
@@ -5737,7 +5737,7 @@ it keeps each pair's share of pixels beyond eight levels, separates the arms of 
 cross-generation pairs, and prints `picture spread: the arms of one generation differ from each other by 9.113%
 of pixels (by more than 8) against the largest cross-generation difference of 8.801%, so this scene cannot
 separate the generations by picture` - and it stays silent on `run/ticks-nopack`, whose own arms differ by 0.02%
-of pixels. A contract in `tools/ci-vitrail-performance.py` fails when that reading is removed.
+of pixels. A contract in `tools/ci-harness.py` fails when that reading is removed.
 
 So section 93's first rung now has two measured sessions: the still-life scene it was written for
 (`run/ticks-nopack`, 1.63-1.78x) and the content-pinned one (`run/protocol-nopack`, 1.50x in the mean and 1.82x
@@ -5827,7 +5827,7 @@ all correct. The signed fixture and the reason are both committed with the fixtu
 **And the comparison is symmetric because the reference counts too.** The Metal 3 pass has always called
 `setDepthBias` when a depth attachment is in use; it now counts the pipelines whose values were non-zero, in the
 same place and under the same condition as the Metal 4 pass, so `depthBias=` reads the same thing on both
-generations. `tools/ci-frame-probe.py` pins both the condition and the count, and the pin fails when the Metal 3
+generations. `tools/ci-metal3.py` pins both the condition and the count, and the pin fails when the Metal 3
 side is removed. What is *not* measured is the counterfactual - a live frame drawn with the call removed - so the
 claim is exactly: the live workload reaches the call on both generations, and the two render the same biased
 surface.
@@ -5919,7 +5919,7 @@ the plan can be asked for the texel buffer a name declares; `Metal4RenderPass.se
 buffer-slot question and calls the new `fillTexelBuffer`, which builds the view with the same
 `MTLTexture.newBufferTextureView` the reference uses, fills the texture slot (direct or through an argument buffer),
 and releases the view through `owner.queueForDestroy`. `setUniform`'s remembered bindings are re-applied on the same
-road, and `tools/ci-metal4-provider.py` pins all five steps - mutation-proved by restoring the old lookup.
+road, and `tools/ci-metal4.py` pins all five steps - mutation-proved by restoring the old lookup.
 
 **Verified** on the same scene, fullscreen so no desktop is in the capture (1920x1200, one capture per arm):
 the dropped-binding line is gone, **no binding is skipped at all**, and the cloud outlines, positions and facets
@@ -5956,7 +5956,7 @@ maps it write-only; a mapped buffer on this backend is created `MTLStorageMode.S
 buffer's own storage, and the view's close action is empty - one allocation, no staging, no copy encoder. The
 bytes the shader reads are therefore the CPU's by construction, and the device-level reading is the probe's
 texel-buffer smoke, where a CPU-filled shared range comes back byte for byte. The invariant is pinned in
-`tools/ci-contracts.py`.
+`tools/ci-metal3.py`.
 
 **And a diagnostic that answers no at contract time cannot price a per-frame fallback.** Trying to reach the
 scaler's refusal road live with `-Dmetallum.probeNoMetalFx=true` on a forced Metal 4 launch does not get there:

@@ -124,7 +124,7 @@ The pack and the options file beside it are staged into `run/`, the pack selecti
 
 Three things it does not do. It cannot play: the client is left standing where the world put it, so the picture is evidence of a plausible frame rather than of anybody's judgement of one. It cannot photograph the screen on macOS until the process it runs under has been granted Screen Recording in System Settings, so a run may report that it has no picture - the counters are unaffected. And it measures no time yet: the probe counts bytes, encoders and bindings, and the only frame rate in the log belongs to the first full frame, which is a warming window.
 
-`tools/ci-vitrail-performance.py` pins the launcher's shape, because every property it has is one a hand-run measurement has already got wrong: a window armed before the pack had drawn a frame, a pack named in the script rather than handed to it, a jar picked out of the directory that holds every branch's jar, and a run that measured the pack's own defaults instead of the options its owner had chosen.
+`tools/ci-harness.py` pins the launcher's shape, because every property it has is one a hand-run measurement has already got wrong: a window armed before the pack had drawn a frame, a pack named in the script rather than handed to it, a jar picked out of the directory that holds every branch's jar, and a run that measured the pack's own defaults instead of the options its owner had chosen.
 
 ## What counts as evidence
 

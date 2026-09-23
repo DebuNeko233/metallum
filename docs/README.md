@@ -2,7 +2,7 @@
 
 Metallum's long-form record. One page per subject, and each subject has one home: a figure lives in the document
 that measured it, and anything that quotes it points there rather than copying the reasoning. Two contracts keep
-that true - `tools/ci-summary.py` traces the result page's figures back to their owners, and `tools/ci-docs.py`
+that true - `tools/ci-harness.py` traces the result page's figures back to their owners, and `tools/ci-repo.py`
 traces this index: every page in this directory is listed below, every link resolves, and nothing is listed that
 does not exist.
 

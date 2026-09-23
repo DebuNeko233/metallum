@@ -29,7 +29,7 @@ so the screenshot is evidence that a plausible frame was drawn, not that it was 
 | `tools/freeze-world.py` | rewrites the staged world's clock, weather and game rules, takes the entities out, puts the player in spectator |
 | the frame probe | `MetalFrameProbe`, armed by `run/metallum/probe-frames` and bounded by `-Dmetallum.frameProbeBudget=N`; one line every N frames |
 | `tools/vitrail-performance-compare.py` | the counters table, the per-run summary and the picture comparison |
-| `tools/ci-vitrail-performance.py` | the contract that keeps the harness honest (it is named by `ci.yml`) |
+| `tools/ci-harness.py` | the contract that keeps the harness honest (it is named by `ci.yml`) |
 
 ## Workflow
 

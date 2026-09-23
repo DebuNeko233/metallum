@@ -83,7 +83,7 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
                                       JSON - repositories, machine, display mode, target, pack, scale, wall and
                                       GPU distribution, CPU and allocation stats, the native call census, the
                                       structural census and the engine's one-a-second censuses - with
-                                      tools/ci-performance-report.py holding it against a fixture built from a
+                                      tools/ci-harness.py holding it against a fixture built from a
                                       real window's lines, mutations included. G2 DONE: section 46's list is
                                       refused end to end - target, generation, backend, pack selection, scene
                                       and content drift, a window shorter than the frames asked for, a window
@@ -132,8 +132,7 @@ Track G  measurement infrastructure   G1 DONE: tools/vitrail-performance-report.
   stored setting and a whole C2 session was collected on Metal 4 against a Metal 3 corpus without one counter
   showing it.
 - **Metal 4 stays verifiable while it is frozen.** All fifteen of this repository's contracts pass on the head
-  that carries everything above - `ci-architecture`, `ci-metal4-provider`, `ci-metal4-report`,
-  `ci-metal4-cold-probe` and `ci-metalfx` among them - and Vitrail's 267 tests pass on its own head, which is
+  that carries everything above - `ci-repo`, `ci-metal4` and `ci-metal3` among them - and Vitrail's 267 tests pass on its own head, which is
   what section 61's eleventh criterion asks for and what a shared-code change has to be re-checked against.
 ```
 
