@@ -1130,7 +1130,7 @@ public final class MetalFrameProbe {
                     threadMx = sun;
                 }
             }
-            return threadMx == null ? 0L : threadMx.getThreadAllocatedBytes(Thread.currentThread().getId());
+            return threadMx == null ? 0L : threadMx.getThreadAllocatedBytes(Thread.currentThread().threadId());
         } catch (RuntimeException | LinkageError unsupported) {
             return 0L;
         }
