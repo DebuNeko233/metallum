@@ -13,7 +13,8 @@ does not exist.
 | what the long-term performance programme proved, rejected and settled | [long-term-performance-summary.md](long-term-performance-summary.md) |
 | the policy that programme was run to, and what the owner answered | [long-term-performance-plan.md](long-term-performance-plan.md) |
 | how a measurement is taken, and how large a difference it can be trusted to show | [performance-testing.md](performance-testing.md) |
-| what this repository is, and which capabilities are validated | [../README.md](../README.md) |
+| what the backend implements, and what each capability deliberately does not decide | [backend-capabilities.md](backend-capabilities.md) |
+| what this repository is, how to build it and how to configure it | [../README.md](../README.md) |
 
 ## The programme's tracks, A to G
 
@@ -50,7 +51,9 @@ runs on it, and these four documents are its history rather than a queue of work
 
 ## The two files outside this directory
 
-[../README.md](../README.md) is what the repository is, its requirements, and the capability list it claims;
+[../README.md](../README.md) is what the repository is, its requirements, how to build and configure it, and how
+it is validated; the capability list it used to carry is [backend-capabilities.md](backend-capabilities.md) in this
+directory.
 [../VITRAIL_SMOKE.md](../VITRAIL_SMOKE.md) describes each Apple-Silicon smoke gate and how to run it.
 
 ## The evidence itself
