@@ -39,9 +39,12 @@ def vitrailPerfVmArgs = providers.gradleProperty("vitrailPerfVmArgs")
 loom {
 	runs {
 		client {
-			if (vitrailSmokeJar.isPresent()) {
-				property("vitrail.experimentalMetal", "true")
-			}
+			// A Vitrail smoke jar used to need `vitrail.experimentalMetal` set here to be let onto the
+			// Metal path at all. That developer switch is gone from Vitrail: Metal is the only path it
+			// draws on, and a session is let in on its own answers - a compatible API, that build's
+			// Prefer Metal, and a device that came up. Setting the property now would be a switch
+			// nothing reads, which is worse than nothing: a reader would take it for the reason the
+			// run works.
 
 			// macOS's own Metal Performance HUD, on for a hand-run dev client, so the frame can be watched
 			// while it is being drawn instead of inferred from a log afterwards: it reads frames a second,
