@@ -201,6 +201,15 @@ makes them:
 Both of the last two were seen to fire: a copy of the harness with the settle threshold raised and another with
 the crash scan pointed at a string every log carries each refused their arm and exited 4.
 
+**And two more, which ask the frame rather than the log, because a pack can be turned off without the run saying
+so.** A pack frame opens tens of passes and copies its targets back, so a window that counted **under ten render
+passes a frame and no copy-backs at all** is the game's own frame and not a measurement of the pack (`1199f39`; the
+shape is measured - the arm that motivated the guard read 39 passes a frame with 6600 copy-backs). And the selection
+file is shared, so the harness fingerprints `pack.txt` before the first arm and compares it after the last: a file
+another writer changed under the run means the window measured whatever that change left behind (`905d315`). Both
+refusals set the same flag as the target and generation guards, so an arm of either kind ends the session's exit 4
+rather than being annotated.
+
 **The picture column is the client's own frame, with the display capture as the fallback.** The harness asks for
 a readback while the probe's window is still open - a file in the instance's `metallum` directory, answered once
 a second from inside the client by `ScreenshotProbeMixin` (off unless `-Dmetallum.clientScreenshot=true`) - and
